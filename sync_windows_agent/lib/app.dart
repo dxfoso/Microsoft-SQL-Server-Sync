@@ -77,16 +77,13 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void _updateClientName(String value) {
     final nextName = value.trim().isEmpty ? 'Local Agent' : value.trim();
     final previousName = _clientName;
+    final currentState = _syncStatesByClient[previousName] ?? _defaultClientState();
     setState(() {
-      _clientName = nextName;
       if (previousName != nextName) {
-        final previousState = _syncStatesByClient[previousName];
-        if (previousState != null &&
-            !_syncStatesByClient.containsKey(nextName)) {
-          _syncStatesByClient[nextName] = previousState;
-        }
+        _syncStatesByClient.remove(previousName);
       }
-      _syncStatesByClient.putIfAbsent(nextName, _defaultClientState);
+      _syncStatesByClient[nextName] = currentState;
+      _clientName = nextName;
     });
     _scheduleSave();
   }

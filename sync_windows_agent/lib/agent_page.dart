@@ -951,11 +951,11 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                   },
                   child: const Text('Cancel'),
                 ),
-                FilledButton(
-                  onPressed: () async {
-                    final dialogProfile = readDialogProfile();
-                    final clientName =
-                        clientNameController.text.trim().isEmpty
+              FilledButton(
+                onPressed: () async {
+                  final dialogProfile = readDialogProfile();
+                  final clientName =
+                      clientNameController.text.trim().isEmpty
                             ? 'Local Agent'
                             : clientNameController.text.trim();
 
@@ -971,9 +971,8 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                       _rowOffset = 0;
                       _errorMessage = null;
                     });
-                    widget.onClientNameChanged(clientName);
-
                     Navigator.of(context).pop();
+                    widget.onClientNameChanged(clientName);
 
                     await _loadDatabases(
                       profile: dialogProfile,
