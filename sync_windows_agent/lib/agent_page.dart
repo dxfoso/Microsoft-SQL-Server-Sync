@@ -388,8 +388,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return _StringQueryResult(
         success: false,
         values: const [],
-        errorText:
-            'sqlcmd failed (exit ${processResult.exitCode}): ${_formatSqlError(processResult)}',
+        errorText: _sqlCmdFailed('database discovery', processResult),
       );
     }
 
@@ -443,8 +442,7 @@ ORDER BY table_name;
       return _StringQueryResult(
         success: false,
         values: const [],
-        errorText:
-            'sqlcmd failed (exit ${processResult.exitCode}): ${_formatSqlError(processResult)}',
+        errorText: _sqlCmdFailed('table discovery', processResult),
       );
     }
 
@@ -548,8 +546,7 @@ OFFSET $offset ROWS FETCH NEXT $fetchSize ROWS ONLY;
         rows: const [],
         totalRows: rowCountResult.value,
         hasMoreRows: false,
-        errorText:
-            'sqlcmd failed (exit ${processResult.exitCode}): ${_formatSqlError(processResult)}',
+        errorText: _sqlCmdFailed('row fetch', processResult),
       );
     }
 
@@ -593,8 +590,7 @@ ORDER BY ORDINAL_POSITION;
       return _StringQueryResult(
         success: false,
         values: const [],
-        errorText:
-            'sqlcmd failed (exit ${processResult.exitCode}): ${_formatSqlError(processResult)}',
+        errorText: _sqlCmdFailed('column discovery', processResult),
       );
     }
 
@@ -631,8 +627,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       return _IntQueryResult(
         success: false,
         value: 0,
-        errorText:
-            'sqlcmd failed (exit ${processResult.exitCode}): ${_formatSqlError(processResult)}',
+        errorText: _sqlCmdFailed('row count lookup', processResult),
       );
     }
 
@@ -660,6 +655,11 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       details.add('stderr: $stderr');
     }
     return details.isEmpty ? 'No output returned.' : details.join('\n');
+  }
+
+  String _sqlCmdFailed(String phase, ProcessResult processResult) {
+    return 'sqlcmd failed during $phase (exit ${processResult.exitCode}): '
+        '${_formatSqlError(processResult)}';
   }
 
   Future<ProcessResult?> _runSqlCmd({
