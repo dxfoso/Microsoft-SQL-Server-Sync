@@ -1,0 +1,21 @@
+namespace: sync-admin-web
+domain: velvet.sync.divclouds.com
+
+frontend:
+  image:
+    repository: sync-admin-web/frontend
+    tag: latest
+    pullPolicy: Always
+  backendBaseUrl: https://velvet.sync.divclouds.com/api
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: velvet.sync.divclouds.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: velvet-sync-tls
+        hosts:
+          - velvet.sync.divclouds.com
