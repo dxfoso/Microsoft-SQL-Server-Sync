@@ -1,0 +1,217 @@
+import 'dart:convert';
+import 'dart:io';
+
+class SyncHistoryEntry {
+  const SyncHistoryEntry({
+    required this.timestamp,
+    required this.table,
+    required this.status,
+    required this.success,
+    required this.message,
+  });
+
+  final String timestamp;
+  final String table;
+  final String status;
+  final bool success;
+  final String message;
+
+  factory SyncHistoryEntry.fromJson(Map<String, dynamic> json) {
+    return SyncHistoryEntry(
+      timestamp: json['timestamp'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+      success: json['success'] as bool? ?? false,
+      message: json['message'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'timestamp': timestamp,
+    'table': table,
+    'status': status,
+    'success': success,
+    'message': message,
+  };
+}
+
+class SyncTableState {
+  const SyncTableState({
+    required this.enabled,
+    required this.status,
+    required this.lastSync,
+    required this.history,
+  });
+
+  final bool enabled;
+  final String status;
+  final String lastSync;
+  final List<SyncHistoryEntry> history;
+
+  factory SyncTableState.fromJson(Map<String, dynamic> json) {
+    final history = (json['history'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => SyncHistoryEntry.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList(growable: false);
+    return SyncTableState(
+      enabled: json['enabled'] as bool? ?? false,
+      status: json['status'] as String? ?? 'Paused',
+      lastSync: json['lastSync'] as String? ?? '--',
+      history: history,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    'status': status,
+    'lastSync': lastSync,
+    'history': history.map((entry) => entry.toJson()).toList(growable: false),
+  };
+
+  SyncTableState copyWith({
+    bool? enabled,
+    String? status,
+    String? lastSync,
+    List<SyncHistoryEntry>? history,
+  }) {
+    return SyncTableState(
+      enabled: enabled ?? this.enabled,
+      status: status ?? this.status,
+      lastSync: lastSync ?? this.lastSync,
+      history: history ?? this.history,
+    );
+  }
+}
+
+class SyncClientState {
+  const SyncClientState({required this.tables});
+
+  final Map<String, SyncTableState> tables;
+
+  factory SyncClientState.fromJson(Map<String, dynamic> json) {
+    final tablesJson = Map<String, dynamic>.from(
+      json['tables'] as Map? ?? const {},
+    );
+    return SyncClientState(
+      tables: tablesJson.map(
+        (key, value) => MapEntry(
+          key,
+          SyncTableState.fromJson(Map<String, dynamic>.from(value as Map)),
+        ),
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
+  };
+
+  SyncClientState copyWith({Map<String, SyncTableState>? tables}) {
+    return SyncClientState(tables: tables ?? this.tables);
+  }
+}
+
+class SyncAppStateStore {
+  const SyncAppStateStore({
+    required this.lastClientName,
+    required this.clients,
+  });
+
+  final String lastClientName;
+  final Map<String, SyncClientState> clients;
+
+  static Directory _stateDirectory() {
+    final base =
+        Platform.environment['APPDATA'] ??
+        Platform.environment['LOCALAPPDATA'] ??
+        Directory.current.path;
+    return Directory(
+      '$base${Platform.pathSeparator}Microsoft-SQL-Server-Sync',
+    );
+  }
+
+  static File _stateFile() {
+    return File(
+      '${_stateDirectory().path}${Platform.pathSeparator}sync_windows_agent_state.json',
+    );
+  }
+
+  static Future<SyncAppStateStore> load() async {
+    final file = _stateFile();
+    if (!await file.exists()) {
+      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+    }
+
+    try {
+      final raw = await file.readAsString();
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+      }
+
+      final json = Map<String, dynamic>.from(decoded);
+      final clientsJson = Map<String, dynamic>.from(
+        json['clients'] as Map? ?? const {},
+      );
+      return SyncAppStateStore(
+        lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        clients: clientsJson.map(
+          (key, value) => MapEntry(
+            key,
+            SyncClientState.fromJson(Map<String, dynamic>.from(value as Map)),
+          ),
+        ),
+      );
+    } catch (_) {
+      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+    }
+  }
+
+  static SyncAppStateStore loadSync() {
+    final file = _stateFile();
+    if (!file.existsSync()) {
+      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+    }
+
+    try {
+      final raw = file.readAsStringSync();
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+      }
+
+      final json = Map<String, dynamic>.from(decoded);
+      final clientsJson = Map<String, dynamic>.from(
+        json['clients'] as Map? ?? const {},
+      );
+      return SyncAppStateStore(
+        lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        clients: clientsJson.map(
+          (key, value) => MapEntry(
+            key,
+            SyncClientState.fromJson(Map<String, dynamic>.from(value as Map)),
+          ),
+        ),
+      );
+    } catch (_) {
+      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+    }
+  }
+
+  Future<void> save() async {
+    final dir = _stateDirectory();
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    final file = _stateFile();
+    final payload = jsonEncode({
+      'lastClientName': lastClientName,
+      'clients': clients.map((key, value) => MapEntry(key, value.toJson())),
+    });
+    await file.writeAsString(payload);
+  }
+}

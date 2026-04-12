@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'agent_page.dart';
+import 'sample_data.dart';
+import 'sync_state.dart';
 
 class SyncWindowsAgentApp extends StatefulWidget {
   const SyncWindowsAgentApp({super.key, this.autoLoadOnStart = true});
@@ -13,18 +17,91 @@ class SyncWindowsAgentApp extends StatefulWidget {
 
 class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String _clientName = 'Local Agent';
-  final Map<String, Map<String, bool>> _syncStatesByClient = {};
+  Map<String, SyncClientState> _syncStatesByClient = {};
+  Timer? _saveDebounce;
 
-  void _updateClientName(String value) {
-    setState(() {
-      _clientName = value.trim().isEmpty ? 'Local Agent' : value.trim();
-    });
+  SyncClientState _defaultClientState() {
+    return SyncClientState(
+      tables: {
+        for (final table in discoveredTables)
+          table.name: SyncTableState(
+            enabled: table.syncEnabled,
+            status: table.syncStatus,
+            lastSync: table.lastSync,
+            history: [
+              SyncHistoryEntry(
+                timestamp: table.lastSync,
+                table: table.name,
+                status: table.syncStatus,
+                success: table.syncStatus != 'Failed',
+                message: 'Seeded from sample data.',
+              ),
+            ],
+          ),
+      },
+    );
   }
 
-  void _updateSyncStateForClient(Map<String, bool> state) {
+  SyncClientState _stateForClient(String clientName) {
+    return _syncStatesByClient[clientName] ?? _defaultClientState();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadState();
+  }
+
+  void _loadState() {
+    final store = SyncAppStateStore.loadSync();
+    _clientName =
+        store.lastClientName.trim().isEmpty
+            ? 'Local Agent'
+            : store.lastClientName.trim();
+    _syncStatesByClient = store.clients.isEmpty ? {} : store.clients;
+  }
+
+  void _scheduleSave() {
+    _saveDebounce?.cancel();
+    _saveDebounce = Timer(const Duration(milliseconds: 300), _saveState);
+  }
+
+  Future<void> _saveState() async {
+    final store = SyncAppStateStore(
+      lastClientName: _clientName,
+      clients: _syncStatesByClient,
+    );
+    await store.save();
+  }
+
+  void _updateClientName(String value) {
+    final nextName = value.trim().isEmpty ? 'Local Agent' : value.trim();
+    final previousName = _clientName;
+    setState(() {
+      _clientName = nextName;
+      if (previousName != nextName) {
+        final previousState = _syncStatesByClient[previousName];
+        if (previousState != null &&
+            !_syncStatesByClient.containsKey(nextName)) {
+          _syncStatesByClient[nextName] = previousState;
+        }
+      }
+      _syncStatesByClient.putIfAbsent(nextName, _defaultClientState);
+    });
+    _scheduleSave();
+  }
+
+  void _updateSyncStateForClient(SyncClientState state) {
     setState(() {
       _syncStatesByClient[_clientName] = state;
     });
+    _scheduleSave();
+  }
+
+  @override
+  void dispose() {
+    _saveDebounce?.cancel();
+    super.dispose();
   }
 
   @override
@@ -78,9 +155,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         autoLoadOnStart: widget.autoLoadOnStart,
         clientName: _clientName,
         onClientNameChanged: _updateClientName,
-        initialSyncEnabledTables:
-            _syncStatesByClient[_clientName] ?? const <String, bool>{},
-        onSyncEnabledTablesChanged: _updateSyncStateForClient,
+        initialSyncState: _stateForClient(_clientName),
+        onSyncStateChanged: _updateSyncStateForClient,
       ),
     );
   }

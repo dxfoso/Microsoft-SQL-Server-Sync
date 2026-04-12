@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'agent_widgets.dart';
 import 'sample_data.dart';
+import 'sync_state.dart';
 
 class AgentDashboardPage extends StatefulWidget {
   const AgentDashboardPage({
@@ -13,15 +14,15 @@ class AgentDashboardPage extends StatefulWidget {
     this.autoLoadOnStart = true,
     required this.clientName,
     required this.onClientNameChanged,
-    required this.initialSyncEnabledTables,
-    required this.onSyncEnabledTablesChanged,
+    required this.initialSyncState,
+    required this.onSyncStateChanged,
   });
 
   final bool autoLoadOnStart;
   final String clientName;
   final ValueChanged<String> onClientNameChanged;
-  final Map<String, bool> initialSyncEnabledTables;
-  final ValueChanged<Map<String, bool>> onSyncEnabledTablesChanged;
+  final SyncClientState initialSyncState;
+  final ValueChanged<SyncClientState> onSyncStateChanged;
 
   @override
   State<AgentDashboardPage> createState() => _AgentDashboardPageState();
@@ -36,7 +37,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final ScrollController _tableScrollController = ScrollController();
-  late Map<String, bool> _syncEnabledTables;
+  late SyncClientState _syncState;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -58,7 +59,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   @override
   void initState() {
     super.initState();
-    _syncEnabledTables = Map<String, bool>.from(widget.initialSyncEnabledTables);
+    _syncState = widget.initialSyncState;
     _tableScrollController.addListener(_onTableScroll);
     if (widget.autoLoadOnStart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -79,11 +80,68 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     super.dispose();
   }
 
-  void _updateSyncEnabledTable(String table, bool enabled) {
+  void _updateSyncTableState(String table, SyncTableState state) {
+    final tables = Map<String, SyncTableState>.from(_syncState.tables);
+    tables[table] = state;
+    final nextState = _syncState.copyWith(tables: tables);
     setState(() {
-      _syncEnabledTables[table] = enabled;
+      _syncState = nextState;
     });
-    widget.onSyncEnabledTablesChanged(Map<String, bool>.from(_syncEnabledTables));
+    widget.onSyncStateChanged(nextState);
+  }
+
+  void _updateSyncEnabledTable(String table, bool enabled) {
+    final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+    final now = DateTime.now().toIso8601String();
+    final nextStatus = enabled ? 'Synced' : 'Paused';
+    final nextHistory = List<SyncHistoryEntry>.from(current.history)
+      ..add(
+        SyncHistoryEntry(
+          timestamp: now,
+          table: table,
+          status: nextStatus,
+          success: enabled,
+          message: enabled ? 'Sync enabled for client ${widget.clientName}.' : 'Sync paused for client ${widget.clientName}.',
+        ),
+      );
+    _updateSyncTableState(
+      table,
+      current.copyWith(
+        enabled: enabled,
+        status: nextStatus,
+        lastSync: now,
+        history: nextHistory,
+      ),
+    );
+  }
+
+  SyncTableState _defaultSyncTableState(String table) {
+    final fallback = discoveredTables.firstWhere(
+      (entry) => entry.name == table,
+      orElse: () => discoveredTables.first,
+    );
+    return SyncTableState(
+      enabled: fallback.syncEnabled,
+      status: fallback.syncStatus,
+      lastSync: fallback.lastSync,
+      history: [
+        SyncHistoryEntry(
+          timestamp: fallback.lastSync,
+          table: fallback.name,
+          status: fallback.syncStatus,
+          success: fallback.syncStatus != 'Failed',
+          message: 'Seeded from sample data.',
+        ),
+      ],
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant AgentDashboardPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.clientName != widget.clientName) {
+      _syncState = widget.initialSyncState;
+    }
   }
 
   Future<void> _onTableScroll() async {
@@ -961,15 +1019,30 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
   Widget _buildSyncPanel() {
     final syncRows = discoveredTables.map((table) {
-      final enabled = _syncEnabledTables[table.name] ?? table.syncEnabled;
+      final state =
+          _syncState.tables[table.name] ?? _defaultSyncTableState(table.name);
       return (
         table: table.name,
         rows: table.rows,
-        enabled: enabled,
-        status: enabled ? table.syncStatus : 'Paused',
-        lastSync: table.lastSync,
+        state: state,
       );
     }).toList(growable: false);
+
+    final historyEntries =
+        syncRows
+            .expand(
+              (row) => row.state.history.map(
+                (entry) => (
+                  table: row.table,
+                  timestamp: entry.timestamp,
+                  status: entry.status,
+                  success: entry.success,
+                  message: entry.message,
+                ),
+              ),
+            )
+            .toList(growable: false)
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -996,9 +1069,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                     detail: 'Tables tracked for remote sync.',
                   ),
                   AgentMetricCard(
-                    title: 'Remote',
-                    value: 'Enabled',
-                    detail: 'Checked rows sync with the remote server.',
+                    title: 'History',
+                    value: historyEntries.length.toString(),
+                    detail: 'Saved sync events for this client.',
                   ),
                 ],
               ),
@@ -1017,6 +1090,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                     DataColumn(label: Text('Rows')),
                     DataColumn(label: Text('Status')),
                     DataColumn(label: Text('Last Sync')),
+                    DataColumn(label: Text('History')),
                   ],
                   rows:
                       syncRows
@@ -1025,7 +1099,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                               cells: [
                                 DataCell(
                                   Checkbox(
-                                    value: row.enabled,
+                                    value: row.state.enabled,
                                     onChanged: (value) {
                                       if (value == null) {
                                         return;
@@ -1041,16 +1115,17 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                                 DataCell(Text(row.rows.toString())),
                                 DataCell(
                                   AgentStatusPill(
-                                    label: row.status,
+                                    label: row.state.status,
                                     color:
-                                        row.status == 'Paused'
+                                        row.state.status == 'Paused'
                                             ? const Color(0xFF718096)
-                                            : row.status == 'Retrying'
+                                            : row.state.status == 'Retrying'
                                             ? const Color(0xFFD69E2E)
                                             : const Color(0xFF2F855A),
                                   ),
                                 ),
-                                DataCell(Text(row.lastSync)),
+                                DataCell(Text(row.state.lastSync)),
+                                DataCell(Text('${row.state.history.length} events')),
                               ],
                             ),
                           )
@@ -1059,12 +1134,12 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
               ),
               const SizedBox(height: 18),
               Text(
-                'Latest sync feed',
+                'Sync history',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 10),
-              ...recentEvents.map(
-                (event) => Container(
+              ...historyEntries.take(12).map(
+                (entry) => Container(
                   width: double.infinity,
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(16),
@@ -1076,27 +1151,33 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      AgentEventDot(level: event.level),
+                      AgentStatusPill(
+                        label: entry.success ? 'Success' : 'Failed',
+                        color:
+                            entry.success
+                                ? const Color(0xFF2F855A)
+                                : const Color(0xFFC53030),
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              event.title,
+                              '${entry.table} · ${entry.status}',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 15,
                               ),
                             ),
                             const SizedBox(height: 4),
-                            Text(event.message),
+                            Text(entry.message),
                           ],
                         ),
                       ),
                       const SizedBox(width: 12),
                       Text(
-                        event.time,
+                        entry.timestamp,
                         style: const TextStyle(color: Color(0xFF5F6B76)),
                       ),
                     ],
