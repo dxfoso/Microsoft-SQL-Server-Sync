@@ -375,7 +375,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final sql = 'SET NOCOUNT ON; SELECT name FROM sys.databases ORDER BY name;';
-    final processResult = await _runSqlCmd(profile: profile, query: sql);
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: 'master',
+      query: sql,
+    );
     if (processResult == null) {
       return _StringQueryResult(
         success: false,
@@ -681,10 +685,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       '-W',
       '-w',
       '32767',
-      '-y',
-      '0',
-      '-Y',
-      '0',
       '-s',
       '|',
       '-Q',
