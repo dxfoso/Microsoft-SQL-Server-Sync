@@ -20,3 +20,11 @@ app.kubernetes.io/managed-by: Helm
 {{- $auth := printf "%s:%s" .Values.dockerUsername .Values.dockerPassword | b64enc -}}
 {{- printf "{\"auths\":{\"%s\":{\"username\":\"%s\",\"password\":\"%s\",\"email\":\"%s\",\"auth\":\"%s\"}}}" .Values.dockerRegistry .Values.dockerUsername .Values.dockerPassword .Values.dockerEmail $auth | b64enc -}}
 {{- end -}}
+
+{{- define "sync-admin-web.certManagerAnnotationKey" -}}
+{{- if eq (.Values.certManager.issuerKind | default "ClusterIssuer") "Issuer" -}}
+cert-manager.io/issuer
+{{- else -}}
+cert-manager.io/cluster-issuer
+{{- end -}}
+{{- end -}}

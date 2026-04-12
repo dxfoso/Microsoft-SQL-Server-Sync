@@ -1,0 +1,18 @@
+{{- if and .Values.certManager.enabled .Values.frontend.ingress.enabled .Values.frontend.ingress.tls }}
+{{- $tls := index .Values.frontend.ingress.tls 0 }}
+{{- $host := index $tls.hosts 0 }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "sync-admin-web.fullname" . }}-tls
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $tls.secretName }}
+  issuerRef:
+    name: {{ .Values.certManager.issuerName }}
+    kind: {{ .Values.certManager.issuerKind | default "ClusterIssuer" }}
+  dnsNames:
+    - {{ $host }}
+{{- end }}

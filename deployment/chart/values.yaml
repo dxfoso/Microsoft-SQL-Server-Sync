@@ -1,6 +1,11 @@
 namespace: sync-admin-web
 domain: sync.velvet-leaf.com
 
+certManager:
+  enabled: true
+  issuerName: letsencrypt-prod
+  issuerKind: ClusterIssuer
+
 frontend:
   image:
     repository: sync-admin-web/frontend
@@ -16,6 +21,6 @@ frontend:
           - path: /
             pathType: Prefix
     tls:
-      - secretName: velvet-sync-tls
+      - secretName: sync-velvet-leaf-com-tls
         hosts:
           - sync.velvet-leaf.com

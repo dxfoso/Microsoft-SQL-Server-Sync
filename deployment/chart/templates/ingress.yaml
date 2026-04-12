@@ -6,6 +6,10 @@ metadata:
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
+  {{- if .Values.certManager.enabled }}
+  annotations:
+    {{ include "sync-admin-web.certManagerAnnotationKey" . }}: {{ .Values.certManager.issuerName | quote }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.frontend.ingress.className | default "nginx" }}
   rules:
