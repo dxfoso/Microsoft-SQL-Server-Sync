@@ -45,7 +45,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _errorMessage;
   int? _sortColumnIndex;
   bool _sortAscending = true;
-  bool _showSyncView = false;
+  String? _selectedSyncTable;
   int _totalTableRows = 0;
 
   List<String> _databases = const [];
@@ -142,6 +142,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (oldWidget.clientName != widget.clientName) {
       _syncState = widget.initialSyncState;
     }
+  }
+
+  String? _selectedSyncTableName(List<String> tableNames) {
+    if (_selectedSyncTable != null && tableNames.contains(_selectedSyncTable)) {
+      return _selectedSyncTable;
+    }
+    return tableNames.isNotEmpty ? tableNames.first : null;
   }
 
   Future<void> _onTableScroll() async {
@@ -1028,166 +1035,169 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       );
     }).toList(growable: false);
 
-    final historyEntries =
-        syncRows
-            .expand(
-              (row) => row.state.history.map(
-                (entry) => (
-                  table: row.table,
-                  timestamp: entry.timestamp,
-                  status: entry.status,
-                  success: entry.success,
-                  message: entry.message,
-                ),
-              ),
-            )
-            .toList(growable: false)
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final selectedTableName = _selectedSyncTableName(
+      syncRows.map((row) => row.table).toList(growable: false),
+    );
+    final selectedRow = syncRows.firstWhere(
+      (row) => row.table == selectedTableName,
+      orElse: () => syncRows.first,
+    );
+    final historyEntries = List<SyncHistoryEntry>.from(selectedRow.state.history)
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AgentSectionShell(
-          title: 'Sync Table',
-          subtitle:
-              'Periodic upload and download batches for ${widget.clientName}.',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return AgentSectionShell(
+      title: 'Sync',
+      subtitle: 'Per-table sync controls and history for ${widget.clientName}.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 16,
+            runSpacing: 16,
             children: [
-              Wrap(
-                spacing: 16,
-                runSpacing: 16,
-                children: [
-                  AgentMetricCard(
-                    title: 'Client',
-                    value: widget.clientName,
-                    detail: 'This name is shown to the control plane.',
-                  ),
-                  AgentMetricCard(
-                    title: 'Tables',
-                    value: syncRows.length.toString(),
-                    detail: 'Tables tracked for remote sync.',
-                  ),
-                  AgentMetricCard(
-                    title: 'History',
-                    value: historyEntries.length.toString(),
-                    detail: 'Saved sync events for this client.',
-                  ),
-                ],
+              AgentMetricCard(
+                title: 'Client',
+                value: widget.clientName,
+                detail: 'This name is shown to the control plane.',
               ),
-              const SizedBox(height: 18),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  headingRowColor: WidgetStatePropertyAll(
-                    const Color(0xFFE7ECE6),
-                  ),
-                  dataRowMinHeight: 54,
-                  dataRowMaxHeight: 64,
-                  columns: const [
-                    DataColumn(label: Text('Sync')),
-                    DataColumn(label: Text('Table')),
-                    DataColumn(label: Text('Rows')),
-                    DataColumn(label: Text('Status')),
-                    DataColumn(label: Text('Last Sync')),
-                    DataColumn(label: Text('History')),
-                  ],
-                  rows:
-                      syncRows
-                          .map(
-                            (row) => DataRow(
-                              cells: [
-                                DataCell(
-                                  Checkbox(
-                                    value: row.state.enabled,
-                                    onChanged: (value) {
-                                      if (value == null) {
-                                        return;
-                                      }
-                                      _updateSyncEnabledTable(
-                                        row.table,
-                                        value,
-                                      );
-                                    },
-                                  ),
-                                ),
-                                DataCell(Text(row.table)),
-                                DataCell(Text(row.rows.toString())),
-                                DataCell(
-                                  AgentStatusPill(
-                                    label: row.state.status,
-                                    color:
-                                        row.state.status == 'Paused'
-                                            ? const Color(0xFF718096)
-                                            : row.state.status == 'Retrying'
-                                            ? const Color(0xFFD69E2E)
-                                            : const Color(0xFF2F855A),
-                                  ),
-                                ),
-                                DataCell(Text(row.state.lastSync)),
-                                DataCell(Text('${row.state.history.length} events')),
-                              ],
-                            ),
-                          )
-                          .toList(),
-                ),
+              AgentMetricCard(
+                title: 'Tables',
+                value: syncRows.length.toString(),
+                detail: 'Tables tracked for remote sync.',
               ),
-              const SizedBox(height: 18),
-              Text(
-                'Sync history',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 10),
-              ...historyEntries.take(12).map(
-                (entry) => Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: const Color(0xFFE2D8CB)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AgentStatusPill(
-                        label: entry.success ? 'Success' : 'Failed',
-                        color:
-                            entry.success
-                                ? const Color(0xFF2F855A)
-                                : const Color(0xFFC53030),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${entry.table} · ${entry.status}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(entry.message),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        entry.timestamp,
-                        style: const TextStyle(color: Color(0xFF5F6B76)),
-                      ),
-                    ],
-                  ),
-                ),
+              AgentMetricCard(
+                title: 'History',
+                value: historyEntries.length.toString(),
+                detail: 'History for the selected table.',
               ),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: 18),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowColor: WidgetStatePropertyAll(
+                const Color(0xFFE7ECE6),
+              ),
+              dataRowMinHeight: 54,
+              dataRowMaxHeight: 64,
+              columns: const [
+                DataColumn(label: Text('Sync')),
+                DataColumn(label: Text('Table')),
+                DataColumn(label: Text('Rows')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Last Sync')),
+                DataColumn(label: Text('History')),
+              ],
+              rows:
+                  syncRows
+                      .map(
+                        (row) => DataRow(
+                          selected: row.table == selectedTableName,
+                          onSelectChanged: (_) {
+                            setState(() {
+                              _selectedSyncTable = row.table;
+                            });
+                          },
+                          cells: [
+                            DataCell(
+                              Checkbox(
+                                value: row.state.enabled,
+                                onChanged: (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  _updateSyncEnabledTable(row.table, value);
+                                },
+                              ),
+                            ),
+                            DataCell(Text(row.table)),
+                            DataCell(Text(row.rows.toString())),
+                            DataCell(
+                              AgentStatusPill(
+                                label: row.state.status,
+                                color:
+                                    row.state.status == 'Paused'
+                                        ? const Color(0xFF718096)
+                                        : row.state.status == 'Retrying'
+                                        ? const Color(0xFFD69E2E)
+                                        : const Color(0xFF2F855A),
+                              ),
+                            ),
+                            DataCell(Text(row.state.lastSync)),
+                            DataCell(Text('${row.state.history.length} events')),
+                          ],
+                        ),
+                      )
+                      .toList(),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '$selectedTableName history',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 10),
+          if (historyEntries.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFE2D8CB)),
+              ),
+              child: const Text('No sync history recorded for this table.'),
+            )
+          else
+            ...historyEntries.map(
+              (entry) => Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE2D8CB)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AgentStatusPill(
+                      label: entry.success ? 'Success' : 'Failed',
+                      color:
+                          entry.success
+                              ? const Color(0xFF2F855A)
+                              : const Color(0xFFC53030),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entry.status,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(entry.message),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      entry.timestamp,
+                      style: const TextStyle(color: Color(0xFF5F6B76)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -1245,6 +1255,64 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTableTab() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSelectionHeader(),
+        const SizedBox(height: 12),
+        if (_errorMessage != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: const Color(0xFFFFEEEE),
+            ),
+            child: Text(
+              _errorMessage!,
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: _buildTablePanel(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSyncTab() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_errorMessage != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: const Color(0xFFFFEEEE),
+            ),
+            child: Text(
+              _errorMessage!,
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: _buildSyncPanel(),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1524,27 +1592,22 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
       appBar: AppBar(
         title: Text(
           widget.clientName == 'Local Agent'
               ? 'SQL Sync Agent'
               : '${widget.clientName} · SQL Sync Agent',
         ),
+        bottom: const TabBar(
+          tabs: [
+            Tab(icon: Icon(Icons.table_rows), text: 'Table'),
+            Tab(icon: Icon(Icons.sync), text: 'Sync'),
+          ],
+        ),
         actions: [
-          TextButton.icon(
-            onPressed: () {
-              setState(() {
-                _showSyncView = !_showSyncView;
-              });
-            },
-            icon: Icon(_showSyncView ? Icons.table_rows : Icons.sync),
-            label: Text(_showSyncView ? 'Tables' : 'Sync'),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF17313A),
-              visualDensity: VisualDensity.compact,
-            ),
-          ),
           IconButton(
             tooltip: 'Settings',
             icon: const Icon(Icons.more_vert),
@@ -1555,35 +1618,15 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: TabBarView(
           children: [
-            _buildSelectionHeader(),
-            const SizedBox(height: 12),
-            if (_errorMessage != null)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: const Color(0xFFFFEEEE),
-                ),
-                child: Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: Colors.red),
-                ),
-              ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: _showSyncView ? _buildSyncPanel() : _buildTablePanel(),
-              ),
-            ),
+            _buildTableTab(),
+            _buildSyncTab(),
           ],
         ),
       ),
-      bottomNavigationBar: _buildPinnedSummaryBar(),
+        bottomNavigationBar: _buildPinnedSummaryBar(),
+      ),
     );
   }
 }
