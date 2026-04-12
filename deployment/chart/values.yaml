@@ -21,6 +21,6 @@ frontend:
           - path: /
             pathType: Prefix
     tls:
-      - secretName: sync-velvet-leaf-com-tls
+      - secretName: sync-velvet-leaf-com-letsencrypt-tls
         hosts:
           - sync.velvet-leaf.com

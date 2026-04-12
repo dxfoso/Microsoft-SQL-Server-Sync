@@ -28,8 +28,10 @@ class AgentDashboardPage extends StatefulWidget {
   State<AgentDashboardPage> createState() => _AgentDashboardPageState();
 }
 
-class _AgentDashboardPageState extends State<AgentDashboardPage> {
+class _AgentDashboardPageState extends State<AgentDashboardPage>
+    with SingleTickerProviderStateMixin {
   static const int _rowsPerPage = 25;
+  static const String _serverCheckUrl = 'https://sync.velvet-leaf.com/';
 
   final TextEditingController _serverController = TextEditingController(
     text: 'localhost',
@@ -38,6 +40,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final TextEditingController _passwordController = TextEditingController();
   final ScrollController _tableScrollController = ScrollController();
   late SyncClientState _syncState;
+  late final TabController _tabController;
+  Timer? _connectionCheckTimer;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -47,6 +51,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _sortAscending = true;
   String? _selectedSyncTable;
   int _totalTableRows = 0;
+  bool _serverConnected = false;
+  bool _checkingServerConnection = false;
+  DateTime? _lastServerCheck;
 
   List<String> _databases = const [];
   String? _selectedDatabase;
@@ -60,7 +67,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   void initState() {
     super.initState();
     _syncState = widget.initialSyncState;
+    _tabController = TabController(length: 2, vsync: this)
+      ..addListener(_onTabChanged);
     _tableScrollController.addListener(_onTableScroll);
+    _connectionCheckTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_checkServerConnection()),
+    );
     if (widget.autoLoadOnStart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -69,15 +82,65 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _refreshConnection(loadTables: true);
       });
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_checkServerConnection());
+      }
+    });
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
+    _tabController.dispose();
+    _connectionCheckTimer?.cancel();
     _serverController.dispose();
     _userController.dispose();
     _passwordController.dispose();
     _tableScrollController.dispose();
     super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (!mounted || _tabController.indexIsChanging) {
+      return;
+    }
+    setState(() {});
+  }
+
+  Future<void> _checkServerConnection() async {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _checkingServerConnection = true;
+    });
+
+    var online = false;
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 5);
+      final request = await client.getUrl(Uri.parse(_serverCheckUrl));
+      final response = await request.close().timeout(
+            const Duration(seconds: 5),
+          );
+      online = response.statusCode < 500;
+      await response.drain<void>();
+      client.close(force: true);
+    } catch (_) {
+      online = false;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _serverConnected = online;
+      _checkingServerConnection = false;
+      _lastServerCheck = DateTime.now();
+    });
   }
 
   void _updateSyncTableState(String table, SyncTableState state) {
@@ -1050,28 +1113,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: [
-              AgentMetricCard(
-                title: 'Client',
-                value: widget.clientName,
-                detail: 'This name is shown to the control plane.',
-              ),
-              AgentMetricCard(
-                title: 'Tables',
-                value: syncRows.length.toString(),
-                detail: 'Tables tracked for remote sync.',
-              ),
-              AgentMetricCard(
-                title: 'History',
-                value: historyEntries.length.toString(),
-                detail: 'History for the selected table.',
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
@@ -1212,6 +1253,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
               child: DropdownButtonFormField<String>(
                 value: _selectedDatabase,
                 isDense: true,
+                isExpanded: true,
                 iconSize: 18,
                 borderRadius: BorderRadius.circular(12),
                 items:
@@ -1219,7 +1261,12 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                         .map(
                           (database) => DropdownMenuItem(
                             value: database,
-                            child: Text(database),
+                            child: Text(
+                              database,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
                           ),
                         )
                         .toList(),
@@ -1236,6 +1283,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
               child: DropdownButtonFormField<String>(
                 value: _selectedTable,
                 isDense: true,
+                isExpanded: true,
                 iconSize: 18,
                 borderRadius: BorderRadius.circular(12),
                 items:
@@ -1243,10 +1291,31 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                         .map(
                           (table) => DropdownMenuItem(
                             value: table,
-                            child: Text(table),
+                            child: Text(
+                              table,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
                           ),
                         )
                         .toList(),
+                selectedItemBuilder:
+                    (context) =>
+                        _tables
+                            .map(
+                              (table) => Align(
+                                alignment: Alignment.centerLeft,
+                                child: SelectableText(
+                                  table,
+                                  maxLines: 1,
+                                  minLines: 1,
+                                  scrollPhysics:
+                                      const BouncingScrollPhysics(),
+                                ),
+                              ),
+                            )
+                            .toList(),
                 onChanged: _tables.isEmpty ? null : _selectTable,
                 decoration: _compactInputDecoration('Table'),
               ),
@@ -1261,6 +1330,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const SizedBox(height: 10),
         _buildSelectionHeader(),
         const SizedBox(height: 12),
         if (_errorMessage != null)
@@ -1321,21 +1391,21 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       isDense: true,
       filled: true,
       fillColor: const Color(0xFFF6F7F5),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF7C8A7A)),
-      ),
-    );
-  }
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Color(0xFF7C8A7A)),
+    ),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+  );
+}
 
   Widget _buildTableCell(String value, double cellWidth, {required bool alt}) {
     return Container(
@@ -1380,6 +1450,48 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   Widget _buildPinnedSummaryBar() {
+    final syncRows = discoveredTables.map((table) {
+      final state =
+          _syncState.tables[table.name] ?? _defaultSyncTableState(table.name);
+      return (
+        table: table.name,
+        rows: table.rows,
+        state: state,
+      );
+    }).toList(growable: false);
+
+    final selectedSyncTableName = _selectedSyncTableName(
+      syncRows.map((row) => row.table).toList(growable: false),
+    );
+    final selectedSyncRow = syncRows.firstWhere(
+      (row) => row.table == selectedSyncTableName,
+      orElse: () => syncRows.first,
+    );
+
+    final footerItems =
+        _tabController.index == 1
+            ? <Widget>[
+              _InfoLine(label: 'Client', value: widget.clientName),
+              _InfoLine(label: 'Tables', value: syncRows.length.toString()),
+              _InfoLine(label: 'Selected', value: selectedSyncRow.table),
+              _InfoLine(
+                label: 'History',
+                value: selectedSyncRow.state.history.length.toString(),
+              ),
+              _InfoLine(label: 'Status', value: selectedSyncRow.state.status),
+            ]
+            : <Widget>[
+              _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
+              _InfoLine(label: 'Table', value: _selectedTable ?? 'None'),
+              _InfoLine(label: 'Rows', value: _totalTableRows.toString()),
+              _InfoLine(
+                label: 'Loaded',
+                value: _selectedTable == null
+                    ? 'No table selected'
+                    : (_rowsLoading ? 'Loading' : 'Ready'),
+              ),
+            ];
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -1387,17 +1499,54 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Wrap(
-          spacing: 14,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        child: Row(
           children: [
-            Text(
-              'Total rows: $_totalTableRows',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            Expanded(
+              child: Wrap(
+                spacing: 14,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: footerItems,
+              ),
             ),
+            const SizedBox(width: 16),
+            _buildServerStatusIndicator(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildServerStatusIndicator() {
+    final color =
+        _checkingServerConnection
+            ? const Color(0xFFD69E2E)
+            : _serverConnected
+            ? const Color(0xFF2F855A)
+            : const Color(0xFFC53030);
+    final label =
+        _checkingServerConnection
+            ? 'Checking'
+            : _serverConnected
+            ? 'Online'
+            : 'Offline';
+    final tooltip =
+        _lastServerCheck == null
+            ? 'Checks $_serverCheckUrl every minute.'
+            : 'Last checked at ${_lastServerCheck!.toLocal()}';
+
+    return Tooltip(
+      message: tooltip,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, color: color, size: 12),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ],
       ),
     );
   }
@@ -1591,17 +1740,16 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
+    return Scaffold(
       appBar: AppBar(
         title: Text(
           widget.clientName == 'Local Agent'
               ? 'SQL Sync Agent'
               : '${widget.clientName} · SQL Sync Agent',
         ),
-        bottom: const TabBar(
-          tabs: [
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
             Tab(icon: Icon(Icons.table_rows), text: 'Table'),
             Tab(icon: Icon(Icons.sync), text: 'Sync'),
           ],
@@ -1618,14 +1766,14 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: TabBarView(
+          controller: _tabController,
           children: [
             _buildTableTab(),
             _buildSyncTab(),
           ],
         ),
       ),
-        bottomNavigationBar: _buildPinnedSummaryBar(),
-      ),
+      bottomNavigationBar: _buildPinnedSummaryBar(),
     );
   }
 }
