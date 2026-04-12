@@ -8,7 +8,7 @@ metadata:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
   {{- if .Values.certManager.enabled }}
   annotations:
-    {{ include "sync-admin-web.certManagerAnnotationKey" . }}: {{ .Values.certManager.issuerName | quote }}
+    {{ include "sync-admin-web.certManagerAnnotationKey" . }}: {{ include "sync-admin-web.certManagerIssuerName" . | quote }}
   {{- end }}
 spec:
   ingressClassName: {{ .Values.frontend.ingress.className | default "nginx" }}

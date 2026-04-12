@@ -11,8 +11,8 @@ metadata:
 spec:
   secretName: {{ $tls.secretName }}
   issuerRef:
-    name: {{ .Values.certManager.issuerName }}
-    kind: {{ .Values.certManager.issuerKind | default "ClusterIssuer" }}
+    name: {{ include "sync-admin-web.certManagerIssuerName" . }}
+    kind: {{ include "sync-admin-web.certManagerIssuerKind" . }}
   dnsNames:
     - {{ $host }}
 {{- end }}

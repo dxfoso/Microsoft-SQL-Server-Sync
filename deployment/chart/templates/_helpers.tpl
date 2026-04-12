@@ -21,8 +21,32 @@ app.kubernetes.io/managed-by: Helm
 {{- printf "{\"auths\":{\"%s\":{\"username\":\"%s\",\"password\":\"%s\",\"email\":\"%s\",\"auth\":\"%s\"}}}" .Values.dockerRegistry .Values.dockerUsername .Values.dockerPassword .Values.dockerEmail $auth | b64enc -}}
 {{- end -}}
 
+{{- define "sync-admin-web.certManagerCreateClusterIssuer" -}}
+{{- if hasKey .Values.certManager "createClusterIssuer" -}}
+{{- .Values.certManager.createClusterIssuer -}}
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- define "sync-admin-web.certManagerIssuerName" -}}
+{{- if eq (include "sync-admin-web.certManagerCreateClusterIssuer" .) "true" -}}
+{{- printf "%s-letsencrypt" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- .Values.certManager.issuerName | default "letsencrypt-prod" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "sync-admin-web.certManagerIssuerKind" -}}
+{{- if eq (include "sync-admin-web.certManagerCreateClusterIssuer" .) "true" -}}
+ClusterIssuer
+{{- else -}}
+{{- .Values.certManager.issuerKind | default "ClusterIssuer" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "sync-admin-web.certManagerAnnotationKey" -}}
-{{- if eq (.Values.certManager.issuerKind | default "ClusterIssuer") "Issuer" -}}
+{{- if eq (include "sync-admin-web.certManagerIssuerKind" .) "Issuer" -}}
 cert-manager.io/issuer
 {{- else -}}
 cert-manager.io/cluster-issuer
