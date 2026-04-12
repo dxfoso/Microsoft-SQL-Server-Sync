@@ -6,6 +6,7 @@ metadata:
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:
+  revisionHistoryLimit: 2
   replicas: 1
   selector:
     matchLabels:
