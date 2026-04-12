@@ -4,12 +4,18 @@ class AgentTable {
     required this.keyColumn,
     required this.changeColumn,
     required this.rows,
+    required this.syncEnabled,
+    required this.syncStatus,
+    required this.lastSync,
   });
 
   final String name;
   final String keyColumn;
   final String changeColumn;
   final int rows;
+  final bool syncEnabled;
+  final String syncStatus;
+  final String lastSync;
 }
 
 class AgentEvent {

@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'agent_widgets.dart';
-import 'models.dart';
 import 'sample_data.dart';
 
 class AgentDashboardPage extends StatefulWidget {
@@ -33,6 +32,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final ScrollController _tableScrollController = ScrollController();
+  final Map<String, bool> _syncEnabledTables = {};
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -814,10 +814,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     final serverController = TextEditingController(
       text: _serverController.text,
     );
-    String? selectedDatabase = _selectedDatabase;
-    List<String> dbCache = List.of(_databases);
-    bool loading = false;
-    String? dialogError;
 
     _SqlConnectionProfile readDialogProfile() => _SqlConnectionProfile(
       server: serverController.text.trim(),
@@ -825,43 +821,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       user: _userController.text.trim(),
       password: _passwordController.text,
     );
-
-    Future<void> loadDatabases(
-      BuildContext context,
-      StateSetter setDialogState,
-    ) async {
-      setDialogState(() {
-        loading = true;
-        dialogError = null;
-      });
-
-      final dialogProfile = readDialogProfile();
-      final databaseResult = await _queryDatabases(profile: dialogProfile);
-
-      if (!context.mounted) {
-        return;
-      }
-      if (!databaseResult.success) {
-        setDialogState(() {
-          loading = false;
-          dbCache = const [];
-          selectedDatabase = null;
-          dialogError = databaseResult.errorText;
-        });
-        return;
-      }
-
-      selectedDatabase =
-          selectedDatabase != null &&
-                  databaseResult.values.contains(selectedDatabase)
-              ? selectedDatabase
-              : _preferredDatabase(databaseResult.values);
-
-      setDialogState(() {
-        dbCache = databaseResult.values;
-        loading = false;
-      });
-    }
 
     await showDialog<void>(
       context: context,
@@ -872,7 +831,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
               titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
               contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              title: const Text('Database'),
+              title: const Text('Settings'),
               content: SizedBox(
                 width: 420,
                 child: SingleChildScrollView(
@@ -895,71 +854,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                           ),
                           _InfoLine(
                             label: 'Server',
-                            value:
+                          value:
                                 serverController.text.trim().isEmpty
                                     ? 'Not set'
                                     : serverController.text.trim(),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 14),
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                        ),
-                        onPressed:
-                            loading
-                                ? null
-                                : () => loadDatabases(context, setDialogState),
-                        icon:
-                            loading
-                                ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                                : const Icon(Icons.refresh, size: 18),
-                        label: Text(loading ? 'Loading...' : 'Read metadata'),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: selectedDatabase,
-                        isDense: true,
-                        iconSize: 18,
-                        borderRadius: BorderRadius.circular(12),
-                        items:
-                            dbCache
-                                .map(
-                                  (database) => DropdownMenuItem(
-                                    value: database,
-                                    child: Text(database),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            dbCache.isEmpty
-                                ? null
-                                : (value) {
-                                  if (value == null) {
-                                    return;
-                                  }
-                                  selectedDatabase = value;
-                                },
-                        decoration: _compactInputDecoration('Database'),
-                      ),
-                      if (dialogError != null) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          dialogError!,
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -978,14 +879,11 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                         clientNameController.text.trim().isEmpty
                             ? 'Local Agent'
                             : clientNameController.text.trim();
-                    final hasDatabase =
-                        selectedDatabase != null &&
-                        dbCache.contains(selectedDatabase);
 
                     setState(() {
                       _serverController.text = dialogProfile.server;
-                      _databases = dbCache;
-                      _selectedDatabase = hasDatabase ? selectedDatabase : null;
+                      _databases = const [];
+                      _selectedDatabase = null;
                       _tables = const [];
                       _selectedTable = null;
                       _tableColumns = const [];
@@ -998,13 +896,11 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
                     Navigator.of(context).pop();
 
-                    if (hasDatabase) {
-                      await _loadTables(
-                        profile: dialogProfile,
-                        database: _selectedDatabase!,
-                        autoLoadRows: true,
-                      );
-                    }
+                    await _loadDatabases(
+                      profile: dialogProfile,
+                      loadTables: true,
+                      preserveSelection: false,
+                    );
                   },
                   child: const Text('Save'),
                 ),
@@ -1050,28 +946,16 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   Widget _buildSyncPanel() {
-    final syncRows = discoveredTables
-        .asMap()
-        .entries
-        .map((entry) {
-          final event = recentEvents[entry.key % recentEvents.length];
-          final mode = entry.key.isEven ? 'Upload' : 'Download';
-          final state =
-              event.level == AgentEventLevel.error
-                  ? 'Failed'
-                  : entry.key == 1
-                  ? 'Retrying'
-                  : 'Synced';
-          return (
-            table: entry.value.name,
-            mode: mode,
-            rows: entry.value.rows,
-            lastSync: event.time,
-            state: state,
-            changeColumn: entry.value.changeColumn,
-          );
-        })
-        .toList(growable: false);
+    final syncRows = discoveredTables.map((table) {
+      final enabled = _syncEnabledTables[table.name] ?? table.syncEnabled;
+      return (
+        table: table.name,
+        rows: table.rows,
+        enabled: enabled,
+        status: enabled ? table.syncStatus : 'Paused',
+        lastSync: table.lastSync,
+      );
+    }).toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1095,12 +979,12 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                   AgentMetricCard(
                     title: 'Tables',
                     value: syncRows.length.toString(),
-                    detail: 'Tables participating in the sync table.',
+                    detail: 'Tables tracked for remote sync.',
                   ),
                   AgentMetricCard(
-                    title: 'Modes',
-                    value: 'Upload / Download',
-                    detail: 'The table tracks both directions.',
+                    title: 'Remote',
+                    value: 'Enabled',
+                    detail: 'Checked rows sync with the remote server.',
                   ),
                 ],
               ),
@@ -1111,33 +995,47 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                   headingRowColor: WidgetStatePropertyAll(
                     const Color(0xFFE7ECE6),
                   ),
+                  dataRowMinHeight: 54,
+                  dataRowMaxHeight: 64,
                   columns: const [
+                    DataColumn(label: Text('Sync')),
                     DataColumn(label: Text('Table')),
-                    DataColumn(label: Text('Mode')),
                     DataColumn(label: Text('Rows')),
+                    DataColumn(label: Text('Status')),
                     DataColumn(label: Text('Last Sync')),
-                    DataColumn(label: Text('State')),
                   ],
                   rows:
                       syncRows
                           .map(
                             (row) => DataRow(
                               cells: [
+                                DataCell(
+                                  Checkbox(
+                                    value: row.enabled,
+                                    onChanged: (value) {
+                                      if (value == null) {
+                                        return;
+                                      }
+                                      setState(() {
+                                        _syncEnabledTables[row.table] = value;
+                                      });
+                                    },
+                                  ),
+                                ),
                                 DataCell(Text(row.table)),
-                                DataCell(Text(row.mode)),
                                 DataCell(Text(row.rows.toString())),
-                                DataCell(Text(row.lastSync)),
                                 DataCell(
                                   AgentStatusPill(
-                                    label: row.state,
+                                    label: row.status,
                                     color:
-                                        row.state == 'Failed'
-                                            ? const Color(0xFFC53030)
-                                            : row.state == 'Retrying'
+                                        row.status == 'Paused'
+                                            ? const Color(0xFF718096)
+                                            : row.status == 'Retrying'
                                             ? const Color(0xFFD69E2E)
                                             : const Color(0xFF2F855A),
                                   ),
                                 ),
+                                DataCell(Text(row.lastSync)),
                               ],
                             ),
                           )
@@ -1145,11 +1043,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                 ),
               ),
               const SizedBox(height: 18),
-              Text(
-                'Change marker: ${syncRows.first.changeColumn}',
-                style: const TextStyle(color: Color(0xFF58656B)),
-              ),
-              const SizedBox(height: 14),
               Text(
                 'Latest sync feed',
                 style: Theme.of(context).textTheme.titleMedium,
