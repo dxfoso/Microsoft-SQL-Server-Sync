@@ -3,8 +3,14 @@ domain: sync.velvet-leaf.com
 
 certManager:
   enabled: true
-  issuerName: letsencrypt-prod
+  createClusterIssuer: true
+  issuerName: sync-admin-web-letsencrypt
   issuerKind: ClusterIssuer
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: dxfoso@gmail.com
+    privateKeySecretName: sync-admin-web-letsencrypt-account-key
+    ingressClassName: nginx
 
 frontend:
   image:

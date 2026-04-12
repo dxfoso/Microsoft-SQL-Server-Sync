@@ -2,5 +2,5 @@ apiVersion: v2
 name: sync-admin-web
 description: Helm chart for the Sync admin web frontend
 type: application
-version: 0.1.3
+version: 0.1.4
 appVersion: "1.0.0"
