@@ -16,6 +16,8 @@ spec:
       labels:
         {{- include "sync-admin-web.labels" . | nindent 8 }}
     spec:
+      imagePullSecrets:
+        - name: {{ include "sync-admin-web.registrySecretName" . }}
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}"
