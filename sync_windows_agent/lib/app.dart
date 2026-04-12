@@ -13,10 +13,17 @@ class SyncWindowsAgentApp extends StatefulWidget {
 
 class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String _clientName = 'Local Agent';
+  final Map<String, Map<String, bool>> _syncStatesByClient = {};
 
   void _updateClientName(String value) {
     setState(() {
       _clientName = value.trim().isEmpty ? 'Local Agent' : value.trim();
+    });
+  }
+
+  void _updateSyncStateForClient(Map<String, bool> state) {
+    setState(() {
+      _syncStatesByClient[_clientName] = state;
     });
   }
 
@@ -71,6 +78,9 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         autoLoadOnStart: widget.autoLoadOnStart,
         clientName: _clientName,
         onClientNameChanged: _updateClientName,
+        initialSyncEnabledTables:
+            _syncStatesByClient[_clientName] ?? const <String, bool>{},
+        onSyncEnabledTablesChanged: _updateSyncStateForClient,
       ),
     );
   }

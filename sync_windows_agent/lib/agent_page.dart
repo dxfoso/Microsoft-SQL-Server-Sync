@@ -13,11 +13,15 @@ class AgentDashboardPage extends StatefulWidget {
     this.autoLoadOnStart = true,
     required this.clientName,
     required this.onClientNameChanged,
+    required this.initialSyncEnabledTables,
+    required this.onSyncEnabledTablesChanged,
   });
 
   final bool autoLoadOnStart;
   final String clientName;
   final ValueChanged<String> onClientNameChanged;
+  final Map<String, bool> initialSyncEnabledTables;
+  final ValueChanged<Map<String, bool>> onSyncEnabledTablesChanged;
 
   @override
   State<AgentDashboardPage> createState() => _AgentDashboardPageState();
@@ -32,7 +36,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final ScrollController _tableScrollController = ScrollController();
-  final Map<String, bool> _syncEnabledTables = {};
+  late Map<String, bool> _syncEnabledTables;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -54,6 +58,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   @override
   void initState() {
     super.initState();
+    _syncEnabledTables = Map<String, bool>.from(widget.initialSyncEnabledTables);
     _tableScrollController.addListener(_onTableScroll);
     if (widget.autoLoadOnStart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -72,6 +77,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _passwordController.dispose();
     _tableScrollController.dispose();
     super.dispose();
+  }
+
+  void _updateSyncEnabledTable(String table, bool enabled) {
+    setState(() {
+      _syncEnabledTables[table] = enabled;
+    });
+    widget.onSyncEnabledTablesChanged(Map<String, bool>.from(_syncEnabledTables));
   }
 
   Future<void> _onTableScroll() async {
@@ -334,9 +346,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _tableColumns = result.columns;
       _tableRows =
           reset
-                ? List<List<String>>.from(result.rows)
-                : List<List<String>>.from(_tableRows)
-            ..addAll(result.rows);
+              ? List<List<String>>.from(result.rows)
+              : <List<String>>[
+                ..._tableRows,
+                ...result.rows,
+              ];
       _rowOffset = nextOffset;
       _hasMoreRows = result.hasMoreRows;
       _totalTableRows = result.totalRows;
@@ -1016,9 +1030,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                                       if (value == null) {
                                         return;
                                       }
-                                      setState(() {
-                                        _syncEnabledTables[row.table] = value;
-                                      });
+                                      _updateSyncEnabledTable(
+                                        row.table,
+                                        value,
+                                      );
                                     },
                                   ),
                                 ),
