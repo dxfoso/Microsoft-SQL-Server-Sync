@@ -21,7 +21,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _loading = true;
   bool _connected = false;
   String? _error;
-  String? _selectedSnapshotId;
 
   @override
   void initState() {
@@ -57,11 +56,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _connected = true;
         _loading = false;
         _error = null;
-        final snapshots = state.snapshots;
-        if (snapshots.isNotEmpty &&
-            !snapshots.any((snapshot) => snapshot.id == _selectedSnapshotId)) {
-          _selectedSnapshotId = snapshots.first.id;
-        }
       });
     } catch (error) {
       if (!mounted) {
@@ -89,17 +83,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${direction == 'download' ? 'Pull' : 'Push'} queued for $table on $clientName.')),
-      );
+      final action = direction == 'download' ? 'Pull' : 'Push';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$action queued for $table on $clientName.')));
       await _refreshState(silent: true);
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -130,37 +125,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
-  int get _onlineAgents =>
-      _state?.agents.where((agent) => agent.isOnline).length ?? 0;
-
-  int get _enabledTables =>
-      _state?.agents.fold<int>(
-            0,
-            (count, agent) =>
-                count + agent.tables.where((table) => table.enabled).length,
-          ) ??
-      0;
-
   List<AdminJob> get _jobs => _state?.jobs ?? const [];
-
-  List<AdminSnapshot> get _snapshots => _state?.snapshots ?? const [];
-
-  AdminSnapshot? get _selectedSnapshot {
-    if (_snapshots.isEmpty) {
-      return null;
-    }
-    return _snapshots.firstWhere(
-      (snapshot) => snapshot.id == _selectedSnapshotId,
-      orElse: () => _snapshots.first,
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 1180;
-        final contentWidth = isWide ? 1360.0 : 860.0;
+        final contentWidth = isWide ? 1360.0 : 920.0;
         final state = _state;
 
         return Scaffold(
@@ -186,44 +158,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           lastUpdated: _formatTimestamp(
                             state?.generatedAt ?? '',
                           ),
-                        ),
-                        const SizedBox(height: 18),
-                        Wrap(
-                          spacing: 16,
-                          runSpacing: 16,
-                          children: [
-                            SummaryCard(
-                              title: 'Online agents',
-                              value:
-                                  '$_onlineAgents/${state?.agents.length ?? 0}',
-                              detail:
-                                  'Windows agents with a recent heartbeat in the control plane.',
-                            ),
-                            SummaryCard(
-                              title: 'Active sync jobs',
-                              value:
-                                  _jobs.where((job) => job.isActive).length.toString(),
-                              detail:
-                                  'Snapshot uploads or downloads still running right now.',
-                            ),
-                            SummaryCard(
-                              title: 'Enabled tables',
-                              value: _enabledTables.toString(),
-                              detail:
-                                  'Tables currently marked to sync with the remote control plane.',
-                            ),
-                            SummaryCard(
-                              title: 'Latest snapshot',
-                              value:
-                                  _selectedSnapshot == null
-                                      ? 'None'
-                                      : _formatTimestamp(
-                                        _selectedSnapshot!.createdAt,
-                                      ),
-                              detail:
-                                  'Most recent table snapshot visible to the admin web app.',
-                            ),
-                          ],
                         ),
                         const SizedBox(height: 18),
                         if (_error != null)
@@ -252,13 +186,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             children: [
                               Expanded(
                                 flex: 7,
-                                child: Column(
-                                  children: [
-                                    _buildAgentsSection(state),
-                                    const SizedBox(height: 18),
-                                    _buildSnapshotsSection(),
-                                  ],
-                                ),
+                                child: _buildAgentsSection(state),
                               ),
                               const SizedBox(width: 18),
                               Expanded(
@@ -273,8 +201,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               _buildAgentsSection(state),
                               const SizedBox(height: 18),
                               _buildJobsSection(),
-                              const SizedBox(height: 18),
-                              _buildSnapshotsSection(),
                             ],
                           ),
                       ],
@@ -293,9 +219,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final agents = state?.agents ?? const <AdminAgent>[];
 
     return SurfaceCard(
-      title: 'Live agent sync',
+      title: 'Live sync',
       subtitle:
-          'Only live machine state is shown here. Table rows, sync status, and progress all come from the backend heartbeat stream.',
+          'Only live machine state is shown here. Each enabled table is being synced from a frozen snapshot, not a mutable live query.',
       child: agents.isEmpty
           ? const Text('No agents have registered with the control plane yet.')
           : Column(
@@ -493,7 +419,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Text(
-                                '${job.clientName} · ${job.table}',
+                                '${job.clientName} - ${job.table}',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
                                   fontSize: 16,
@@ -519,7 +445,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '${job.progress}% · ${job.rowCount} rows · ${job.message}',
+                            '${job.progress}% - ${job.rowCount} rows - ${job.message}',
                             style: const TextStyle(height: 1.4),
                           ),
                           const SizedBox(height: 6),
@@ -533,160 +459,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   )
                   .toList(growable: false),
             ),
-    );
-  }
-
-  Widget _buildSnapshotsSection() {
-    final selectedSnapshot = _selectedSnapshot;
-
-    return SurfaceCard(
-      title: 'Latest snapshots',
-      subtitle:
-          'Each upload is a frozen snapshot. The web app previews the exact rows already stored by the backend, not sample data.',
-      child: _snapshots.isEmpty
-          ? const Text('No uploaded snapshots are available yet.')
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                final isWide = constraints.maxWidth >= 920;
-                final list = _buildSnapshotList();
-                final preview = _buildSnapshotPreview(selectedSnapshot);
-
-                if (!isWide) {
-                  return Column(
-                    children: [
-                      list,
-                      const SizedBox(height: 16),
-                      preview,
-                    ],
-                  );
-                }
-
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(width: 320, child: list),
-                    const SizedBox(width: 18),
-                    Expanded(child: preview),
-                  ],
-                );
-              },
-            ),
-    );
-  }
-
-  Widget _buildSnapshotList() {
-    return Column(
-      children: _snapshots
-          .map(
-            (snapshot) => InkWell(
-              onTap: () {
-                setState(() {
-                  _selectedSnapshotId = snapshot.id;
-                });
-              },
-              borderRadius: BorderRadius.circular(18),
-              child: Container(
-                width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color:
-                      snapshot.id == _selectedSnapshotId
-                          ? const Color(0xFFEAF4F2)
-                          : const Color(0xFFF9FBF7),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color:
-                        snapshot.id == _selectedSnapshotId
-                            ? const Color(0xFF7EB0A3)
-                            : const Color(0xFFE1E7DE),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      snapshot.table,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(snapshot.clientName),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${snapshot.rowCount} rows · ${_formatTimestamp(snapshot.createdAt)}',
-                      style: const TextStyle(color: Color(0xFF5E6C73)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          )
-          .toList(growable: false),
-    );
-  }
-
-  Widget _buildSnapshotPreview(AdminSnapshot? snapshot) {
-    if (snapshot == null) {
-      return const Text('Select a snapshot to preview the captured rows.');
-    }
-
-    if (snapshot.columns.isEmpty) {
-      return const Text('The selected snapshot does not contain column metadata.');
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF9FBF7),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE1E7DE)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${snapshot.clientName} · ${snapshot.table}',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Snapshot created ${_formatTimestamp(snapshot.createdAt)} · ${snapshot.rowCount} rows',
-            style: const TextStyle(color: Color(0xFF5E6C73)),
-          ),
-          const SizedBox(height: 16),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: const WidgetStatePropertyAll(Color(0xFFE7ECE6)),
-              columns: snapshot.columns
-                  .map((column) => DataColumn(label: Text(column)))
-                  .toList(growable: false),
-              rows: snapshot.previewRows
-                  .map(
-                    (row) => DataRow(
-                      cells: List.generate(snapshot.columns.length, (index) {
-                        final value = index < row.length ? row[index] : '';
-                        return DataCell(
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 220),
-                            child: Text(
-                              value,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

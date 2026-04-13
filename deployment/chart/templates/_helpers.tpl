@@ -6,12 +6,20 @@ sync-admin-web
 {{- printf "%s-%s" .Release.Name (include "sync-admin-web.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "sync-admin-web.componentFullname" -}}
+{{- $root := index . 0 -}}
+{{- $suffix := index . 1 -}}
+{{- $base := printf "%s-%s" $root.Release.Name (include "sync-admin-web.name" $root) -}}
+{{- $budget := sub 63 (add 1 (len $suffix)) -}}
+{{- printf "%s-%s" ($base | trunc $budget | trimSuffix "-") $suffix | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "sync-admin-web.frontendFullname" -}}
-{{- printf "%s-frontend" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- include "sync-admin-web.componentFullname" (list . "frontend") -}}
 {{- end -}}
 
 {{- define "sync-admin-web.backendFullname" -}}
-{{- printf "%s-backend" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- include "sync-admin-web.componentFullname" (list . "backend") -}}
 {{- end -}}
 
 {{- define "sync-admin-web.backendEnabled" -}}
