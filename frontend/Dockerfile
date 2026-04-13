@@ -22,11 +22,19 @@ RUN flutter build web --release \
   --dart-define=BUILD_COMMIT_DATE=${BUILD_COMMIT_DATE} \
   --dart-define=BUILD_RELEASE_DATE=${BUILD_RELEASE_DATE}
 
-FROM nginx:1.27-alpine
+FROM node:20-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/build/web /usr/share/nginx/html
+WORKDIR /app
+
+COPY server.js /app/server.js
+COPY --from=build /app/build/web /app/public
+
+ENV PORT=80
+ENV PUBLIC_DIR=/app/public
+ENV STATE_FILE=/app/data/state.json
+
+RUN mkdir -p /app/data
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server.js"]

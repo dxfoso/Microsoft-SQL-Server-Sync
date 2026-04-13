@@ -32,6 +32,7 @@ frontend:
           - sync.velvet-leaf.com
 
 backend:
+  enabled: false
   image:
     repository: sync-admin-web/backend
     tag: latest

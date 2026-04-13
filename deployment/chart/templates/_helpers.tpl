@@ -14,6 +14,18 @@ sync-admin-web
 {{- printf "%s-backend" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "sync-admin-web.backendEnabled" -}}
+{{- if .Values.backend -}}
+{{- if hasKey .Values.backend "enabled" -}}
+{{- .Values.backend.enabled -}}
+{{- else -}}
+true
+{{- end -}}
+{{- else -}}
+false
+{{- end -}}
+{{- end -}}
+
 {{- define "sync-admin-web.labels" -}}
 app.kubernetes.io/name: {{ include "sync-admin-web.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
