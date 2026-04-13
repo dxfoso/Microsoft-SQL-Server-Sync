@@ -10,7 +10,7 @@ sync-admin-web
 {{- $root := index . 0 -}}
 {{- $suffix := index . 1 -}}
 {{- $base := printf "%s-%s" $root.Release.Name (include "sync-admin-web.name" $root) -}}
-{{- $budget := sub 63 (add 1 (len $suffix)) -}}
+{{- $budget := int (sub 63 (add 1 (len $suffix))) -}}
 {{- printf "%s-%s" ($base | trunc $budget | trimSuffix "-") $suffix | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
