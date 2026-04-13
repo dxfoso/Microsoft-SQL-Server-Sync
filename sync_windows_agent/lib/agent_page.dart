@@ -59,6 +59,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   DateTime? _lastServerCheck;
   bool _syncLoopBusy = false;
   List<RemoteSyncJob> _activeJobs = const [];
+  VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
   final Set<String> _busyFileTables = <String>{};
 
@@ -406,6 +407,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _tableRows = const [];
       }
     });
+    _refreshTableDataDialog();
 
     final result = await _queryTableRows(
       profile: profile,
@@ -427,6 +429,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _errorMessage = result.errorText;
         _hasMoreRows = false;
       });
+      _refreshTableDataDialog();
       return;
     }
 
@@ -442,6 +445,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _hasMoreRows = result.hasMoreRows;
       _totalTableRows = result.totalRows;
     });
+    _refreshTableDataDialog();
   }
 
   Future<void> _reloadCurrentTableRows() async {
@@ -479,6 +483,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return null;
     }
     return _tableColumns[_sortColumnIndex!];
+  }
+
+  void _refreshTableDataDialog() {
+    final refresh = _tableDataDialogRefresh;
+    if (refresh == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _tableDataDialogRefresh != refresh) {
+        return;
+      }
+      refresh();
+    });
   }
 
   Map<String, SyncTableState> _heartbeatTablesPayload() {
@@ -2883,88 +2900,116 @@ SELECT (
       return;
     }
 
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 1200,
-              maxHeight: MediaQuery.sizeOf(context).height * 0.82,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '$table Data',
-                          style: Theme.of(context).textTheme.headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w800),
+    final dialogScrollController = ScrollController();
+
+    Future<void> handleDialogScroll() async {
+      if (!dialogScrollController.hasClients ||
+          _rowsLoading ||
+          !_hasMoreRows ||
+          _selectedDatabase == null ||
+          _selectedTable == null) {
+        return;
+      }
+      final position = dialogScrollController.position.pixels;
+      final max = dialogScrollController.position.maxScrollExtent;
+      if (max <= 0 || position < max - 200) {
+        return;
+      }
+      await _loadMoreCurrentTableRows();
+    }
+
+    dialogScrollController.addListener(handleDialogScroll);
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              _tableDataDialogRefresh = () => setDialogState(() {});
+
+              return Dialog(
+                insetPadding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: 1200,
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '$table Data',
+                                style: Theme.of(context).textTheme.headlineSmall
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Close',
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
                         ),
-                      ),
-                      IconButton(
-                        tooltip: 'Close',
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      _InfoLine(label: 'Database', value: _selectedDatabase!),
-                      _InfoLine(label: 'Table', value: table),
-                      _InfoLine(
-                        label: 'Rows',
-                        value: _totalTableRows.toString(),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  if (_errorMessage != null)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: const Color(0xFFFFEEEE),
-                      ),
-                      child: Text(
-                        _errorMessage!,
-                        style: const TextStyle(color: Colors.red),
-                      ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            _InfoLine(
+                              label: 'Database',
+                              value: _selectedDatabase!,
+                            ),
+                            _InfoLine(label: 'Table', value: table),
+                            _InfoLine(
+                              label: 'Rows',
+                              value: _totalTableRows.toString(),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        if (_errorMessage != null)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            margin: const EdgeInsets.only(bottom: 12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              color: const Color(0xFFFFEEEE),
+                            ),
+                            child: Text(
+                              _errorMessage!,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        Expanded(
+                          child: _buildSpreadsheetTable(
+                            verticalScrollController: dialogScrollController,
+                          ),
+                        ),
+                        if (_rowsLoading && _tableRows.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          const Center(child: CircularProgressIndicator()),
+                        ],
+                      ],
                     ),
-                  Expanded(child: _buildSpreadsheetTable()),
-                  if (_rowsLoading && _tableRows.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Center(child: CircularProgressIndicator()),
-                  ] else if (_hasMoreRows) ...[
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.center,
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            _rowsLoading ? null : _loadMoreCurrentTableRows,
-                        icon: const Icon(Icons.expand_more_rounded),
-                        label: const Text('Load more rows'),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      _tableDataDialogRefresh = null;
+      dialogScrollController.removeListener(handleDialogScroll);
+      dialogScrollController.dispose();
+    }
   }
 
   Widget _buildSyncHistorySide(_SyncTableRowData row) {
@@ -3264,7 +3309,7 @@ SELECT (
     );
   }
 
-  Widget _buildSpreadsheetTable() {
+  Widget _buildSpreadsheetTable({ScrollController? verticalScrollController}) {
     if (_tableColumns.isEmpty) {
       return Center(
         child:
@@ -3356,6 +3401,7 @@ SELECT (
                                       _sortColumnIndex = entry.key;
                                       _sortAscending = ascending;
                                     });
+                                    _refreshTableDataDialog();
                                     unawaited(_reloadCurrentTableRows());
                                   },
                                   child: Container(
@@ -3410,7 +3456,11 @@ SELECT (
                                       ),
                                     )
                                     : Scrollbar(
+                                      controller: verticalScrollController,
+                                      thumbVisibility:
+                                          verticalScrollController != null,
                                       child: ListView.builder(
+                                        controller: verticalScrollController,
                                         itemCount: _tableRows.length,
                                         itemBuilder: (context, index) {
                                           return _buildTableRow(
