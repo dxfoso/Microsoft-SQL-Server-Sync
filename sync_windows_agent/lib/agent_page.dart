@@ -30,8 +30,7 @@ class AgentDashboardPage extends StatefulWidget {
   State<AgentDashboardPage> createState() => _AgentDashboardPageState();
 }
 
-class _AgentDashboardPageState extends State<AgentDashboardPage>
-    with SingleTickerProviderStateMixin {
+class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
   static const Duration _autoSyncInterval = Duration(minutes: 1);
@@ -44,7 +43,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   final ScrollController _tableScrollController = ScrollController();
   final AgentControlPlaneClient _controlPlaneClient = AgentControlPlaneClient();
   late SyncClientState _syncState;
-  late final TabController _tabController;
   Timer? _connectionCheckTimer;
   Timer? _syncPollTimer;
 
@@ -65,7 +63,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   final Set<String> _processingJobIds = <String>{};
   final Set<String> _busyFileTables = <String>{};
 
-  List<String> _databases = const [];
   String? _selectedDatabase;
   List<String> _tables = const [];
   String? _selectedTable;
@@ -79,8 +76,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   void initState() {
     super.initState();
     _syncState = widget.initialSyncState;
-    _tabController = TabController(length: 2, vsync: this)
-      ..addListener(_onTabChanged);
     _tableScrollController.addListener(_onTableScroll);
     _connectionCheckTimer = Timer.periodic(
       const Duration(minutes: 1),
@@ -108,8 +103,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
 
   @override
   void dispose() {
-    _tabController.removeListener(_onTabChanged);
-    _tabController.dispose();
     _connectionCheckTimer?.cancel();
     _syncPollTimer?.cancel();
     _controlPlaneClient.dispose();
@@ -118,13 +111,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     _passwordController.dispose();
     _tableScrollController.dispose();
     super.dispose();
-  }
-
-  void _onTabChanged() {
-    if (!mounted || _tabController.indexIsChanging) {
-      return;
-    }
-    setState(() {});
   }
 
   Future<void> _checkServerConnection() async {
@@ -330,7 +316,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     if (!result.success) {
       setState(() {
         _errorMessage = result.errorText;
-        _databases = const [];
         _selectedDatabase = null;
       });
       return;
@@ -344,7 +329,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     }
 
     setState(() {
-      _databases = result.values;
       _selectedDatabase = selectedDatabase;
       if (selectedDatabase != previousDatabase) {
         _selectedTable = null;
@@ -359,32 +343,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         autoLoadRows: true,
       );
     }
-  }
-
-  void _selectDatabase(String? database) {
-    if (database == null || database == _selectedDatabase) {
-      return;
-    }
-
-    setState(() {
-      _selectedDatabase = database;
-      _selectedTable = null;
-      _tables = const [];
-      _tableColumns = const [];
-      _tableRows = const [];
-      _hasMoreRows = false;
-      _rowOffset = 0;
-      _sortColumnIndex = null;
-      _totalTableRows = 0;
-    });
-
-    unawaited(
-      _loadTables(
-        profile: _activeProfile(),
-        database: database,
-        autoLoadRows: true,
-      ),
-    );
   }
 
   Future<void> _loadTables({
@@ -448,34 +406,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       return 'velvet';
     }
     return databases.isNotEmpty ? databases.first : null;
-  }
-
-  void _selectTable(String? table) {
-    if (table == null || _selectedDatabase == null) {
-      return;
-    }
-
-    setState(() {
-      _selectedTable = table;
-      _errorMessage = null;
-      _sortColumnIndex = null;
-      _tableColumns = const [];
-      _tableRows = const [];
-      _hasMoreRows = false;
-      _rowOffset = 0;
-      _totalTableRows = 0;
-    });
-
-    unawaited(
-      _loadTableRows(
-        profile: _activeProfile(),
-        database: _selectedDatabase!,
-        table: table,
-        reset: true,
-        orderByColumn: null,
-        orderAscending: true,
-      ),
-    );
   }
 
   Future<void> _loadTableRows({
@@ -2405,7 +2335,6 @@ SELECT (
 
                     setState(() {
                       _serverController.text = dialogProfile.server;
-                      _databases = const [];
                       _selectedDatabase = null;
                       _tables = const [];
                       _selectedTable = null;
@@ -2441,36 +2370,6 @@ SELECT (
     serverController.dispose();
   }
 
-  Widget _buildTablePanel() {
-    if (_databases.isEmpty && _selectedDatabase == null) {
-      return Center(
-        child: Text(
-          'Open the settings dialog to read database metadata.',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child:
-              _selectedTable == null
-                  ? Center(
-                    child: Text(
-                      _tables.isEmpty
-                          ? 'Load tables from the selected database.'
-                          : 'Select a table to view data.',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  )
-                  : _buildSpreadsheetTable(),
-        ),
-      ],
-    );
-  }
-
   Widget _buildSyncPanel() {
     final syncRows = _syncRows();
 
@@ -2478,10 +2377,10 @@ SELECT (
       return AgentSurfaceCard(
         title: 'Sync Tables',
         subtitle:
-            'Load a database on the Table tab first. The sync layout only shows real SQL tables from the selected database.',
+            'Open settings and let the app load the local database tables first. The main screen only shows real SQL tables from the selected database.',
         child: const AgentEmptyStateCard(
           message:
-              'No live tables are available yet. Open the Table tab, choose a database, and let the agent read the table list.',
+              'No live tables are available yet. Open settings, confirm the SQL connection, and let the agent read the table list.',
         ),
       );
     }
@@ -2489,7 +2388,7 @@ SELECT (
     final selectedRow = _selectedSyncRow(syncRows);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final stackPanels = constraints.maxWidth < 1380;
+        final stackPanels = constraints.maxWidth < 1100;
         final tableListCard = _buildSyncTableListCard(syncRows, selectedRow);
         final detailCard = _buildSyncDetailCard(selectedRow);
 
@@ -2683,6 +2582,15 @@ SELECT (
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _buildSyncActionIconButton(
+              tooltip: 'Open table data',
+              onPressed: () => _openTableDataDialog(selectedRow.table),
+              icon: Icons.table_rows_outlined,
+            ),
+          ),
           const SizedBox(height: 14),
           SegmentedButton<_SyncDetailMode>(
             showSelectedIcon: false,
@@ -2834,16 +2742,6 @@ SELECT (
                       : null,
               icon: Icons.cloud_download_rounded,
             ),
-            _buildSyncActionIconButton(
-              tooltip: 'Open table data',
-              onPressed: () {
-                _tabController.animateTo(0);
-                if (_selectedTable != row.table) {
-                  _selectTable(row.table);
-                }
-              },
-              icon: Icons.table_rows_outlined,
-            ),
           ],
         ),
       ],
@@ -2890,6 +2788,177 @@ SELECT (
         context,
       ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
+  }
+
+  Future<void> _prepareTableData(String table) async {
+    if (_selectedDatabase == null) {
+      throw Exception(
+        'Open settings first so the app can load database tables.',
+      );
+    }
+
+    final needsReload =
+        _selectedTable != table || _tableColumns.isEmpty || _tableRows.isEmpty;
+    if (!needsReload) {
+      return;
+    }
+
+    setState(() {
+      _selectedTable = table;
+      _errorMessage = null;
+      _sortColumnIndex = null;
+      _tableColumns = const [];
+      _tableRows = const [];
+      _hasMoreRows = false;
+      _rowOffset = 0;
+      _totalTableRows = 0;
+    });
+
+    await _loadTableRows(
+      profile: _activeProfile(),
+      database: _selectedDatabase!,
+      table: table,
+      reset: true,
+      orderByColumn: null,
+      orderAscending: true,
+    );
+  }
+
+  Future<void> _openTableDataDialog(String table) async {
+    if (_selectedDatabase == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Open settings first so the app can load database metadata.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final needsReload =
+        _selectedTable != table || _tableColumns.isEmpty || _tableRows.isEmpty;
+    var loadingDialogOpen = false;
+    if (needsReload && mounted) {
+      loadingDialogOpen = true;
+      unawaited(
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) {
+            return const Dialog(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(width: 16),
+                    Text('Loading table data...'),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    try {
+      await _prepareTableData(table);
+    } catch (error) {
+      if (loadingDialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        loadingDialogOpen = false;
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
+
+    if (loadingDialogOpen && mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+      loadingDialogOpen = false;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 1200,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '$table Data',
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _InfoLine(label: 'Database', value: _selectedDatabase!),
+                      _InfoLine(label: 'Table', value: table),
+                      _InfoLine(
+                        label: 'Rows',
+                        value: _totalTableRows.toString(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  if (_errorMessage != null)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xFFFFEEEE),
+                      ),
+                      child: Text(
+                        _errorMessage!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  Expanded(child: _buildSpreadsheetTable()),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildSyncHistorySide(_SyncTableRowData row) {
@@ -2973,121 +3042,6 @@ SELECT (
           ),
         );
       },
-    );
-  }
-
-  Widget _buildSelectionHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Row(
-        children: [
-          Flexible(
-            fit: FlexFit.loose,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: DropdownButtonFormField<String>(
-                value: _selectedDatabase,
-                isDense: true,
-                isExpanded: true,
-                iconSize: 18,
-                borderRadius: BorderRadius.circular(12),
-                items:
-                    _databases
-                        .map(
-                          (database) => DropdownMenuItem(
-                            value: database,
-                            child: Text(
-                              database,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                onChanged: _databases.isEmpty ? null : _selectDatabase,
-                decoration: _compactInputDecoration('Database'),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Flexible(
-            fit: FlexFit.loose,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: DropdownButtonFormField<String>(
-                value: _selectedTable,
-                isDense: true,
-                isExpanded: true,
-                iconSize: 18,
-                borderRadius: BorderRadius.circular(12),
-                items:
-                    _tables
-                        .map(
-                          (table) => DropdownMenuItem(
-                            value: table,
-                            child: Text(
-                              table,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                selectedItemBuilder:
-                    (context) =>
-                        _tables
-                            .map(
-                              (table) => Align(
-                                alignment: Alignment.centerLeft,
-                                child: SelectableText(
-                                  table,
-                                  maxLines: 1,
-                                  minLines: 1,
-                                  scrollPhysics: const BouncingScrollPhysics(),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                onChanged: _tables.isEmpty ? null : _selectTable,
-                decoration: _compactInputDecoration('Table'),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTableTab() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 10),
-        _buildSelectionHeader(),
-        const SizedBox(height: 12),
-        if (_errorMessage != null)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: const Color(0xFFFFEEEE),
-            ),
-            child: Text(
-              _errorMessage!,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: _buildTablePanel(),
-          ),
-        ),
-      ],
     );
   }
 
@@ -3214,59 +3168,39 @@ SELECT (
             )
             .length;
 
-    final footerItems =
-        _tabController.index == 1
-            ? <Widget>[
-              _InfoLine(label: 'Client', value: widget.clientName),
-              _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
-              _InfoLine(label: 'Tables', value: syncRows.length.toString()),
-              _InfoLine(
-                label: 'Selected',
-                value: selectedSyncRow?.table ?? 'None',
-              ),
-              _InfoLine(label: 'Active', value: activeSyncCount.toString()),
-              _InfoLine(
-                label: 'Progress',
-                value:
-                    selectedSyncRow == null
-                        ? '0%'
-                        : '${selectedSyncRow.state.progress}%',
-              ),
-              _InfoLine(
-                label: 'Status',
-                value: selectedSyncRow?.state.status ?? 'Idle',
-              ),
-              _InfoLine(
-                label: 'Backup',
-                value:
-                    selectedSyncRow == null
-                        ? '--'
-                        : _formatBytes(selectedSyncRow.state.snapshotBytes),
-              ),
-            ]
-            : <Widget>[
-              _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
-              _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
-              _InfoLine(label: 'Table', value: _selectedTable ?? 'None'),
-              _InfoLine(label: 'Rows', value: _totalTableRows.toString()),
-              _InfoLine(
-                label: 'Backup',
-                value:
-                    _selectedTable == null
-                        ? '--'
-                        : _formatBytes(
-                          (_syncState.tables[_selectedTable!]?.snapshotBytes ??
-                              0),
-                        ),
-              ),
-              _InfoLine(
-                label: 'Loaded',
-                value:
-                    _selectedTable == null
-                        ? 'No table selected'
-                        : (_rowsLoading ? 'Loading' : 'Ready'),
-              ),
-            ];
+    final footerItems = <Widget>[
+      _InfoLine(label: 'Client', value: widget.clientName),
+      _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
+      _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
+      _InfoLine(label: 'Tables', value: syncRows.length.toString()),
+      _InfoLine(label: 'Selected', value: selectedSyncRow?.table ?? 'None'),
+      _InfoLine(label: 'Active', value: activeSyncCount.toString()),
+      _InfoLine(
+        label: 'Progress',
+        value:
+            selectedSyncRow == null
+                ? '0%'
+                : '${selectedSyncRow.state.progress}%',
+      ),
+      _InfoLine(
+        label: 'Status',
+        value: selectedSyncRow?.state.status ?? 'Idle',
+      ),
+      _InfoLine(
+        label: 'Backup',
+        value:
+            selectedSyncRow == null
+                ? '--'
+                : _formatBytes(selectedSyncRow.state.snapshotBytes),
+      ),
+      _InfoLine(
+        label: 'Data Rows',
+        value:
+            _selectedTable == selectedSyncRow?.table
+                ? _totalTableRows.toString()
+                : '--',
+      ),
+    ];
 
     return Container(
       width: double.infinity,
@@ -3525,12 +3459,11 @@ SELECT (
               child: Row(
                 children: [
                   Expanded(
-                    child: TabBar(
-                      controller: _tabController,
-                      tabs: const [
-                        Tab(icon: Icon(Icons.table_rows), text: 'Table'),
-                        Tab(icon: Icon(Icons.sync), text: 'Sync'),
-                      ],
+                    child: Text(
+                      widget.clientName,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -3548,13 +3481,7 @@ SELECT (
           ),
         ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: TabBarView(
-          controller: _tabController,
-          children: [_buildTableTab(), _buildSyncTab()],
-        ),
-      ),
+      body: Padding(padding: const EdgeInsets.all(16), child: _buildSyncTab()),
       bottomNavigationBar: _buildPinnedSummaryBar(),
     );
   }
