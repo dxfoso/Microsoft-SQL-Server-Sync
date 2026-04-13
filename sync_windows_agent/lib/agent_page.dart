@@ -3494,9 +3494,6 @@ SELECT (
           child: SafeArea(
             bottom: false,
             child: Container(
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFFC9D2C7))),
-              ),
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: Row(
                 children: [
