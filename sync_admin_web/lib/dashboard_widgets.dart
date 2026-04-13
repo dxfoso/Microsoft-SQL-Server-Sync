@@ -139,6 +139,7 @@ class SurfaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasSubtitle = subtitle.trim().isNotEmpty;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
@@ -160,12 +161,15 @@ class SurfaceCard extends StatelessWidget {
             title,
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
-          ),
-          const SizedBox(height: 18),
+          if (hasSubtitle) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
+            ),
+            const SizedBox(height: 18),
+          ] else
+            const SizedBox(height: 14),
           if (expandChild) Expanded(child: child) else child,
         ],
       ),

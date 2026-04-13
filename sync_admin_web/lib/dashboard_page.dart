@@ -9,6 +9,10 @@ import 'dashboard_widgets.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
 
+const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
+const int _defaultHistoryLimit = 20;
+const int _maxHistoryLimit = 100;
+
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({
     super.key,
@@ -41,12 +45,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String? _snapshotKey;
   String? _snapshotVersionToken;
   int _snapshotRequestToken = 0;
+  int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyBackupKeys = <String>{};
   _TableDetailMode _detailMode = _TableDetailMode.clients;
 
   @override
   void initState() {
     super.initState();
+    _historyLimit = _readStoredHistoryLimit();
     _syncSearchController.addListener(_handleSearchChange);
     _dataSearchController.addListener(_handleSearchChange);
     unawaited(_refreshState());
@@ -72,6 +78,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return;
     }
     setState(() {});
+  }
+
+  int _readStoredHistoryLimit() {
+    final raw = readBrowserStorage(_historyLimitStorageKey);
+    final parsed = int.tryParse(raw ?? '');
+    if (parsed == null) {
+      return _defaultHistoryLimit;
+    }
+    return parsed.clamp(1, _maxHistoryLimit);
   }
 
   Future<void> _refreshState({bool silent = false}) async {
@@ -466,6 +481,146 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     setState(() {
       _detailMode = mode;
     });
+  }
+
+  Future<void> _openSettingsDialog() async {
+    final controller = TextEditingController(text: _historyLimit.toString());
+    String? errorText;
+
+    final nextLimit = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Settings'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'Keep Last History Items',
+                        hintText: '20',
+                        helperText:
+                            'Choose how many recent history items to show in the history dialog.',
+                        errorText: errorText,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final parsed = int.tryParse(controller.text.trim());
+                    if (parsed == null ||
+                        parsed < 1 ||
+                        parsed > _maxHistoryLimit) {
+                      setDialogState(() {
+                        errorText =
+                            'Enter a number between 1 and $_maxHistoryLimit.';
+                      });
+                      return;
+                    }
+                    Navigator.of(context).pop(parsed);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (!mounted || nextLimit == null || nextLimit == _historyLimit) {
+      return;
+    }
+
+    writeBrowserStorage(_historyLimitStorageKey, nextLimit.toString());
+    setState(() {
+      _historyLimit = nextLimit;
+    });
+  }
+
+  Future<void> _openHistoryDialog({
+    required String clientName,
+    required String table,
+  }) async {
+    _selectClient(clientName);
+    final jobs = _jobsForClientAndTable(clientName: clientName, table: table);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 860,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.8,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$clientName History',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Showing the last ${jobs.length} sync items for $table. The website setting is currently set to keep $_historyLimit items.',
+                    style: const TextStyle(
+                      color: Color(0xFF58656B),
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child:
+                        jobs.isEmpty
+                            ? const EmptyStateCard(
+                              message:
+                                  'No sync jobs have been recorded yet for this client and table.',
+                            )
+                            : ListView.builder(
+                              itemCount: jobs.length,
+                              itemBuilder: (context, index) {
+                                return _buildJobCard(jobs[index]);
+                              },
+                            ),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Close'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _triggerJob({
@@ -928,15 +1083,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return matches;
   }
 
-  List<AdminJob> get _selectedClientJobs {
-    final tableName = _selectedTableName;
-    final clientName = _selectedClientName;
-    if (tableName == null || clientName == null) {
-      return const <AdminJob>[];
-    }
+  List<AdminJob> _jobsForClientAndTable({
+    required String clientName,
+    required String table,
+  }) {
     return _jobs
-        .where((job) => job.clientName == clientName && job.table == tableName)
-        .take(12)
+        .where((job) => job.clientName == clientName && job.table == table)
+        .take(_historyLimit)
         .toList(growable: false);
   }
 
@@ -1080,32 +1233,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return SurfaceCard(
       title: summary.table,
-      subtitle:
-          'Use Clients to inspect every connected client for this table, or Data to browse the latest rows from the most recent sync.',
+      subtitle: '',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              MetricPill(
-                label: 'Last Sync',
-                value: _formatTimestamp(summary.lastSync),
-              ),
-              MetricPill(
-                label: 'Clients',
-                value: summary.clientCount.toString(),
-              ),
-              MetricPill(
-                label: 'Masters',
-                value: summary.masterCount.toString(),
-              ),
-              MetricPill(label: 'Slaves', value: summary.slaveCount.toString()),
-            ],
-          ),
-          const SizedBox(height: 14),
           SegmentedButton<_TableDetailMode>(
             showSelectedIcon: false,
             segments: const [
@@ -1155,7 +1287,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildClientTableSide(_TableAggregateSummary summary) {
     final clients = _filteredTableClients(summary.clients);
     final selectedClient = _selectedClientEntry;
-    final selectedJobs = _selectedClientJobs;
 
     return ListView(
       children: [
@@ -1296,25 +1427,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 selectedClient?.tableState.lastSync ?? '',
               ),
             ),
+            MetricPill(label: 'History Limit', value: '$_historyLimit'),
           ],
         ),
         const SizedBox(height: 18),
-        Text(
-          'History',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 10),
-        if (selectedJobs.isEmpty)
+        if (selectedClient == null)
           EmptyStateCard(
-            message:
-                selectedClient == null
-                    ? 'Select a client row to inspect history.'
-                    : 'No sync jobs have been recorded yet for ${selectedClient.agent.clientName}.',
+            message: 'Select a client row to inspect or open history.',
           )
         else
-          ...selectedJobs.map(_buildJobCard),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              onPressed:
+                  () => _openHistoryDialog(
+                    clientName: selectedClient.agent.clientName,
+                    table: summary.table,
+                  ),
+              icon: const Icon(Icons.history_rounded),
+              label: const Text('Open History'),
+            ),
+          ),
       ],
     );
   }
@@ -1675,14 +1808,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     final footerItems = <Widget>[
       InfoLine(label: 'Table', value: summary?.table ?? 'None'),
-      InfoLine(label: 'Clients', value: '${summary?.clientCount ?? 0}'),
-      InfoLine(label: 'Masters', value: '${summary?.masterCount ?? 0}'),
-      InfoLine(label: 'Slaves', value: '${summary?.slaveCount ?? 0}'),
-      InfoLine(label: 'Rows', value: displayedRows),
       InfoLine(
         label: 'Last Sync',
         value: _formatTimestamp(summary?.lastSync ?? ''),
       ),
+      InfoLine(label: 'Clients', value: '${summary?.clientCount ?? 0}'),
+      InfoLine(label: 'Masters', value: '${summary?.masterCount ?? 0}'),
+      InfoLine(label: 'Slaves', value: '${summary?.slaveCount ?? 0}'),
+      InfoLine(label: 'Rows', value: displayedRows),
       InfoLine(
         label: 'Panel',
         value:
@@ -1771,6 +1904,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             tooltip: 'Refresh now',
             onPressed: () => unawaited(_refreshState()),
             icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            onPressed: _openSettingsDialog,
+            icon: const Icon(Icons.settings_outlined),
           ),
           IconButton(
             tooltip: 'Sign out',
