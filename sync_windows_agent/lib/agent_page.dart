@@ -34,7 +34,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     with SingleTickerProviderStateMixin {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
-  static const Duration _autoUploadInterval = Duration(minutes: 1);
+  static const Duration _autoSyncInterval = Duration(minutes: 1);
 
   final TextEditingController _serverController = TextEditingController(
     text: 'localhost',
@@ -71,6 +71,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   List<String> _tableColumns = const [];
   List<List<String>> _tableRows = const [];
   int _rowOffset = 0;
+
+  bool get _isMasterClient => _syncState.isMaster;
 
   @override
   void initState() {
@@ -178,6 +180,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
     final now = DateTime.now().toIso8601String();
     final nextStatus = enabled ? 'Queued' : 'Paused';
+    final syncDirection = _isMasterClient ? 'upload' : 'download';
     final nextHistory = _appendHistory(
       current.history,
       SyncHistoryEntry(
@@ -187,9 +190,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         success: enabled,
         message:
             enabled
-                ? 'Remote sync enabled for ${widget.clientName}.'
+                ? _isMasterClient
+                    ? 'Master sync enabled for ${widget.clientName}.'
+                    : 'Slave sync enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
-        direction: current.direction,
+        direction: syncDirection,
         rowCount: current.rowCount,
         progress: enabled ? 0 : current.progress,
         snapshotId: current.snapshotId,
@@ -203,15 +208,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         status: nextStatus,
         lastSync: enabled ? current.lastSync : now,
         progress: enabled ? 0 : current.progress,
+        direction: syncDirection,
         message:
             enabled
-                ? 'Waiting for the next live snapshot upload.'
+                ? _isMasterClient
+                    ? 'Waiting for the next master upload.'
+                    : 'Waiting for the next master snapshot download.'
                 : 'Sync disabled.',
         history: nextHistory,
       ),
     );
     if (enabled) {
-      unawaited(_queueEnabledUploads(forceTables: {table}));
+      unawaited(_queueEnabledRoleJobs(forceTables: {table}));
     }
   }
 
@@ -221,7 +229,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       status: 'Paused',
       lastSync: '',
       progress: 0,
-      direction: 'upload',
+      direction: _isMasterClient ? 'upload' : 'download',
       rowCount: 0,
       snapshotId: null,
       snapshotCreatedAt: null,
@@ -576,7 +584,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         : normalized[0].toUpperCase() + normalized.substring(1);
   }
 
-  bool _isTableDueForUpload(SyncTableState state) {
+  bool _isTableDueForRoleSync(SyncTableState state) {
     if (!state.enabled) {
       return false;
     }
@@ -587,7 +595,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     if (parsed == null) {
       return true;
     }
-    return DateTime.now().difference(parsed).abs() >= _autoUploadInterval;
+    return DateTime.now().difference(parsed).abs() >= _autoSyncInterval;
   }
 
   void _applyRemoteJobState(
@@ -694,6 +702,83 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
     return '$month/$day $hour:$minute';
+  }
+
+  Color _roleColor(bool isMaster) =>
+      isMaster ? const Color(0xFF2563EB) : const Color(0xFF2F855A);
+
+  IconData _roleIcon(bool isMaster) =>
+      isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
+
+  String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
+
+  Set<String> _setClientRole(bool isMaster) {
+    final enabledTables = <String>{};
+    final direction = isMaster ? 'upload' : 'download';
+    final nextTables = Map<String, SyncTableState>.fromEntries(
+      _syncState.tables.entries.map((entry) {
+        final tableState = entry.value;
+        if (tableState.enabled) {
+          enabledTables.add(entry.key);
+        }
+        final nextStatus =
+            tableState.enabled &&
+                    !tableState.status.toLowerCase().contains('ing')
+                ? 'Queued'
+                : tableState.status;
+        final nextMessage =
+            tableState.enabled
+                ? isMaster
+                    ? 'Waiting for the next master upload.'
+                    : 'Waiting for the next master snapshot download.'
+                : tableState.message;
+        return MapEntry(
+          entry.key,
+          tableState.copyWith(
+            direction: direction,
+            status: nextStatus,
+            progress:
+                tableState.enabled && nextStatus == 'Queued'
+                    ? 0
+                    : tableState.progress,
+            message: nextMessage,
+          ),
+        );
+      }),
+    );
+    _replaceSyncState(
+      _syncState.copyWith(isMaster: isMaster, tables: nextTables),
+    );
+    return enabledTables;
+  }
+
+  Widget _buildRoleIndicator(bool isMaster, {bool showLabel = true}) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: showLabel ? 10 : 6,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: _roleColor(isMaster).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_roleIcon(isMaster), size: 16, color: _roleColor(isMaster)),
+          if (showLabel) ...[
+            const SizedBox(width: 6),
+            Text(
+              _roleLabel(isMaster),
+              style: TextStyle(
+                color: _roleColor(isMaster),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   _SnapshotFileDocument _createSnapshotFileDocument({
@@ -976,12 +1061,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     }
   }
 
-  Future<void> _queueEnabledUploads({Set<String>? forceTables}) async {
+  Future<void> _queueEnabledRoleJobs({Set<String>? forceTables}) async {
     if (_tables.isEmpty || _selectedDatabase == null) {
       return;
     }
 
     final activeTables = _activeJobs.map((job) => job.table).toSet();
+    final syncDirection = _isMasterClient ? 'upload' : 'download';
     final dueTables = _tables
         .where((table) {
           final state =
@@ -989,7 +1075,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
           if (!state.enabled || activeTables.contains(table)) {
             return false;
           }
-          return forceTables?.contains(table) ?? _isTableDueForUpload(state);
+          return forceTables?.contains(table) ?? _isTableDueForRoleSync(state);
         })
         .toList(growable: false);
 
@@ -1000,7 +1086,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     final queuedJobs = await _controlPlaneClient.createJobs(
       clientName: widget.clientName,
       tables: dueTables,
-      direction: 'upload',
+      direction: syncDirection,
     );
 
     if (!mounted) {
@@ -1030,6 +1116,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       final jobs = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
+        isMaster: _isMasterClient,
         server: _serverController.text.trim(),
         database: _selectedDatabase ?? '',
         serverConnected: _serverConnected,
@@ -1053,7 +1140,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         _applyRemoteJobState(job);
       }
 
-      await _queueEnabledUploads();
+      await _queueEnabledRoleJobs();
       await _processPendingJobs();
     } catch (error) {
       if (!mounted) {
@@ -2138,6 +2225,7 @@ SELECT (
     final serverController = TextEditingController(
       text: _serverController.text,
     );
+    var isMaster = _isMasterClient;
 
     _SqlConnectionProfile readDialogProfile() => _SqlConnectionProfile(
       server: serverController.text.trim(),
@@ -2168,6 +2256,27 @@ SELECT (
                         decoration: _compactInputDecoration('Client Name'),
                       ),
                       const SizedBox(height: 12),
+                      CheckboxListTile(
+                        value: isMaster,
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text('Master'),
+                        subtitle: Text(
+                          isMaster
+                              ? 'This client uploads table snapshots to the website.'
+                              : 'This client downloads the latest master snapshot and applies it locally.',
+                        ),
+                        onChanged: (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          setDialogState(() {
+                            isMaster = value;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 4),
                       Wrap(
                         spacing: 10,
                         runSpacing: 10,
@@ -2176,6 +2285,7 @@ SELECT (
                             label: 'Auth',
                             value: _useWindowsAuth ? 'Windows' : 'SQL',
                           ),
+                          _InfoLine(label: 'Role', value: _roleLabel(isMaster)),
                           _InfoLine(
                             label: 'Server',
                             value:
@@ -2218,12 +2328,16 @@ SELECT (
                     });
                     Navigator.of(context).pop();
                     widget.onClientNameChanged(clientName);
+                    final enabledTables = _setClientRole(isMaster);
 
                     await _loadDatabases(
                       profile: dialogProfile,
                       loadTables: true,
                       preserveSelection: false,
                     );
+                    if (enabledTables.isNotEmpty) {
+                      await _queueEnabledRoleJobs(forceTables: enabledTables);
+                    }
                   },
                   child: const Text('Save'),
                 ),
@@ -2302,11 +2416,26 @@ SELECT (
     return AgentSectionShell(
       title: 'Sync',
       subtitle:
-          'Live sync status, backup size, and table file actions for ${widget.clientName}. Every enabled table is snapshotted locally before any upload or download step.',
+          'Live sync status, backup size, and table file actions for ${widget.clientName}. Master clients upload snapshots, while slave clients download the latest master snapshot and apply it locally.',
       scrollChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _buildRoleIndicator(_isMasterClient),
+              _InfoLine(
+                label: 'Mode',
+                value:
+                    _isMasterClient
+                        ? 'Upload to website'
+                        : 'Download from website',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
@@ -2315,6 +2444,7 @@ SELECT (
               dataRowMaxHeight: 56,
               columns: const [
                 DataColumn(label: Text('Sync')),
+                DataColumn(label: Text('Role')),
                 DataColumn(label: Text('Table')),
                 DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Progress')),
@@ -2344,6 +2474,12 @@ SELECT (
                                   }
                                   _updateSyncEnabledTable(row.table, value);
                                 },
+                              ),
+                            ),
+                            DataCell(
+                              _buildRoleIndicator(
+                                _isMasterClient,
+                                showLabel: false,
                               ),
                             ),
                             DataCell(Text(row.table)),
@@ -2791,6 +2927,7 @@ SELECT (
         _tabController.index == 1
             ? <Widget>[
               _InfoLine(label: 'Client', value: widget.clientName),
+              _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
               _InfoLine(label: 'Tables', value: syncRows.length.toString()),
               _InfoLine(
                 label: 'Selected',
@@ -2818,6 +2955,7 @@ SELECT (
             ]
             : <Widget>[
               _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
+              _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
               _InfoLine(label: 'Table', value: _selectedTable ?? 'None'),
               _InfoLine(label: 'Rows', value: _totalTableRows.toString()),
               _InfoLine(

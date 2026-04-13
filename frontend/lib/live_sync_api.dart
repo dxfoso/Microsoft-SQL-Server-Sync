@@ -59,7 +59,8 @@ class LiveSyncApiClient {
       headers: const {'Content-Type': 'application/json'},
       body: jsonEncode({
         'clientName': clientName,
-        'sourceClientName': sourceClientName ?? clientName,
+        if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
+          'sourceClientName': sourceClientName,
         'direction': direction,
         'tables': [table],
       }),

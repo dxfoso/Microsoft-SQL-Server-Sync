@@ -148,8 +148,9 @@ class SyncTableState {
 }
 
 class SyncClientState {
-  const SyncClientState({required this.tables});
+  const SyncClientState({required this.isMaster, required this.tables});
 
+  final bool isMaster;
   final Map<String, SyncTableState> tables;
 
   factory SyncClientState.fromJson(Map<String, dynamic> json) {
@@ -157,6 +158,7 @@ class SyncClientState {
       json['tables'] as Map? ?? const {},
     );
     return SyncClientState(
+      isMaster: json['isMaster'] as bool? ?? true,
       tables: tablesJson.map(
         (key, value) => MapEntry(
           key,
@@ -167,11 +169,18 @@ class SyncClientState {
   }
 
   Map<String, dynamic> toJson() => {
+    'isMaster': isMaster,
     'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
   };
 
-  SyncClientState copyWith({Map<String, SyncTableState>? tables}) {
-    return SyncClientState(tables: tables ?? this.tables);
+  SyncClientState copyWith({
+    bool? isMaster,
+    Map<String, SyncTableState>? tables,
+  }) {
+    return SyncClientState(
+      isMaster: isMaster ?? this.isMaster,
+      tables: tables ?? this.tables,
+    );
   }
 }
 

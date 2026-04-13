@@ -527,6 +527,40 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     }
   }
 
+  Color _roleColor(bool isMaster) =>
+      isMaster ? const Color(0xFF2563EB) : const Color(0xFF2F855A);
+
+  IconData _roleIcon(bool isMaster) =>
+      isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
+
+  String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
+
+  Widget _buildRoleBadge(bool isMaster, {bool compact = false}) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: _roleColor(isMaster).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_roleIcon(isMaster), size: 16, color: _roleColor(isMaster)),
+          if (!compact) ...[
+            const SizedBox(width: 6),
+            Text(
+              _roleLabel(isMaster),
+              style: TextStyle(
+                color: _roleColor(isMaster),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   double _bestMatchScore(String query, String candidate) {
     final normalizedQuery = query.trim().toLowerCase();
     final normalizedCandidate = candidate.trim().toLowerCase();
@@ -676,6 +710,48 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
         .toList(growable: false);
   }
 
+  AdminTableState? _tableStateForAgent(AdminAgent agent, String tableName) {
+    for (final table in agent.tables) {
+      if (table.table == tableName) {
+        return table;
+      }
+    }
+    return null;
+  }
+
+  List<AdminAgent> _agentsForTable(String? tableName) {
+    if (_state == null || tableName == null) {
+      return const <AdminAgent>[];
+    }
+    return _state!.agents
+        .where((agent) => _tableStateForAgent(agent, tableName) != null)
+        .toList(growable: false);
+  }
+
+  List<AdminJob> _tableJobsForClient(String clientName, String tableName) {
+    return _jobs
+        .where((job) => job.clientName == clientName && job.table == tableName)
+        .take(8)
+        .toList(growable: false);
+  }
+
+  void _focusClientTable(String clientName, String tableName) {
+    if (_state == null) {
+      return;
+    }
+    final agent = _agentByName(_state, clientName);
+    if (agent == null || _tableStateForAgent(agent, tableName) == null) {
+      return;
+    }
+    setState(() {
+      _selectedClientName = clientName;
+      _selectedTableName = tableName;
+      _snapshot = null;
+      _snapshotError = null;
+    });
+    unawaited(_loadSelectedSnapshot(force: true));
+  }
+
   Widget _buildSelectionHeader() {
     final agent = _selectedAgent;
     final tables = _selectedTables;
@@ -728,6 +804,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
             ),
           ),
           if (agent != null) ...[
+            _buildRoleBadge(agent.isMaster),
             MetricPill(label: 'Machine', value: agent.machineName),
             MetricPill(
               label: 'Database',
@@ -829,6 +906,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
             runSpacing: 12,
             children: [
               MetricPill(label: 'Agent', value: agent.clientName),
+              MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
               MetricPill(
                 label: 'Rows',
                 value:
@@ -1076,6 +1154,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
             runSpacing: 12,
             children: [
               MetricPill(label: 'Agent', value: agent.clientName),
+              MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
               MetricPill(
                 label: 'SQL',
                 value: agent.sqlConnected ? 'Ready' : 'Offline',
@@ -1114,6 +1193,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                       ),
                       columns: const [
                         DataColumn(label: Text('Sync')),
+                        DataColumn(label: Text('Role')),
                         DataColumn(label: Text('Table')),
                         DataColumn(label: Text('Status')),
                         DataColumn(label: Text('Progress')),
@@ -1140,6 +1220,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                                             ? const Color(0xFF2F855A)
                                             : const Color(0xFF718096),
                                     size: 18,
+                                  ),
+                                ),
+                                DataCell(
+                                  _buildRoleBadge(
+                                    agent.isMaster,
+                                    compact: true,
                                   ),
                                 ),
                                 DataCell(Text(table.table)),
@@ -1265,8 +1351,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                     ),
                   ),
                 const SizedBox(height: 18),
+                _buildTableClientOverview(),
+                const SizedBox(height: 18),
                 Text(
-                  '${_selectedTableName ?? 'Selected table'} activity',
+                  '${_selectedTableName ?? 'Selected table'} activity for ${_selectedAgent?.clientName ?? 'the selected client'}',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
@@ -1367,6 +1455,145 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     );
   }
 
+  Widget _buildTableClientOverview() {
+    final tableName = _selectedTableName;
+    final agents = _agentsForTable(tableName);
+    if (tableName == null) {
+      return const EmptyStateCard(
+        message: 'Select a table to compare that table across every client.',
+      );
+    }
+    if (agents.isEmpty) {
+      return EmptyStateCard(message: 'No clients are exposing $tableName yet.');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$tableName across clients',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Click a client card to switch the history view below to that client and see whether it is running as master or slave.',
+          style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: agents.map(_buildClientTableCard).toList(growable: false),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildClientTableCard(AdminAgent agent) {
+    final tableName = _selectedTableName!;
+    final tableState = _tableStateForAgent(agent, tableName)!;
+    final selected = agent.clientName == _selectedClientName;
+    final recentJobs = _tableJobsForClient(agent.clientName, tableName);
+    final latestJob = recentJobs.isEmpty ? null : recentJobs.first;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => _focusClientTable(agent.clientName, tableName),
+      child: Container(
+        width: 280,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? const Color(0xFF1E6674) : const Color(0xFFD9DDD8),
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    agent.clientName,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                _buildRoleBadge(agent.isMaster, compact: false),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                StatusBadge(
+                  label: tableState.status,
+                  color: _statusColor(tableState.status),
+                ),
+                MetricPill(
+                  label: 'Last Sync',
+                  value: _formatTimestamp(tableState.lastSync),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ProgressStrip(
+              progress: tableState.progress,
+              color: _statusColor(tableState.status),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 10,
+              runSpacing: 6,
+              children: [
+                Text(
+                  '${tableState.progress}%',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  '${tableState.rowCount} rows',
+                  style: const TextStyle(color: Color(0xFF5F6B76)),
+                ),
+                Text(
+                  _formatBytes(tableState.snapshotBytes),
+                  style: const TextStyle(color: Color(0xFF5F6B76)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              tableState.message.isEmpty
+                  ? 'No sync message yet.'
+                  : tableState.message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(height: 1.35),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              latestJob == null
+                  ? 'No recent history yet.'
+                  : 'Latest: ${latestJob.direction.toUpperCase()} ${_formatTimestamp(latestJob.updatedAt)}',
+              style: const TextStyle(
+                color: Color(0xFF58656B),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPinnedSummaryBar() {
     final agent = _selectedAgent;
     final tableState = _selectedTableState;
@@ -1374,6 +1601,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
         _tabController.index == 0
             ? <Widget>[
               InfoLine(label: 'Agent', value: agent?.clientName ?? 'None'),
+              InfoLine(
+                label: 'Role',
+                value: agent == null ? 'None' : _roleLabel(agent.isMaster),
+              ),
               InfoLine(label: 'Table', value: _selectedTableName ?? 'None'),
               InfoLine(
                 label: 'Rows',
@@ -1393,6 +1624,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
             ]
             : <Widget>[
               InfoLine(label: 'Agent', value: agent?.clientName ?? 'None'),
+              InfoLine(
+                label: 'Role',
+                value: agent == null ? 'None' : _roleLabel(agent.isMaster),
+              ),
               InfoLine(
                 label: 'Tables',
                 value: _selectedTables.length.toString(),

@@ -20,6 +20,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   Timer? _saveDebounce;
 
   static const SyncClientState _defaultClientState = SyncClientState(
+    isMaster: true,
     tables: {},
   );
 

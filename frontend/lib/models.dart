@@ -42,6 +42,7 @@ class AdminAgent {
     required this.server,
     required this.database,
     required this.isOnline,
+    required this.isMaster,
     required this.serverConnected,
     required this.sqlConnected,
     required this.lastHeartbeat,
@@ -54,6 +55,7 @@ class AdminAgent {
   final String server;
   final String database;
   final bool isOnline;
+  final bool isMaster;
   final bool serverConnected;
   final bool sqlConnected;
   final String lastHeartbeat;
@@ -67,6 +69,7 @@ class AdminAgent {
       server: json['server'] as String? ?? '',
       database: json['database'] as String? ?? '',
       isOnline: json['isOnline'] as bool? ?? false,
+      isMaster: json['isMaster'] as bool? ?? true,
       serverConnected: json['serverConnected'] as bool? ?? false,
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',

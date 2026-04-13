@@ -144,6 +144,7 @@ function ensureAgent(clientName) {
       server: "",
       database: "",
       isOnline: false,
+      isMaster: true,
       serverConnected: false,
       sqlConnected: false,
       lastHeartbeat: "",
@@ -183,6 +184,7 @@ function buildLiveState() {
         server: agent.server,
         database: agent.database,
         isOnline,
+        isMaster: agent.isMaster !== false,
         serverConnected: Boolean(agent.serverConnected),
         sqlConnected: Boolean(agent.sqlConnected),
         lastHeartbeat: agent.lastHeartbeat,
@@ -295,6 +297,69 @@ function updateJob(job, patch) {
 
 function latestSnapshot(clientName, table) {
   return state.snapshots[snapshotKey(clientName, table)] || null;
+}
+
+function agentTableState(clientName, table) {
+  const agent = state.agents[clientName];
+  if (!agent || !agent.tables) {
+    return null;
+  }
+  return agent.tables[table] ? normalizeTableState(agent.tables[table]) : null;
+}
+
+function latestMasterSnapshotForTable(table) {
+  return Object.values(state.snapshots)
+    .map((snapshot) => finalizeSnapshot(snapshot))
+    .filter((snapshot) => {
+      if (snapshot.table !== table) {
+        return false;
+      }
+      const agent = state.agents[snapshot.clientName];
+      return agent ? agent.isMaster !== false : false;
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] || null;
+}
+
+function resolveDownloadSource(clientName, requestedSourceClientName, table) {
+  const explicitSource = String(requestedSourceClientName || "").trim();
+  if (explicitSource) {
+    const snapshot = latestSnapshot(explicitSource, table);
+    if (!snapshot) {
+      return null;
+    }
+    return finalizeSnapshot(snapshot);
+  }
+
+  const masterSnapshot = latestMasterSnapshotForTable(table);
+  if (!masterSnapshot) {
+    return null;
+  }
+
+  if (masterSnapshot.clientName === clientName) {
+    return masterSnapshot;
+  }
+
+  return masterSnapshot;
+}
+
+function shouldQueueDownloadJob(clientName, table, sourceSnapshot) {
+  if (!sourceSnapshot) {
+    return false;
+  }
+
+  const targetTableState = agentTableState(clientName, table);
+  const targetCreatedAt = String(targetTableState?.snapshotCreatedAt || "").trim();
+  if (!targetCreatedAt) {
+    return true;
+  }
+
+  const targetTimestamp = Date.parse(targetCreatedAt);
+  const sourceTimestamp = Date.parse(sourceSnapshot.createdAt);
+  if (!Number.isFinite(targetTimestamp) || !Number.isFinite(sourceTimestamp)) {
+    return targetCreatedAt !== sourceSnapshot.createdAt;
+  }
+
+  return sourceTimestamp > targetTimestamp;
 }
 
 function normalizeSnapshotRow(row, columns) {
@@ -517,6 +582,7 @@ async function handleRequest(req, res) {
     agent.machineName = String(body.machineName || clientName);
     agent.server = String(body.server || "");
     agent.database = String(body.database || "");
+    agent.isMaster = body.isMaster !== undefined ? Boolean(body.isMaster) : true;
     agent.serverConnected = Boolean(body.serverConnected);
     agent.sqlConnected = Boolean(body.sqlConnected);
     agent.lastHeartbeat = nowIso();
@@ -550,9 +616,7 @@ async function handleRequest(req, res) {
     const body = await parseJsonBody(req);
     const clientName = String(body.clientName || "").trim();
     const direction = String(body.direction || "upload").trim().toLowerCase();
-    const sourceClientName = String(
-      body.sourceClientName || body.clientName || "",
-    ).trim();
+    const sourceClientName = String(body.sourceClientName || "").trim();
     const tables = Array.isArray(body.tables)
       ? body.tables.map(String).map((item) => item.trim()).filter(Boolean)
       : [];
@@ -562,7 +626,7 @@ async function handleRequest(req, res) {
       return;
     }
 
-    const jobs = tables.map((table) => {
+    const jobs = tables.flatMap((table) => {
       const existingJob = state.jobs.find(
         (job) =>
           job.clientName === clientName &&
@@ -571,19 +635,40 @@ async function handleRequest(req, res) {
           isJobActive(job),
       );
       if (existingJob) {
-        return existingJob;
+        return [existingJob];
       }
 
-      return createJob({
+      if (direction === "download") {
+        const sourceSnapshot = resolveDownloadSource(
+          clientName,
+          sourceClientName,
+          table,
+        );
+        if (!shouldQueueDownloadJob(clientName, table, sourceSnapshot)) {
+          return [];
+        }
+
+        return [
+          createJob({
+            clientName,
+            sourceClientName: sourceSnapshot.clientName,
+            table,
+            direction,
+            message: `Queued snapshot download for ${table} from ${sourceSnapshot.clientName}.`,
+          }),
+        ];
+      }
+
+      return [createJob({
         clientName,
-        sourceClientName,
+        sourceClientName: sourceClientName || clientName,
         table,
         direction,
         message:
           direction === "download"
             ? `Queued snapshot download for ${table}.`
             : `Queued snapshot upload for ${table}.`,
-      });
+      })];
     });
     await queueSave();
     sendJson(res, 201, { jobs });

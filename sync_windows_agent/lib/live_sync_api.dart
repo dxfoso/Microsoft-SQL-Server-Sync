@@ -41,6 +41,7 @@ class AgentControlPlaneClient {
   Future<List<RemoteSyncJob>> heartbeat({
     required String clientName,
     required String machineName,
+    required bool isMaster,
     required String server,
     required String database,
     required bool serverConnected,
@@ -54,6 +55,7 @@ class AgentControlPlaneClient {
       body: jsonEncode({
         'clientName': clientName,
         'machineName': machineName,
+        'isMaster': isMaster,
         'server': server,
         'database': database,
         'serverConnected': serverConnected,
@@ -96,7 +98,8 @@ class AgentControlPlaneClient {
       headers: const {'Content-Type': 'application/json'},
       body: jsonEncode({
         'clientName': clientName,
-        'sourceClientName': sourceClientName ?? clientName,
+        if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
+          'sourceClientName': sourceClientName,
         'direction': direction,
         'tables': tables,
       }),
