@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
 
 import 'agent_widgets.dart';
 import 'live_sync_api.dart';
@@ -61,6 +62,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   bool _syncLoopBusy = false;
   List<RemoteSyncJob> _activeJobs = const [];
   final Set<String> _processingJobIds = <String>{};
+  final Set<String> _busyFileTables = <String>{};
 
   List<String> _databases = const [];
   String? _selectedDatabase;
@@ -191,6 +193,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         rowCount: current.rowCount,
         progress: enabled ? 0 : current.progress,
         snapshotId: current.snapshotId,
+        snapshotBytes: current.snapshotBytes,
       ),
     );
     _updateSyncTableState(
@@ -222,6 +225,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       rowCount: 0,
       snapshotId: null,
       snapshotCreatedAt: null,
+      snapshotBytes: 0,
       message: 'Remote sync disabled.',
       history: const [],
     );
@@ -617,6 +621,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       rowCount: job.rowCount,
       snapshotId: job.snapshotId,
       snapshotCreatedAt: job.snapshotCreatedAt ?? current.snapshotCreatedAt,
+      snapshotBytes:
+          job.snapshotBytes > 0 ? job.snapshotBytes : current.snapshotBytes,
       message: nextMessage,
       history:
           appendHistory
@@ -632,11 +638,342 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
                   rowCount: job.rowCount,
                   progress: job.progress,
                   snapshotId: job.snapshotId,
+                  snapshotBytes: job.snapshotBytes,
                 ),
               )
               : current.history,
     );
     _updateSyncTableState(job.table, nextState);
+  }
+
+  bool _isFileBusy(String table) => _busyFileTables.contains(table);
+
+  void _setFileBusy(String table, bool busy) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (busy) {
+        _busyFileTables.add(table);
+      } else {
+        _busyFileTables.remove(table);
+      }
+    });
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) {
+      return '--';
+    }
+
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var value = bytes.toDouble();
+    var unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+
+    final decimals =
+        value >= 100 || unitIndex == 0
+            ? 0
+            : value >= 10
+            ? 1
+            : 2;
+    return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
+  }
+
+  String _formatTimestamp(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) {
+      return raw.isEmpty ? 'Never' : raw;
+    }
+    final local = parsed.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$month/$day $hour:$minute';
+  }
+
+  _SnapshotFileDocument _createSnapshotFileDocument({
+    required String clientName,
+    required String table,
+    required String createdAt,
+    required int rowCount,
+    required List<String> columns,
+    required List<Map<String, String?>> rows,
+    String? id,
+    String checksum = '',
+    String? sourceJobId,
+  }) {
+    return _SnapshotFileDocument(
+      id: id ?? '${clientName}_${table}_${createdAt.hashCode}',
+      clientName: clientName,
+      table: table,
+      createdAt: createdAt,
+      rowCount: rowCount,
+      checksum: checksum,
+      snapshotBytes: 0,
+      columns: columns,
+      rows: rows,
+      sourceJobId: sourceJobId,
+    );
+  }
+
+  String _encodeSnapshotFileDocument(_SnapshotFileDocument document) {
+    var snapshotBytes = 0;
+    var encoded = jsonEncode(
+      document.copyWith(snapshotBytes: snapshotBytes).toJson(),
+    );
+
+    for (var index = 0; index < 3; index += 1) {
+      final nextBytes = utf8.encode(encoded).length;
+      if (nextBytes == snapshotBytes) {
+        snapshotBytes = nextBytes;
+        break;
+      }
+      snapshotBytes = nextBytes;
+      encoded = jsonEncode(
+        document.copyWith(snapshotBytes: snapshotBytes).toJson(),
+      );
+    }
+
+    return encoded;
+  }
+
+  String _backupFileName(String table, String createdAt) {
+    String sanitize(String value) {
+      final normalized = value
+          .replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-')
+          .replaceAll(RegExp(r'-+'), '-')
+          .replaceAll(RegExp(r'^-|-$'), '');
+      return normalized.isEmpty ? 'snapshot' : normalized;
+    }
+
+    return '${sanitize(widget.clientName)}-${sanitize(table)}-${sanitize(createdAt)}.json';
+  }
+
+  Future<void> _exportTableBackup(String table) async {
+    if (_selectedDatabase == null || _isFileBusy(table)) {
+      return;
+    }
+
+    _setFileBusy(table, true);
+    try {
+      final snapshot = await _createTableSnapshot(
+        profile: _activeProfile(),
+        database: _selectedDatabase!,
+        table: table,
+      );
+      if (!snapshot.success) {
+        throw Exception(snapshot.errorText);
+      }
+
+      final document = _createSnapshotFileDocument(
+        clientName: widget.clientName,
+        table: table,
+        createdAt: snapshot.snapshotCreatedAt,
+        rowCount: snapshot.totalRows,
+        columns: snapshot.columns,
+        rows: snapshot.rows,
+      );
+      final content = _encodeSnapshotFileDocument(document);
+      final bytes = utf8.encode(content).length;
+
+      final location = await getSaveLocation(
+        suggestedName: _backupFileName(table, snapshot.snapshotCreatedAt),
+        acceptedTypeGroups: <XTypeGroup>[
+          const XTypeGroup(label: 'JSON backup', extensions: <String>['json']),
+        ],
+      );
+      if (location == null) {
+        return;
+      }
+
+      await File(location.path).writeAsString(content);
+
+      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      final history = _appendHistory(
+        current.history,
+        SyncHistoryEntry(
+          timestamp: DateTime.now().toIso8601String(),
+          table: table,
+          status: 'Backup saved',
+          success: true,
+          message: 'Saved a backup file with ${snapshot.totalRows} rows.',
+          direction: 'file',
+          rowCount: snapshot.totalRows,
+          progress: current.progress,
+          snapshotId: current.snapshotId,
+          snapshotBytes: bytes,
+        ),
+      );
+      _updateSyncTableState(
+        table,
+        current.copyWith(
+          rowCount: snapshot.totalRows,
+          snapshotCreatedAt: snapshot.snapshotCreatedAt,
+          snapshotBytes: bytes,
+          message: 'Backup file saved for $table.',
+          history: history,
+        ),
+      );
+
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved backup file for $table.')));
+    } catch (error) {
+      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      _updateSyncTableState(
+        table,
+        current.copyWith(
+          status: 'Failed',
+          message: error.toString(),
+          history: _appendHistory(
+            current.history,
+            SyncHistoryEntry(
+              timestamp: DateTime.now().toIso8601String(),
+              table: table,
+              status: 'Backup save failed',
+              success: false,
+              message: error.toString(),
+              direction: 'file',
+              rowCount: current.rowCount,
+              progress: current.progress,
+              snapshotId: current.snapshotId,
+              snapshotBytes: current.snapshotBytes,
+            ),
+          ),
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      _setFileBusy(table, false);
+    }
+  }
+
+  Future<void> _importTableBackup(String table) async {
+    if (_selectedDatabase == null || _isFileBusy(table)) {
+      return;
+    }
+
+    _setFileBusy(table, true);
+    try {
+      final pickedFile = await openFile(
+        acceptedTypeGroups: <XTypeGroup>[
+          const XTypeGroup(label: 'JSON backup', extensions: <String>['json']),
+        ],
+      );
+      if (pickedFile == null) {
+        return;
+      }
+
+      final content = await pickedFile.readAsString();
+      final bytes = utf8.encode(content).length;
+      final document = _SnapshotFileDocument.fromJson(
+        Map<String, dynamic>.from(jsonDecode(content) as Map),
+      );
+
+      final snapshot = RemoteSnapshot(
+        id: document.id,
+        clientName: widget.clientName,
+        table: table,
+        createdAt: document.createdAt,
+        rowCount: document.rowCount,
+        checksum: document.checksum,
+        snapshotBytes: bytes,
+        columns: document.columns,
+        rows: document.rows,
+        sourceJobId: document.sourceJobId,
+      );
+
+      await _applySnapshotToTable(
+        profile: _activeProfile(),
+        database: _selectedDatabase!,
+        table: table,
+        snapshot: snapshot,
+      );
+
+      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      final history = _appendHistory(
+        current.history,
+        SyncHistoryEntry(
+          timestamp: DateTime.now().toIso8601String(),
+          table: table,
+          status: 'Backup applied',
+          success: true,
+          message: 'Applied a backup file with ${document.rowCount} rows.',
+          direction: 'file',
+          rowCount: document.rowCount,
+          progress: current.progress,
+          snapshotId: document.id,
+          snapshotBytes: bytes,
+        ),
+      );
+      _updateSyncTableState(
+        table,
+        current.copyWith(
+          rowCount: document.rowCount,
+          snapshotId: document.id,
+          snapshotCreatedAt: document.createdAt,
+          snapshotBytes: bytes,
+          message: 'Backup file applied to $table.',
+          history: history,
+        ),
+      );
+
+      if (_selectedTable == table) {
+        await _reloadCurrentTableRows();
+      }
+
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Applied backup file to $table.')));
+    } catch (error) {
+      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      _updateSyncTableState(
+        table,
+        current.copyWith(
+          status: 'Failed',
+          message: error.toString(),
+          history: _appendHistory(
+            current.history,
+            SyncHistoryEntry(
+              timestamp: DateTime.now().toIso8601String(),
+              table: table,
+              status: 'Backup apply failed',
+              success: false,
+              message: error.toString(),
+              direction: 'file',
+              rowCount: current.rowCount,
+              progress: current.progress,
+              snapshotId: current.snapshotId,
+              snapshotBytes: current.snapshotBytes,
+            ),
+          ),
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      _setFileBusy(table, false);
+    }
   }
 
   Future<void> _queueEnabledUploads({Set<String>? forceTables}) async {
@@ -775,6 +1112,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         throw Exception(snapshot.errorText);
       }
 
+      final backupFile = _createSnapshotFileDocument(
+        clientName: widget.clientName,
+        table: job.table,
+        createdAt: snapshot.snapshotCreatedAt,
+        rowCount: snapshot.totalRows,
+        columns: snapshot.columns,
+        rows: snapshot.rows,
+      );
+      final backupContent = _encodeSnapshotFileDocument(backupFile);
+      final backupBytes = utf8.encode(backupContent).length;
+
       activeJob = await _controlPlaneClient.updateJobProgress(
         job.id,
         status: 'uploading',
@@ -793,6 +1141,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         rows: snapshot.rows,
         rowCount: snapshot.totalRows,
         snapshotCreatedAt: snapshot.snapshotCreatedAt,
+        snapshotBytes: backupBytes,
       );
 
       _applyRemoteJobState(
@@ -821,6 +1170,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         completedAt: DateTime.now().toIso8601String(),
         snapshotId: job.snapshotId,
         snapshotCreatedAt: job.snapshotCreatedAt,
+        snapshotBytes: job.snapshotBytes,
         message: error.toString(),
         error: error.toString(),
       );
@@ -890,6 +1240,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         rowCount: snapshot.rowCount,
         snapshotId: snapshot.id,
         snapshotCreatedAt: snapshot.createdAt,
+        snapshotBytes: snapshot.snapshotBytes,
       );
 
       _applyRemoteJobState(
@@ -920,6 +1271,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         completedAt: DateTime.now().toIso8601String(),
         snapshotId: job.snapshotId,
         snapshotCreatedAt: job.snapshotCreatedAt,
+        snapshotBytes: job.snapshotBytes,
         message: error.toString(),
         error: error.toString(),
       );
@@ -1950,7 +2302,7 @@ SELECT (
     return AgentSectionShell(
       title: 'Sync',
       subtitle:
-          'Live sync status and progress for ${widget.clientName}. Every enabled table is snapshotted locally before any upload or download step.',
+          'Live sync status, backup size, and table file actions for ${widget.clientName}. Every enabled table is snapshotted locally before any upload or download step.',
       scrollChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1959,8 +2311,8 @@ SELECT (
             scrollDirection: Axis.horizontal,
             child: DataTable(
               headingRowColor: WidgetStatePropertyAll(const Color(0xFFE7ECE6)),
-              dataRowMinHeight: 54,
-              dataRowMaxHeight: 64,
+              dataRowMinHeight: 48,
+              dataRowMaxHeight: 56,
               columns: const [
                 DataColumn(label: Text('Sync')),
                 DataColumn(label: Text('Table')),
@@ -1968,6 +2320,8 @@ SELECT (
                 DataColumn(label: Text('Progress')),
                 DataColumn(label: Text('Rows')),
                 DataColumn(label: Text('Last Sync')),
+                DataColumn(label: Text('Backup')),
+                DataColumn(label: Text('File')),
                 DataColumn(label: Text('Message')),
               ],
               rows:
@@ -2013,7 +2367,7 @@ SELECT (
                             ),
                             DataCell(
                               SizedBox(
-                                width: 150,
+                                width: 132,
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2022,7 +2376,7 @@ SELECT (
                                       value:
                                           row.state.progress.clamp(0, 100) /
                                           100,
-                                      minHeight: 8,
+                                      minHeight: 6,
                                       backgroundColor: const Color(0xFFE7ECE6),
                                       valueColor: AlwaysStoppedAnimation<Color>(
                                         row.state.status == 'Failed'
@@ -2039,11 +2393,45 @@ SELECT (
                               ),
                             ),
                             DataCell(Text(row.state.rowCount.toString())),
-                            DataCell(Text(row.state.lastSync)),
+                            DataCell(
+                              Text(_formatTimestamp(row.state.lastSync)),
+                            ),
+                            DataCell(
+                              Text(_formatBytes(row.state.snapshotBytes)),
+                            ),
+                            DataCell(
+                              Wrap(
+                                spacing: 4,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Download backup file',
+                                    onPressed:
+                                        _selectedDatabase == null ||
+                                                _isFileBusy(row.table)
+                                            ? null
+                                            : () =>
+                                                _exportTableBackup(row.table),
+                                    icon: const Icon(Icons.download_rounded),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Upload backup file',
+                                    onPressed:
+                                        _selectedDatabase == null ||
+                                                _isFileBusy(row.table)
+                                            ? null
+                                            : () =>
+                                                _importTableBackup(row.table),
+                                    icon: const Icon(Icons.upload_file_rounded),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ],
+                              ),
+                            ),
                             DataCell(
                               ConstrainedBox(
                                 constraints: const BoxConstraints(
-                                  maxWidth: 280,
+                                  maxWidth: 220,
                                 ),
                                 child: Text(
                                   row.state.message.isEmpty
@@ -2080,11 +2468,14 @@ SELECT (
             ...historyEntries.map(
               (entry) => Container(
                 width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(16),
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFFE2D8CB)),
                 ),
                 child: Row(
@@ -2106,17 +2497,47 @@ SELECT (
                             entry.status,
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
-                              fontSize: 15,
+                              fontSize: 14,
                             ),
                           ),
                           const SizedBox(height: 4),
-                          Text(entry.message),
+                          Text(
+                            entry.message,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 6,
+                            children: [
+                              Text(
+                                '${entry.rowCount} rows',
+                                style: const TextStyle(
+                                  color: Color(0xFF5F6B76),
+                                ),
+                              ),
+                              Text(
+                                _formatBytes(entry.snapshotBytes),
+                                style: const TextStyle(
+                                  color: Color(0xFF5F6B76),
+                                ),
+                              ),
+                              Text(
+                                '${entry.progress}%',
+                                style: const TextStyle(
+                                  color: Color(0xFF5F6B76),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      entry.timestamp,
+                      _formatTimestamp(entry.timestamp),
                       style: const TextStyle(color: Color(0xFF5F6B76)),
                     ),
                   ],
@@ -2387,11 +2808,28 @@ SELECT (
                 label: 'Status',
                 value: selectedSyncRow?.state.status ?? 'Idle',
               ),
+              _InfoLine(
+                label: 'Backup',
+                value:
+                    selectedSyncRow == null
+                        ? '--'
+                        : _formatBytes(selectedSyncRow.state.snapshotBytes),
+              ),
             ]
             : <Widget>[
               _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
               _InfoLine(label: 'Table', value: _selectedTable ?? 'None'),
               _InfoLine(label: 'Rows', value: _totalTableRows.toString()),
+              _InfoLine(
+                label: 'Backup',
+                value:
+                    _selectedTable == null
+                        ? '--'
+                        : _formatBytes(
+                          (_syncState.tables[_selectedTable!]?.snapshotBytes ??
+                              0),
+                        ),
+              ),
               _InfoLine(
                 label: 'Loaded',
                 value:
@@ -2734,12 +3172,109 @@ class _InfoLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      '$label: $value',
-      style: const TextStyle(
-        color: Color(0xFF374151),
-        fontWeight: FontWeight.w600,
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(
+              color: Color(0xFF5E6C73),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          TextSpan(
+            text: value,
+            style: const TextStyle(
+              color: Color(0xFF18212B),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _SnapshotFileDocument {
+  const _SnapshotFileDocument({
+    required this.id,
+    required this.clientName,
+    required this.table,
+    required this.createdAt,
+    required this.rowCount,
+    required this.checksum,
+    required this.snapshotBytes,
+    required this.columns,
+    required this.rows,
+    required this.sourceJobId,
+  });
+
+  final String id;
+  final String clientName;
+  final String table;
+  final String createdAt;
+  final int rowCount;
+  final String checksum;
+  final int snapshotBytes;
+  final List<String> columns;
+  final List<Map<String, String?>> rows;
+  final String? sourceJobId;
+
+  factory _SnapshotFileDocument.fromJson(Map<String, dynamic> json) {
+    final columns = (json['columns'] as List<dynamic>? ?? const [])
+        .map((item) => item.toString())
+        .toList(growable: false);
+    final rawRows = json['rows'] as List<dynamic>? ?? const [];
+    return _SnapshotFileDocument(
+      id: json['id'] as String? ?? '',
+      clientName: json['clientName'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      createdAt: json['createdAt'] as String? ?? '',
+      rowCount: (json['rowCount'] as num? ?? rawRows.length).round(),
+      checksum: json['checksum'] as String? ?? '',
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
+      columns: columns,
+      rows: rawRows
+          .map(
+            (row) => Map<String, String?>.fromEntries(
+              columns.map((column) {
+                final value =
+                    row is Map && row.containsKey(column) ? row[column] : null;
+                return MapEntry(column, value?.toString());
+              }),
+            ),
+          )
+          .toList(growable: false),
+      sourceJobId: json['sourceJobId'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'formatVersion': 1,
+    'id': id,
+    'clientName': clientName,
+    'table': table,
+    'createdAt': createdAt,
+    'rowCount': rowCount,
+    'checksum': checksum,
+    'snapshotBytes': snapshotBytes,
+    'columns': columns,
+    'rows': rows,
+    'sourceJobId': sourceJobId,
+  };
+
+  _SnapshotFileDocument copyWith({int? snapshotBytes}) {
+    return _SnapshotFileDocument(
+      id: id,
+      clientName: clientName,
+      table: table,
+      createdAt: createdAt,
+      rowCount: rowCount,
+      checksum: checksum,
+      snapshotBytes: snapshotBytes ?? this.snapshotBytes,
+      columns: columns,
+      rows: rows,
+      sourceJobId: sourceJobId,
     );
   }
 }

@@ -1,14 +1,23 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'browser_bridge.dart';
 import 'dashboard_widgets.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
 
 class AdminDashboardPage extends StatefulWidget {
-  const AdminDashboardPage({super.key});
+  const AdminDashboardPage({
+    super.key,
+    required this.authenticatedEmail,
+    required this.onLogout,
+  });
+
+  final String authenticatedEmail;
+  final VoidCallback onLogout;
 
   @override
   State<AdminDashboardPage> createState() => _AdminDashboardPageState();
@@ -34,6 +43,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   String? _snapshotKey;
   String? _snapshotVersionToken;
   int _snapshotRequestToken = 0;
+  final Set<String> _busyBackupKeys = <String>{};
 
   @override
   void initState() {
@@ -301,6 +311,192 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  String _backupKey(String clientName, String table) => '$clientName::$table';
+
+  bool _isBackupBusy(String clientName, String table) =>
+      _busyBackupKeys.contains(_backupKey(clientName, table));
+
+  void _setBackupBusy(String clientName, String table, bool busy) {
+    final key = _backupKey(clientName, table);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (busy) {
+        _busyBackupKeys.add(key);
+      } else {
+        _busyBackupKeys.remove(key);
+      }
+    });
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) {
+      return '--';
+    }
+
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var value = bytes.toDouble();
+    var unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+
+    final decimals =
+        value >= 100 || unitIndex == 0
+            ? 0
+            : value >= 10
+            ? 1
+            : 2;
+    return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
+  }
+
+  String _snapshotFilename(String clientName, String table, String createdAt) {
+    String sanitize(String value) {
+      final normalized = value
+          .replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-')
+          .replaceAll(RegExp(r'-+'), '-')
+          .replaceAll(RegExp(r'^-|-$'), '');
+      return normalized.isEmpty ? 'snapshot' : normalized;
+    }
+
+    return '${sanitize(clientName)}-${sanitize(table)}-${sanitize(createdAt)}.json';
+  }
+
+  Map<String, dynamic> _snapshotFilePayload(
+    AdminSnapshotDetail snapshot, {
+    required int snapshotBytes,
+  }) {
+    return <String, dynamic>{
+      'formatVersion': 1,
+      'id': snapshot.id,
+      'clientName': snapshot.clientName,
+      'table': snapshot.table,
+      'createdAt': snapshot.createdAt,
+      'rowCount': snapshot.rowCount,
+      'checksum': snapshot.checksum,
+      'snapshotBytes': snapshotBytes,
+      'columns': snapshot.columns,
+      'rows': snapshot.rows,
+      'sourceJobId': snapshot.sourceJobId,
+    };
+  }
+
+  String _encodeSnapshotFile(AdminSnapshotDetail snapshot) {
+    var snapshotBytes = 0;
+    var encoded = jsonEncode(
+      _snapshotFilePayload(snapshot, snapshotBytes: snapshotBytes),
+    );
+
+    for (var index = 0; index < 3; index += 1) {
+      final nextBytes = utf8.encode(encoded).length;
+      if (nextBytes == snapshotBytes) {
+        snapshotBytes = nextBytes;
+        break;
+      }
+      snapshotBytes = nextBytes;
+      encoded = jsonEncode(
+        _snapshotFilePayload(snapshot, snapshotBytes: snapshotBytes),
+      );
+    }
+
+    return encoded;
+  }
+
+  Future<void> _downloadSnapshotFile({
+    required String clientName,
+    required String table,
+  }) async {
+    _setBackupBusy(clientName, table, true);
+    try {
+      final snapshot =
+          _selectedClientName == clientName &&
+                  _selectedTableName == table &&
+                  _snapshot != null
+              ? _snapshot
+              : await _api.fetchLatestSnapshot(
+                clientName: clientName,
+                table: table,
+              );
+
+      if (!mounted) {
+        return;
+      }
+      if (snapshot == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No backup file is available yet for $table.'),
+          ),
+        );
+        return;
+      }
+
+      await downloadBrowserTextFile(
+        filename: _snapshotFilename(clientName, table, snapshot.createdAt),
+        content: _encodeSnapshotFile(snapshot),
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Downloaded backup file for $table.')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      _setBackupBusy(clientName, table, false);
+    }
+  }
+
+  Future<void> _uploadSnapshotFile({
+    required String clientName,
+    required String table,
+  }) async {
+    _setBackupBusy(clientName, table, true);
+    try {
+      final pickedFile = await pickBrowserTextFile();
+      if (pickedFile == null) {
+        return;
+      }
+
+      final decoded = jsonDecode(pickedFile.content);
+      if (decoded is! Map) {
+        throw const FormatException('Backup file must contain a JSON object.');
+      }
+
+      await _api.importSnapshot(
+        clientName: clientName,
+        table: table,
+        snapshot: Map<String, dynamic>.from(decoded),
+      );
+      await _refreshState(silent: true);
+      if (_selectedClientName == clientName && _selectedTableName == table) {
+        await _loadSelectedSnapshot(force: true);
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Uploaded backup file to $table.')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      _setBackupBusy(clientName, table, false);
     }
   }
 
@@ -651,6 +847,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                         ? 'Not available'
                         : _formatTimestamp(snapshot.createdAt),
               ),
+              MetricPill(
+                label: 'Backup Size',
+                value: _formatBytes(
+                  snapshot?.snapshotBytes ?? tableState?.snapshotBytes ?? 0,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -886,6 +1088,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                 label: 'Tables',
                 value: _selectedTables.length.toString(),
               ),
+              MetricPill(
+                label: 'Backup Size',
+                value: _formatBytes(_selectedTableState?.snapshotBytes ?? 0),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -913,7 +1119,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                         DataColumn(label: Text('Progress')),
                         DataColumn(label: Text('Rows')),
                         DataColumn(label: Text('Last Sync')),
+                        DataColumn(label: Text('Backup')),
                         DataColumn(label: Text('Message')),
+                        DataColumn(label: Text('File')),
                         DataColumn(label: Text('Action')),
                       ],
                       rows: filteredTables
@@ -965,6 +1173,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                                   Text(_formatTimestamp(table.lastSync)),
                                 ),
                                 DataCell(
+                                  Text(_formatBytes(table.snapshotBytes)),
+                                ),
+                                DataCell(
                                   ConstrainedBox(
                                     constraints: const BoxConstraints(
                                       maxWidth: 340,
@@ -975,6 +1186,47 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                                           : table.message,
                                       overflow: TextOverflow.ellipsis,
                                     ),
+                                  ),
+                                ),
+                                DataCell(
+                                  Wrap(
+                                    spacing: 4,
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'Download backup file',
+                                        onPressed:
+                                            _isBackupBusy(
+                                                  agent.clientName,
+                                                  table.table,
+                                                )
+                                                ? null
+                                                : () => _downloadSnapshotFile(
+                                                  clientName: agent.clientName,
+                                                  table: table.table,
+                                                ),
+                                        icon: const Icon(
+                                          Icons.download_rounded,
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Upload backup file',
+                                        onPressed:
+                                            _isBackupBusy(
+                                                  agent.clientName,
+                                                  table.table,
+                                                )
+                                                ? null
+                                                : () => _uploadSnapshotFile(
+                                                  clientName: agent.clientName,
+                                                  table: table.table,
+                                                ),
+                                        icon: const Icon(
+                                          Icons.upload_file_rounded,
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ],
                                   ),
                                 ),
                                 DataCell(
@@ -1038,18 +1290,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   Widget _buildJobCard(AdminJob job) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2D8CB)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           StatusBadge(label: job.status, color: _statusColor(job.status)),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1058,7 +1310,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                   '${job.direction.toUpperCase()} - ${job.table}',
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
-                    fontSize: 15,
+                    fontSize: 14,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -1071,20 +1323,39 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                   job.message.isEmpty
                       ? 'No job message recorded.'
                       : job.message,
-                  style: const TextStyle(height: 1.45),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(height: 1.35),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
+                  children: [
+                    Text(
+                      '${job.progress}%',
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      '${job.rowCount} rows',
+                      style: const TextStyle(color: Color(0xFF5F6B76)),
+                    ),
+                    Text(
+                      _formatBytes(job.snapshotBytes),
+                      style: const TextStyle(color: Color(0xFF5F6B76)),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                '${job.rowCount} rows',
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 6),
               Text(
                 _formatTimestamp(job.updatedAt),
                 style: const TextStyle(color: Color(0xFF5F6B76)),
@@ -1115,6 +1386,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                 label: 'Last Sync',
                 value: _formatTimestamp(tableState?.lastSync ?? ''),
               ),
+              InfoLine(
+                label: 'Backup',
+                value: _formatBytes(tableState?.snapshotBytes ?? 0),
+              ),
             ]
             : <Widget>[
               InfoLine(label: 'Agent', value: agent?.clientName ?? 'None'),
@@ -1131,6 +1406,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
               InfoLine(
                 label: 'Last Sync',
                 value: _formatTimestamp(tableState?.lastSync ?? ''),
+              ),
+              InfoLine(
+                label: 'Backup',
+                value: _formatBytes(tableState?.snapshotBytes ?? 0),
               ),
             ];
 
@@ -1201,6 +1480,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
         ),
         actions: [
           IconButton(
+            tooltip: 'Sign out',
+            onPressed: widget.onLogout,
+            icon: const Icon(Icons.logout_rounded),
+          ),
+          IconButton(
             tooltip: 'Refresh now',
             onPressed: () => unawaited(_refreshState()),
             icon: const Icon(Icons.refresh),
@@ -1218,6 +1502,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
               selectedAgent: _selectedClientName,
               totalAgents: state?.agents.length ?? 0,
               totalJobs: _jobs.where((job) => job.isActive).length,
+              authenticatedEmail: widget.authenticatedEmail,
             ),
             const SizedBox(height: 12),
             _buildSelectionHeader(),

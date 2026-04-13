@@ -8,6 +8,7 @@ class DashboardHeader extends StatelessWidget {
     required this.totalAgents,
     required this.totalJobs,
     this.selectedAgent,
+    this.authenticatedEmail,
   });
 
   final bool isConnected;
@@ -15,6 +16,7 @@ class DashboardHeader extends StatelessWidget {
   final int totalAgents;
   final int totalJobs;
   final String? selectedAgent;
+  final String? authenticatedEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -107,6 +109,12 @@ class DashboardHeader extends StatelessWidget {
                 color: const Color(0x26FFFFFF),
                 textColor: Colors.white,
               ),
+              if (authenticatedEmail != null)
+                _HeaderBadge(
+                  label: authenticatedEmail!,
+                  color: const Color(0x26FFFFFF),
+                  textColor: Colors.white,
+                ),
             ],
           ),
         ],
@@ -200,7 +208,7 @@ class ProgressStrip extends StatelessWidget {
       borderRadius: BorderRadius.circular(999),
       child: LinearProgressIndicator(
         value: value,
-        minHeight: 8,
+        minHeight: 6,
         backgroundColor: const Color(0xFFE7ECE6),
         valueColor: AlwaysStoppedAnimation<Color>(color),
       ),

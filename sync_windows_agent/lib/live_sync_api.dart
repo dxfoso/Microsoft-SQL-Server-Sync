@@ -22,7 +22,9 @@ class AgentControlPlaneClient {
     if (trimmed.isEmpty) {
       return 'https://sync.velvet-leaf.com/api';
     }
-    return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+    return trimmed.endsWith('/')
+        ? trimmed.substring(0, trimmed.length - 1)
+        : trimmed;
   }
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
@@ -76,7 +78,10 @@ class AgentControlPlaneClient {
 
     final jobs = decoded['jobs'] as List<dynamic>? ?? const [];
     return jobs
-        .map((item) => RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map(
+          (item) =>
+              RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
         .toList(growable: false);
   }
 
@@ -109,7 +114,10 @@ class AgentControlPlaneClient {
     }
     final jobs = decoded['jobs'] as List<dynamic>? ?? const [];
     return jobs
-        .map((item) => RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map(
+          (item) =>
+              RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
         .toList(growable: false);
   }
 
@@ -161,6 +169,7 @@ class AgentControlPlaneClient {
     required List<Map<String, String?>> rows,
     required int rowCount,
     required String snapshotCreatedAt,
+    required int snapshotBytes,
   }) async {
     final response = await _client.post(
       _uri('/jobs/$jobId/upload'),
@@ -172,6 +181,7 @@ class AgentControlPlaneClient {
         'rows': rows,
         'rowCount': rowCount,
         'snapshotCreatedAt': snapshotCreatedAt,
+        'snapshotBytes': snapshotBytes,
       }),
     );
 
@@ -222,6 +232,7 @@ class AgentControlPlaneClient {
     required int rowCount,
     String? snapshotId,
     String? snapshotCreatedAt,
+    int? snapshotBytes,
   }) async {
     final response = await _client.post(
       _uri('/jobs/$jobId/complete'),
@@ -233,6 +244,7 @@ class AgentControlPlaneClient {
         'rowCount': rowCount,
         'snapshotId': snapshotId,
         'snapshotCreatedAt': snapshotCreatedAt,
+        'snapshotBytes': snapshotBytes,
       }),
     );
     return _parseJobResponse(response, 'job completion');
@@ -264,7 +276,9 @@ class AgentControlPlaneClient {
 
     final decoded = jsonDecode(response.body);
     if (decoded is! Map) {
-      throw AgentControlPlaneException('Unexpected payload returned from $phase.');
+      throw AgentControlPlaneException(
+        'Unexpected payload returned from $phase.',
+      );
     }
 
     return RemoteSyncJob.fromJson(
@@ -293,6 +307,7 @@ class RemoteSyncJob {
     required this.completedAt,
     required this.snapshotId,
     required this.snapshotCreatedAt,
+    required this.snapshotBytes,
     required this.message,
     required this.error,
   });
@@ -311,6 +326,7 @@ class RemoteSyncJob {
   final String? completedAt;
   final String? snapshotId;
   final String? snapshotCreatedAt;
+  final int snapshotBytes;
   final String message;
   final String? error;
 
@@ -330,6 +346,7 @@ class RemoteSyncJob {
       completedAt: json['completedAt'] as String?,
       snapshotId: json['snapshotId'] as String?,
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
     );
@@ -350,6 +367,8 @@ class RemoteSnapshot {
     required this.table,
     required this.createdAt,
     required this.rowCount,
+    required this.checksum,
+    required this.snapshotBytes,
     required this.columns,
     required this.rows,
     required this.sourceJobId,
@@ -360,6 +379,8 @@ class RemoteSnapshot {
   final String table;
   final String createdAt;
   final int rowCount;
+  final String checksum;
+  final int snapshotBytes;
   final List<String> columns;
   final List<Map<String, String?>> rows;
   final String? sourceJobId;
@@ -372,6 +393,8 @@ class RemoteSnapshot {
       table: json['table'] as String? ?? '',
       createdAt: json['createdAt'] as String? ?? '',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
+      checksum: json['checksum'] as String? ?? '',
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       columns: (json['columns'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
           .toList(growable: false),
@@ -379,10 +402,7 @@ class RemoteSnapshot {
           .map(
             (row) => Map<String, String?>.fromEntries(
               Map<String, dynamic>.from(row as Map).entries.map(
-                (entry) => MapEntry(
-                  entry.key,
-                  entry.value?.toString(),
-                ),
+                (entry) => MapEntry(entry.key, entry.value?.toString()),
               ),
             ),
           )

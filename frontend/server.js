@@ -54,9 +54,12 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function sendBuffer(res, statusCode, buffer, contentType) {
+function sendBuffer(res, statusCode, buffer, contentType, extraHeaders = {}) {
   withCorsHeaders(res);
-  res.writeHead(statusCode, { "Content-Type": contentType });
+  res.writeHead(statusCode, {
+    "Content-Type": contentType,
+    ...extraHeaders,
+  });
   res.end(buffer);
 }
 
@@ -128,6 +131,7 @@ function normalizeTableState(tableState) {
     snapshotCreatedAt: tableState.snapshotCreatedAt
       ? String(tableState.snapshotCreatedAt)
       : null,
+    snapshotBytes: Number(tableState.snapshotBytes || 0),
     message: String(tableState.message || ""),
   };
 }
@@ -184,7 +188,20 @@ function buildLiveState() {
         lastHeartbeat: agent.lastHeartbeat,
         selectedTable: agent.selectedTable,
         tables: Object.values(agent.tables || {})
-          .map(normalizeTableState)
+          .map((tableState) => {
+            const normalizedTableState = normalizeTableState(tableState);
+            const snapshot = latestSnapshot(
+              agent.clientName,
+              normalizedTableState.table,
+            );
+            if (!snapshot) {
+              return normalizedTableState;
+            }
+            return {
+              ...normalizedTableState,
+              snapshotBytes: finalizeSnapshot(snapshot).snapshotBytes,
+            };
+          })
           .sort((left, right) => left.table.localeCompare(right.table)),
       };
     })
@@ -192,17 +209,21 @@ function buildLiveState() {
 
   const jobs = sortJobsDescending([...state.jobs]).slice(0, 100);
   const snapshots = Object.values(state.snapshots)
-    .map((snapshot) => ({
-      id: snapshot.id,
-      clientName: snapshot.clientName,
-      table: snapshot.table,
-      rowCount: snapshot.rowCount,
-      checksum: snapshot.checksum,
-      createdAt: snapshot.createdAt,
-      columns: snapshot.columns,
-      previewRows: buildSnapshotPreviewRows(snapshot),
-      sourceJobId: snapshot.sourceJobId || null,
-    }))
+    .map((snapshot) => {
+      const normalized = finalizeSnapshot(snapshot);
+      return {
+        id: normalized.id,
+        clientName: normalized.clientName,
+        table: normalized.table,
+        rowCount: normalized.rowCount,
+        checksum: normalized.checksum,
+        createdAt: normalized.createdAt,
+        snapshotBytes: normalized.snapshotBytes,
+        columns: normalized.columns,
+        previewRows: buildSnapshotPreviewRows(normalized),
+        sourceJobId: normalized.sourceJobId || null,
+      };
+    })
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 
   return { generatedAt, agents, jobs, snapshots };
@@ -226,6 +247,7 @@ function createJob(payload) {
     completedAt: null,
     snapshotId: null,
     snapshotCreatedAt: null,
+    snapshotBytes: 0,
     message: String(payload.message || "Queued."),
     error: null,
   };
@@ -263,6 +285,10 @@ function updateJob(job, patch) {
       patch.snapshotCreatedAt !== undefined
         ? patch.snapshotCreatedAt
         : job.snapshotCreatedAt,
+    snapshotBytes:
+      patch.snapshotBytes !== undefined
+        ? Number(patch.snapshotBytes || 0)
+        : Number(job.snapshotBytes || 0),
     message: patch.message !== undefined ? String(patch.message) : job.message,
   });
 }
@@ -290,12 +316,90 @@ function normalizeSnapshotRow(row, columns) {
   return Object.fromEntries(columns.map((column) => [column, null]));
 }
 
-function serializeSnapshot(snapshot) {
+function normalizeSnapshot(snapshot) {
+  const columns = Array.isArray(snapshot.columns)
+    ? snapshot.columns.map((column) => String(column))
+    : [];
+  const rows = Array.isArray(snapshot.rows)
+    ? snapshot.rows.map((row) => normalizeSnapshotRow(row, columns))
+    : [];
+  const rowCount =
+    snapshot.rowCount !== undefined ? Number(snapshot.rowCount) : rows.length;
+
   return {
-    ...snapshot,
-    rows: Array.isArray(snapshot.rows)
-      ? snapshot.rows.map((row) => normalizeSnapshotRow(row, snapshot.columns))
-      : [],
+    id: snapshot.id ? String(snapshot.id) : crypto.randomUUID(),
+    clientName: String(snapshot.clientName || "").trim(),
+    table: String(snapshot.table || "").trim(),
+    createdAt: String(snapshot.createdAt || nowIso()),
+    rowCount,
+    checksum:
+      snapshot.checksum ||
+      crypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex"),
+    columns,
+    rows,
+    sourceJobId: snapshot.sourceJobId ? String(snapshot.sourceJobId) : null,
+    snapshotBytes: Number(snapshot.snapshotBytes || 0),
+  };
+}
+
+function createSnapshotFilePayload(snapshot) {
+  return {
+    formatVersion: 1,
+    id: snapshot.id,
+    clientName: snapshot.clientName,
+    table: snapshot.table,
+    createdAt: snapshot.createdAt,
+    rowCount: snapshot.rowCount,
+    checksum: snapshot.checksum,
+    snapshotBytes: Number(snapshot.snapshotBytes || 0),
+    columns: snapshot.columns,
+    rows: snapshot.rows,
+    sourceJobId: snapshot.sourceJobId || null,
+  };
+}
+
+function serializeSnapshotFile(snapshot) {
+  let snapshotBytes = Number(snapshot.snapshotBytes || 0);
+  let payload = createSnapshotFilePayload(snapshot);
+
+  for (let index = 0; index < 3; index += 1) {
+    payload = {
+      ...payload,
+      snapshotBytes,
+    };
+    const nextBytes = Buffer.byteLength(JSON.stringify(payload));
+    if (nextBytes === snapshotBytes) {
+      break;
+    }
+    snapshotBytes = nextBytes;
+  }
+
+  payload = {
+    ...payload,
+    snapshotBytes,
+  };
+
+  return {
+    payload,
+    buffer: Buffer.from(JSON.stringify(payload)),
+    snapshotBytes,
+  };
+}
+
+function finalizeSnapshot(snapshot) {
+  const normalized = normalizeSnapshot(snapshot);
+  const serialized = serializeSnapshotFile(normalized);
+  return {
+    ...normalized,
+    snapshotBytes: serialized.snapshotBytes,
+  };
+}
+
+function serializeSnapshot(snapshot) {
+  const normalized = finalizeSnapshot(snapshot);
+  return {
+    ...normalized,
+    rows: normalized.rows,
   };
 }
 
@@ -311,6 +415,15 @@ function buildSnapshotPreviewRows(snapshot) {
       return value === null || value === undefined ? "NULL" : String(value);
     });
   });
+}
+
+function snapshotFilename(snapshot) {
+  const sanitize = (value) =>
+    String(value || "snapshot")
+      .replace(/[^a-z0-9._-]+/gi, "-")
+      .replace(/^-+|-+$/g, "") || "snapshot";
+  const createdAt = sanitize(String(snapshot.createdAt || nowIso()));
+  return `${sanitize(snapshot.clientName)}-${sanitize(snapshot.table)}-${createdAt}.json`;
 }
 
 function isJobActive(job) {
@@ -489,6 +602,76 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "GET" && pathname === "/api/snapshots/latest/file") {
+    const clientName = String(url.searchParams.get("clientName") || "").trim();
+    const table = String(url.searchParams.get("table") || "").trim();
+    const snapshot = latestSnapshot(clientName, table);
+    if (!snapshot) {
+      sendJson(res, 404, { error: "snapshot not found" });
+      return;
+    }
+    const normalized = finalizeSnapshot(snapshot);
+    const serialized = serializeSnapshotFile(normalized);
+    sendBuffer(
+      res,
+      200,
+      serialized.buffer,
+      "application/json; charset=utf-8",
+      {
+        "Content-Disposition": `attachment; filename="${snapshotFilename(
+          normalized,
+        )}"`,
+      },
+    );
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/snapshots/import") {
+    const body = await parseJsonBody(req);
+    const rawSnapshot =
+      body.snapshot && typeof body.snapshot === "object" ? body.snapshot : body;
+    const snapshot = finalizeSnapshot({
+      ...rawSnapshot,
+      clientName: body.clientName || rawSnapshot.clientName,
+      table: body.table || rawSnapshot.table,
+      createdAt:
+        body.createdAt ||
+        rawSnapshot.createdAt ||
+        rawSnapshot.snapshotCreatedAt ||
+        nowIso(),
+    });
+
+    if (!snapshot.clientName || !snapshot.table) {
+      sendJson(res, 400, { error: "clientName and table are required." });
+      return;
+    }
+
+    state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
+
+    const agent = state.agents[snapshot.clientName];
+    if (agent) {
+      const currentTable = normalizeTableState(
+        agent.tables[snapshot.table] || { table: snapshot.table, enabled: true },
+      );
+      agent.tables[snapshot.table] = {
+        ...currentTable,
+        table: snapshot.table,
+        status: currentTable.enabled ? "Completed" : currentTable.status,
+        progress: currentTable.enabled ? 100 : currentTable.progress,
+        lastSync: snapshot.createdAt,
+        rowCount: snapshot.rowCount,
+        snapshotId: snapshot.id,
+        snapshotCreatedAt: snapshot.createdAt,
+        snapshotBytes: snapshot.snapshotBytes,
+        message: `Backup file imported with ${snapshot.rowCount} rows.`,
+      };
+    }
+
+    await queueSave();
+    sendJson(res, 200, { snapshot: serializeSnapshot(snapshot) });
+    return;
+  }
+
   if (pathname.startsWith("/api/jobs/")) {
     const parts = pathname.split("/").filter(Boolean);
     const jobId = parts[2];
@@ -539,22 +722,17 @@ async function handleRequest(req, res) {
         ? body.rows.map((row) => normalizeSnapshotRow(row, columns))
         : [];
       const createdAt = String(body.snapshotCreatedAt || nowIso());
-      const snapshot = {
+      const snapshot = finalizeSnapshot({
         id: crypto.randomUUID(),
         clientName: String(body.clientName || job.clientName),
         table: String(body.table || job.table),
         createdAt,
         rowCount: Number(body.rowCount || rows.length),
-        checksum:
-          body.checksum ||
-          crypto
-            .createHash("sha256")
-            .update(JSON.stringify(rows))
-            .digest("hex"),
+        checksum: body.checksum,
         columns,
         rows,
         sourceJobId: job.id,
-      };
+      });
       state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
       updateJob(job, {
         status: "completed",
@@ -562,6 +740,7 @@ async function handleRequest(req, res) {
         completedAt: nowIso(),
         snapshotId: snapshot.id,
         snapshotCreatedAt: snapshot.createdAt,
+        snapshotBytes: snapshot.snapshotBytes,
         rowCount: snapshot.rowCount,
         message: `Snapshot uploaded with ${snapshot.rowCount} rows.`,
       });
@@ -595,6 +774,10 @@ async function handleRequest(req, res) {
           body.snapshotCreatedAt !== undefined
             ? String(body.snapshotCreatedAt)
             : job.snapshotCreatedAt,
+        snapshotBytes:
+          body.snapshotBytes !== undefined
+            ? Number(body.snapshotBytes || 0)
+            : Number(job.snapshotBytes || 0),
       });
       await queueSave();
       sendJson(res, 200, { job });

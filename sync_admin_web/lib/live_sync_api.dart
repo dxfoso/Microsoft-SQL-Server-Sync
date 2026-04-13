@@ -100,6 +100,37 @@ class LiveSyncApiClient {
     return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
   }
 
+  Future<AdminSnapshotDetail> importSnapshot({
+    required String clientName,
+    required String table,
+    required Map<String, dynamic> snapshot,
+  }) async {
+    final response = await _client.post(
+      _uri('/snapshots/import'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'clientName': clientName,
+        'table': table,
+        'snapshot': snapshot,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw LiveSyncApiException(
+        'Snapshot import failed with ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map || decoded['snapshot'] is! Map) {
+      throw const LiveSyncApiException('Unexpected snapshot import payload.');
+    }
+
+    return AdminSnapshotDetail.fromJson(
+      Map<String, dynamic>.from(decoded['snapshot'] as Map),
+    );
+  }
+
   Future<bool> checkHealth() async {
     try {
       final response = await _client.get(_uri('/health'));

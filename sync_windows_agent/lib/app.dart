@@ -19,7 +19,9 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   Map<String, SyncClientState> _syncStatesByClient = {};
   Timer? _saveDebounce;
 
-  static const SyncClientState _defaultClientState = SyncClientState(tables: {});
+  static const SyncClientState _defaultClientState = SyncClientState(
+    tables: {},
+  );
 
   SyncClientState _stateForClient(String clientName) {
     return _syncStatesByClient[clientName] ?? _defaultClientState;
@@ -56,7 +58,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void _updateClientName(String value) {
     final nextName = value.trim().isEmpty ? 'Local Agent' : value.trim();
     final previousName = _clientName;
-    final currentState = _syncStatesByClient[previousName] ?? _defaultClientState;
+    final currentState =
+        _syncStatesByClient[previousName] ?? _defaultClientState;
     setState(() {
       if (previousName != nextName) {
         _syncStatesByClient.remove(previousName);

@@ -12,6 +12,7 @@ class SyncHistoryEntry {
     this.rowCount = 0,
     this.progress = 0,
     this.snapshotId,
+    this.snapshotBytes = 0,
   });
 
   final String timestamp;
@@ -23,6 +24,7 @@ class SyncHistoryEntry {
   final int rowCount;
   final int progress;
   final String? snapshotId;
+  final int snapshotBytes;
 
   factory SyncHistoryEntry.fromJson(Map<String, dynamic> json) {
     return SyncHistoryEntry(
@@ -35,6 +37,7 @@ class SyncHistoryEntry {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       progress: (json['progress'] as num? ?? 0).round(),
       snapshotId: json['snapshotId'] as String?,
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
     );
   }
 
@@ -48,6 +51,7 @@ class SyncHistoryEntry {
     'rowCount': rowCount,
     'progress': progress,
     'snapshotId': snapshotId,
+    'snapshotBytes': snapshotBytes,
   };
 }
 
@@ -61,6 +65,7 @@ class SyncTableState {
     required this.rowCount,
     required this.snapshotId,
     required this.snapshotCreatedAt,
+    required this.snapshotBytes,
     required this.message,
     required this.history,
   });
@@ -73,15 +78,15 @@ class SyncTableState {
   final int rowCount;
   final String? snapshotId;
   final String? snapshotCreatedAt;
+  final int snapshotBytes;
   final String message;
   final List<SyncHistoryEntry> history;
 
   factory SyncTableState.fromJson(Map<String, dynamic> json) {
     final history = (json['history'] as List<dynamic>? ?? const [])
         .map(
-          (item) => SyncHistoryEntry.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
+          (item) =>
+              SyncHistoryEntry.fromJson(Map<String, dynamic>.from(item as Map)),
         )
         .toList(growable: false);
     return SyncTableState(
@@ -93,6 +98,7 @@ class SyncTableState {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       snapshotId: json['snapshotId'] as String?,
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
       history: history,
     );
@@ -107,6 +113,7 @@ class SyncTableState {
     'rowCount': rowCount,
     'snapshotId': snapshotId,
     'snapshotCreatedAt': snapshotCreatedAt,
+    'snapshotBytes': snapshotBytes,
     'message': message,
     'history': history.map((entry) => entry.toJson()).toList(growable: false),
   };
@@ -120,6 +127,7 @@ class SyncTableState {
     int? rowCount,
     String? snapshotId,
     String? snapshotCreatedAt,
+    int? snapshotBytes,
     String? message,
     List<SyncHistoryEntry>? history,
   }) {
@@ -132,6 +140,7 @@ class SyncTableState {
       rowCount: rowCount ?? this.rowCount,
       snapshotId: snapshotId ?? this.snapshotId,
       snapshotCreatedAt: snapshotCreatedAt ?? this.snapshotCreatedAt,
+      snapshotBytes: snapshotBytes ?? this.snapshotBytes,
       message: message ?? this.message,
       history: history ?? this.history,
     );
@@ -180,9 +189,7 @@ class SyncAppStateStore {
         Platform.environment['APPDATA'] ??
         Platform.environment['LOCALAPPDATA'] ??
         Directory.current.path;
-    return Directory(
-      '$base${Platform.pathSeparator}Microsoft-SQL-Server-Sync',
-    );
+    return Directory('$base${Platform.pathSeparator}Microsoft-SQL-Server-Sync');
   }
 
   static File _stateFile() {
@@ -194,14 +201,20 @@ class SyncAppStateStore {
   static Future<SyncAppStateStore> load() async {
     final file = _stateFile();
     if (!await file.exists()) {
-      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+      return const SyncAppStateStore(
+        lastClientName: 'Local Agent',
+        clients: {},
+      );
     }
 
     try {
       final raw = await file.readAsString();
       final decoded = jsonDecode(raw);
       if (decoded is! Map) {
-        return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+        return const SyncAppStateStore(
+          lastClientName: 'Local Agent',
+          clients: {},
+        );
       }
 
       final json = Map<String, dynamic>.from(decoded);
@@ -218,21 +231,30 @@ class SyncAppStateStore {
         ),
       );
     } catch (_) {
-      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+      return const SyncAppStateStore(
+        lastClientName: 'Local Agent',
+        clients: {},
+      );
     }
   }
 
   static SyncAppStateStore loadSync() {
     final file = _stateFile();
     if (!file.existsSync()) {
-      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+      return const SyncAppStateStore(
+        lastClientName: 'Local Agent',
+        clients: {},
+      );
     }
 
     try {
       final raw = file.readAsStringSync();
       final decoded = jsonDecode(raw);
       if (decoded is! Map) {
-        return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+        return const SyncAppStateStore(
+          lastClientName: 'Local Agent',
+          clients: {},
+        );
       }
 
       final json = Map<String, dynamic>.from(decoded);
@@ -249,7 +271,10 @@ class SyncAppStateStore {
         ),
       );
     } catch (_) {
-      return const SyncAppStateStore(lastClientName: 'Local Agent', clients: {});
+      return const SyncAppStateStore(
+        lastClientName: 'Local Agent',
+        clients: {},
+      );
     }
   }
 

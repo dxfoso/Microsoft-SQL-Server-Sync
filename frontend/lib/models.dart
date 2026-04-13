@@ -93,6 +93,7 @@ class AdminTableState {
     required this.rowCount,
     required this.snapshotId,
     required this.snapshotCreatedAt,
+    required this.snapshotBytes,
     required this.message,
   });
 
@@ -105,6 +106,7 @@ class AdminTableState {
   final int rowCount;
   final String? snapshotId;
   final String? snapshotCreatedAt;
+  final int snapshotBytes;
   final String message;
 
   factory AdminTableState.fromJson(Map<String, dynamic> json) {
@@ -118,6 +120,7 @@ class AdminTableState {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       snapshotId: json['snapshotId'] as String?,
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
     );
   }
@@ -145,6 +148,7 @@ class AdminJob {
     required this.completedAt,
     required this.snapshotId,
     required this.snapshotCreatedAt,
+    required this.snapshotBytes,
     required this.message,
     required this.error,
   });
@@ -163,6 +167,7 @@ class AdminJob {
   final String? completedAt;
   final String? snapshotId;
   final String? snapshotCreatedAt;
+  final int snapshotBytes;
   final String message;
   final String? error;
 
@@ -182,6 +187,7 @@ class AdminJob {
       completedAt: json['completedAt'] as String?,
       snapshotId: json['snapshotId'] as String?,
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
     );
@@ -203,6 +209,7 @@ class AdminSnapshot {
     required this.rowCount,
     required this.checksum,
     required this.createdAt,
+    required this.snapshotBytes,
     required this.columns,
     required this.previewRows,
     required this.sourceJobId,
@@ -214,6 +221,7 @@ class AdminSnapshot {
   final int rowCount;
   final String checksum;
   final String createdAt;
+  final int snapshotBytes;
   final List<String> columns;
   final List<List<String>> previewRows;
   final String? sourceJobId;
@@ -227,6 +235,7 @@ class AdminSnapshot {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       checksum: json['checksum'] as String? ?? '',
       createdAt: json['createdAt'] as String? ?? '',
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       columns: (json['columns'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
           .toList(growable: false),
@@ -250,6 +259,7 @@ class AdminSnapshotDetail {
     required this.rowCount,
     required this.checksum,
     required this.createdAt,
+    required this.snapshotBytes,
     required this.columns,
     required this.rows,
     required this.sourceJobId,
@@ -261,6 +271,7 @@ class AdminSnapshotDetail {
   final int rowCount;
   final String checksum;
   final String createdAt;
+  final int snapshotBytes;
   final List<String> columns;
   final List<Map<String, String?>> rows;
   final String? sourceJobId;
@@ -278,6 +289,7 @@ class AdminSnapshotDetail {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       checksum: json['checksum'] as String? ?? '',
       createdAt: json['createdAt'] as String? ?? '',
+      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       columns: columns,
       rows: rawRows
           .map(
