@@ -15,16 +15,20 @@ class AdminLiveState {
     return AdminLiveState(
       generatedAt: json['generatedAt'] as String? ?? '',
       agents: (json['agents'] as List<dynamic>? ?? const [])
-          .map((item) => AdminAgent.fromJson(Map<String, dynamic>.from(item as Map)))
+          .map(
+            (item) =>
+                AdminAgent.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
           .toList(growable: false),
       jobs: (json['jobs'] as List<dynamic>? ?? const [])
-          .map((item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)))
+          .map(
+            (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
           .toList(growable: false),
       snapshots: (json['snapshots'] as List<dynamic>? ?? const [])
           .map(
-            (item) => AdminSnapshot.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
+            (item) =>
+                AdminSnapshot.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false),
     );
@@ -231,6 +235,59 @@ class AdminSnapshot {
             (row) => (row as List<dynamic>)
                 .map((item) => item?.toString() ?? '')
                 .toList(growable: false),
+          )
+          .toList(growable: false),
+      sourceJobId: json['sourceJobId'] as String?,
+    );
+  }
+}
+
+class AdminSnapshotDetail {
+  const AdminSnapshotDetail({
+    required this.id,
+    required this.clientName,
+    required this.table,
+    required this.rowCount,
+    required this.checksum,
+    required this.createdAt,
+    required this.columns,
+    required this.rows,
+    required this.sourceJobId,
+  });
+
+  final String id;
+  final String clientName;
+  final String table;
+  final int rowCount;
+  final String checksum;
+  final String createdAt;
+  final List<String> columns;
+  final List<Map<String, String?>> rows;
+  final String? sourceJobId;
+
+  factory AdminSnapshotDetail.fromJson(Map<String, dynamic> json) {
+    final columns = (json['columns'] as List<dynamic>? ?? const [])
+        .map((item) => item.toString())
+        .toList(growable: false);
+    final rawRows = json['rows'] as List<dynamic>? ?? const [];
+
+    return AdminSnapshotDetail(
+      id: json['id'] as String? ?? '',
+      clientName: json['clientName'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      rowCount: (json['rowCount'] as num? ?? 0).round(),
+      checksum: json['checksum'] as String? ?? '',
+      createdAt: json['createdAt'] as String? ?? '',
+      columns: columns,
+      rows: rawRows
+          .map(
+            (row) => Map<String, String?>.fromEntries(
+              columns.map((column) {
+                final value =
+                    row is Map && row.containsKey(column) ? row[column] : null;
+                return MapEntry(column, value?.toString());
+              }),
+            ),
           )
           .toList(growable: false),
       sourceJobId: json['sourceJobId'] as String?,

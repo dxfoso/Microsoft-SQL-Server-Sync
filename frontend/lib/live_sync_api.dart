@@ -22,10 +22,15 @@ class LiveSyncApiClient {
     if (trimmed.isEmpty) {
       return 'http://localhost:9001/api';
     }
-    return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+    return trimmed.endsWith('/')
+        ? trimmed.substring(0, trimmed.length - 1)
+        : trimmed;
   }
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
+
+  Uri _uriWithQuery(String path, Map<String, String> queryParameters) =>
+      _uri(path).replace(queryParameters: queryParameters);
 
   Future<AdminLiveState> fetchLiveState() async {
     final response = await _client.get(_uri('/live-state'));
@@ -65,6 +70,34 @@ class LiveSyncApiClient {
         'Sync request failed with ${response.statusCode}.',
       );
     }
+  }
+
+  Future<AdminSnapshotDetail?> fetchLatestSnapshot({
+    required String clientName,
+    required String table,
+  }) async {
+    final response = await _client.get(
+      _uriWithQuery('/snapshots/latest', {
+        'clientName': clientName,
+        'table': table,
+      }),
+    );
+
+    if (response.statusCode == 404) {
+      return null;
+    }
+    if (response.statusCode != 200) {
+      throw LiveSyncApiException(
+        'Latest snapshot request failed with ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw const LiveSyncApiException('Unexpected latest snapshot payload.');
+    }
+
+    return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
   }
 
   Future<bool> checkHealth() async {

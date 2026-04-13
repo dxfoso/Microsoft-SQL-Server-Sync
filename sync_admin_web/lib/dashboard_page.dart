@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -13,18 +14,34 @@ class AdminDashboardPage extends StatefulWidget {
   State<AdminDashboardPage> createState() => _AdminDashboardPageState();
 }
 
-class _AdminDashboardPageState extends State<AdminDashboardPage> {
+class _AdminDashboardPageState extends State<AdminDashboardPage>
+    with SingleTickerProviderStateMixin {
   final LiveSyncApiClient _api = LiveSyncApiClient();
+  final TextEditingController _syncSearchController = TextEditingController();
+  final TextEditingController _dataSearchController = TextEditingController();
   Timer? _refreshTimer;
+  late final TabController _tabController;
 
   AdminLiveState? _state;
+  AdminSnapshotDetail? _snapshot;
   bool _loading = true;
   bool _connected = false;
+  bool _snapshotLoading = false;
   String? _error;
+  String? _snapshotError;
+  String? _selectedClientName;
+  String? _selectedTableName;
+  String? _snapshotKey;
+  String? _snapshotVersionToken;
+  int _snapshotRequestToken = 0;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this)
+      ..addListener(_handleTabChange);
+    _syncSearchController.addListener(_handleSearchChange);
+    _dataSearchController.addListener(_handleSearchChange);
     unawaited(_refreshState());
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 5),
@@ -35,8 +52,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _tabController.removeListener(_handleTabChange);
+    _tabController.dispose();
+    _syncSearchController.removeListener(_handleSearchChange);
+    _dataSearchController.removeListener(_handleSearchChange);
+    _syncSearchController.dispose();
+    _dataSearchController.dispose();
     _api.dispose();
     super.dispose();
+  }
+
+  void _handleTabChange() {
+    if (!mounted || _tabController.indexIsChanging) {
+      return;
+    }
+    setState(() {});
+  }
+
+  void _handleSearchChange() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
   }
 
   Future<void> _refreshState({bool silent = false}) async {
@@ -47,26 +84,195 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
 
     try {
-      final state = await _api.fetchLiveState();
+      final nextState = await _api.fetchLiveState();
       if (!mounted) {
         return;
       }
+
+      final nextClientName = _resolveSelectedClient(nextState);
+      final nextTableName = _resolveSelectedTable(nextState, nextClientName);
+
       setState(() {
-        _state = state;
+        _state = nextState;
+        _selectedClientName = nextClientName;
+        _selectedTableName = nextTableName;
         _connected = true;
         _loading = false;
         _error = null;
       });
+
+      unawaited(_loadSelectedSnapshot());
     } catch (error) {
       if (!mounted) {
         return;
       }
+
       setState(() {
         _connected = false;
         _loading = false;
         _error = error.toString();
       });
     }
+  }
+
+  String? _resolveSelectedClient(AdminLiveState state) {
+    if (state.agents.isEmpty) {
+      return null;
+    }
+    if (_selectedClientName != null &&
+        state.agents.any((agent) => agent.clientName == _selectedClientName)) {
+      return _selectedClientName;
+    }
+    return state.agents.first.clientName;
+  }
+
+  String? _resolveSelectedTable(AdminLiveState state, String? clientName) {
+    final agent = _agentByName(state, clientName);
+    if (agent == null || agent.tables.isEmpty) {
+      return null;
+    }
+    if (_selectedTableName != null &&
+        agent.tables.any((table) => table.table == _selectedTableName)) {
+      return _selectedTableName;
+    }
+    final preferredTable = agent.selectedTable;
+    if (preferredTable != null &&
+        agent.tables.any((table) => table.table == preferredTable)) {
+      return preferredTable;
+    }
+    return agent.tables.first.table;
+  }
+
+  AdminAgent? _agentByName(AdminLiveState? state, String? clientName) {
+    if (state == null || clientName == null) {
+      return null;
+    }
+    for (final agent in state.agents) {
+      if (agent.clientName == clientName) {
+        return agent;
+      }
+    }
+    return null;
+  }
+
+  AdminAgent? get _selectedAgent => _agentByName(_state, _selectedClientName);
+
+  List<AdminTableState> get _selectedTables =>
+      _selectedAgent?.tables ?? const <AdminTableState>[];
+
+  AdminTableState? get _selectedTableState {
+    final tableName = _selectedTableName;
+    if (tableName == null) {
+      return null;
+    }
+    for (final table in _selectedTables) {
+      if (table.table == tableName) {
+        return table;
+      }
+    }
+    return null;
+  }
+
+  List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
+
+  Future<void> _loadSelectedSnapshot({bool force = false}) async {
+    final agent = _selectedAgent;
+    final tableName = _selectedTableName;
+    final tableState = _selectedTableState;
+
+    if (agent == null || tableName == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _snapshot = null;
+        _snapshotLoading = false;
+        _snapshotError = null;
+        _snapshotKey = null;
+        _snapshotVersionToken = null;
+      });
+      return;
+    }
+
+    final nextKey = '${agent.clientName}::$tableName';
+    final snapshotCreatedAt = tableState?.snapshotCreatedAt?.trim() ?? '';
+    final nextVersion =
+        snapshotCreatedAt.isNotEmpty
+            ? snapshotCreatedAt
+            : tableState?.lastSync.trim() ?? '';
+
+    if (!force &&
+        nextKey == _snapshotKey &&
+        nextVersion == _snapshotVersionToken &&
+        (_snapshot != null || _snapshotError != null)) {
+      return;
+    }
+
+    final requestToken = ++_snapshotRequestToken;
+    if (mounted) {
+      setState(() {
+        _snapshotLoading = true;
+        _snapshotError = null;
+        _snapshotKey = nextKey;
+        _snapshotVersionToken = nextVersion;
+        _snapshot = null;
+      });
+    }
+
+    try {
+      final snapshot = await _api.fetchLatestSnapshot(
+        clientName: agent.clientName,
+        table: tableName,
+      );
+      if (!mounted || requestToken != _snapshotRequestToken) {
+        return;
+      }
+      setState(() {
+        _snapshot = snapshot;
+        _snapshotLoading = false;
+        _snapshotError =
+            snapshot == null
+                ? 'No snapshot uploaded yet for $tableName. Trigger a Push from Sync Status after the agent loads the table.'
+                : null;
+      });
+    } catch (error) {
+      if (!mounted || requestToken != _snapshotRequestToken) {
+        return;
+      }
+      setState(() {
+        _snapshotLoading = false;
+        _snapshot = null;
+        _snapshotError = error.toString();
+      });
+    }
+  }
+
+  void _selectClient(String? clientName) {
+    if (clientName == null ||
+        clientName == _selectedClientName ||
+        _state == null) {
+      return;
+    }
+    final nextTable = _resolveSelectedTable(_state!, clientName);
+    setState(() {
+      _selectedClientName = clientName;
+      _selectedTableName = nextTable;
+      _snapshot = null;
+      _snapshotError = null;
+    });
+    unawaited(_loadSelectedSnapshot(force: true));
+  }
+
+  void _selectTable(String? tableName) {
+    if (tableName == null || tableName == _selectedTableName) {
+      return;
+    }
+    setState(() {
+      _selectedTableName = tableName;
+      _snapshot = null;
+      _snapshotError = null;
+    });
+    unawaited(_loadSelectedSnapshot(force: true));
   }
 
   Future<void> _triggerJob({
@@ -84,9 +290,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return;
       }
       final action = direction == 'download' ? 'Pull' : 'Push';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('$action queued for $table on $clientName.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$action queued for $table on $clientName.')),
+      );
       await _refreshState(silent: true);
     } catch (error) {
       if (!mounted) {
@@ -125,87 +331,438 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
-  List<AdminJob> get _jobs => _state?.jobs ?? const [];
+  double _bestMatchScore(String query, String candidate) {
+    final normalizedQuery = query.trim().toLowerCase();
+    final normalizedCandidate = candidate.trim().toLowerCase();
 
-  @override
-  Widget build(BuildContext context) {
+    if (normalizedQuery.isEmpty) {
+      return 1.0;
+    }
+    if (normalizedCandidate.isEmpty) {
+      return 0.0;
+    }
+    if (normalizedCandidate == normalizedQuery) {
+      return 1000.0;
+    }
+    if (normalizedCandidate.startsWith(normalizedQuery)) {
+      return 850 - normalizedCandidate.length / 1000;
+    }
+
+    final exactIndex = normalizedCandidate.indexOf(normalizedQuery);
+    if (exactIndex >= 0) {
+      return 700.0 - exactIndex;
+    }
+
+    final tokens = normalizedQuery
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+
+    var tokenHits = 0;
+    var tokenScore = 0.0;
+    for (final token in tokens) {
+      final index = normalizedCandidate.indexOf(token);
+      if (index >= 0) {
+        tokenHits += 1;
+        tokenScore += 140 - math.min(index.toDouble(), 120);
+      }
+    }
+
+    final subsequenceScore = _subsequenceScore(
+      normalizedQuery,
+      normalizedCandidate,
+    );
+    if (tokenHits == 0 && subsequenceScore == 0) {
+      return 0.0;
+    }
+
+    if (tokens.isNotEmpty && tokenHits == tokens.length) {
+      tokenScore += 120;
+    }
+    return tokenScore + subsequenceScore;
+  }
+
+  double _subsequenceScore(String query, String candidate) {
+    var matched = 0;
+    var start = 0;
+
+    for (final codePoint in query.runes) {
+      final char = String.fromCharCode(codePoint);
+      final index = candidate.indexOf(char, start);
+      if (index == -1) {
+        continue;
+      }
+      matched += 1;
+      start = index + 1;
+    }
+
+    if (matched == 0) {
+      return 0.0;
+    }
+    return matched / query.length * 90;
+  }
+
+  List<AdminTableState> _filteredTables(List<AdminTableState> tables) {
+    final query = _syncSearchController.text.trim();
+    if (query.isEmpty) {
+      return tables;
+    }
+
+    final matches = tables
+      .map((table) {
+        final score = _bestMatchScore(
+          query,
+          [
+            table.table,
+            table.status,
+            table.message,
+            table.direction,
+            _formatTimestamp(table.lastSync),
+          ].join(' '),
+        );
+        return _ScoredTableMatch(table: table, score: score);
+      })
+      .where((match) => match.score > 0)
+      .toList(growable: false)..sort((left, right) {
+      final byScore = right.score.compareTo(left.score);
+      if (byScore != 0) {
+        return byScore;
+      }
+      return left.table.table.compareTo(right.table.table);
+    });
+
+    return matches.map((match) => match.table).toList(growable: false);
+  }
+
+  List<_ScoredSnapshotRow> _filteredSnapshotRows(AdminSnapshotDetail snapshot) {
+    final query = _dataSearchController.text.trim();
+    final matches = snapshot.rows
+        .asMap()
+        .entries
+        .map((entry) {
+          final rowText = snapshot.columns
+              .map((column) => '$column ${entry.value[column] ?? 'NULL'}')
+              .join(' ');
+          return _ScoredSnapshotRow(
+            originalIndex: entry.key,
+            row: entry.value,
+            score: query.isEmpty ? 1 : _bestMatchScore(query, rowText),
+          );
+        })
+        .where((match) => match.score > 0)
+        .toList(growable: false);
+
+    if (query.isEmpty) {
+      return matches;
+    }
+
+    matches.sort((left, right) {
+      final byScore = right.score.compareTo(left.score);
+      if (byScore != 0) {
+        return byScore;
+      }
+      return left.originalIndex.compareTo(right.originalIndex);
+    });
+    return matches;
+  }
+
+  List<AdminJob> get _selectedTableJobs {
+    final agent = _selectedAgent;
+    final table = _selectedTableName;
+    if (agent == null || table == null) {
+      return const <AdminJob>[];
+    }
+    return _jobs
+        .where(
+          (job) => job.clientName == agent.clientName && job.table == table,
+        )
+        .take(12)
+        .toList(growable: false);
+  }
+
+  Widget _buildSelectionHeader() {
+    final agent = _selectedAgent;
+    final tables = _selectedTables;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(
+            width: 320,
+            child: DropdownButtonFormField<String>(
+              value: _selectedClientName,
+              isExpanded: true,
+              decoration: _selectionDecoration('Agent'),
+              items: (_state?.agents ?? const <AdminAgent>[])
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item.clientName,
+                      child: Text(
+                        item.clientName,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged:
+                  (_state?.agents ?? const <AdminAgent>[]).isEmpty
+                      ? null
+                      : _selectClient,
+            ),
+          ),
+          SizedBox(
+            width: 320,
+            child: DropdownButtonFormField<String>(
+              value: _selectedTableName,
+              isExpanded: true,
+              decoration: _selectionDecoration('Table'),
+              items: tables
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item.table,
+                      child: Text(item.table, overflow: TextOverflow.ellipsis),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: tables.isEmpty ? null : _selectTable,
+            ),
+          ),
+          if (agent != null) ...[
+            MetricPill(label: 'Machine', value: agent.machineName),
+            MetricPill(
+              label: 'Database',
+              value: agent.database.isEmpty ? 'Not selected' : agent.database,
+            ),
+            MetricPill(
+              label: 'Heartbeat',
+              value: _formatTimestamp(agent.lastHeartbeat),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _selectionDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      isDense: true,
+      filled: true,
+      fillColor: const Color(0xFFF6F7F5),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF7C8A7A)),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    );
+  }
+
+  Widget _buildSearchField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+  }) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon:
+            controller.text.isEmpty
+                ? null
+                : IconButton(
+                  tooltip: 'Clear search',
+                  onPressed: controller.clear,
+                  icon: const Icon(Icons.close),
+                ),
+      ),
+    );
+  }
+
+  Widget _buildTableDataTab() {
+    final agent = _selectedAgent;
+    if (agent == null) {
+      return SurfaceCard(
+        title: 'Table Data',
+        subtitle:
+            'Select an agent first. Table data comes from the latest uploaded snapshot for the selected table.',
+        child: const EmptyStateCard(
+          message:
+              'No agents have registered yet. Open the Windows agent and let it connect before browsing table data here.',
+        ),
+      );
+    }
+
+    final tableState = _selectedTableState;
+    final snapshot = _snapshot;
+    final filteredRows =
+        snapshot == null
+            ? const <_ScoredSnapshotRow>[]
+            : _filteredSnapshotRows(snapshot);
+
+    return SurfaceCard(
+      title: 'Table Data',
+      subtitle:
+          'Browse the latest uploaded snapshot for ${_selectedTableName ?? 'the selected table'}. Search ranks the best matching rows first.',
+      expandChild: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSearchField(
+            controller: _dataSearchController,
+            label: 'Search Rows',
+            hint:
+                'Search across all visible columns for the best matching row.',
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              MetricPill(label: 'Agent', value: agent.clientName),
+              MetricPill(
+                label: 'Rows',
+                value:
+                    snapshot == null
+                        ? '${tableState?.rowCount ?? 0}'
+                        : '${filteredRows.length} / ${snapshot.rowCount}',
+              ),
+              MetricPill(
+                label: 'Last Sync',
+                value: _formatTimestamp(tableState?.lastSync ?? ''),
+              ),
+              MetricPill(
+                label: 'Snapshot',
+                value:
+                    snapshot == null
+                        ? 'Not available'
+                        : _formatTimestamp(snapshot.createdAt),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_snapshotLoading)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: LinearProgressIndicator(minHeight: 3),
+            ),
+          Expanded(
+            child: _buildSnapshotBody(
+              snapshot: snapshot,
+              filteredRows: filteredRows,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSnapshotBody({
+    required AdminSnapshotDetail? snapshot,
+    required List<_ScoredSnapshotRow> filteredRows,
+  }) {
+    if (_snapshotLoading && snapshot == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (snapshot == null) {
+      return EmptyStateCard(
+        message:
+            _snapshotError ??
+            'No snapshot is available yet for the selected table.',
+      );
+    }
+
+    if (filteredRows.isEmpty) {
+      return EmptyStateCard(
+        message:
+            _dataSearchController.text.trim().isEmpty
+                ? 'This snapshot has no rows.'
+                : 'No rows matched your search. Try a broader term or clear the search box.',
+      );
+    }
+
+    return _buildSnapshotGrid(snapshot, filteredRows);
+  }
+
+  Widget _buildSnapshotGrid(
+    AdminSnapshotDetail snapshot,
+    List<_ScoredSnapshotRow> filteredRows,
+  ) {
+    const rowNumberWidth = 72.0;
+    const cellWidth = 220.0;
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 1180;
-        final contentWidth = isWide ? 1360.0 : 920.0;
-        final state = _state;
+        final panelWidth =
+            constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width;
+        final totalWidth = math.max(
+          panelWidth,
+          rowNumberWidth + (snapshot.columns.length * cellWidth),
+        );
+        final panelHeight =
+            constraints.maxHeight.isFinite
+                ? constraints.maxHeight
+                : MediaQuery.sizeOf(context).height * 0.65;
 
-        return Scaffold(
-          body: DecoratedBox(
-            decoration: const BoxDecoration(color: Color(0xFFF6F7F3)),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: RefreshIndicator(
-                onRefresh: _refreshState,
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 24,
-                  ),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: contentWidth),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+        return Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF7F9F6),
+            border: Border.all(color: const Color(0xFFD9DDD8)),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: totalWidth,
+                height: panelHeight,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        DashboardHeader(
-                          isConnected: _connected,
-                          lastUpdated: _formatTimestamp(
-                            state?.generatedAt ?? '',
-                          ),
+                        _buildSnapshotHeaderCell('#', rowNumberWidth),
+                        ...snapshot.columns.map(
+                          (column) =>
+                              _buildSnapshotHeaderCell(column, cellWidth),
                         ),
-                        const SizedBox(height: 18),
-                        if (_error != null)
-                          Container(
-                            width: double.infinity,
-                            margin: const EdgeInsets.only(bottom: 18),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFF1F1),
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: const Color(0xFFF2C5C5)),
-                            ),
-                            child: Text(
-                              _error!,
-                              style: const TextStyle(color: Color(0xFFC53030)),
-                            ),
-                          ),
-                        if (_loading && state == null)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 80),
-                            child: Center(child: CircularProgressIndicator()),
-                          )
-                        else if (isWide)
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 7,
-                                child: _buildAgentsSection(state),
-                              ),
-                              const SizedBox(width: 18),
-                              Expanded(
-                                flex: 5,
-                                child: _buildJobsSection(),
-                              ),
-                            ],
-                          )
-                        else
-                          Column(
-                            children: [
-                              _buildAgentsSection(state),
-                              const SizedBox(height: 18),
-                              _buildJobsSection(),
-                            ],
-                          ),
                       ],
                     ),
-                  ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: filteredRows.length,
+                        itemBuilder: (context, index) {
+                          final match = filteredRows[index];
+                          return _buildSnapshotRow(
+                            columns: snapshot.columns,
+                            row: match.row,
+                            rowNumber: match.originalIndex + 1,
+                            rowNumberWidth: rowNumberWidth,
+                            cellWidth: cellWidth,
+                            alternate: index.isOdd,
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -215,250 +772,499 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildAgentsSection(AdminLiveState? state) {
-    final agents = state?.agents ?? const <AdminAgent>[];
+  Widget _buildSnapshotHeaderCell(String value, double width) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFFE3E8E1),
+        border: Border(bottom: BorderSide(color: Color(0xFFBFC9BE))),
+      ),
+      child: Text(
+        value,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildSnapshotRow({
+    required List<String> columns,
+    required Map<String, String?> row,
+    required int rowNumber,
+    required double rowNumberWidth,
+    required double cellWidth,
+    required bool alternate,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        _buildSnapshotBodyCell(
+          '$rowNumber',
+          rowNumberWidth,
+          alternate: alternate,
+          alignCenter: true,
+        ),
+        ...columns.map(
+          (column) => _buildSnapshotBodyCell(
+            row[column] ?? 'NULL',
+            cellWidth,
+            alternate: alternate,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSnapshotBodyCell(
+    String value,
+    double width, {
+    required bool alternate,
+    bool alignCenter = false,
+  }) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: alternate ? Colors.white : const Color(0xFFFAFBF9),
+        border: const Border(bottom: BorderSide(color: Color(0xFFE4E8E3))),
+      ),
+      child: Text(
+        value,
+        textAlign: alignCenter ? TextAlign.center : TextAlign.start,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 13),
+      ),
+    );
+  }
+
+  Widget _buildSyncStatusTab() {
+    final agent = _selectedAgent;
+    if (agent == null) {
+      return SurfaceCard(
+        title: 'Sync Status',
+        subtitle:
+            'Select an agent to inspect table sync progress and trigger uploads or downloads.',
+        child: const EmptyStateCard(
+          message:
+              'No agents are available yet. Start the Windows agent first so the control plane has a machine to inspect.',
+        ),
+      );
+    }
+
+    final filteredTables = _filteredTables(_selectedTables);
 
     return SurfaceCard(
-      title: 'Live sync',
+      title: 'Sync Status',
       subtitle:
-          'Only live machine state is shown here. Each enabled table is being synced from a frozen snapshot, not a mutable live query.',
-      child: agents.isEmpty
-          ? const Text('No agents have registered with the control plane yet.')
-          : Column(
-              children: agents
-                  .map(
-                    (agent) => Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 14),
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FBF7),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: const Color(0xFFE1E7DE)),
+          'This mirrors the Windows agent workflow: table sync state at the top, recent activity for the selected table below it.',
+      expandChild: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSearchField(
+            controller: _syncSearchController,
+            label: 'Search Tables',
+            hint:
+                'Search table names, statuses, messages, and last sync times.',
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              MetricPill(label: 'Agent', value: agent.clientName),
+              MetricPill(
+                label: 'SQL',
+                value: agent.sqlConnected ? 'Ready' : 'Offline',
+              ),
+              MetricPill(
+                label: 'Server',
+                value: agent.server.isEmpty ? 'Not set' : agent.server,
+              ),
+              MetricPill(
+                label: 'Tables',
+                value: _selectedTables.length.toString(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView(
+              children: [
+                if (filteredTables.isEmpty)
+                  EmptyStateCard(
+                    message:
+                        _syncSearchController.text.trim().isEmpty
+                            ? 'No tables are loaded on this agent yet.'
+                            : 'No tables matched your search.',
+                  )
+                else
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      headingRowColor: const WidgetStatePropertyAll(
+                        Color(0xFFE7ECE6),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                agent.clientName,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
+                      columns: const [
+                        DataColumn(label: Text('Sync')),
+                        DataColumn(label: Text('Table')),
+                        DataColumn(label: Text('Status')),
+                        DataColumn(label: Text('Progress')),
+                        DataColumn(label: Text('Rows')),
+                        DataColumn(label: Text('Last Sync')),
+                        DataColumn(label: Text('Message')),
+                        DataColumn(label: Text('Action')),
+                      ],
+                      rows: filteredTables
+                          .map(
+                            (table) => DataRow(
+                              selected: table.table == _selectedTableName,
+                              onSelectChanged: (_) => _selectTable(table.table),
+                              cells: [
+                                DataCell(
+                                  Icon(
+                                    table.enabled
+                                        ? Icons.check_circle
+                                        : Icons.pause_circle,
+                                    color:
+                                        table.enabled
+                                            ? const Color(0xFF2F855A)
+                                            : const Color(0xFF718096),
+                                    size: 18,
+                                  ),
                                 ),
-                              ),
-                              StatusBadge(
-                                label: agent.isOnline ? 'Online' : 'Offline',
-                                color:
-                                    agent.isOnline
-                                        ? const Color(0xFF2F855A)
-                                        : const Color(0xFFC53030),
-                              ),
-                              StatusBadge(
-                                label:
-                                    agent.sqlConnected ? 'SQL ready' : 'SQL down',
-                                color:
-                                    agent.sqlConnected
-                                        ? const Color(0xFF1F5561)
-                                        : const Color(0xFFD69E2E),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Server ${agent.server.isEmpty ? 'not set' : agent.server} | Database ${agent.database.isEmpty ? 'not selected' : agent.database} | Last heartbeat ${_formatTimestamp(agent.lastHeartbeat)}',
-                            style: const TextStyle(color: Color(0xFF5E6C73)),
-                          ),
-                          const SizedBox(height: 14),
-                          if (agent.tables.isEmpty)
-                            const Text(
-                              'No tables are loaded on this agent yet. Open the Table tab in the agent and load a database.',
-                            )
-                          else
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: DataTable(
-                                headingRowColor: const WidgetStatePropertyAll(
-                                  Color(0xFFE7ECE6),
+                                DataCell(Text(table.table)),
+                                DataCell(
+                                  StatusBadge(
+                                    label: table.status,
+                                    color: _statusColor(table.status),
+                                  ),
                                 ),
-                                columns: const [
-                                  DataColumn(label: Text('Sync')),
-                                  DataColumn(label: Text('Table')),
-                                  DataColumn(label: Text('Status')),
-                                  DataColumn(label: Text('Progress')),
-                                  DataColumn(label: Text('Rows')),
-                                  DataColumn(label: Text('Last sync')),
-                                  DataColumn(label: Text('Action')),
-                                ],
-                                rows: agent.tables
-                                    .map(
-                                      (table) => DataRow(
-                                        cells: [
-                                          DataCell(
-                                            Icon(
-                                              table.enabled
-                                                  ? Icons.check_circle
-                                                  : Icons.pause_circle,
-                                              color:
-                                                  table.enabled
-                                                      ? const Color(0xFF2F855A)
-                                                      : const Color(0xFF718096),
-                                              size: 18,
-                                            ),
-                                          ),
-                                          DataCell(Text(table.table)),
-                                          DataCell(
-                                            StatusBadge(
-                                              label: table.status,
-                                              color: _statusColor(table.status),
-                                            ),
-                                          ),
-                                          DataCell(
-                                            SizedBox(
-                                              width: 140,
-                                              child: Column(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment.center,
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  ProgressStrip(
-                                                    progress: table.progress,
-                                                    color: _statusColor(
-                                                      table.status,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 6),
-                                                  Text('${table.progress}%'),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(table.rowCount.toString()),
-                                          ),
-                                          DataCell(
-                                            Text(_formatTimestamp(table.lastSync)),
-                                          ),
-                                          DataCell(
-                                            Wrap(
-                                              spacing: 8,
-                                              children: [
-                                                TextButton(
-                                                  onPressed:
-                                                      table.enabled
-                                                          ? () => _triggerJob(
-                                                            clientName:
-                                                                agent.clientName,
-                                                            table: table.table,
-                                                            direction: 'upload',
-                                                          )
-                                                          : null,
-                                                  child: const Text('Push'),
-                                                ),
-                                                TextButton(
-                                                  onPressed:
-                                                      table.enabled
-                                                          ? () => _triggerJob(
-                                                            clientName:
-                                                                agent.clientName,
-                                                            table: table.table,
-                                                            direction:
-                                                                'download',
-                                                          )
-                                                          : null,
-                                                  child: const Text('Pull'),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
+                                DataCell(
+                                  SizedBox(
+                                    width: 150,
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        ProgressStrip(
+                                          progress: table.progress,
+                                          color: _statusColor(table.status),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text('${table.progress}%'),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                DataCell(Text(table.rowCount.toString())),
+                                DataCell(
+                                  Text(_formatTimestamp(table.lastSync)),
+                                ),
+                                DataCell(
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 340,
+                                    ),
+                                    child: Text(
+                                      table.message.isEmpty
+                                          ? 'No sync message yet.'
+                                          : table.message,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                                DataCell(
+                                  Wrap(
+                                    spacing: 8,
+                                    children: [
+                                      TextButton(
+                                        onPressed:
+                                            table.enabled
+                                                ? () => _triggerJob(
+                                                  clientName: agent.clientName,
+                                                  table: table.table,
+                                                  direction: 'upload',
+                                                )
+                                                : null,
+                                        child: const Text('Push'),
                                       ),
-                                    )
-                                    .toList(growable: false),
-                              ),
+                                      TextButton(
+                                        onPressed:
+                                            table.enabled
+                                                ? () => _triggerJob(
+                                                  clientName: agent.clientName,
+                                                  table: table.table,
+                                                  direction: 'download',
+                                                )
+                                                : null,
+                                        child: const Text('Pull'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ),
-                        ],
-                      ),
+                          )
+                          .toList(growable: false),
                     ),
+                  ),
+                const SizedBox(height: 18),
+                Text(
+                  '${_selectedTableName ?? 'Selected table'} activity',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (_selectedTableJobs.isEmpty)
+                  const EmptyStateCard(
+                    message:
+                        'No sync jobs have been recorded yet for the selected table.',
                   )
-                  .toList(growable: false),
+                else
+                  ..._selectedTableJobs.map(_buildJobCard),
+              ],
             ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildJobsSection() {
-    return SurfaceCard(
-      title: 'Sync progress',
-      subtitle:
-          'This feed shows queued, running, completed, and failed jobs exactly as the backend sees them.',
-      child: _jobs.isEmpty
-          ? const Text('No sync jobs have been recorded yet.')
-          : Column(
-              children: _jobs
-                  .map(
-                    (job) => Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FBF7),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFFE1E7DE)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                '${job.clientName} - ${job.table}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              StatusBadge(
-                                label: job.status,
-                                color: _statusColor(job.status),
-                              ),
-                              Text(
-                                job.direction.toUpperCase(),
-                                style: const TextStyle(
-                                  color: Color(0xFF5E6C73),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          ProgressStrip(
-                            progress: job.progress,
-                            color: _statusColor(job.status),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${job.progress}% - ${job.rowCount} rows - ${job.message}',
-                            style: const TextStyle(height: 1.4),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Updated ${_formatTimestamp(job.updatedAt)}',
-                            style: const TextStyle(color: Color(0xFF5E6C73)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                  .toList(growable: false),
+  Widget _buildJobCard(AdminJob job) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2D8CB)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StatusBadge(label: job.status, color: _statusColor(job.status)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${job.direction.toUpperCase()} - ${job.table}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ProgressStrip(
+                  progress: job.progress,
+                  color: _statusColor(job.status),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  job.message.isEmpty
+                      ? 'No job message recorded.'
+                      : job.message,
+                  style: const TextStyle(height: 1.45),
+                ),
+              ],
             ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${job.rowCount} rows',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _formatTimestamp(job.updatedAt),
+                style: const TextStyle(color: Color(0xFF5F6B76)),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
+
+  Widget _buildPinnedSummaryBar() {
+    final agent = _selectedAgent;
+    final tableState = _selectedTableState;
+    final footerItems =
+        _tabController.index == 0
+            ? <Widget>[
+              InfoLine(label: 'Agent', value: agent?.clientName ?? 'None'),
+              InfoLine(label: 'Table', value: _selectedTableName ?? 'None'),
+              InfoLine(
+                label: 'Rows',
+                value:
+                    _snapshot == null
+                        ? '${tableState?.rowCount ?? 0}'
+                        : '${_filteredSnapshotRows(_snapshot!).length}/${_snapshot!.rowCount}',
+              ),
+              InfoLine(
+                label: 'Last Sync',
+                value: _formatTimestamp(tableState?.lastSync ?? ''),
+              ),
+            ]
+            : <Widget>[
+              InfoLine(label: 'Agent', value: agent?.clientName ?? 'None'),
+              InfoLine(
+                label: 'Tables',
+                value: _selectedTables.length.toString(),
+              ),
+              InfoLine(label: 'Selected', value: _selectedTableName ?? 'None'),
+              InfoLine(
+                label: 'Progress',
+                value: tableState == null ? '0%' : '${tableState.progress}%',
+              ),
+              InfoLine(label: 'Status', value: tableState?.status ?? 'Idle'),
+              InfoLine(
+                label: 'Last Sync',
+                value: _formatTimestamp(tableState?.lastSync ?? ''),
+              ),
+            ];
+
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFC9D2C7))),
+        color: Color(0xFFF6F7F3),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Wrap(
+                spacing: 14,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: footerItems,
+              ),
+            ),
+            const SizedBox(width: 16),
+            _buildBackendStatusIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackendStatusIndicator() {
+    final color =
+        _connected ? const Color(0xFF2F855A) : const Color(0xFFC53030);
+    final label = _connected ? 'Online' : 'Offline';
+
+    return Tooltip(
+      message:
+          _state == null
+              ? 'Control plane connection status.'
+              : 'Last refresh ${_formatTimestamp(_state!.generatedAt)}',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, color: color, size: 12),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = _state;
+    final title =
+        _selectedClientName == null
+            ? 'SQL Sync Control Plane'
+            : 'SQL Sync Control Plane - $_selectedClientName';
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(icon: Icon(Icons.table_rows), text: 'Table Data'),
+            Tab(icon: Icon(Icons.sync), text: 'Sync Status'),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh now',
+            onPressed: () => unawaited(_refreshState()),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DashboardHeader(
+              isConnected: _connected,
+              lastUpdated: _formatTimestamp(state?.generatedAt ?? ''),
+              selectedAgent: _selectedClientName,
+              totalAgents: state?.agents.length ?? 0,
+              totalJobs: _jobs.where((job) => job.isActive).length,
+            ),
+            const SizedBox(height: 12),
+            _buildSelectionHeader(),
+            const SizedBox(height: 12),
+            if (_error != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: const Color(0xFFFFEEEE),
+                ),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+              ),
+            Expanded(
+              child:
+                  _loading && state == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : TabBarView(
+                        controller: _tabController,
+                        children: [_buildTableDataTab(), _buildSyncStatusTab()],
+                      ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: _buildPinnedSummaryBar(),
+    );
+  }
+}
+
+class _ScoredTableMatch {
+  const _ScoredTableMatch({required this.table, required this.score});
+
+  final AdminTableState table;
+  final double score;
+}
+
+class _ScoredSnapshotRow {
+  const _ScoredSnapshotRow({
+    required this.originalIndex,
+    required this.row,
+    required this.score,
+  });
+
+  final int originalIndex;
+  final Map<String, String?> row;
+  final double score;
 }

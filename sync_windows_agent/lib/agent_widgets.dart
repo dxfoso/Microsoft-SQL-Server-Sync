@@ -128,11 +128,13 @@ class AgentSectionShell extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
+    this.scrollChild = false,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
+  final bool scrollChild;
 
   @override
   Widget build(BuildContext context) {
@@ -163,7 +165,10 @@ class AgentSectionShell extends StatelessWidget {
             style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
           ),
           const SizedBox(height: 18),
-          child,
+          if (scrollChild)
+            Expanded(child: SingleChildScrollView(child: child))
+          else
+            child,
         ],
       ),
     );

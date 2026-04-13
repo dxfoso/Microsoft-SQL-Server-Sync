@@ -520,10 +520,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       _tableRows =
           reset
               ? List<List<String>>.from(result.rows)
-              : <List<String>>[
-                ..._tableRows,
-                ...result.rows,
-              ];
+              : <List<String>>[..._tableRows, ...result.rows];
       _rowOffset = nextOffset;
       _hasMoreRows = result.hasMoreRows;
       _totalTableRows = result.totalRows;
@@ -606,22 +603,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       _activeJobs = nextJobs.values.toList(growable: false);
     });
 
-    final current = _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
-    final timestamp =
-        job.completedAt ?? job.snapshotCreatedAt ?? job.updatedAt;
+    final current =
+        _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
+    final timestamp = job.completedAt ?? job.snapshotCreatedAt ?? job.updatedAt;
     final nextStatus = _displayStatus(job.status);
     final nextMessage = overrideMessage ?? job.error ?? job.message;
     final nextState = current.copyWith(
       enabled: current.enabled,
       status: nextStatus,
-      lastSync:
-          timestamp.trim().isEmpty ? current.lastSync : timestamp,
+      lastSync: timestamp.trim().isEmpty ? current.lastSync : timestamp,
       progress: job.progress,
       direction: job.direction,
       rowCount: job.rowCount,
       snapshotId: job.snapshotId,
-      snapshotCreatedAt:
-          job.snapshotCreatedAt ?? current.snapshotCreatedAt,
+      snapshotCreatedAt: job.snapshotCreatedAt ?? current.snapshotCreatedAt,
       message: nextMessage,
       history:
           appendHistory
@@ -650,14 +645,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     }
 
     final activeTables = _activeJobs.map((job) => job.table).toSet();
-    final dueTables =
-        _tables.where((table) {
-          final state = _syncState.tables[table] ?? _defaultSyncTableState(table);
+    final dueTables = _tables
+        .where((table) {
+          final state =
+              _syncState.tables[table] ?? _defaultSyncTableState(table);
           if (!state.enabled || activeTables.contains(table)) {
             return false;
           }
           return forceTables?.contains(table) ?? _isTableDueForUpload(state);
-        }).toList(growable: false);
+        })
+        .toList(growable: false);
 
     if (dueTables.isEmpty) {
       return;
@@ -737,8 +734,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   }
 
   Future<void> _processPendingJobs() async {
-    final pendingJobs =
-        _activeJobs.where((job) => job.isActive).toList(growable: false);
+    final pendingJobs = _activeJobs
+        .where((job) => job.isActive)
+        .toList(growable: false);
 
     for (final job in pendingJobs) {
       if (_processingJobIds.contains(job.id)) {
@@ -803,7 +801,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         success: true,
       );
     } catch (error) {
-      await _controlPlaneClient.failJob(job.id, error.toString(), progress: 100);
+      await _controlPlaneClient.failJob(
+        job.id,
+        error.toString(),
+        progress: 100,
+      );
       final failedJob = RemoteSyncJob(
         id: job.id,
         clientName: job.clientName,
@@ -898,7 +900,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
             'Applied remote snapshot ${snapshot.id} with ${snapshot.rowCount} rows. Local pre-apply snapshot captured ${localSnapshot.totalRows} rows.',
       );
     } catch (error) {
-      await _controlPlaneClient.failJob(job.id, error.toString(), progress: 100);
+      await _controlPlaneClient.failJob(
+        job.id,
+        error.toString(),
+        progress: 100,
+      );
       final failedJob = RemoteSyncJob(
         id: job.id,
         clientName: job.clientName,
@@ -933,7 +939,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     required RemoteSnapshot snapshot,
   }) async {
     if (database.isEmpty) {
-      throw Exception('Select a database before applying a downloaded snapshot.');
+      throw Exception(
+        'Select a database before applying a downloaded snapshot.',
+      );
     }
 
     final tableParts = _splitQualifiedName(table);
@@ -952,11 +960,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       throw Exception('No column metadata was found for $table.');
     }
 
-    final schemasByName = {
-      for (final schema in schemas) schema.name: schema,
-    };
+    final schemasByName = {for (final schema in schemas) schema.name: schema};
     final missingColumns =
-        snapshot.columns.where((column) => !schemasByName.containsKey(column)).toList();
+        snapshot.columns
+            .where((column) => !schemasByName.containsKey(column))
+            .toList();
     if (missingColumns.isNotEmpty) {
       throw Exception(
         'Downloaded snapshot columns do not exist locally: ${missingColumns.join(', ')}',
@@ -967,8 +975,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       (column) => schemasByName[column]?.isIdentity ?? false,
     );
     final qualifiedTable = _quoteQualifiedIdentifier(table);
-    final columnList =
-        snapshot.columns.map(_quoteIdentifier).join(', ');
+    final columnList = snapshot.columns.map(_quoteIdentifier).join(', ');
     final statements = <String>[
       'SET NOCOUNT ON;',
       'BEGIN TRY',
@@ -982,11 +989,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       final chunk = snapshot.rows.skip(index).take(rowsPerBatch);
       final values = chunk
           .map(
-            (row) => '(${snapshot.columns.map((column) => _sqlLiteral(row[column])).join(', ')})',
+            (row) =>
+                '(${snapshot.columns.map((column) => _sqlLiteral(row[column])).join(', ')})',
           )
           .join(', ');
       if (values.isNotEmpty) {
-        statements.add('INSERT INTO $qualifiedTable ($columnList) VALUES $values;');
+        statements.add(
+          'INSERT INTO $qualifiedTable ($columnList) VALUES $values;',
+        );
       }
     }
 
@@ -1047,13 +1057,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         totalRows: 0,
         snapshotCreatedAt: '',
         errorText:
-            schemaResult.errorText ??
-            'No columns were returned for $table.',
+            schemaResult.errorText ?? 'No columns were returned for $table.',
       );
     }
-    final columns = schemaResult.values.map((schema) => schema.name).toList(
-      growable: false,
-    );
+    final columns = schemaResult.values
+        .map((schema) => schema.name)
+        .toList(growable: false);
 
     final rowCountResult = await _queryTableRowCount(
       profile: profile,
@@ -1499,7 +1508,11 @@ SELECT (
 
     final jsonText = _parseJsonScalarOutput(processResult.stdout.toString());
     if (jsonText.isEmpty || jsonText == 'null') {
-      return const _SnapshotPageResult(success: true, rows: [], errorText: null);
+      return const _SnapshotPageResult(
+        success: true,
+        rows: [],
+        errorText: null,
+      );
     }
 
     final decoded = jsonDecode(jsonText);
@@ -1601,8 +1614,6 @@ SELECT (
       profile.server,
       if (database != null && database.isNotEmpty) ...['-d', database],
       '-b',
-      '-h',
-      '-1',
       '-w',
       '65535',
       '-y',
@@ -1815,7 +1826,7 @@ SELECT (
                           ),
                           _InfoLine(
                             label: 'Server',
-                          value:
+                            value:
                                 serverController.text.trim().isEmpty
                                     ? 'Not set'
                                     : serverController.text.trim(),
@@ -1833,11 +1844,11 @@ SELECT (
                   },
                   child: const Text('Cancel'),
                 ),
-              FilledButton(
-                onPressed: () async {
-                  final dialogProfile = readDialogProfile();
-                  final clientName =
-                      clientNameController.text.trim().isEmpty
+                FilledButton(
+                  onPressed: () async {
+                    final dialogProfile = readDialogProfile();
+                    final clientName =
+                        clientNameController.text.trim().isEmpty
                             ? 'Local Agent'
                             : clientNameController.text.trim();
 
@@ -1906,15 +1917,13 @@ SELECT (
   }
 
   Widget _buildSyncPanel() {
-    final syncRows =
-        _tables.map((table) {
+    final syncRows = _tables
+        .map((table) {
           final state =
               _syncState.tables[table] ?? _defaultSyncTableState(table);
-          return (
-            table: table,
-            state: state,
-          );
-        }).toList(growable: false);
+          return (table: table, state: state);
+        })
+        .toList(growable: false);
 
     if (syncRows.isEmpty) {
       return AgentSectionShell(
@@ -1934,22 +1943,22 @@ SELECT (
       (row) => row.table == selectedTableName,
       orElse: () => syncRows.first,
     );
-    final historyEntries = List<SyncHistoryEntry>.from(selectedRow.state.history)
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final historyEntries = List<SyncHistoryEntry>.from(
+      selectedRow.state.history,
+    )..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     return AgentSectionShell(
       title: 'Sync',
       subtitle:
           'Live sync status and progress for ${widget.clientName}. Every enabled table is snapshotted locally before any upload or download step.',
+      scrollChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
-              headingRowColor: WidgetStatePropertyAll(
-                const Color(0xFFE7ECE6),
-              ),
+              headingRowColor: WidgetStatePropertyAll(const Color(0xFFE7ECE6)),
               dataRowMinHeight: 54,
               dataRowMaxHeight: 64,
               columns: const [
@@ -1993,7 +2002,8 @@ SELECT (
                                         : row.state.status == 'Failed'
                                         ? const Color(0xFFC53030)
                                         : row.state.status == 'Queued' ||
-                                            row.state.status == 'Snapshotting' ||
+                                            row.state.status ==
+                                                'Snapshotting' ||
                                             row.state.status == 'Uploading' ||
                                             row.state.status == 'Downloading' ||
                                             row.state.status == 'Applying'
@@ -2009,7 +2019,9 @@ SELECT (
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     LinearProgressIndicator(
-                                      value: row.state.progress.clamp(0, 100) / 100,
+                                      value:
+                                          row.state.progress.clamp(0, 100) /
+                                          100,
                                       minHeight: 8,
                                       backgroundColor: const Color(0xFFE7ECE6),
                                       valueColor: AlwaysStoppedAnimation<Color>(
@@ -2030,7 +2042,9 @@ SELECT (
                             DataCell(Text(row.state.lastSync)),
                             DataCell(
                               ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 280),
+                                constraints: const BoxConstraints(
+                                  maxWidth: 280,
+                                ),
                                 child: Text(
                                   row.state.message.isEmpty
                                       ? 'No sync message yet.'
@@ -2183,8 +2197,7 @@ SELECT (
                                   table,
                                   maxLines: 1,
                                   minLines: 1,
-                                  scrollPhysics:
-                                      const BouncingScrollPhysics(),
+                                  scrollPhysics: const BouncingScrollPhysics(),
                                 ),
                               ),
                             )
@@ -2269,16 +2282,16 @@ SELECT (
         borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
       ),
       enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFF7C8A7A)),
-    ),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-  );
-}
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF7C8A7A)),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+    );
+  }
 
   Widget _buildTableCell(String value, double cellWidth, {required bool alt}) {
     return Container(
@@ -2323,15 +2336,13 @@ SELECT (
   }
 
   Widget _buildPinnedSummaryBar() {
-    final syncRows =
-        _tables.map((table) {
+    final syncRows = _tables
+        .map((table) {
           final state =
               _syncState.tables[table] ?? _defaultSyncTableState(table);
-          return (
-            table: table,
-            state: state,
-          );
-        }).toList(growable: false);
+          return (table: table, state: state);
+        })
+        .toList(growable: false);
 
     final selectedSyncTableName = _selectedSyncTableName(
       syncRows.map((row) => row.table).toList(growable: false),
@@ -2343,16 +2354,17 @@ SELECT (
               (row) => row.table == selectedSyncTableName,
               orElse: () => syncRows.first,
             );
-    final activeSyncCount = syncRows
-        .where(
-          (row) =>
-              row.state.status == 'Queued' ||
-              row.state.status == 'Snapshotting' ||
-              row.state.status == 'Uploading' ||
-              row.state.status == 'Downloading' ||
-              row.state.status == 'Applying',
-        )
-        .length;
+    final activeSyncCount =
+        syncRows
+            .where(
+              (row) =>
+                  row.state.status == 'Queued' ||
+                  row.state.status == 'Snapshotting' ||
+                  row.state.status == 'Uploading' ||
+                  row.state.status == 'Downloading' ||
+                  row.state.status == 'Applying',
+            )
+            .length;
 
     final footerItems =
         _tabController.index == 1
@@ -2366,9 +2378,10 @@ SELECT (
               _InfoLine(label: 'Active', value: activeSyncCount.toString()),
               _InfoLine(
                 label: 'Progress',
-                value: selectedSyncRow == null
-                    ? '0%'
-                    : '${selectedSyncRow.state.progress}%',
+                value:
+                    selectedSyncRow == null
+                        ? '0%'
+                        : '${selectedSyncRow.state.progress}%',
               ),
               _InfoLine(
                 label: 'Status',
@@ -2381,9 +2394,10 @@ SELECT (
               _InfoLine(label: 'Rows', value: _totalTableRows.toString()),
               _InfoLine(
                 label: 'Loaded',
-                value: _selectedTable == null
-                    ? 'No table selected'
-                    : (_rowsLoading ? 'Loading' : 'Ready'),
+                value:
+                    _selectedTable == null
+                        ? 'No table selected'
+                        : (_rowsLoading ? 'Loading' : 'Ready'),
               ),
             ];
 
@@ -2437,10 +2451,7 @@ SELECT (
         children: [
           Icon(Icons.circle, color: color, size: 12),
           const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
         ],
       ),
     );
@@ -2662,10 +2673,7 @@ SELECT (
         padding: const EdgeInsets.all(16),
         child: TabBarView(
           controller: _tabController,
-          children: [
-            _buildTableTab(),
-            _buildSyncTab(),
-          ],
+          children: [_buildTableTab(), _buildSyncTab()],
         ),
       ),
       bottomNavigationBar: _buildPinnedSummaryBar(),
