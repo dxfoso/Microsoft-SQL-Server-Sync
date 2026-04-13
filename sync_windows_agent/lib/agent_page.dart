@@ -55,6 +55,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   int? _sortColumnIndex;
   bool _sortAscending = true;
   String? _selectedSyncTable;
+  _SyncDetailMode _syncDetailMode = _SyncDetailMode.overview;
   int _totalTableRows = 0;
   bool _serverConnected = false;
   bool _checkingServerConnection = false;
@@ -265,6 +266,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   String? _selectedSyncTableName(List<String> tableNames) {
     if (_selectedSyncTable != null && tableNames.contains(_selectedSyncTable)) {
       return _selectedSyncTable;
+    }
+    if (_selectedTable != null && tableNames.contains(_selectedTable)) {
+      return _selectedTable;
     }
     return tableNames.isNotEmpty ? tableNames.first : null;
   }
@@ -711,6 +715,60 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
 
   String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'Paused':
+        return const Color(0xFF718096);
+      case 'Failed':
+        return const Color(0xFFC53030);
+      case 'Queued':
+      case 'Snapshotting':
+      case 'Uploading':
+      case 'Downloading':
+      case 'Applying':
+        return const Color(0xFFD69E2E);
+      default:
+        return const Color(0xFF2F855A);
+    }
+  }
+
+  bool _isSyncBusyStatus(String status) {
+    switch (status) {
+      case 'Queued':
+      case 'Snapshotting':
+      case 'Uploading':
+      case 'Downloading':
+      case 'Applying':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  List<_SyncTableRowData> _syncRows() => _tables
+      .map(
+        (table) => _SyncTableRowData(
+          table: table,
+          state: _syncState.tables[table] ?? _defaultSyncTableState(table),
+        ),
+      )
+      .toList(growable: false);
+
+  _SyncTableRowData? _selectedSyncRow(List<_SyncTableRowData> syncRows) {
+    final selectedTableName = _selectedSyncTableName(
+      syncRows.map((row) => row.table).toList(growable: false),
+    );
+    if (selectedTableName == null) {
+      return null;
+    }
+    for (final row in syncRows) {
+      if (row.table == selectedTableName) {
+        return row;
+      }
+    }
+    return syncRows.isEmpty ? null : syncRows.first;
+  }
 
   Set<String> _setClientRole(bool isMaster) {
     final enabledTables = <String>{};
@@ -2383,41 +2441,61 @@ SELECT (
   }
 
   Widget _buildSyncPanel() {
-    final syncRows = _tables
-        .map((table) {
-          final state =
-              _syncState.tables[table] ?? _defaultSyncTableState(table);
-          return (table: table, state: state);
-        })
-        .toList(growable: false);
+    final syncRows = _syncRows();
 
     if (syncRows.isEmpty) {
-      return AgentSectionShell(
-        title: 'Sync',
+      return AgentSurfaceCard(
+        title: 'Sync Tables',
         subtitle:
-            'Load a database on the Table tab first. The live sync page only shows real SQL tables from the selected database.',
-        child: const Text(
-          'No live tables are available yet. Open the Table tab, choose a database, and let the agent read the table list.',
+            'Load a database on the Table tab first. The sync layout only shows real SQL tables from the selected database.',
+        child: const AgentEmptyStateCard(
+          message:
+              'No live tables are available yet. Open the Table tab, choose a database, and let the agent read the table list.',
         ),
       );
     }
 
-    final selectedTableName = _selectedSyncTableName(
-      syncRows.map((row) => row.table).toList(growable: false),
-    );
-    final selectedRow = syncRows.firstWhere(
-      (row) => row.table == selectedTableName,
-      orElse: () => syncRows.first,
-    );
-    final historyEntries = List<SyncHistoryEntry>.from(
-      selectedRow.state.history,
-    )..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final selectedRow = _selectedSyncRow(syncRows);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stackPanels = constraints.maxWidth < 1380;
+        final tableListCard = _buildSyncTableListCard(syncRows, selectedRow);
+        final detailCard = _buildSyncDetailCard(selectedRow);
 
-    return AgentSectionShell(
-      title: 'Sync',
+        if (stackPanels) {
+          return Column(
+            children: [
+              Expanded(flex: 7, child: tableListCard),
+              const SizedBox(height: 16),
+              Expanded(flex: 6, child: detailCard),
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 7, child: tableListCard),
+            const SizedBox(width: 16),
+            Expanded(flex: 5, child: detailCard),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSyncTableListCard(
+    List<_SyncTableRowData> syncRows,
+    _SyncTableRowData? selectedRow,
+  ) {
+    final activeSyncCount =
+        syncRows.where((row) => _isSyncBusyStatus(row.state.status)).length;
+
+    return AgentSurfaceCard(
+      title: 'Sync Tables',
       subtitle:
-          'Live sync status, backup size, and table file actions for ${widget.clientName}. Master clients upload snapshots, while slave clients download the latest master snapshot and apply it locally.',
-      scrollChild: true,
+          'This is the main sync table list. Click a table row to open its right-side sync history and details.',
+      expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2425,263 +2503,449 @@ SELECT (
             spacing: 12,
             runSpacing: 12,
             children: [
-              _buildRoleIndicator(_isMasterClient),
-              _InfoLine(
-                label: 'Mode',
-                value:
-                    _isMasterClient
-                        ? 'Upload to website'
-                        : 'Download from website',
+              AgentMetricPill(label: 'Client', value: widget.clientName),
+              AgentMetricPill(
+                label: 'Role',
+                value: _roleLabel(_isMasterClient),
+              ),
+              AgentMetricPill(
+                label: 'Tables',
+                value: syncRows.length.toString(),
+              ),
+              AgentMetricPill(
+                label: 'Active',
+                value: activeSyncCount.toString(),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: WidgetStatePropertyAll(const Color(0xFFE7ECE6)),
-              dataRowMinHeight: 48,
-              dataRowMaxHeight: 56,
-              columns: const [
-                DataColumn(label: Text('Sync')),
-                DataColumn(label: Text('Role')),
-                DataColumn(label: Text('Table')),
-                DataColumn(label: Text('Status')),
-                DataColumn(label: Text('Progress')),
-                DataColumn(label: Text('Rows')),
-                DataColumn(label: Text('Last Sync')),
-                DataColumn(label: Text('Backup')),
-                DataColumn(label: Text('File')),
-                DataColumn(label: Text('Message')),
-              ],
-              rows:
-                  syncRows
-                      .map(
-                        (row) => DataRow(
-                          selected: row.table == selectedTableName,
-                          onSelectChanged: (_) {
-                            setState(() {
-                              _selectedSyncTable = row.table;
-                            });
-                          },
-                          cells: [
-                            DataCell(
-                              Checkbox(
-                                value: row.state.enabled,
-                                onChanged: (value) {
-                                  if (value == null) {
-                                    return;
-                                  }
-                                  _updateSyncEnabledTable(row.table, value);
-                                },
-                              ),
-                            ),
-                            DataCell(
-                              _buildRoleIndicator(
-                                _isMasterClient,
-                                showLabel: false,
-                              ),
-                            ),
-                            DataCell(Text(row.table)),
-                            DataCell(
-                              AgentStatusPill(
-                                label: row.state.status,
-                                color:
-                                    row.state.status == 'Paused'
-                                        ? const Color(0xFF718096)
-                                        : row.state.status == 'Failed'
-                                        ? const Color(0xFFC53030)
-                                        : row.state.status == 'Queued' ||
-                                            row.state.status ==
-                                                'Snapshotting' ||
-                                            row.state.status == 'Uploading' ||
-                                            row.state.status == 'Downloading' ||
-                                            row.state.status == 'Applying'
-                                        ? const Color(0xFFD69E2E)
-                                        : const Color(0xFF2F855A),
-                              ),
-                            ),
-                            DataCell(
-                              SizedBox(
-                                width: 132,
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    LinearProgressIndicator(
-                                      value:
-                                          row.state.progress.clamp(0, 100) /
-                                          100,
-                                      minHeight: 6,
-                                      backgroundColor: const Color(0xFFE7ECE6),
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        row.state.status == 'Failed'
-                                            ? const Color(0xFFC53030)
-                                            : row.state.status == 'Paused'
-                                            ? const Color(0xFF718096)
-                                            : const Color(0xFF2F855A),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text('${row.state.progress}%'),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            DataCell(Text(row.state.rowCount.toString())),
-                            DataCell(
-                              Text(_formatTimestamp(row.state.lastSync)),
-                            ),
-                            DataCell(
-                              Text(_formatBytes(row.state.snapshotBytes)),
-                            ),
-                            DataCell(
-                              Wrap(
-                                spacing: 4,
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Download backup file',
-                                    onPressed:
-                                        _selectedDatabase == null ||
-                                                _isFileBusy(row.table)
-                                            ? null
-                                            : () =>
-                                                _exportTableBackup(row.table),
-                                    icon: const Icon(Icons.download_rounded),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Upload backup file',
-                                    onPressed:
-                                        _selectedDatabase == null ||
-                                                _isFileBusy(row.table)
-                                            ? null
-                                            : () =>
-                                                _importTableBackup(row.table),
-                                    icon: const Icon(Icons.upload_file_rounded),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            DataCell(
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 220,
-                                ),
-                                child: Text(
-                                  row.state.message.isEmpty
-                                      ? 'No sync message yet.'
-                                      : row.state.message,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                      .toList(),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            '$selectedTableName history',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 10),
-          if (historyEntries.isEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFE2D8CB)),
-              ),
-              child: const Text('No sync history recorded for this table.'),
-            )
-          else
-            ...historyEntries.map(
-              (entry) => Container(
-                width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFE2D8CB)),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AgentStatusPill(
-                      label: entry.success ? 'Success' : 'Failed',
-                      color:
-                          entry.success
-                              ? const Color(0xFF2F855A)
-                              : const Color(0xFFC53030),
+          const SizedBox(height: 14),
+          Expanded(
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    showCheckboxColumn: false,
+                    headingRowColor: const WidgetStatePropertyAll(
+                      Color(0xFFE7ECE6),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entry.status,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            entry.message,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 6,
-                            children: [
-                              Text(
-                                '${entry.rowCount} rows',
-                                style: const TextStyle(
-                                  color: Color(0xFF5F6B76),
+                    dataRowMinHeight: 48,
+                    dataRowMaxHeight: 56,
+                    columns: const [
+                      DataColumn(label: Text('Sync')),
+                      DataColumn(label: Text('Role')),
+                      DataColumn(label: Text('Table')),
+                      DataColumn(label: Text('Status')),
+                      DataColumn(label: Text('Progress')),
+                      DataColumn(label: Text('Rows')),
+                      DataColumn(label: Text('Last Sync')),
+                      DataColumn(label: Text('Backup')),
+                    ],
+                    rows: syncRows
+                        .map(
+                          (row) => DataRow(
+                            selected: row.table == selectedRow?.table,
+                            onSelectChanged: (_) {
+                              setState(() {
+                                _selectedSyncTable = row.table;
+                                _syncDetailMode = _SyncDetailMode.history;
+                              });
+                            },
+                            cells: [
+                              DataCell(
+                                Checkbox(
+                                  value: row.state.enabled,
+                                  onChanged: (value) {
+                                    if (value == null) {
+                                      return;
+                                    }
+                                    _updateSyncEnabledTable(row.table, value);
+                                  },
                                 ),
                               ),
-                              Text(
-                                _formatBytes(entry.snapshotBytes),
-                                style: const TextStyle(
-                                  color: Color(0xFF5F6B76),
+                              DataCell(
+                                _buildRoleIndicator(
+                                  _isMasterClient,
+                                  showLabel: false,
                                 ),
                               ),
-                              Text(
-                                '${entry.progress}%',
-                                style: const TextStyle(
-                                  color: Color(0xFF5F6B76),
-                                  fontWeight: FontWeight.w700,
+                              DataCell(Text(row.table)),
+                              DataCell(
+                                AgentStatusPill(
+                                  label: row.state.status,
+                                  color: _statusColor(row.state.status),
                                 ),
+                              ),
+                              DataCell(
+                                SizedBox(
+                                  width: 132,
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      AgentProgressStrip(
+                                        progress: row.state.progress,
+                                        color: _statusColor(row.state.status),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text('${row.state.progress}%'),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              DataCell(Text(row.state.rowCount.toString())),
+                              DataCell(
+                                Text(_formatTimestamp(row.state.lastSync)),
+                              ),
+                              DataCell(
+                                Text(_formatBytes(row.state.snapshotBytes)),
                               ),
                             ],
                           ),
-                        ],
+                        )
+                        .toList(growable: false),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSyncDetailCard(_SyncTableRowData? selectedRow) {
+    if (selectedRow == null) {
+      return const AgentSurfaceCard(
+        title: 'Sync Details',
+        subtitle:
+            'Choose a table from the main sync list to inspect its history or current sync state.',
+        child: AgentEmptyStateCard(
+          message:
+              'No sync table is selected yet. Click a table row on the left to open its side detail card.',
+        ),
+      );
+    }
+
+    return AgentSurfaceCard(
+      title: selectedRow.table,
+      subtitle:
+          'Use Overview for the current sync state and actions, or History for recent sync runs for this table.',
+      expandChild: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              AgentMetricPill(label: 'Status', value: selectedRow.state.status),
+              AgentMetricPill(
+                label: 'Last Sync',
+                value: _formatTimestamp(selectedRow.state.lastSync),
+              ),
+              AgentMetricPill(
+                label: 'Rows',
+                value: selectedRow.state.rowCount.toString(),
+              ),
+              AgentMetricPill(
+                label: 'Backup',
+                value: _formatBytes(selectedRow.state.snapshotBytes),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SegmentedButton<_SyncDetailMode>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment<_SyncDetailMode>(
+                value: _SyncDetailMode.overview,
+                icon: Icon(Icons.sync_alt_rounded),
+                label: Text('Overview'),
+              ),
+              ButtonSegment<_SyncDetailMode>(
+                value: _SyncDetailMode.history,
+                icon: Icon(Icons.history_rounded),
+                label: Text('History'),
+              ),
+            ],
+            selected: <_SyncDetailMode>{_syncDetailMode},
+            onSelectionChanged: (selection) {
+              if (selection.isEmpty) {
+                return;
+              }
+              setState(() {
+                _syncDetailMode = selection.first;
+              });
+            },
+          ),
+          const SizedBox(height: 14),
+          Expanded(
+            child:
+                _syncDetailMode == _SyncDetailMode.overview
+                    ? _buildSyncOverviewSide(selectedRow)
+                    : _buildSyncHistorySide(selectedRow),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSyncOverviewSide(_SyncTableRowData row) {
+    final busy = _isFileBusy(row.table);
+    final statusColor = _statusColor(row.state.status);
+
+    return ListView(
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _buildRoleIndicator(_isMasterClient),
+            AgentMetricPill(
+              label: 'Mode',
+              value:
+                  _isMasterClient
+                      ? 'Upload to website'
+                      : 'Download from website',
+            ),
+            AgentMetricPill(
+              label: 'Enabled',
+              value: row.state.enabled ? 'Yes' : 'No',
+            ),
+            AgentMetricPill(label: 'Progress', value: '${row.state.progress}%'),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Current Progress',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFD9DDD8)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AgentProgressStrip(
+                progress: row.state.progress,
+                color: statusColor,
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  AgentStatusPill(label: row.state.status, color: statusColor),
+                  Text(
+                    '${row.state.progress}% complete',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                row.state.message.isEmpty
+                    ? 'No sync message yet.'
+                    : row.state.message,
+                style: const TextStyle(height: 1.45),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Actions',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            ElevatedButton.icon(
+              onPressed:
+                  _selectedDatabase == null || busy
+                      ? null
+                      : () => _exportTableBackup(row.table),
+              icon: const Icon(Icons.download_rounded),
+              label: const Text('Download Backup'),
+            ),
+            ElevatedButton.icon(
+              onPressed:
+                  _selectedDatabase == null || busy
+                      ? null
+                      : () => _importTableBackup(row.table),
+              icon: const Icon(Icons.upload_file_rounded),
+              label: const Text('Upload Backup'),
+            ),
+            OutlinedButton.icon(
+              onPressed:
+                  row.state.enabled
+                      ? () => _triggerSyncNow(row.table, direction: 'upload')
+                      : null,
+              icon: const Icon(Icons.cloud_upload_rounded),
+              label: const Text('Push Now'),
+            ),
+            OutlinedButton.icon(
+              onPressed:
+                  row.state.enabled
+                      ? () => _triggerSyncNow(row.table, direction: 'download')
+                      : null,
+              icon: const Icon(Icons.cloud_download_rounded),
+              label: const Text('Pull Now'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () {
+                _tabController.animateTo(0);
+                if (_selectedTable != row.table) {
+                  _selectTable(row.table);
+                }
+              },
+              icon: const Icon(Icons.table_rows_outlined),
+              label: const Text('Open Table Data'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _triggerSyncNow(
+    String table, {
+    required String direction,
+  }) async {
+    if (_selectedDatabase == null) {
+      return;
+    }
+
+    try {
+      final queuedJobs = await _controlPlaneClient.createJobs(
+        clientName: widget.clientName,
+        tables: [table],
+        direction: direction,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        final merged = <String, RemoteSyncJob>{
+          for (final job in _activeJobs) job.id: job,
+          for (final job in queuedJobs) job.id: job,
+        };
+        _activeJobs = merged.values.toList(growable: false);
+      });
+
+      for (final job in queuedJobs) {
+        _applyRemoteJobState(job);
+      }
+
+      await _processPendingJobs();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Widget _buildSyncHistorySide(_SyncTableRowData row) {
+    final historyEntries = List<SyncHistoryEntry>.from(row.state.history)
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    if (historyEntries.isEmpty) {
+      return const AgentEmptyStateCard(
+        message: 'No sync history recorded for this table yet.',
+      );
+    }
+
+    return ListView.separated(
+      itemCount: historyEntries.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final entry = historyEntries[index];
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFD9DDD8)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AgentStatusPill(
+                label: entry.success ? 'Success' : 'Failed',
+                color:
+                    entry.success
+                        ? const Color(0xFF2F855A)
+                        : const Color(0xFFC53030),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entry.status,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Text(
-                      _formatTimestamp(entry.timestamp),
-                      style: const TextStyle(color: Color(0xFF5F6B76)),
+                    const SizedBox(height: 4),
+                    Text(entry.message, style: const TextStyle(height: 1.35)),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 6,
+                      children: [
+                        Text(
+                          '${entry.rowCount} rows',
+                          style: const TextStyle(color: Color(0xFF5F6B76)),
+                        ),
+                        Text(
+                          _formatBytes(entry.snapshotBytes),
+                          style: const TextStyle(color: Color(0xFF5F6B76)),
+                        ),
+                        Text(
+                          '${entry.progress}%',
+                          style: const TextStyle(
+                            color: Color(0xFF5F6B76),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-            ),
-        ],
-      ),
+              const SizedBox(width: 12),
+              Text(
+                _formatTimestamp(entry.timestamp),
+                style: const TextStyle(color: Color(0xFF5F6B76)),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -3270,6 +3534,15 @@ SELECT (
       bottomNavigationBar: _buildPinnedSummaryBar(),
     );
   }
+}
+
+enum _SyncDetailMode { overview, history }
+
+class _SyncTableRowData {
+  const _SyncTableRowData({required this.table, required this.state});
+
+  final String table;
+  final SyncTableState state;
 }
 
 class _SqlConnectionProfile {
