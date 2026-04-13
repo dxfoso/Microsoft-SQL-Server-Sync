@@ -1,11 +1,12 @@
-import 'dart:math' as math;
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import 'agent_widgets.dart';
-import 'sample_data.dart';
+import 'live_sync_api.dart';
 import 'sync_state.dart';
 
 class AgentDashboardPage extends StatefulWidget {
@@ -31,7 +32,8 @@ class AgentDashboardPage extends StatefulWidget {
 class _AgentDashboardPageState extends State<AgentDashboardPage>
     with SingleTickerProviderStateMixin {
   static const int _rowsPerPage = 25;
-  static const String _serverCheckUrl = 'https://sync.velvet-leaf.com/';
+  static const Duration _syncPollInterval = Duration(seconds: 15);
+  static const Duration _autoUploadInterval = Duration(minutes: 1);
 
   final TextEditingController _serverController = TextEditingController(
     text: 'localhost',
@@ -39,9 +41,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final ScrollController _tableScrollController = ScrollController();
+  final AgentControlPlaneClient _controlPlaneClient = AgentControlPlaneClient();
   late SyncClientState _syncState;
   late final TabController _tabController;
   Timer? _connectionCheckTimer;
+  Timer? _syncPollTimer;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -54,6 +58,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
   bool _serverConnected = false;
   bool _checkingServerConnection = false;
   DateTime? _lastServerCheck;
+  bool _syncLoopBusy = false;
+  List<RemoteSyncJob> _activeJobs = const [];
+  final Set<String> _processingJobIds = <String>{};
 
   List<String> _databases = const [];
   String? _selectedDatabase;
@@ -74,17 +81,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       const Duration(minutes: 1),
       (_) => unawaited(_checkServerConnection()),
     );
+    _syncPollTimer = Timer.periodic(
+      _syncPollInterval,
+      (_) => unawaited(_syncWithControlPlane()),
+    );
     if (widget.autoLoadOnStart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
         }
-        _refreshConnection(loadTables: true);
+        unawaited(_refreshConnection(loadTables: true));
       });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         unawaited(_checkServerConnection());
+        unawaited(_syncWithControlPlane());
       }
     });
   }
@@ -94,6 +106,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     _connectionCheckTimer?.cancel();
+    _syncPollTimer?.cancel();
+    _controlPlaneClient.dispose();
     _serverController.dispose();
     _userController.dispose();
     _passwordController.dispose();
@@ -117,20 +131,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       _checkingServerConnection = true;
     });
 
-    var online = false;
-    try {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 5);
-      final request = await client.getUrl(Uri.parse(_serverCheckUrl));
-      final response = await request.close().timeout(
-            const Duration(seconds: 5),
-          );
-      online = response.statusCode < 500;
-      await response.drain<void>();
-      client.close(force: true);
-    } catch (_) {
-      online = false;
-    }
+    final online = await _controlPlaneClient.checkHealth();
 
     if (!mounted) {
       return;
@@ -153,50 +154,91 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     widget.onSyncStateChanged(nextState);
   }
 
+  void _replaceSyncState(SyncClientState nextState) {
+    setState(() {
+      _syncState = nextState;
+    });
+    widget.onSyncStateChanged(nextState);
+  }
+
+  List<SyncHistoryEntry> _appendHistory(
+    List<SyncHistoryEntry> current,
+    SyncHistoryEntry entry,
+  ) {
+    final next = List<SyncHistoryEntry>.from(current)..insert(0, entry);
+    if (next.length > 20) {
+      next.removeRange(20, next.length);
+    }
+    return next;
+  }
+
   void _updateSyncEnabledTable(String table, bool enabled) {
     final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
     final now = DateTime.now().toIso8601String();
-    final nextStatus = enabled ? 'Synced' : 'Paused';
-    final nextHistory = List<SyncHistoryEntry>.from(current.history)
-      ..add(
-        SyncHistoryEntry(
-          timestamp: now,
-          table: table,
-          status: nextStatus,
-          success: enabled,
-          message: enabled ? 'Sync enabled for client ${widget.clientName}.' : 'Sync paused for client ${widget.clientName}.',
-        ),
-      );
+    final nextStatus = enabled ? 'Queued' : 'Paused';
+    final nextHistory = _appendHistory(
+      current.history,
+      SyncHistoryEntry(
+        timestamp: now,
+        table: table,
+        status: nextStatus,
+        success: enabled,
+        message:
+            enabled
+                ? 'Remote sync enabled for ${widget.clientName}.'
+                : 'Remote sync paused for ${widget.clientName}.',
+        direction: current.direction,
+        rowCount: current.rowCount,
+        progress: enabled ? 0 : current.progress,
+        snapshotId: current.snapshotId,
+      ),
+    );
     _updateSyncTableState(
       table,
       current.copyWith(
         enabled: enabled,
         status: nextStatus,
-        lastSync: now,
+        lastSync: enabled ? current.lastSync : now,
+        progress: enabled ? 0 : current.progress,
+        message:
+            enabled
+                ? 'Waiting for the next live snapshot upload.'
+                : 'Sync disabled.',
         history: nextHistory,
       ),
     );
+    if (enabled) {
+      unawaited(_queueEnabledUploads(forceTables: {table}));
+    }
   }
 
   SyncTableState _defaultSyncTableState(String table) {
-    final fallback = discoveredTables.firstWhere(
-      (entry) => entry.name == table,
-      orElse: () => discoveredTables.first,
-    );
     return SyncTableState(
-      enabled: fallback.syncEnabled,
-      status: fallback.syncStatus,
-      lastSync: fallback.lastSync,
-      history: [
-        SyncHistoryEntry(
-          timestamp: fallback.lastSync,
-          table: fallback.name,
-          status: fallback.syncStatus,
-          success: fallback.syncStatus != 'Failed',
-          message: 'Seeded from sample data.',
-        ),
-      ],
+      enabled: false,
+      status: 'Paused',
+      lastSync: '',
+      progress: 0,
+      direction: 'upload',
+      rowCount: 0,
+      snapshotId: null,
+      snapshotCreatedAt: null,
+      message: 'Remote sync disabled.',
+      history: const [],
     );
+  }
+
+  void _ensureSyncTablesLoaded(Iterable<String> tableNames) {
+    final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+    var changed = false;
+    for (final table in tableNames) {
+      if (!nextTables.containsKey(table)) {
+        nextTables[table] = _defaultSyncTableState(table);
+        changed = true;
+      }
+    }
+    if (changed) {
+      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+    }
   }
 
   @override
@@ -204,6 +246,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.clientName != widget.clientName) {
       _syncState = widget.initialSyncState;
+      unawaited(_syncWithControlPlane());
     }
   }
 
@@ -369,6 +412,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       _tables = result.values;
       _selectedTable = selectedTable;
     });
+    _ensureSyncTablesLoaded(result.values);
 
     if (autoLoadRows && selectedTable != null) {
       await _loadTableRows(
@@ -380,6 +424,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
         orderAscending: true,
       );
     }
+    unawaited(_syncWithControlPlane());
   }
 
   String? _preferredDatabase(List<String> databases) {
@@ -502,6 +547,564 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       reset: true,
       orderByColumn: sortColumn,
       orderAscending: _sortAscending,
+    );
+  }
+
+  Map<String, SyncTableState> _heartbeatTablesPayload() {
+    if (_tables.isEmpty) {
+      return _syncState.tables;
+    }
+
+    return Map<String, SyncTableState>.fromEntries(
+      _tables.map(
+        (table) => MapEntry(
+          table,
+          _syncState.tables[table] ?? _defaultSyncTableState(table),
+        ),
+      ),
+    );
+  }
+
+  String _displayStatus(String status) {
+    if (status.isEmpty) {
+      return 'Idle';
+    }
+    final normalized = status.replaceAll('_', ' ').trim();
+    return normalized.isEmpty
+        ? 'Idle'
+        : normalized[0].toUpperCase() + normalized.substring(1);
+  }
+
+  bool _isTableDueForUpload(SyncTableState state) {
+    if (!state.enabled) {
+      return false;
+    }
+    if (state.lastSync.trim().isEmpty) {
+      return true;
+    }
+    final parsed = DateTime.tryParse(state.lastSync);
+    if (parsed == null) {
+      return true;
+    }
+    return DateTime.now().difference(parsed).abs() >= _autoUploadInterval;
+  }
+
+  void _applyRemoteJobState(
+    RemoteSyncJob job, {
+    bool appendHistory = false,
+    bool success = true,
+    String? overrideMessage,
+  }) {
+    setState(() {
+      final nextJobs = <String, RemoteSyncJob>{
+        for (final item in _activeJobs)
+          if (item.id != job.id) item.id: item,
+      };
+      if (job.isActive) {
+        nextJobs[job.id] = job;
+      }
+      _activeJobs = nextJobs.values.toList(growable: false);
+    });
+
+    final current = _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
+    final timestamp =
+        job.completedAt ?? job.snapshotCreatedAt ?? job.updatedAt;
+    final nextStatus = _displayStatus(job.status);
+    final nextMessage = overrideMessage ?? job.error ?? job.message;
+    final nextState = current.copyWith(
+      enabled: current.enabled,
+      status: nextStatus,
+      lastSync:
+          timestamp.trim().isEmpty ? current.lastSync : timestamp,
+      progress: job.progress,
+      direction: job.direction,
+      rowCount: job.rowCount,
+      snapshotId: job.snapshotId,
+      snapshotCreatedAt:
+          job.snapshotCreatedAt ?? current.snapshotCreatedAt,
+      message: nextMessage,
+      history:
+          appendHistory
+              ? _appendHistory(
+                current.history,
+                SyncHistoryEntry(
+                  timestamp: timestamp,
+                  table: job.table,
+                  status: nextStatus,
+                  success: success,
+                  message: nextMessage,
+                  direction: job.direction,
+                  rowCount: job.rowCount,
+                  progress: job.progress,
+                  snapshotId: job.snapshotId,
+                ),
+              )
+              : current.history,
+    );
+    _updateSyncTableState(job.table, nextState);
+  }
+
+  Future<void> _queueEnabledUploads({Set<String>? forceTables}) async {
+    if (_tables.isEmpty || _selectedDatabase == null) {
+      return;
+    }
+
+    final activeTables = _activeJobs.map((job) => job.table).toSet();
+    final dueTables =
+        _tables.where((table) {
+          final state = _syncState.tables[table] ?? _defaultSyncTableState(table);
+          if (!state.enabled || activeTables.contains(table)) {
+            return false;
+          }
+          return forceTables?.contains(table) ?? _isTableDueForUpload(state);
+        }).toList(growable: false);
+
+    if (dueTables.isEmpty) {
+      return;
+    }
+
+    final queuedJobs = await _controlPlaneClient.createJobs(
+      clientName: widget.clientName,
+      tables: dueTables,
+      direction: 'upload',
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      final merged = <String, RemoteSyncJob>{
+        for (final job in _activeJobs) job.id: job,
+        for (final job in queuedJobs) job.id: job,
+      };
+      _activeJobs = merged.values.toList(growable: false);
+    });
+
+    for (final job in queuedJobs) {
+      _applyRemoteJobState(job);
+    }
+  }
+
+  Future<void> _syncWithControlPlane() async {
+    if (!mounted || _syncLoopBusy) {
+      return;
+    }
+
+    _syncLoopBusy = true;
+    try {
+      final jobs = await _controlPlaneClient.heartbeat(
+        clientName: widget.clientName,
+        machineName: Platform.localHostname,
+        server: _serverController.text.trim(),
+        database: _selectedDatabase ?? '',
+        serverConnected: _serverConnected,
+        sqlConnected: _selectedDatabase != null,
+        selectedTable: _selectedTable,
+        tables: _heartbeatTablesPayload(),
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _serverConnected = true;
+        _checkingServerConnection = false;
+        _lastServerCheck = DateTime.now();
+        _activeJobs = jobs;
+      });
+
+      for (final job in jobs) {
+        _applyRemoteJobState(job);
+      }
+
+      await _queueEnabledUploads();
+      await _processPendingJobs();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverConnected = false;
+        _checkingServerConnection = false;
+        _lastServerCheck = DateTime.now();
+        _errorMessage = error.toString();
+      });
+    } finally {
+      _syncLoopBusy = false;
+    }
+  }
+
+  Future<void> _processPendingJobs() async {
+    final pendingJobs =
+        _activeJobs.where((job) => job.isActive).toList(growable: false);
+
+    for (final job in pendingJobs) {
+      if (_processingJobIds.contains(job.id)) {
+        continue;
+      }
+      _processingJobIds.add(job.id);
+      try {
+        if (job.direction == 'download') {
+          await _processDownloadJob(job);
+        } else {
+          await _processUploadJob(job);
+        }
+      } finally {
+        _processingJobIds.remove(job.id);
+      }
+    }
+  }
+
+  Future<void> _processUploadJob(RemoteSyncJob job) async {
+    try {
+      var activeJob = await _controlPlaneClient.startJob(
+        job.id,
+        status: 'snapshotting',
+        progress: 10,
+        message: 'Creating a local snapshot before upload.',
+      );
+      _applyRemoteJobState(activeJob);
+
+      final snapshot = await _createTableSnapshot(
+        profile: _activeProfile(),
+        database: _selectedDatabase ?? '',
+        table: job.table,
+      );
+
+      if (!snapshot.success) {
+        throw Exception(snapshot.errorText);
+      }
+
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'uploading',
+        progress: 70,
+        message: 'Uploading snapshot to the control plane.',
+        rowCount: snapshot.totalRows,
+        direction: 'upload',
+      );
+      _applyRemoteJobState(activeJob);
+
+      final uploadResult = await _controlPlaneClient.uploadSnapshot(
+        job.id,
+        clientName: widget.clientName,
+        table: job.table,
+        columns: snapshot.columns,
+        rows: snapshot.rows,
+        rowCount: snapshot.totalRows,
+        snapshotCreatedAt: snapshot.snapshotCreatedAt,
+      );
+
+      _applyRemoteJobState(
+        uploadResult.job,
+        appendHistory: true,
+        success: true,
+      );
+    } catch (error) {
+      await _controlPlaneClient.failJob(job.id, error.toString(), progress: 100);
+      final failedJob = RemoteSyncJob(
+        id: job.id,
+        clientName: job.clientName,
+        sourceClientName: job.sourceClientName,
+        table: job.table,
+        direction: job.direction,
+        status: 'failed',
+        progress: 100,
+        rowCount: job.rowCount,
+        createdAt: job.createdAt,
+        updatedAt: DateTime.now().toIso8601String(),
+        startedAt: job.startedAt,
+        completedAt: DateTime.now().toIso8601String(),
+        snapshotId: job.snapshotId,
+        snapshotCreatedAt: job.snapshotCreatedAt,
+        message: error.toString(),
+        error: error.toString(),
+      );
+      _applyRemoteJobState(
+        failedJob,
+        appendHistory: true,
+        success: false,
+        overrideMessage: error.toString(),
+      );
+    }
+  }
+
+  Future<void> _processDownloadJob(RemoteSyncJob job) async {
+    try {
+      var activeJob = await _controlPlaneClient.startJob(
+        job.id,
+        status: 'snapshotting',
+        progress: 10,
+        message: 'Creating a local snapshot before download apply.',
+      );
+      _applyRemoteJobState(activeJob);
+
+      final localSnapshot = await _createTableSnapshot(
+        profile: _activeProfile(),
+        database: _selectedDatabase ?? '',
+        table: job.table,
+      );
+      if (!localSnapshot.success) {
+        throw Exception(localSnapshot.errorText);
+      }
+
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'downloading',
+        progress: 40,
+        message: 'Downloading the latest remote snapshot.',
+        rowCount: localSnapshot.totalRows,
+        direction: 'download',
+      );
+      _applyRemoteJobState(activeJob);
+
+      final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);
+
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'applying',
+        progress: 75,
+        message: 'Applying the remote snapshot to local SQL Server.',
+        rowCount: snapshot.rowCount,
+        direction: 'download',
+      );
+      _applyRemoteJobState(activeJob);
+
+      await _applySnapshotToTable(
+        profile: _activeProfile(),
+        database: _selectedDatabase ?? '',
+        table: job.table,
+        snapshot: snapshot,
+      );
+
+      activeJob = await _controlPlaneClient.completeJob(
+        job.id,
+        status: 'completed',
+        progress: 100,
+        message:
+            'Applied snapshot ${snapshot.id} with ${snapshot.rowCount} rows to local SQL Server.',
+        rowCount: snapshot.rowCount,
+        snapshotId: snapshot.id,
+        snapshotCreatedAt: snapshot.createdAt,
+      );
+
+      _applyRemoteJobState(
+        activeJob,
+        appendHistory: true,
+        success: true,
+        overrideMessage:
+            'Applied remote snapshot ${snapshot.id} with ${snapshot.rowCount} rows. Local pre-apply snapshot captured ${localSnapshot.totalRows} rows.',
+      );
+    } catch (error) {
+      await _controlPlaneClient.failJob(job.id, error.toString(), progress: 100);
+      final failedJob = RemoteSyncJob(
+        id: job.id,
+        clientName: job.clientName,
+        sourceClientName: job.sourceClientName,
+        table: job.table,
+        direction: job.direction,
+        status: 'failed',
+        progress: 100,
+        rowCount: job.rowCount,
+        createdAt: job.createdAt,
+        updatedAt: DateTime.now().toIso8601String(),
+        startedAt: job.startedAt,
+        completedAt: DateTime.now().toIso8601String(),
+        snapshotId: job.snapshotId,
+        snapshotCreatedAt: job.snapshotCreatedAt,
+        message: error.toString(),
+        error: error.toString(),
+      );
+      _applyRemoteJobState(
+        failedJob,
+        appendHistory: true,
+        success: false,
+        overrideMessage: error.toString(),
+      );
+    }
+  }
+
+  Future<void> _applySnapshotToTable({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String table,
+    required RemoteSnapshot snapshot,
+  }) async {
+    if (database.isEmpty) {
+      throw Exception('Select a database before applying a downloaded snapshot.');
+    }
+
+    final tableParts = _splitQualifiedName(table);
+    final schemaResult = await _queryTableColumnSchemas(
+      profile: profile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (!schemaResult.success) {
+      throw Exception(schemaResult.errorText);
+    }
+
+    final schemas = schemaResult.values;
+    if (schemas.isEmpty) {
+      throw Exception('No column metadata was found for $table.');
+    }
+
+    final schemasByName = {
+      for (final schema in schemas) schema.name: schema,
+    };
+    final missingColumns =
+        snapshot.columns.where((column) => !schemasByName.containsKey(column)).toList();
+    if (missingColumns.isNotEmpty) {
+      throw Exception(
+        'Downloaded snapshot columns do not exist locally: ${missingColumns.join(', ')}',
+      );
+    }
+
+    final hasIdentity = snapshot.columns.any(
+      (column) => schemasByName[column]?.isIdentity ?? false,
+    );
+    final qualifiedTable = _quoteQualifiedIdentifier(table);
+    final columnList =
+        snapshot.columns.map(_quoteIdentifier).join(', ');
+    final statements = <String>[
+      'SET NOCOUNT ON;',
+      'BEGIN TRY',
+      'BEGIN TRAN;',
+      'DELETE FROM $qualifiedTable;',
+      if (hasIdentity) 'SET IDENTITY_INSERT $qualifiedTable ON;',
+    ];
+
+    const rowsPerBatch = 100;
+    for (var index = 0; index < snapshot.rows.length; index += rowsPerBatch) {
+      final chunk = snapshot.rows.skip(index).take(rowsPerBatch);
+      final values = chunk
+          .map(
+            (row) => '(${snapshot.columns.map((column) => _sqlLiteral(row[column])).join(', ')})',
+          )
+          .join(', ');
+      if (values.isNotEmpty) {
+        statements.add('INSERT INTO $qualifiedTable ($columnList) VALUES $values;');
+      }
+    }
+
+    if (hasIdentity) {
+      statements.add('SET IDENTITY_INSERT $qualifiedTable OFF;');
+    }
+    statements.add('COMMIT TRAN;');
+    statements.add('END TRY');
+    statements.add('BEGIN CATCH');
+    statements.add('IF @@TRANCOUNT > 0 ROLLBACK TRAN;');
+    statements.add('THROW;');
+    statements.add('END CATCH;');
+
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: statements.join(' '),
+    );
+
+    if (processResult == null) {
+      throw Exception(
+        'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+      );
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('download apply', processResult));
+    }
+  }
+
+  Future<_TableSnapshotResult> _createTableSnapshot({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String table,
+  }) async {
+    if (database.isEmpty || table.isEmpty) {
+      return const _TableSnapshotResult(
+        success: false,
+        columns: [],
+        rows: [],
+        totalRows: 0,
+        snapshotCreatedAt: '',
+        errorText: 'Load a database and table before syncing.',
+      );
+    }
+
+    final tableParts = _splitQualifiedName(table);
+    final schemaResult = await _queryTableColumnSchemas(
+      profile: profile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (!schemaResult.success || schemaResult.values.isEmpty) {
+      return _TableSnapshotResult(
+        success: false,
+        columns: const [],
+        rows: const [],
+        totalRows: 0,
+        snapshotCreatedAt: '',
+        errorText:
+            schemaResult.errorText ??
+            'No columns were returned for $table.',
+      );
+    }
+    final columns = schemaResult.values.map((schema) => schema.name).toList(
+      growable: false,
+    );
+
+    final rowCountResult = await _queryTableRowCount(
+      profile: profile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (!rowCountResult.success) {
+      return _TableSnapshotResult(
+        success: false,
+        columns: columns,
+        rows: const [],
+        totalRows: 0,
+        snapshotCreatedAt: '',
+        errorText: rowCountResult.errorText,
+      );
+    }
+
+    final orderByColumn = _quoteIdentifier(columns.first);
+    final rows = <Map<String, String?>>[];
+    const pageSize = 200;
+    for (var offset = 0; offset < rowCountResult.value; offset += pageSize) {
+      final pageResult = await _querySnapshotPage(
+        profile: profile,
+        database: database,
+        table: table,
+        columns: columns,
+        orderByColumn: orderByColumn,
+        offset: offset,
+        pageSize: pageSize,
+      );
+      if (!pageResult.success) {
+        return _TableSnapshotResult(
+          success: false,
+          columns: columns,
+          rows: const [],
+          totalRows: rowCountResult.value,
+          snapshotCreatedAt: '',
+          errorText: pageResult.errorText,
+        );
+      }
+      rows.addAll(pageResult.rows);
+    }
+
+    return _TableSnapshotResult(
+      success: true,
+      columns: columns,
+      rows: rows,
+      totalRows: rowCountResult.value,
+      snapshotCreatedAt: DateTime.now().toIso8601String(),
+      errorText: null,
     );
   }
 
@@ -744,6 +1347,68 @@ ORDER BY ORDINAL_POSITION;
     return _StringQueryResult(success: true, values: values, errorText: null);
   }
 
+  Future<_ColumnSchemaResult> _queryTableColumnSchemas({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+  }) async {
+    final query = '''
+SET NOCOUNT ON;
+SELECT c.name, TYPE_NAME(c.user_type_id), c.is_nullable, c.is_identity
+FROM ${_quoteIdentifier(database)}.sys.columns AS c
+INNER JOIN ${_quoteIdentifier(database)}.sys.tables AS t ON t.object_id = c.object_id
+INNER JOIN ${_quoteIdentifier(database)}.sys.schemas AS s ON s.schema_id = t.schema_id
+WHERE s.name = '${_escapeSqlLiteral(schema)}'
+  AND t.name = '${_escapeSqlLiteral(table)}'
+ORDER BY c.column_id;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+
+    if (processResult == null) {
+      return const _ColumnSchemaResult(
+        success: false,
+        values: [],
+        errorText:
+            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+      );
+    }
+    if (processResult.exitCode != 0) {
+      return _ColumnSchemaResult(
+        success: false,
+        values: const [],
+        errorText: _sqlCmdFailed('column schema discovery', processResult),
+      );
+    }
+
+    final values = <_TableColumnSchema>[];
+    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      final parts = _splitRowValues(trimmedLine);
+      if (parts.length < 4) {
+        continue;
+      }
+      values.add(
+        _TableColumnSchema(
+          name: parts[0],
+          sqlType: parts[1],
+          isNullable: parts[2] == '1' || parts[2].toLowerCase() == 'true',
+          isIdentity: parts[3] == '1' || parts[3].toLowerCase() == 'true',
+        ),
+      );
+    }
+
+    return _ColumnSchemaResult(success: true, values: values, errorText: null);
+  }
+
   Future<_IntQueryResult> _queryTableRowCount({
     required _SqlConnectionProfile profile,
     required String database,
@@ -788,6 +1453,73 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     }
 
     return _IntQueryResult(success: true, value: parsed, errorText: null);
+  }
+
+  Future<_SnapshotPageResult> _querySnapshotPage({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String table,
+    required List<String> columns,
+    required String orderByColumn,
+    required int offset,
+    required int pageSize,
+  }) async {
+    final query = '''
+SET NOCOUNT ON;
+WITH page_source AS (
+  SELECT * FROM ${_quoteQualifiedIdentifier(table)}
+  ORDER BY $orderByColumn ASC
+  OFFSET $offset ROWS FETCH NEXT $pageSize ROWS ONLY
+)
+SELECT (
+  SELECT * FROM page_source FOR JSON PATH, INCLUDE_NULL_VALUES
+) AS snapshot_json;
+''';
+    final processResult = await _runSqlCmdJson(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+
+    if (processResult == null) {
+      return const _SnapshotPageResult(
+        success: false,
+        rows: [],
+        errorText:
+            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+      );
+    }
+    if (processResult.exitCode != 0) {
+      return _SnapshotPageResult(
+        success: false,
+        rows: const [],
+        errorText: _sqlCmdFailed('snapshot page fetch', processResult),
+      );
+    }
+
+    final jsonText = _parseJsonScalarOutput(processResult.stdout.toString());
+    if (jsonText.isEmpty || jsonText == 'null') {
+      return const _SnapshotPageResult(success: true, rows: [], errorText: null);
+    }
+
+    final decoded = jsonDecode(jsonText);
+    if (decoded is! List) {
+      return const _SnapshotPageResult(
+        success: false,
+        rows: [],
+        errorText: 'Snapshot page did not return a JSON array.',
+      );
+    }
+
+    final rows = decoded
+        .map(
+          (row) => _normalizeSnapshotRowMap(
+            Map<String, dynamic>.from(row as Map),
+            columns,
+          ),
+        )
+        .toList(growable: false);
+    return _SnapshotPageResult(success: true, rows: rows, errorText: null);
   }
 
   String _formatSqlError(ProcessResult processResult) {
@@ -855,9 +1587,62 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     }
   }
 
+  Future<ProcessResult?> _runSqlCmdJson({
+    required _SqlConnectionProfile profile,
+    String? database,
+    required String query,
+  }) async {
+    final normalizedQuery = query
+        .trim()
+        .replaceAll('\r\n', ' ')
+        .replaceAll('\n', ' ');
+    final arguments = <String>[
+      '-S',
+      profile.server,
+      if (database != null && database.isNotEmpty) ...['-d', database],
+      '-b',
+      '-h',
+      '-1',
+      '-w',
+      '65535',
+      '-y',
+      '0',
+      '-Q',
+      normalizedQuery,
+    ];
+
+    if (profile.useWindowsAuth) {
+      arguments.insert(0, '-E');
+    } else {
+      if (profile.user.isEmpty || profile.password.isEmpty) {
+        return null;
+      }
+      arguments.insertAll(0, ['-U', profile.user, '-P', profile.password]);
+    }
+
+    try {
+      return await Process.run(
+        'sqlcmd',
+        arguments,
+        runInShell: false,
+        stdoutEncoding: SystemEncoding(),
+        stderrEncoding: SystemEncoding(),
+      );
+    } on ProcessException {
+      return null;
+    }
+  }
+
   String _quoteIdentifier(String value) => '[${value.replaceAll(']', ']]')}]';
 
   String _escapeSqlLiteral(String value) => value.replaceAll("'", "''");
+
+  String _sqlLiteral(String? value) {
+    if (value == null) {
+      return 'NULL';
+    }
+    return "N'${_escapeSqlLiteral(value)}'";
+  }
 
   _QualifiedTableName _splitQualifiedName(String qualifiedName) {
     final parts = qualifiedName.split('.');
@@ -881,6 +1666,40 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         normalized.contains('changed database context') ||
         normalized.contains('row') && normalized.contains('affected') ||
         normalized.contains('command') && normalized.contains('completed');
+  }
+
+  String _parseJsonScalarOutput(String output) {
+    final buffer = StringBuffer();
+    final lines = output.split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      buffer.write(trimmedLine);
+    }
+    return buffer.toString().trim();
+  }
+
+  Map<String, String?> _normalizeSnapshotRowMap(
+    Map<String, dynamic> row,
+    List<String> columns,
+  ) {
+    return Map<String, String?>.fromEntries(
+      columns.map(
+        (column) => MapEntry(column, _normalizeSnapshotValue(row[column])),
+      ),
+    );
+  }
+
+  String? _normalizeSnapshotValue(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is bool) {
+      return value ? '1' : '0';
+    }
+    return value.toString();
   }
 
   List<String> _parseSingleColumnOutput(String output) {
@@ -1087,15 +1906,26 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   Widget _buildSyncPanel() {
-    final syncRows = discoveredTables.map((table) {
-      final state =
-          _syncState.tables[table.name] ?? _defaultSyncTableState(table.name);
-      return (
-        table: table.name,
-        rows: table.rows,
-        state: state,
+    final syncRows =
+        _tables.map((table) {
+          final state =
+              _syncState.tables[table] ?? _defaultSyncTableState(table);
+          return (
+            table: table,
+            state: state,
+          );
+        }).toList(growable: false);
+
+    if (syncRows.isEmpty) {
+      return AgentSectionShell(
+        title: 'Sync',
+        subtitle:
+            'Load a database on the Table tab first. The live sync page only shows real SQL tables from the selected database.',
+        child: const Text(
+          'No live tables are available yet. Open the Table tab, choose a database, and let the agent read the table list.',
+        ),
       );
-    }).toList(growable: false);
+    }
 
     final selectedTableName = _selectedSyncTableName(
       syncRows.map((row) => row.table).toList(growable: false),
@@ -1109,7 +1939,8 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
     return AgentSectionShell(
       title: 'Sync',
-      subtitle: 'Per-table sync controls and history for ${widget.clientName}.',
+      subtitle:
+          'Live sync status and progress for ${widget.clientName}. Every enabled table is snapshotted locally before any upload or download step.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1124,10 +1955,11 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
               columns: const [
                 DataColumn(label: Text('Sync')),
                 DataColumn(label: Text('Table')),
-                DataColumn(label: Text('Rows')),
                 DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Progress')),
+                DataColumn(label: Text('Rows')),
                 DataColumn(label: Text('Last Sync')),
-                DataColumn(label: Text('History')),
+                DataColumn(label: Text('Message')),
               ],
               rows:
                   syncRows
@@ -1152,20 +1984,61 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                               ),
                             ),
                             DataCell(Text(row.table)),
-                            DataCell(Text(row.rows.toString())),
                             DataCell(
                               AgentStatusPill(
                                 label: row.state.status,
                                 color:
                                     row.state.status == 'Paused'
                                         ? const Color(0xFF718096)
-                                        : row.state.status == 'Retrying'
+                                        : row.state.status == 'Failed'
+                                        ? const Color(0xFFC53030)
+                                        : row.state.status == 'Queued' ||
+                                            row.state.status == 'Snapshotting' ||
+                                            row.state.status == 'Uploading' ||
+                                            row.state.status == 'Downloading' ||
+                                            row.state.status == 'Applying'
                                         ? const Color(0xFFD69E2E)
                                         : const Color(0xFF2F855A),
                               ),
                             ),
+                            DataCell(
+                              SizedBox(
+                                width: 150,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    LinearProgressIndicator(
+                                      value: row.state.progress.clamp(0, 100) / 100,
+                                      minHeight: 8,
+                                      backgroundColor: const Color(0xFFE7ECE6),
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        row.state.status == 'Failed'
+                                            ? const Color(0xFFC53030)
+                                            : row.state.status == 'Paused'
+                                            ? const Color(0xFF718096)
+                                            : const Color(0xFF2F855A),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text('${row.state.progress}%'),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            DataCell(Text(row.state.rowCount.toString())),
                             DataCell(Text(row.state.lastSync)),
-                            DataCell(Text('${row.state.history.length} events')),
+                            DataCell(
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 280),
+                                child: Text(
+                                  row.state.message.isEmpty
+                                      ? 'No sync message yet.'
+                                      : row.state.message,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       )
@@ -1450,35 +2323,57 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   Widget _buildPinnedSummaryBar() {
-    final syncRows = discoveredTables.map((table) {
-      final state =
-          _syncState.tables[table.name] ?? _defaultSyncTableState(table.name);
-      return (
-        table: table.name,
-        rows: table.rows,
-        state: state,
-      );
-    }).toList(growable: false);
+    final syncRows =
+        _tables.map((table) {
+          final state =
+              _syncState.tables[table] ?? _defaultSyncTableState(table);
+          return (
+            table: table,
+            state: state,
+          );
+        }).toList(growable: false);
 
     final selectedSyncTableName = _selectedSyncTableName(
       syncRows.map((row) => row.table).toList(growable: false),
     );
-    final selectedSyncRow = syncRows.firstWhere(
-      (row) => row.table == selectedSyncTableName,
-      orElse: () => syncRows.first,
-    );
+    final selectedSyncRow =
+        syncRows.isEmpty
+            ? null
+            : syncRows.firstWhere(
+              (row) => row.table == selectedSyncTableName,
+              orElse: () => syncRows.first,
+            );
+    final activeSyncCount = syncRows
+        .where(
+          (row) =>
+              row.state.status == 'Queued' ||
+              row.state.status == 'Snapshotting' ||
+              row.state.status == 'Uploading' ||
+              row.state.status == 'Downloading' ||
+              row.state.status == 'Applying',
+        )
+        .length;
 
     final footerItems =
         _tabController.index == 1
             ? <Widget>[
               _InfoLine(label: 'Client', value: widget.clientName),
               _InfoLine(label: 'Tables', value: syncRows.length.toString()),
-              _InfoLine(label: 'Selected', value: selectedSyncRow.table),
               _InfoLine(
-                label: 'History',
-                value: selectedSyncRow.state.history.length.toString(),
+                label: 'Selected',
+                value: selectedSyncRow?.table ?? 'None',
               ),
-              _InfoLine(label: 'Status', value: selectedSyncRow.state.status),
+              _InfoLine(label: 'Active', value: activeSyncCount.toString()),
+              _InfoLine(
+                label: 'Progress',
+                value: selectedSyncRow == null
+                    ? '0%'
+                    : '${selectedSyncRow.state.progress}%',
+              ),
+              _InfoLine(
+                label: 'Status',
+                value: selectedSyncRow?.state.status ?? 'Idle',
+              ),
             ]
             : <Widget>[
               _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
@@ -1532,7 +2427,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             : 'Offline';
     final tooltip =
         _lastServerCheck == null
-            ? 'Checks $_serverCheckUrl every minute.'
+            ? 'Checks the control plane health every minute.'
             : 'Last checked at ${_lastServerCheck!.toLocal()}';
 
     return Tooltip(
@@ -1745,7 +2640,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         title: Text(
           widget.clientName == 'Local Agent'
               ? 'SQL Sync Agent'
-              : '${widget.clientName} · SQL Sync Agent',
+              : '${widget.clientName} - SQL Sync Agent',
         ),
         bottom: TabBar(
           controller: _tabController,
@@ -1804,6 +2699,18 @@ class _StringQueryResult {
   final String? errorText;
 }
 
+class _ColumnSchemaResult {
+  const _ColumnSchemaResult({
+    required this.success,
+    required this.values,
+    required this.errorText,
+  });
+
+  final bool success;
+  final List<_TableColumnSchema> values;
+  final String? errorText;
+}
+
 class _QualifiedTableName {
   const _QualifiedTableName({required this.schema, required this.table});
 
@@ -1845,6 +2752,50 @@ class _TableRowsResult {
   final int totalRows;
   final bool hasMoreRows;
   final String? errorText;
+}
+
+class _TableSnapshotResult {
+  const _TableSnapshotResult({
+    required this.success,
+    required this.columns,
+    required this.rows,
+    required this.totalRows,
+    required this.snapshotCreatedAt,
+    required this.errorText,
+  });
+
+  final bool success;
+  final List<String> columns;
+  final List<Map<String, String?>> rows;
+  final int totalRows;
+  final String snapshotCreatedAt;
+  final String? errorText;
+}
+
+class _SnapshotPageResult {
+  const _SnapshotPageResult({
+    required this.success,
+    required this.rows,
+    required this.errorText,
+  });
+
+  final bool success;
+  final List<Map<String, String?>> rows;
+  final String? errorText;
+}
+
+class _TableColumnSchema {
+  const _TableColumnSchema({
+    required this.name,
+    required this.sqlType,
+    required this.isNullable,
+    required this.isIdentity,
+  });
+
+  final String name;
+  final String sqlType;
+  final bool isNullable;
+  final bool isIdentity;
 }
 
 class _IntQueryResult {

@@ -1,118 +1,69 @@
 import 'package:flutter/material.dart';
 
-import 'models.dart';
-
-class HeroBanner extends StatelessWidget {
-  const HeroBanner({
+class DashboardHeader extends StatelessWidget {
+  const DashboardHeader({
     super.key,
-    required this.onlineMachines,
-    required this.totalMachines,
-    required this.selectedTables,
-    required this.syncEveryMinutes,
+    required this.isConnected,
+    required this.lastUpdated,
   });
 
-  final int onlineMachines;
-  final int totalMachines;
-  final int selectedTables;
-  final int syncEveryMinutes;
+  final bool isConnected;
+  final String lastUpdated;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       decoration: BoxDecoration(
-        color: const Color(0xFF20313C),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFF20313C)),
+        border: Border.all(color: const Color(0xFFE2E8DF)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A000000),
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
+        ],
       ),
       child: Wrap(
-        spacing: 20,
-        runSpacing: 20,
+        spacing: 16,
+        runSpacing: 16,
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF2A3E4A),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Text(
-                    'SQL Sync Control Plane',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'Manage source PCs, sink PCs, and table-level SQL Server replication from one web dashboard.',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
-                    height: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '$onlineMachines of $totalMachines agents are online. '
-                  '$selectedTables tables are selected, with a default cadence of every $syncEveryMinutes minutes.',
-                  style: const TextStyle(color: Colors.white70, height: 1.45),
-                ),
-              ],
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text(
+                'Sync Control Plane',
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+              ),
+              SizedBox(height: 6),
+              Text(
+                'Live Windows agent status, sync progress, and snapshot visibility.',
+                style: TextStyle(color: Color(0xFF5E6C73), height: 1.4),
+              ),
+            ],
           ),
-          Container(
-            width: 280,
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2A3E4A),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: const Color(0xFF385668)),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Recommended Production Flow',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                SizedBox(height: 12),
-                Text(
-                  '1. Agent registers with domain',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  '2. Web app saves sync plan',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  '3. Agent polls and runs delta sync',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  '4. Backend stores results and alerts',
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ],
-            ),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _HeaderBadge(
+                label: isConnected ? 'Backend online' : 'Backend offline',
+                color:
+                    isConnected
+                        ? const Color(0xFF2F855A)
+                        : const Color(0xFFC53030),
+              ),
+              _HeaderBadge(
+                label: 'Last refresh $lastUpdated',
+                color: const Color(0xFF1F5561),
+              ),
+            ],
           ),
         ],
       ),
@@ -120,8 +71,56 @@ class HeroBanner extends StatelessWidget {
   }
 }
 
-class SectionShell extends StatelessWidget {
-  const SectionShell({
+class SummaryCard extends StatelessWidget {
+  const SummaryCard({
+    super.key,
+    required this.title,
+    required this.value,
+    required this.detail,
+  });
+
+  final String title;
+  final String value;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 250,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: const Color(0xFFE2E8DF)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF64727A),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(detail, style: const TextStyle(height: 1.35)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SurfaceCard extends StatelessWidget {
+  const SurfaceCard({
     super.key,
     required this.title,
     required this.subtitle,
@@ -139,12 +138,12 @@ class SectionShell extends StatelessWidget {
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE5E9E2)),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0xFFE2E8DF)),
         boxShadow: const [
           BoxShadow(
             color: Color(0x0A000000),
-            blurRadius: 20,
+            blurRadius: 22,
             offset: Offset(0, 10),
           ),
         ],
@@ -154,12 +153,12 @@ class SectionShell extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
           Text(
             subtitle,
-            style: const TextStyle(color: Color(0xFF60707A), height: 1.4),
+            style: const TextStyle(color: Color(0xFF5E6C73), height: 1.4),
           ),
           const SizedBox(height: 18),
           child,
@@ -169,56 +168,8 @@ class SectionShell extends StatelessWidget {
   }
 }
 
-class MetricCard extends StatelessWidget {
-  const MetricCard({
-    super.key,
-    required this.title,
-    required this.value,
-    required this.detail,
-  });
-
-  final String title;
-  final String value;
-  final String detail;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 248,
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE1E6DD)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(0xFF60707A),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 6),
-            Text(detail, style: const TextStyle(height: 1.35)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class StatusPill extends StatelessWidget {
-  const StatusPill({super.key, required this.label, required this.color});
+class StatusBadge extends StatelessWidget {
+  const StatusBadge({super.key, required this.label, required this.color});
 
   final String label;
   final Color color;
@@ -228,7 +179,7 @@ class StatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -239,28 +190,45 @@ class StatusPill extends StatelessWidget {
   }
 }
 
-class OutcomeDot extends StatelessWidget {
-  const OutcomeDot({super.key, required this.outcome});
+class ProgressStrip extends StatelessWidget {
+  const ProgressStrip({super.key, required this.progress, required this.color});
 
-  final SyncOutcome outcome;
+  final int progress;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    late final Color color;
-    switch (outcome) {
-      case SyncOutcome.success:
-        color = const Color(0xFF2F855A);
-      case SyncOutcome.warning:
-        color = const Color(0xFFD69E2E);
-      case SyncOutcome.failed:
-        color = const Color(0xFFC53030);
-    }
+    final value = progress.clamp(0, 100) / 100;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: LinearProgressIndicator(
+        value: value,
+        minHeight: 8,
+        backgroundColor: const Color(0xFFE7ECE6),
+        valueColor: AlwaysStoppedAnimation<Color>(color),
+      ),
+    );
+  }
+}
 
+class _HeaderBadge extends StatelessWidget {
+  const _HeaderBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: 12,
-      height: 12,
-      margin: const EdgeInsets.only(top: 6),
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontWeight: FontWeight.w700),
+      ),
     );
   }
 }

@@ -1,51 +1,239 @@
-class MachineNode {
-  const MachineNode({
-    required this.id,
-    required this.name,
+class AdminLiveState {
+  const AdminLiveState({
+    required this.generatedAt,
+    required this.agents,
+    required this.jobs,
+    required this.snapshots,
+  });
+
+  final String generatedAt;
+  final List<AdminAgent> agents;
+  final List<AdminJob> jobs;
+  final List<AdminSnapshot> snapshots;
+
+  factory AdminLiveState.fromJson(Map<String, dynamic> json) {
+    return AdminLiveState(
+      generatedAt: json['generatedAt'] as String? ?? '',
+      agents: (json['agents'] as List<dynamic>? ?? const [])
+          .map((item) => AdminAgent.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList(growable: false),
+      jobs: (json['jobs'] as List<dynamic>? ?? const [])
+          .map((item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList(growable: false),
+      snapshots: (json['snapshots'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AdminSnapshot.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AdminAgent {
+  const AdminAgent({
     required this.clientName,
-    required this.office,
-    required this.sqlInstance,
+    required this.machineName,
+    required this.server,
+    required this.database,
     required this.isOnline,
+    required this.serverConnected,
+    required this.sqlConnected,
     required this.lastHeartbeat,
-    required this.tags,
+    required this.selectedTable,
+    required this.tables,
   });
 
-  final String id;
-  final String name;
   final String clientName;
-  final String office;
-  final String sqlInstance;
+  final String machineName;
+  final String server;
+  final String database;
   final bool isOnline;
+  final bool serverConnected;
+  final bool sqlConnected;
   final String lastHeartbeat;
-  final List<String> tags;
+  final String? selectedTable;
+  final List<AdminTableState> tables;
+
+  factory AdminAgent.fromJson(Map<String, dynamic> json) {
+    return AdminAgent(
+      clientName: json['clientName'] as String? ?? '',
+      machineName: json['machineName'] as String? ?? '',
+      server: json['server'] as String? ?? '',
+      database: json['database'] as String? ?? '',
+      isOnline: json['isOnline'] as bool? ?? false,
+      serverConnected: json['serverConnected'] as bool? ?? false,
+      sqlConnected: json['sqlConnected'] as bool? ?? false,
+      lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
+      selectedTable: json['selectedTable'] as String?,
+      tables: (json['tables'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AdminTableState.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
 }
 
-class TableProfile {
-  const TableProfile({
-    required this.name,
-    required this.primaryKey,
-    required this.changeColumn,
-    required this.estimatedRows,
-  });
-
-  final String name;
-  final String primaryKey;
-  final String changeColumn;
-  final int estimatedRows;
-}
-
-class SyncRun {
-  const SyncRun({
-    required this.title,
-    required this.startedAt,
-    required this.outcome,
+class AdminTableState {
+  const AdminTableState({
+    required this.table,
+    required this.enabled,
+    required this.status,
+    required this.lastSync,
+    required this.progress,
+    required this.direction,
+    required this.rowCount,
+    required this.snapshotId,
+    required this.snapshotCreatedAt,
     required this.message,
   });
 
-  final String title;
-  final String startedAt;
-  final SyncOutcome outcome;
+  final String table;
+  final bool enabled;
+  final String status;
+  final String lastSync;
+  final int progress;
+  final String direction;
+  final int rowCount;
+  final String? snapshotId;
+  final String? snapshotCreatedAt;
   final String message;
+
+  factory AdminTableState.fromJson(Map<String, dynamic> json) {
+    return AdminTableState(
+      table: json['table'] as String? ?? '',
+      enabled: json['enabled'] as bool? ?? false,
+      status: json['status'] as String? ?? 'Paused',
+      lastSync: json['lastSync'] as String? ?? '',
+      progress: (json['progress'] as num? ?? 0).round(),
+      direction: json['direction'] as String? ?? 'upload',
+      rowCount: (json['rowCount'] as num? ?? 0).round(),
+      snapshotId: json['snapshotId'] as String?,
+      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
+      message: json['message'] as String? ?? '',
+    );
+  }
+
+  bool get inProgress =>
+      status.toLowerCase() == 'snapshotting' ||
+      status.toLowerCase() == 'uploading' ||
+      status.toLowerCase() == 'downloading' ||
+      status.toLowerCase() == 'applying';
 }
 
-enum SyncOutcome { success, warning, failed }
+class AdminJob {
+  const AdminJob({
+    required this.id,
+    required this.clientName,
+    required this.sourceClientName,
+    required this.table,
+    required this.direction,
+    required this.status,
+    required this.progress,
+    required this.rowCount,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.startedAt,
+    required this.completedAt,
+    required this.snapshotId,
+    required this.snapshotCreatedAt,
+    required this.message,
+    required this.error,
+  });
+
+  final String id;
+  final String clientName;
+  final String sourceClientName;
+  final String table;
+  final String direction;
+  final String status;
+  final int progress;
+  final int rowCount;
+  final String createdAt;
+  final String updatedAt;
+  final String? startedAt;
+  final String? completedAt;
+  final String? snapshotId;
+  final String? snapshotCreatedAt;
+  final String message;
+  final String? error;
+
+  factory AdminJob.fromJson(Map<String, dynamic> json) {
+    return AdminJob(
+      id: json['id'] as String? ?? '',
+      clientName: json['clientName'] as String? ?? '',
+      sourceClientName: json['sourceClientName'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      direction: json['direction'] as String? ?? 'upload',
+      status: json['status'] as String? ?? 'queued',
+      progress: (json['progress'] as num? ?? 0).round(),
+      rowCount: (json['rowCount'] as num? ?? 0).round(),
+      createdAt: json['createdAt'] as String? ?? '',
+      updatedAt: json['updatedAt'] as String? ?? '',
+      startedAt: json['startedAt'] as String?,
+      completedAt: json['completedAt'] as String?,
+      snapshotId: json['snapshotId'] as String?,
+      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
+      message: json['message'] as String? ?? '',
+      error: json['error'] as String?,
+    );
+  }
+
+  bool get isActive =>
+      status == 'queued' ||
+      status == 'snapshotting' ||
+      status == 'uploading' ||
+      status == 'downloading' ||
+      status == 'applying';
+}
+
+class AdminSnapshot {
+  const AdminSnapshot({
+    required this.id,
+    required this.clientName,
+    required this.table,
+    required this.rowCount,
+    required this.checksum,
+    required this.createdAt,
+    required this.columns,
+    required this.previewRows,
+    required this.sourceJobId,
+  });
+
+  final String id;
+  final String clientName;
+  final String table;
+  final int rowCount;
+  final String checksum;
+  final String createdAt;
+  final List<String> columns;
+  final List<List<String>> previewRows;
+  final String? sourceJobId;
+
+  factory AdminSnapshot.fromJson(Map<String, dynamic> json) {
+    final rawRows = json['previewRows'] as List<dynamic>? ?? const [];
+    return AdminSnapshot(
+      id: json['id'] as String? ?? '',
+      clientName: json['clientName'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      rowCount: (json['rowCount'] as num? ?? 0).round(),
+      checksum: json['checksum'] as String? ?? '',
+      createdAt: json['createdAt'] as String? ?? '',
+      columns: (json['columns'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+      previewRows: rawRows
+          .map(
+            (row) => (row as List<dynamic>)
+                .map((item) => item?.toString() ?? '')
+                .toList(growable: false),
+          )
+          .toList(growable: false),
+      sourceJobId: json['sourceJobId'] as String?,
+    );
+  }
+}

@@ -30,3 +30,12 @@ frontend:
       - secretName: sync-velvet-leaf-com-letsencrypt-tls
         hosts:
           - sync.velvet-leaf.com
+
+backend:
+  image:
+    repository: sync-admin-web/backend
+    tag: latest
+    pullPolicy: Always
+  service:
+    port: 9001
+  stateFile: /app/data/state.json

@@ -6,6 +6,14 @@ sync-admin-web
 {{- printf "%s-%s" .Release.Name (include "sync-admin-web.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "sync-admin-web.frontendFullname" -}}
+{{- printf "%s-frontend" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "sync-admin-web.backendFullname" -}}
+{{- printf "%s-backend" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "sync-admin-web.labels" -}}
 app.kubernetes.io/name: {{ include "sync-admin-web.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}

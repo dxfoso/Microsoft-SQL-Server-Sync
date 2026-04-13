@@ -8,6 +8,10 @@ class SyncHistoryEntry {
     required this.status,
     required this.success,
     required this.message,
+    this.direction = 'upload',
+    this.rowCount = 0,
+    this.progress = 0,
+    this.snapshotId,
   });
 
   final String timestamp;
@@ -15,6 +19,10 @@ class SyncHistoryEntry {
   final String status;
   final bool success;
   final String message;
+  final String direction;
+  final int rowCount;
+  final int progress;
+  final String? snapshotId;
 
   factory SyncHistoryEntry.fromJson(Map<String, dynamic> json) {
     return SyncHistoryEntry(
@@ -23,6 +31,10 @@ class SyncHistoryEntry {
       status: json['status'] as String? ?? '',
       success: json['success'] as bool? ?? false,
       message: json['message'] as String? ?? '',
+      direction: json['direction'] as String? ?? 'upload',
+      rowCount: (json['rowCount'] as num? ?? 0).round(),
+      progress: (json['progress'] as num? ?? 0).round(),
+      snapshotId: json['snapshotId'] as String?,
     );
   }
 
@@ -32,6 +44,10 @@ class SyncHistoryEntry {
     'status': status,
     'success': success,
     'message': message,
+    'direction': direction,
+    'rowCount': rowCount,
+    'progress': progress,
+    'snapshotId': snapshotId,
   };
 }
 
@@ -40,12 +56,24 @@ class SyncTableState {
     required this.enabled,
     required this.status,
     required this.lastSync,
+    required this.progress,
+    required this.direction,
+    required this.rowCount,
+    required this.snapshotId,
+    required this.snapshotCreatedAt,
+    required this.message,
     required this.history,
   });
 
   final bool enabled;
   final String status;
   final String lastSync;
+  final int progress;
+  final String direction;
+  final int rowCount;
+  final String? snapshotId;
+  final String? snapshotCreatedAt;
+  final String message;
   final List<SyncHistoryEntry> history;
 
   factory SyncTableState.fromJson(Map<String, dynamic> json) {
@@ -60,6 +88,12 @@ class SyncTableState {
       enabled: json['enabled'] as bool? ?? false,
       status: json['status'] as String? ?? 'Paused',
       lastSync: json['lastSync'] as String? ?? '--',
+      progress: (json['progress'] as num? ?? 0).round(),
+      direction: json['direction'] as String? ?? 'upload',
+      rowCount: (json['rowCount'] as num? ?? 0).round(),
+      snapshotId: json['snapshotId'] as String?,
+      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
+      message: json['message'] as String? ?? '',
       history: history,
     );
   }
@@ -68,6 +102,12 @@ class SyncTableState {
     'enabled': enabled,
     'status': status,
     'lastSync': lastSync,
+    'progress': progress,
+    'direction': direction,
+    'rowCount': rowCount,
+    'snapshotId': snapshotId,
+    'snapshotCreatedAt': snapshotCreatedAt,
+    'message': message,
     'history': history.map((entry) => entry.toJson()).toList(growable: false),
   };
 
@@ -75,12 +115,24 @@ class SyncTableState {
     bool? enabled,
     String? status,
     String? lastSync,
+    int? progress,
+    String? direction,
+    int? rowCount,
+    String? snapshotId,
+    String? snapshotCreatedAt,
+    String? message,
     List<SyncHistoryEntry>? history,
   }) {
     return SyncTableState(
       enabled: enabled ?? this.enabled,
       status: status ?? this.status,
       lastSync: lastSync ?? this.lastSync,
+      progress: progress ?? this.progress,
+      direction: direction ?? this.direction,
+      rowCount: rowCount ?? this.rowCount,
+      snapshotId: snapshotId ?? this.snapshotId,
+      snapshotCreatedAt: snapshotCreatedAt ?? this.snapshotCreatedAt,
+      message: message ?? this.message,
       history: history ?? this.history,
     );
   }

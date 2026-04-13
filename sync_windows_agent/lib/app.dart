@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'agent_page.dart';
-import 'sample_data.dart';
 import 'sync_state.dart';
 
 class SyncWindowsAgentApp extends StatefulWidget {
@@ -20,30 +19,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   Map<String, SyncClientState> _syncStatesByClient = {};
   Timer? _saveDebounce;
 
-  SyncClientState _defaultClientState() {
-    return SyncClientState(
-      tables: {
-        for (final table in discoveredTables)
-          table.name: SyncTableState(
-            enabled: table.syncEnabled,
-            status: table.syncStatus,
-            lastSync: table.lastSync,
-            history: [
-              SyncHistoryEntry(
-                timestamp: table.lastSync,
-                table: table.name,
-                status: table.syncStatus,
-                success: table.syncStatus != 'Failed',
-                message: 'Seeded from sample data.',
-              ),
-            ],
-          ),
-      },
-    );
-  }
+  static const SyncClientState _defaultClientState = SyncClientState(tables: {});
 
   SyncClientState _stateForClient(String clientName) {
-    return _syncStatesByClient[clientName] ?? _defaultClientState();
+    return _syncStatesByClient[clientName] ?? _defaultClientState;
   }
 
   @override
@@ -77,7 +56,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void _updateClientName(String value) {
     final nextName = value.trim().isEmpty ? 'Local Agent' : value.trim();
     final previousName = _clientName;
-    final currentState = _syncStatesByClient[previousName] ?? _defaultClientState();
+    final currentState = _syncStatesByClient[previousName] ?? _defaultClientState;
     setState(() {
       if (previousName != nextName) {
         _syncStatesByClient.remove(previousName);

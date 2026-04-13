@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sync-admin-web.frontendFullname" . }}
+  name: {{ include "sync-admin-web.backendFullname" . }}
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
@@ -12,33 +12,35 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ include "sync-admin-web.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: frontend
+      app.kubernetes.io/component: backend
   template:
     metadata:
       labels:
         {{- include "sync-admin-web.labels" . | nindent 8 }}
-        app.kubernetes.io/component: frontend
+        app.kubernetes.io/component: backend
     spec:
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
       containers:
-        - name: frontend
-          image: "{{ .Values.frontend.image.repository }}"
-          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           ports:
-            - containerPort: 80
+            - containerPort: {{ .Values.backend.service.port }}
           env:
-            - name: BACKEND_BASE_URL
-              value: {{ .Values.frontend.backendBaseUrl | quote }}
+            - name: PORT
+              value: {{ .Values.backend.service.port | quote }}
+            - name: STATE_FILE
+              value: {{ .Values.backend.stateFile | quote }}
           readinessProbe:
             httpGet:
-              path: /
-              port: 80
+              path: /api/health
+              port: {{ .Values.backend.service.port }}
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /
-              port: 80
+              path: /api/health
+              port: {{ .Values.backend.service.port }}
             initialDelaySeconds: 15
             periodSeconds: 20

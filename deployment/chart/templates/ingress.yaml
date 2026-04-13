@@ -17,12 +17,19 @@ spec:
     - host: {{ .host }}
       http:
         paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sync-admin-web.backendFullname" $ }}
+                port:
+                  number: {{ $.Values.backend.service.port }}
           {{- range .paths }}
           - path: {{ .path }}
             pathType: {{ .pathType | default "Prefix" }}
             backend:
               service:
-                name: {{ include "sync-admin-web.fullname" $ }}
+                name: {{ include "sync-admin-web.frontendFullname" $ }}
                 port:
                   number: 80
           {{- end }}
