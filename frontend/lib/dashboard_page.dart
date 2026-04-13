@@ -1132,6 +1132,101 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget _buildActionIconButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        onPressed: onPressed,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon),
+      ),
+    );
+  }
+
+  Widget _buildDetailModeTab({
+    required _TableDetailMode mode,
+    required IconData icon,
+    required String label,
+  }) {
+    final selected = _detailMode == mode;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _selectDetailMode(mode),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border:
+                selected
+                    ? Border.all(color: const Color(0xFFD9DDD8))
+                    : Border.all(color: Colors.transparent),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color:
+                    selected
+                        ? const Color(0xFF18212B)
+                        : const Color(0xFF58656B),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color:
+                        selected
+                            ? const Color(0xFF18212B)
+                            : const Color(0xFF58656B),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailModeTabs() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F3EE),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD9DDD8)),
+      ),
+      child: Row(
+        children: [
+          _buildDetailModeTab(
+            mode: _TableDetailMode.clients,
+            icon: Icons.people_alt_outlined,
+            label: 'Client Table',
+          ),
+          const SizedBox(width: 4),
+          _buildDetailModeTab(
+            mode: _TableDetailMode.data,
+            icon: Icons.table_rows_outlined,
+            label: 'Data Table',
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTableListCard() {
     final summaries = _filteredTableSummaries(_tableSummaries);
     final totalTables = _tableSummaries.length;
@@ -1254,28 +1349,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SegmentedButton<_TableDetailMode>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment<_TableDetailMode>(
-                value: _TableDetailMode.clients,
-                icon: Icon(Icons.people_alt_outlined),
-                label: Text('Client Table'),
-              ),
-              ButtonSegment<_TableDetailMode>(
-                value: _TableDetailMode.data,
-                icon: Icon(Icons.table_rows_outlined),
-                label: Text('Data Table'),
-              ),
-            ],
-            selected: <_TableDetailMode>{_detailMode},
-            onSelectionChanged: (selection) {
-              if (selection.isEmpty) {
-                return;
-              }
-              _selectDetailMode(selection.first);
-            },
-          ),
+          _buildDetailModeTabs(),
           const SizedBox(height: 14),
           _buildSearchField(
             controller: _dataSearchController,
@@ -1454,14 +1528,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         else
           Align(
             alignment: Alignment.centerLeft,
-            child: FilledButton.tonalIcon(
+            child: _buildActionIconButton(
+              tooltip: 'Open history',
               onPressed:
                   () => _openHistoryDialog(
                     clientName: selectedClient.agent.clientName,
                     table: summary.table,
                   ),
-              icon: const Icon(Icons.history_rounded),
-              label: const Text('Open History'),
+              icon: Icons.history_rounded,
             ),
           ),
       ],
@@ -1512,7 +1586,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         if (source != null)
           Align(
             alignment: Alignment.centerLeft,
-            child: TextButton.icon(
+            child: _buildActionIconButton(
+              tooltip: 'Download latest backup',
               onPressed:
                   _isBackupBusy(source.clientName, summary.table)
                       ? null
@@ -1520,8 +1595,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         clientName: source.clientName,
                         table: summary.table,
                       ),
-              icon: const Icon(Icons.download_rounded),
-              label: const Text('Download Latest Backup'),
+              icon: Icons.download_rounded,
             ),
           ),
         if (_snapshotLoading)

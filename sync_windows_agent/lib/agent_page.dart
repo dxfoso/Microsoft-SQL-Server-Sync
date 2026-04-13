@@ -855,6 +855,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
     );
   }
 
+  Widget _buildSyncActionIconButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        onPressed: onPressed,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon),
+      ),
+    );
+  }
+
   _SnapshotFileDocument _createSnapshotFileDocument({
     required String clientName,
     required String table,
@@ -2536,93 +2551,89 @@ SELECT (
           ),
           const SizedBox(height: 14),
           Expanded(
-            child: Scrollbar(
-              thumbVisibility: true,
+            child: SingleChildScrollView(
               child: SingleChildScrollView(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    showCheckboxColumn: false,
-                    headingRowColor: const WidgetStatePropertyAll(
-                      Color(0xFFE7ECE6),
-                    ),
-                    dataRowMinHeight: 48,
-                    dataRowMaxHeight: 56,
-                    columns: const [
-                      DataColumn(label: Text('Sync')),
-                      DataColumn(label: Text('Role')),
-                      DataColumn(label: Text('Table')),
-                      DataColumn(label: Text('Status')),
-                      DataColumn(label: Text('Progress')),
-                      DataColumn(label: Text('Rows')),
-                      DataColumn(label: Text('Last Sync')),
-                      DataColumn(label: Text('Backup')),
-                    ],
-                    rows: syncRows
-                        .map(
-                          (row) => DataRow(
-                            selected: row.table == selectedRow?.table,
-                            onSelectChanged: (_) {
-                              setState(() {
-                                _selectedSyncTable = row.table;
-                                _syncDetailMode = _SyncDetailMode.history;
-                              });
-                            },
-                            cells: [
-                              DataCell(
-                                Checkbox(
-                                  value: row.state.enabled,
-                                  onChanged: (value) {
-                                    if (value == null) {
-                                      return;
-                                    }
-                                    _updateSyncEnabledTable(row.table, value);
-                                  },
-                                ),
-                              ),
-                              DataCell(
-                                _buildRoleIndicator(
-                                  _isMasterClient,
-                                  showLabel: false,
-                                ),
-                              ),
-                              DataCell(Text(row.table)),
-                              DataCell(
-                                AgentStatusPill(
-                                  label: row.state.status,
-                                  color: _statusColor(row.state.status),
-                                ),
-                              ),
-                              DataCell(
-                                SizedBox(
-                                  width: 132,
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      AgentProgressStrip(
-                                        progress: row.state.progress,
-                                        color: _statusColor(row.state.status),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text('${row.state.progress}%'),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              DataCell(Text(row.state.rowCount.toString())),
-                              DataCell(
-                                Text(_formatTimestamp(row.state.lastSync)),
-                              ),
-                              DataCell(
-                                Text(_formatBytes(row.state.snapshotBytes)),
-                              ),
-                            ],
-                          ),
-                        )
-                        .toList(growable: false),
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  showCheckboxColumn: false,
+                  headingRowColor: const WidgetStatePropertyAll(
+                    Color(0xFFE7ECE6),
                   ),
+                  dataRowMinHeight: 48,
+                  dataRowMaxHeight: 56,
+                  columns: const [
+                    DataColumn(label: Text('Sync')),
+                    DataColumn(label: Text('Role')),
+                    DataColumn(label: Text('Table')),
+                    DataColumn(label: Text('Status')),
+                    DataColumn(label: Text('Progress')),
+                    DataColumn(label: Text('Rows')),
+                    DataColumn(label: Text('Last Sync')),
+                    DataColumn(label: Text('Backup')),
+                  ],
+                  rows: syncRows
+                      .map(
+                        (row) => DataRow(
+                          selected: row.table == selectedRow?.table,
+                          onSelectChanged: (_) {
+                            setState(() {
+                              _selectedSyncTable = row.table;
+                              _syncDetailMode = _SyncDetailMode.history;
+                            });
+                          },
+                          cells: [
+                            DataCell(
+                              Checkbox(
+                                value: row.state.enabled,
+                                onChanged: (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  _updateSyncEnabledTable(row.table, value);
+                                },
+                              ),
+                            ),
+                            DataCell(
+                              _buildRoleIndicator(
+                                _isMasterClient,
+                                showLabel: false,
+                              ),
+                            ),
+                            DataCell(Text(row.table)),
+                            DataCell(
+                              AgentStatusPill(
+                                label: row.state.status,
+                                color: _statusColor(row.state.status),
+                              ),
+                            ),
+                            DataCell(
+                              SizedBox(
+                                width: 132,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    AgentProgressStrip(
+                                      progress: row.state.progress,
+                                      color: _statusColor(row.state.status),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text('${row.state.progress}%'),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            DataCell(Text(row.state.rowCount.toString())),
+                            DataCell(
+                              Text(_formatTimestamp(row.state.lastSync)),
+                            ),
+                            DataCell(
+                              Text(_formatBytes(row.state.snapshotBytes)),
+                            ),
+                          ],
+                        ),
+                      )
+                      .toList(growable: false),
                 ),
               ),
             ),
@@ -2791,47 +2802,47 @@ SELECT (
           spacing: 10,
           runSpacing: 10,
           children: [
-            ElevatedButton.icon(
+            _buildSyncActionIconButton(
+              tooltip: 'Download backup',
               onPressed:
                   _selectedDatabase == null || busy
                       ? null
                       : () => _exportTableBackup(row.table),
-              icon: const Icon(Icons.download_rounded),
-              label: const Text('Download Backup'),
+              icon: Icons.download_rounded,
             ),
-            ElevatedButton.icon(
+            _buildSyncActionIconButton(
+              tooltip: 'Upload backup',
               onPressed:
                   _selectedDatabase == null || busy
                       ? null
                       : () => _importTableBackup(row.table),
-              icon: const Icon(Icons.upload_file_rounded),
-              label: const Text('Upload Backup'),
+              icon: Icons.upload_file_rounded,
             ),
-            OutlinedButton.icon(
+            _buildSyncActionIconButton(
+              tooltip: 'Push now',
               onPressed:
                   row.state.enabled
                       ? () => _triggerSyncNow(row.table, direction: 'upload')
                       : null,
-              icon: const Icon(Icons.cloud_upload_rounded),
-              label: const Text('Push Now'),
+              icon: Icons.cloud_upload_rounded,
             ),
-            OutlinedButton.icon(
+            _buildSyncActionIconButton(
+              tooltip: 'Pull now',
               onPressed:
                   row.state.enabled
                       ? () => _triggerSyncNow(row.table, direction: 'download')
                       : null,
-              icon: const Icon(Icons.cloud_download_rounded),
-              label: const Text('Pull Now'),
+              icon: Icons.cloud_download_rounded,
             ),
-            OutlinedButton.icon(
+            _buildSyncActionIconButton(
+              tooltip: 'Open table data',
               onPressed: () {
                 _tabController.animateTo(0);
                 if (_selectedTable != row.table) {
                   _selectTable(row.table);
                 }
               },
-              icon: const Icon(Icons.table_rows_outlined),
-              label: const Text('Open Table Data'),
+              icon: Icons.table_rows_outlined,
             ),
           ],
         ),
