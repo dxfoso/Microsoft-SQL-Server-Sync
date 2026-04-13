@@ -3223,27 +3223,42 @@ SELECT (
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.clientName == 'Local Agent'
-              ? 'SQL Sync Agent'
-              : '${widget.clientName} - SQL Sync Agent',
-        ),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.table_rows), text: 'Table'),
-            Tab(icon: Icon(Icons.sync), text: 'Sync'),
-          ],
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.more_vert),
-            style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
-            onPressed: _openSettingsDialog,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(72),
+        child: Material(
+          color: Theme.of(context).colorScheme.surface,
+          child: SafeArea(
+            bottom: false,
+            child: Container(
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: Color(0xFFC9D2C7))),
+              ),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TabBar(
+                      controller: _tabController,
+                      tabs: const [
+                        Tab(icon: Icon(Icons.table_rows), text: 'Table'),
+                        Tab(icon: Icon(Icons.sync), text: 'Sync'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Settings',
+                    icon: const Icon(Icons.more_vert),
+                    style: IconButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: _openSettingsDialog,
+                  ),
+                ],
+              ),
+            ),
           ),
-        ],
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

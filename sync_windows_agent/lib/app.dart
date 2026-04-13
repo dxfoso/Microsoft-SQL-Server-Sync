@@ -90,9 +90,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     const ink = Color(0xFF17313A);
     const teal = Color(0xFF1E6674);
     final appTitle =
-        _clientName == 'Local Agent'
-            ? 'SQL Sync Agent'
-            : 'SQL Sync Agent - $_clientName';
+        _clientName == 'Local Agent' ? 'SQL Sync Agent' : _clientName;
 
     return MaterialApp(
       title: appTitle,

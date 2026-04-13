@@ -1188,6 +1188,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: DataTable(
+                      showCheckboxColumn: false,
                       headingRowColor: const WidgetStatePropertyAll(
                         Color(0xFFE7ECE6),
                       ),
@@ -1201,8 +1202,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                         DataColumn(label: Text('Last Sync')),
                         DataColumn(label: Text('Backup')),
                         DataColumn(label: Text('Message')),
-                        DataColumn(label: Text('File')),
-                        DataColumn(label: Text('Action')),
+                        DataColumn(label: Text('Download')),
+                        DataColumn(label: Text('Upload')),
+                        DataColumn(label: Text('Sync')),
                       ],
                       rows: filteredTables
                           .map(
@@ -1275,44 +1277,37 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                                   ),
                                 ),
                                 DataCell(
-                                  Wrap(
-                                    spacing: 4,
-                                    children: [
-                                      IconButton(
-                                        tooltip: 'Download backup file',
-                                        onPressed:
-                                            _isBackupBusy(
-                                                  agent.clientName,
-                                                  table.table,
-                                                )
-                                                ? null
-                                                : () => _downloadSnapshotFile(
-                                                  clientName: agent.clientName,
-                                                  table: table.table,
-                                                ),
-                                        icon: const Icon(
-                                          Icons.download_rounded,
-                                        ),
-                                        visualDensity: VisualDensity.compact,
-                                      ),
-                                      IconButton(
-                                        tooltip: 'Upload backup file',
-                                        onPressed:
-                                            _isBackupBusy(
-                                                  agent.clientName,
-                                                  table.table,
-                                                )
-                                                ? null
-                                                : () => _uploadSnapshotFile(
-                                                  clientName: agent.clientName,
-                                                  table: table.table,
-                                                ),
-                                        icon: const Icon(
-                                          Icons.upload_file_rounded,
-                                        ),
-                                        visualDensity: VisualDensity.compact,
-                                      ),
-                                    ],
+                                  IconButton(
+                                    tooltip: 'Download backup file',
+                                    onPressed:
+                                        _isBackupBusy(
+                                              agent.clientName,
+                                              table.table,
+                                            )
+                                            ? null
+                                            : () => _downloadSnapshotFile(
+                                              clientName: agent.clientName,
+                                              table: table.table,
+                                            ),
+                                    icon: const Icon(Icons.download_rounded),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                                DataCell(
+                                  IconButton(
+                                    tooltip: 'Upload backup file',
+                                    onPressed:
+                                        _isBackupBusy(
+                                              agent.clientName,
+                                              table.table,
+                                            )
+                                            ? null
+                                            : () => _uploadSnapshotFile(
+                                              clientName: agent.clientName,
+                                              table: table.table,
+                                            ),
+                                    icon: const Icon(Icons.upload_file_rounded),
+                                    visualDensity: VisualDensity.compact,
                                   ),
                                 ),
                                 DataCell(
@@ -1727,32 +1722,34 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.zero,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DashboardHeader(
-              isConnected: _connected,
-              lastUpdated: _formatTimestamp(state?.generatedAt ?? ''),
-              selectedAgent: _selectedClientName,
-              totalAgents: state?.agents.length ?? 0,
-              totalJobs: _jobs.where((job) => job.isActive).length,
-              authenticatedEmail: widget.authenticatedEmail,
-            ),
-            const SizedBox(height: 12),
-            _buildSelectionHeader(),
-            const SizedBox(height: 12),
-            if (_error != null)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: const Color(0xFFFFEEEE),
-                ),
-                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildSelectionHeader(),
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xFFFFEEEE),
+                      ),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ],
               ),
+            ),
             Expanded(
               child:
                   _loading && state == null
