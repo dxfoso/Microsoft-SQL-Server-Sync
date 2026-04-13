@@ -2546,8 +2546,7 @@ SELECT (
     if (selectedRow == null) {
       return const AgentSurfaceCard(
         title: 'Sync Details',
-        subtitle:
-            'Choose a table from the main sync list to inspect its history or current sync state.',
+        subtitle: '',
         child: AgentEmptyStateCard(
           message:
               'No sync table is selected yet. Click a table row on the left to open its side detail card.',
@@ -2557,8 +2556,7 @@ SELECT (
 
     return AgentSurfaceCard(
       title: selectedRow.table,
-      subtitle:
-          'Use Overview for the current sync state and actions, or History for recent sync runs for this table.',
+      subtitle: '',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
