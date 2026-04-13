@@ -23,13 +23,11 @@ class AdminDashboardPage extends StatefulWidget {
   State<AdminDashboardPage> createState() => _AdminDashboardPageState();
 }
 
-class _AdminDashboardPageState extends State<AdminDashboardPage>
-    with SingleTickerProviderStateMixin {
+class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final LiveSyncApiClient _api = LiveSyncApiClient();
   final TextEditingController _syncSearchController = TextEditingController();
   final TextEditingController _dataSearchController = TextEditingController();
   Timer? _refreshTimer;
-  late final TabController _tabController;
 
   AdminLiveState? _state;
   AdminSnapshotDetail? _snapshot;
@@ -44,12 +42,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   String? _snapshotVersionToken;
   int _snapshotRequestToken = 0;
   final Set<String> _busyBackupKeys = <String>{};
+  _TableDetailMode _detailMode = _TableDetailMode.clients;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this)
-      ..addListener(_handleTabChange);
     _syncSearchController.addListener(_handleSearchChange);
     _dataSearchController.addListener(_handleSearchChange);
     unawaited(_refreshState());
@@ -62,21 +59,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   @override
   void dispose() {
     _refreshTimer?.cancel();
-    _tabController.removeListener(_handleTabChange);
-    _tabController.dispose();
     _syncSearchController.removeListener(_handleSearchChange);
     _dataSearchController.removeListener(_handleSearchChange);
     _syncSearchController.dispose();
     _dataSearchController.dispose();
     _api.dispose();
     super.dispose();
-  }
-
-  void _handleTabChange() {
-    if (!mounted || _tabController.indexIsChanging) {
-      return;
-    }
-    setState(() {});
   }
 
   void _handleSearchChange() {
@@ -99,13 +87,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
         return;
       }
 
-      final nextClientName = _resolveSelectedClient(nextState);
-      final nextTableName = _resolveSelectedTable(nextState, nextClientName);
+      final nextTableName = _resolveSelectedTable(nextState);
+      final nextClientName = _resolveSelectedClientForTable(
+        nextState,
+        nextTableName,
+      );
 
       setState(() {
         _state = nextState;
-        _selectedClientName = nextClientName;
         _selectedTableName = nextTableName;
+        _selectedClientName = nextClientName;
         _connected = true;
         _loading = false;
         _error = null;
@@ -125,57 +116,151 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     }
   }
 
-  String? _resolveSelectedClient(AdminLiveState state) {
-    if (state.agents.isEmpty) {
-      return null;
-    }
-    if (_selectedClientName != null &&
-        state.agents.any((agent) => agent.clientName == _selectedClientName)) {
-      return _selectedClientName;
-    }
-    return state.agents.first.clientName;
-  }
+  List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
 
-  String? _resolveSelectedTable(AdminLiveState state, String? clientName) {
-    final agent = _agentByName(state, clientName);
-    if (agent == null || agent.tables.isEmpty) {
-      return null;
-    }
-    if (_selectedTableName != null &&
-        agent.tables.any((table) => table.table == _selectedTableName)) {
-      return _selectedTableName;
-    }
-    final preferredTable = agent.selectedTable;
-    if (preferredTable != null &&
-        agent.tables.any((table) => table.table == preferredTable)) {
-      return preferredTable;
-    }
-    return agent.tables.first.table;
-  }
+  List<_TableAggregateSummary> get _tableSummaries =>
+      _tableSummariesFromState(_state);
 
-  AdminAgent? _agentByName(AdminLiveState? state, String? clientName) {
-    if (state == null || clientName == null) {
+  _TableAggregateSummary? get _selectedTableSummary {
+    final tableName = _selectedTableName;
+    if (tableName == null) {
       return null;
     }
-    for (final agent in state.agents) {
-      if (agent.clientName == clientName) {
-        return agent;
+    for (final summary in _tableSummaries) {
+      if (summary.table == tableName) {
+        return summary;
       }
     }
     return null;
   }
 
-  AdminAgent? get _selectedAgent => _agentByName(_state, _selectedClientName);
+  List<_TableClientEntry> get _selectedTableClients =>
+      _clientsForTableFromState(_state, _selectedTableName);
 
-  List<AdminTableState> get _selectedTables =>
-      _selectedAgent?.tables ?? const <AdminTableState>[];
-
-  AdminTableState? get _selectedTableState {
-    final tableName = _selectedTableName;
-    if (tableName == null) {
+  _TableClientEntry? get _selectedClientEntry {
+    final clientName = _selectedClientName;
+    if (clientName == null) {
       return null;
     }
-    for (final table in _selectedTables) {
+    for (final entry in _selectedTableClients) {
+      if (entry.agent.clientName == clientName) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  _TableSnapshotSource? get _selectedSnapshotSource =>
+      _snapshotSourceForTable(_state, _selectedTableName);
+
+  String? _resolveSelectedTable(AdminLiveState state) {
+    final summaries = _tableSummariesFromState(state);
+    if (summaries.isEmpty) {
+      return null;
+    }
+    if (_selectedTableName != null &&
+        summaries.any((summary) => summary.table == _selectedTableName)) {
+      return _selectedTableName;
+    }
+    return summaries.first.table;
+  }
+
+  String? _resolveSelectedClientForTable(
+    AdminLiveState state,
+    String? tableName,
+  ) {
+    final clients = _clientsForTableFromState(state, tableName);
+    if (clients.isEmpty) {
+      return null;
+    }
+    if (_selectedClientName != null &&
+        clients.any((entry) => entry.agent.clientName == _selectedClientName)) {
+      return _selectedClientName;
+    }
+    final snapshotSource = _snapshotSourceForTable(state, tableName);
+    if (snapshotSource != null &&
+        clients.any(
+          (entry) => entry.agent.clientName == snapshotSource.clientName,
+        )) {
+      return snapshotSource.clientName;
+    }
+    return clients.first.agent.clientName;
+  }
+
+  List<_TableAggregateSummary> _tableSummariesFromState(AdminLiveState? state) {
+    if (state == null) {
+      return const <_TableAggregateSummary>[];
+    }
+
+    final buckets = <String, List<_TableClientEntry>>{};
+    for (final agent in state.agents) {
+      for (final tableState in agent.tables) {
+        final entries = buckets.putIfAbsent(
+          tableState.table,
+          () => <_TableClientEntry>[],
+        );
+        entries.add(_TableClientEntry(agent: agent, tableState: tableState));
+      }
+    }
+
+    final summaries = buckets.entries
+      .map((entry) {
+        final clients = List<_TableClientEntry>.from(entry.value)
+          ..sort(_compareClientEntries);
+        var latestClient = clients.first;
+        for (final client in clients.skip(1)) {
+          if (_compareTimestamps(
+                _tableTimestampToken(client.tableState),
+                _tableTimestampToken(latestClient.tableState),
+              ) >
+              0) {
+            latestClient = client;
+          }
+        }
+        return _TableAggregateSummary(
+          table: entry.key,
+          lastSync: _tableTimestampToken(latestClient.tableState),
+          clientCount: clients.length,
+          masterCount: clients.where((item) => item.agent.isMaster).length,
+          slaveCount: clients.where((item) => !item.agent.isMaster).length,
+          latestRowCount: latestClient.tableState.rowCount,
+          latestSnapshotBytes: latestClient.tableState.snapshotBytes,
+          sourceClientName: latestClient.agent.clientName,
+          clients: clients,
+        );
+      })
+      .toList(growable: false)..sort((left, right) {
+      final byTimestamp = _compareTimestamps(right.lastSync, left.lastSync);
+      if (byTimestamp != 0) {
+        return byTimestamp;
+      }
+      return left.table.compareTo(right.table);
+    });
+
+    return summaries;
+  }
+
+  List<_TableClientEntry> _clientsForTableFromState(
+    AdminLiveState? state,
+    String? tableName,
+  ) {
+    if (state == null || tableName == null) {
+      return const <_TableClientEntry>[];
+    }
+
+    final entries = <_TableClientEntry>[];
+    for (final agent in state.agents) {
+      final tableState = _tableStateForAgent(agent, tableName);
+      if (tableState != null) {
+        entries.add(_TableClientEntry(agent: agent, tableState: tableState));
+      }
+    }
+    entries.sort(_compareClientEntries);
+    return entries;
+  }
+
+  AdminTableState? _tableStateForAgent(AdminAgent agent, String tableName) {
+    for (final table in agent.tables) {
       if (table.table == tableName) {
         return table;
       }
@@ -183,14 +268,108 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     return null;
   }
 
-  List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
+  int _compareClientEntries(_TableClientEntry left, _TableClientEntry right) {
+    final byRole = (right.agent.isMaster ? 1 : 0).compareTo(
+      left.agent.isMaster ? 1 : 0,
+    );
+    if (byRole != 0) {
+      return byRole;
+    }
+
+    final byTimestamp = _compareTimestamps(
+      _tableTimestampToken(right.tableState),
+      _tableTimestampToken(left.tableState),
+    );
+    if (byTimestamp != 0) {
+      return byTimestamp;
+    }
+    return left.agent.clientName.compareTo(right.agent.clientName);
+  }
+
+  _TableSnapshotSource? _snapshotSourceForTable(
+    AdminLiveState? state,
+    String? tableName,
+  ) {
+    if (state == null || tableName == null) {
+      return null;
+    }
+
+    final snapshots = state.snapshots
+      .where((snapshot) => snapshot.table == tableName)
+      .toList(growable: false)..sort(
+      (left, right) => _compareTimestamps(right.createdAt, left.createdAt),
+    );
+
+    if (snapshots.isNotEmpty) {
+      final snapshot = snapshots.first;
+      return _TableSnapshotSource(
+        clientName: snapshot.clientName,
+        table: snapshot.table,
+        createdAt: snapshot.createdAt,
+        rowCount: snapshot.rowCount,
+        snapshotBytes: snapshot.snapshotBytes,
+      );
+    }
+
+    final clients = _clientsForTableFromState(state, tableName);
+    if (clients.isEmpty) {
+      return null;
+    }
+
+    _TableClientEntry? latestEntry;
+    for (final entry in clients) {
+      final token = _tableTimestampToken(entry.tableState);
+      if (token.isEmpty) {
+        continue;
+      }
+      if (latestEntry == null ||
+          _compareTimestamps(
+                token,
+                _tableTimestampToken(latestEntry.tableState),
+              ) >
+              0) {
+        latestEntry = entry;
+      }
+    }
+
+    if (latestEntry == null) {
+      return null;
+    }
+
+    return _TableSnapshotSource(
+      clientName: latestEntry.agent.clientName,
+      table: tableName,
+      createdAt: _tableTimestampToken(latestEntry.tableState),
+      rowCount: latestEntry.tableState.rowCount,
+      snapshotBytes: latestEntry.tableState.snapshotBytes,
+    );
+  }
+
+  String _tableTimestampToken(AdminTableState tableState) {
+    final snapshotCreatedAt = tableState.snapshotCreatedAt?.trim() ?? '';
+    if (snapshotCreatedAt.isNotEmpty) {
+      return snapshotCreatedAt;
+    }
+    return tableState.lastSync.trim();
+  }
+
+  int _compareTimestamps(String left, String right) {
+    return _timestampSortValue(left).compareTo(_timestampSortValue(right));
+  }
+
+  int _timestampSortValue(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) {
+      return parsed.toUtc().microsecondsSinceEpoch;
+    }
+    return raw.trim().isEmpty ? -1 : 0;
+  }
 
   Future<void> _loadSelectedSnapshot({bool force = false}) async {
-    final agent = _selectedAgent;
     final tableName = _selectedTableName;
-    final tableState = _selectedTableState;
+    final source = _selectedSnapshotSource;
 
-    if (agent == null || tableName == null) {
+    if (tableName == null || source == null) {
       if (!mounted) {
         return;
       }
@@ -204,12 +383,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
       return;
     }
 
-    final nextKey = '${agent.clientName}::$tableName';
-    final snapshotCreatedAt = tableState?.snapshotCreatedAt?.trim() ?? '';
-    final nextVersion =
-        snapshotCreatedAt.isNotEmpty
-            ? snapshotCreatedAt
-            : tableState?.lastSync.trim() ?? '';
+    final nextKey = '${source.clientName}::$tableName';
+    final nextVersion = source.createdAt.trim();
 
     if (!force &&
         nextKey == _snapshotKey &&
@@ -231,7 +406,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
 
     try {
       final snapshot = await _api.fetchLatestSnapshot(
-        clientName: agent.clientName,
+        clientName: source.clientName,
         table: tableName,
       );
       if (!mounted || requestToken != _snapshotRequestToken) {
@@ -242,7 +417,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
         _snapshotLoading = false;
         _snapshotError =
             snapshot == null
-                ? 'No snapshot uploaded yet for $tableName. Trigger a Push from Sync Status after the agent loads the table.'
+                ? 'No snapshot is available yet for $tableName.'
                 : null;
       });
     } catch (error) {
@@ -258,31 +433,39 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   }
 
   void _selectClient(String? clientName) {
-    if (clientName == null ||
-        clientName == _selectedClientName ||
-        _state == null) {
+    if (clientName == null || clientName == _selectedClientName) {
       return;
     }
-    final nextTable = _resolveSelectedTable(_state!, clientName);
     setState(() {
       _selectedClientName = clientName;
-      _selectedTableName = nextTable;
-      _snapshot = null;
-      _snapshotError = null;
     });
-    unawaited(_loadSelectedSnapshot(force: true));
   }
 
   void _selectTable(String? tableName) {
     if (tableName == null || tableName == _selectedTableName) {
       return;
     }
+    final nextClientName =
+        _state == null
+            ? null
+            : _resolveSelectedClientForTable(_state!, tableName);
     setState(() {
       _selectedTableName = tableName;
+      _selectedClientName = nextClientName;
       _snapshot = null;
       _snapshotError = null;
     });
     unawaited(_loadSelectedSnapshot(force: true));
+  }
+
+  void _selectDetailMode(_TableDetailMode mode) {
+    if (mode == _detailMode) {
+      return;
+    }
+    _dataSearchController.clear();
+    setState(() {
+      _detailMode = mode;
+    });
   }
 
   Future<void> _triggerJob({
@@ -632,25 +815,37 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     return matched / query.length * 90;
   }
 
-  List<AdminTableState> _filteredTables(List<AdminTableState> tables) {
+  List<_TableAggregateSummary> _filteredTableSummaries(
+    List<_TableAggregateSummary> summaries,
+  ) {
     final query = _syncSearchController.text.trim();
     if (query.isEmpty) {
-      return tables;
+      return summaries;
     }
 
-    final matches = tables
-      .map((table) {
+    final matches = summaries
+      .map((summary) {
         final score = _bestMatchScore(
           query,
           [
-            table.table,
-            table.status,
-            table.message,
-            table.direction,
-            _formatTimestamp(table.lastSync),
+            summary.table,
+            summary.sourceClientName,
+            _formatTimestamp(summary.lastSync),
+            '${summary.clientCount}',
+            '${summary.masterCount}',
+            '${summary.slaveCount}',
+            ...summary.clients.map((entry) {
+              return [
+                entry.agent.clientName,
+                entry.agent.machineName,
+                _roleLabel(entry.agent.isMaster),
+                entry.tableState.status,
+                entry.tableState.message,
+              ].join(' ');
+            }),
           ].join(' '),
         );
-        return _ScoredTableMatch(table: table, score: score);
+        return _ScoredTableSummary(summary: summary, score: score);
       })
       .where((match) => match.score > 0)
       .toList(growable: false)..sort((left, right) {
@@ -658,10 +853,47 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
       if (byScore != 0) {
         return byScore;
       }
-      return left.table.table.compareTo(right.table.table);
+      return left.summary.table.compareTo(right.summary.table);
     });
 
-    return matches.map((match) => match.table).toList(growable: false);
+    return matches.map((match) => match.summary).toList(growable: false);
+  }
+
+  List<_TableClientEntry> _filteredTableClients(
+    List<_TableClientEntry> entries,
+  ) {
+    final query = _dataSearchController.text.trim();
+    if (query.isEmpty) {
+      return entries;
+    }
+
+    final matches = entries
+      .map((entry) {
+        final score = _bestMatchScore(
+          query,
+          [
+            entry.agent.clientName,
+            entry.agent.machineName,
+            _roleLabel(entry.agent.isMaster),
+            entry.tableState.status,
+            entry.tableState.message,
+            _formatTimestamp(entry.tableState.lastSync),
+            '${entry.tableState.rowCount}',
+            _formatBytes(entry.tableState.snapshotBytes),
+          ].join(' '),
+        );
+        return _ScoredTableClient(entry: entry, score: score);
+      })
+      .where((match) => match.score > 0)
+      .toList(growable: false)..sort((left, right) {
+      final byScore = right.score.compareTo(left.score);
+      if (byScore != 0) {
+        return byScore;
+      }
+      return _compareClientEntries(left.entry, right.entry);
+    });
+
+    return matches.map((match) => match.entry).toList(growable: false);
   }
 
   List<_ScoredSnapshotRow> _filteredSnapshotRows(AdminSnapshotDetail snapshot) {
@@ -696,150 +928,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     return matches;
   }
 
-  List<AdminJob> get _selectedTableJobs {
-    final agent = _selectedAgent;
-    final table = _selectedTableName;
-    if (agent == null || table == null) {
+  List<AdminJob> get _selectedClientJobs {
+    final tableName = _selectedTableName;
+    final clientName = _selectedClientName;
+    if (tableName == null || clientName == null) {
       return const <AdminJob>[];
     }
     return _jobs
-        .where(
-          (job) => job.clientName == agent.clientName && job.table == table,
-        )
+        .where((job) => job.clientName == clientName && job.table == tableName)
         .take(12)
         .toList(growable: false);
-  }
-
-  AdminTableState? _tableStateForAgent(AdminAgent agent, String tableName) {
-    for (final table in agent.tables) {
-      if (table.table == tableName) {
-        return table;
-      }
-    }
-    return null;
-  }
-
-  List<AdminAgent> _agentsForTable(String? tableName) {
-    if (_state == null || tableName == null) {
-      return const <AdminAgent>[];
-    }
-    return _state!.agents
-        .where((agent) => _tableStateForAgent(agent, tableName) != null)
-        .toList(growable: false);
-  }
-
-  List<AdminJob> _tableJobsForClient(String clientName, String tableName) {
-    return _jobs
-        .where((job) => job.clientName == clientName && job.table == tableName)
-        .take(8)
-        .toList(growable: false);
-  }
-
-  void _focusClientTable(String clientName, String tableName) {
-    if (_state == null) {
-      return;
-    }
-    final agent = _agentByName(_state, clientName);
-    if (agent == null || _tableStateForAgent(agent, tableName) == null) {
-      return;
-    }
-    setState(() {
-      _selectedClientName = clientName;
-      _selectedTableName = tableName;
-      _snapshot = null;
-      _snapshotError = null;
-    });
-    unawaited(_loadSelectedSnapshot(force: true));
-  }
-
-  Widget _buildSelectionHeader() {
-    final agent = _selectedAgent;
-    final tables = _selectedTables;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          SizedBox(
-            width: 320,
-            child: DropdownButtonFormField<String>(
-              value: _selectedClientName,
-              isExpanded: true,
-              decoration: _selectionDecoration('Agent'),
-              items: (_state?.agents ?? const <AdminAgent>[])
-                  .map(
-                    (item) => DropdownMenuItem(
-                      value: item.clientName,
-                      child: Text(
-                        item.clientName,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged:
-                  (_state?.agents ?? const <AdminAgent>[]).isEmpty
-                      ? null
-                      : _selectClient,
-            ),
-          ),
-          SizedBox(
-            width: 320,
-            child: DropdownButtonFormField<String>(
-              value: _selectedTableName,
-              isExpanded: true,
-              decoration: _selectionDecoration('Table'),
-              items: tables
-                  .map(
-                    (item) => DropdownMenuItem(
-                      value: item.table,
-                      child: Text(item.table, overflow: TextOverflow.ellipsis),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged: tables.isEmpty ? null : _selectTable,
-            ),
-          ),
-          if (agent != null) ...[
-            _buildRoleBadge(agent.isMaster),
-            MetricPill(label: 'Machine', value: agent.machineName),
-            MetricPill(
-              label: 'Database',
-              value: agent.database.isEmpty ? 'Not selected' : agent.database,
-            ),
-            MetricPill(
-              label: 'Heartbeat',
-              value: _formatTimestamp(agent.lastHeartbeat),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  InputDecoration _selectionDecoration(String label) {
-    return InputDecoration(
-      labelText: label,
-      isDense: true,
-      filled: true,
-      fillColor: const Color(0xFFF6F7F5),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF7C8A7A)),
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    );
   }
 
   Widget _buildSearchField({
@@ -865,88 +963,430 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     );
   }
 
-  Widget _buildTableDataTab() {
-    final agent = _selectedAgent;
-    if (agent == null) {
-      return SurfaceCard(
-        title: 'Table Data',
-        subtitle:
-            'Select an agent first. Table data comes from the latest uploaded snapshot for the selected table.',
-        child: const EmptyStateCard(
-          message:
-              'No agents have registered yet. Open the Windows agent and let it connect before browsing table data here.',
-        ),
-      );
-    }
-
-    final tableState = _selectedTableState;
-    final snapshot = _snapshot;
-    final filteredRows =
-        snapshot == null
-            ? const <_ScoredSnapshotRow>[]
-            : _filteredSnapshotRows(snapshot);
+  Widget _buildTableListCard() {
+    final summaries = _filteredTableSummaries(_tableSummaries);
+    final totalTables = _tableSummaries.length;
+    final totalClients = _state?.agents.length ?? 0;
+    final masterClients =
+        _state?.agents.where((agent) => agent.isMaster).length ?? 0;
+    final slaveClients =
+        _state?.agents.where((agent) => !agent.isMaster).length ?? 0;
 
     return SurfaceCard(
-      title: 'Table Data',
+      title: 'Tables',
       subtitle:
-          'Browse the latest uploaded snapshot for ${_selectedTableName ?? 'the selected table'}. Search ranks the best matching rows first.',
+          'This is the main table list. Select a table to inspect connected clients or the latest synced rows on the side.',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildSearchField(
-            controller: _dataSearchController,
-            label: 'Search Rows',
+            controller: _syncSearchController,
+            label: 'Search Tables',
             hint:
-                'Search across all visible columns for the best matching row.',
+                'Search table names, connected clients, role counts, and sync dates.',
           ),
           const SizedBox(height: 14),
           Wrap(
             spacing: 12,
             runSpacing: 12,
             children: [
-              MetricPill(label: 'Agent', value: agent.clientName),
-              MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
+              MetricPill(label: 'Tables', value: totalTables.toString()),
+              MetricPill(label: 'Clients', value: totalClients.toString()),
+              MetricPill(label: 'Masters', value: masterClients.toString()),
+              MetricPill(label: 'Slaves', value: slaveClients.toString()),
               MetricPill(
-                label: 'Rows',
-                value:
-                    snapshot == null
-                        ? '${tableState?.rowCount ?? 0}'
-                        : '${filteredRows.length} / ${snapshot.rowCount}',
-              ),
-              MetricPill(
-                label: 'Last Sync',
-                value: _formatTimestamp(tableState?.lastSync ?? ''),
-              ),
-              MetricPill(
-                label: 'Snapshot',
-                value:
-                    snapshot == null
-                        ? 'Not available'
-                        : _formatTimestamp(snapshot.createdAt),
-              ),
-              MetricPill(
-                label: 'Backup Size',
-                value: _formatBytes(
-                  snapshot?.snapshotBytes ?? tableState?.snapshotBytes ?? 0,
-                ),
+                label: 'Selected',
+                value: _selectedTableName ?? 'None',
               ),
             ],
           ),
           const SizedBox(height: 16),
-          if (_snapshotLoading)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 12),
-              child: LinearProgressIndicator(minHeight: 3),
-            ),
           Expanded(
-            child: _buildSnapshotBody(
-              snapshot: snapshot,
-              filteredRows: filteredRows,
-            ),
+            child:
+                summaries.isEmpty
+                    ? EmptyStateCard(
+                      message:
+                          _syncSearchController.text.trim().isEmpty
+                              ? 'No synced tables are available yet.'
+                              : 'No tables matched your search.',
+                    )
+                    : ListView(
+                      children: [
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: DataTable(
+                            showCheckboxColumn: false,
+                            headingRowColor: const WidgetStatePropertyAll(
+                              Color(0xFFE7ECE6),
+                            ),
+                            columns: const [
+                              DataColumn(label: Text('Table')),
+                              DataColumn(label: Text('Last Sync')),
+                              DataColumn(label: Text('Clients')),
+                              DataColumn(label: Text('Masters')),
+                              DataColumn(label: Text('Slaves')),
+                            ],
+                            rows: summaries
+                                .map(
+                                  (summary) => DataRow(
+                                    selected:
+                                        summary.table == _selectedTableName,
+                                    onSelectChanged:
+                                        (_) => _selectTable(summary.table),
+                                    cells: [
+                                      DataCell(Text(summary.table)),
+                                      DataCell(
+                                        Text(
+                                          _formatTimestamp(summary.lastSync),
+                                        ),
+                                      ),
+                                      DataCell(
+                                        Text(summary.clientCount.toString()),
+                                      ),
+                                      DataCell(
+                                        Text(summary.masterCount.toString()),
+                                      ),
+                                      DataCell(
+                                        Text(summary.slaveCount.toString()),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                                .toList(growable: false),
+                          ),
+                        ),
+                      ],
+                    ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildDetailCard() {
+    final summary = _selectedTableSummary;
+    if (summary == null) {
+      return const SurfaceCard(
+        title: 'Details',
+        subtitle:
+            'Choose a table from the main list to view connected clients or the latest synced data.',
+        child: EmptyStateCard(
+          message:
+              'No table is selected yet. Pick a table from the left to open its side detail card.',
+        ),
+      );
+    }
+
+    return SurfaceCard(
+      title: summary.table,
+      subtitle:
+          'Use Clients to inspect every connected client for this table, or Data to browse the latest rows from the most recent sync.',
+      expandChild: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              MetricPill(
+                label: 'Last Sync',
+                value: _formatTimestamp(summary.lastSync),
+              ),
+              MetricPill(
+                label: 'Clients',
+                value: summary.clientCount.toString(),
+              ),
+              MetricPill(
+                label: 'Masters',
+                value: summary.masterCount.toString(),
+              ),
+              MetricPill(label: 'Slaves', value: summary.slaveCount.toString()),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SegmentedButton<_TableDetailMode>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment<_TableDetailMode>(
+                value: _TableDetailMode.clients,
+                icon: Icon(Icons.people_alt_outlined),
+                label: Text('Client Table'),
+              ),
+              ButtonSegment<_TableDetailMode>(
+                value: _TableDetailMode.data,
+                icon: Icon(Icons.table_rows_outlined),
+                label: Text('Data Table'),
+              ),
+            ],
+            selected: <_TableDetailMode>{_detailMode},
+            onSelectionChanged: (selection) {
+              if (selection.isEmpty) {
+                return;
+              }
+              _selectDetailMode(selection.first);
+            },
+          ),
+          const SizedBox(height: 14),
+          _buildSearchField(
+            controller: _dataSearchController,
+            label:
+                _detailMode == _TableDetailMode.clients
+                    ? 'Search Clients'
+                    : 'Search Rows',
+            hint:
+                _detailMode == _TableDetailMode.clients
+                    ? 'Search client names, roles, statuses, and sync dates.'
+                    : 'Search across all visible columns for the best matching row.',
+          ),
+          const SizedBox(height: 14),
+          Expanded(
+            child:
+                _detailMode == _TableDetailMode.clients
+                    ? _buildClientTableSide(summary)
+                    : _buildDataTableSide(summary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientTableSide(_TableAggregateSummary summary) {
+    final clients = _filteredTableClients(summary.clients);
+    final selectedClient = _selectedClientEntry;
+    final selectedJobs = _selectedClientJobs;
+
+    return ListView(
+      children: [
+        if (clients.isEmpty)
+          EmptyStateCard(
+            message:
+                _dataSearchController.text.trim().isEmpty
+                    ? 'No clients are exposing ${summary.table} yet.'
+                    : 'No clients matched your search.',
+          )
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              showCheckboxColumn: false,
+              headingRowColor: const WidgetStatePropertyAll(Color(0xFFE7ECE6)),
+              columns: const [
+                DataColumn(label: Text('Client')),
+                DataColumn(label: Text('Type')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Last Sync')),
+                DataColumn(label: Text('Rows')),
+                DataColumn(label: Text('Backup')),
+                DataColumn(label: Text('Download')),
+                DataColumn(label: Text('Upload')),
+                DataColumn(label: Text('Sync')),
+              ],
+              rows: clients
+                  .map(
+                    (entry) => DataRow(
+                      selected: entry.agent.clientName == _selectedClientName,
+                      onSelectChanged:
+                          (_) => _selectClient(entry.agent.clientName),
+                      cells: [
+                        DataCell(Text(entry.agent.clientName)),
+                        DataCell(_buildRoleBadge(entry.agent.isMaster)),
+                        DataCell(
+                          StatusBadge(
+                            label: entry.tableState.status,
+                            color: _statusColor(entry.tableState.status),
+                          ),
+                        ),
+                        DataCell(
+                          Text(_formatTimestamp(entry.tableState.lastSync)),
+                        ),
+                        DataCell(Text(entry.tableState.rowCount.toString())),
+                        DataCell(
+                          Text(_formatBytes(entry.tableState.snapshotBytes)),
+                        ),
+                        DataCell(
+                          IconButton(
+                            tooltip: 'Download backup file',
+                            onPressed:
+                                _isBackupBusy(
+                                      entry.agent.clientName,
+                                      summary.table,
+                                    )
+                                    ? null
+                                    : () => _downloadSnapshotFile(
+                                      clientName: entry.agent.clientName,
+                                      table: summary.table,
+                                    ),
+                            icon: const Icon(Icons.download_rounded),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        DataCell(
+                          IconButton(
+                            tooltip: 'Upload backup file',
+                            onPressed:
+                                _isBackupBusy(
+                                      entry.agent.clientName,
+                                      summary.table,
+                                    )
+                                    ? null
+                                    : () => _uploadSnapshotFile(
+                                      clientName: entry.agent.clientName,
+                                      table: summary.table,
+                                    ),
+                            icon: const Icon(Icons.upload_file_rounded),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        DataCell(
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              TextButton(
+                                onPressed:
+                                    entry.tableState.enabled
+                                        ? () => _triggerJob(
+                                          clientName: entry.agent.clientName,
+                                          table: summary.table,
+                                          direction: 'upload',
+                                        )
+                                        : null,
+                                child: const Text('Push'),
+                              ),
+                              TextButton(
+                                onPressed:
+                                    entry.tableState.enabled
+                                        ? () => _triggerJob(
+                                          clientName: entry.agent.clientName,
+                                          table: summary.table,
+                                          direction: 'download',
+                                        )
+                                        : null,
+                                child: const Text('Pull'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ),
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            MetricPill(
+              label: 'Selected Client',
+              value: selectedClient?.agent.clientName ?? 'None',
+            ),
+            MetricPill(
+              label: 'Type',
+              value:
+                  selectedClient == null
+                      ? 'None'
+                      : _roleLabel(selectedClient.agent.isMaster),
+            ),
+            MetricPill(
+              label: 'Last Sync',
+              value: _formatTimestamp(
+                selectedClient?.tableState.lastSync ?? '',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Text(
+          'History',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        if (selectedJobs.isEmpty)
+          EmptyStateCard(
+            message:
+                selectedClient == null
+                    ? 'Select a client row to inspect history.'
+                    : 'No sync jobs have been recorded yet for ${selectedClient.agent.clientName}.',
+          )
+        else
+          ...selectedJobs.map(_buildJobCard),
+      ],
+    );
+  }
+
+  Widget _buildDataTableSide(_TableAggregateSummary summary) {
+    final snapshot = _snapshot;
+    final source = _selectedSnapshotSource;
+    final filteredRows =
+        snapshot == null
+            ? const <_ScoredSnapshotRow>[]
+            : _filteredSnapshotRows(snapshot);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            MetricPill(
+              label: 'Source Client',
+              value: source?.clientName ?? 'Not available',
+            ),
+            MetricPill(
+              label: 'Last Sync',
+              value: _formatTimestamp(source?.createdAt ?? summary.lastSync),
+            ),
+            MetricPill(
+              label: 'Rows',
+              value:
+                  snapshot == null
+                      ? '${summary.latestRowCount}'
+                      : '${filteredRows.length} / ${snapshot.rowCount}',
+            ),
+            MetricPill(
+              label: 'Backup Size',
+              value: _formatBytes(
+                snapshot?.snapshotBytes ??
+                    source?.snapshotBytes ??
+                    summary.latestSnapshotBytes,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (source != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed:
+                  _isBackupBusy(source.clientName, summary.table)
+                      ? null
+                      : () => _downloadSnapshotFile(
+                        clientName: source.clientName,
+                        table: summary.table,
+                      ),
+              icon: const Icon(Icons.download_rounded),
+              label: const Text('Download Latest Backup'),
+            ),
+          ),
+        if (_snapshotLoading)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: LinearProgressIndicator(minHeight: 3),
+          ),
+        Expanded(
+          child: _buildSnapshotBody(
+            snapshot: snapshot,
+            filteredRows: filteredRows,
+          ),
+        ),
+      ],
     );
   }
 
@@ -1118,255 +1558,29 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     );
   }
 
-  Widget _buildSyncStatusTab() {
-    final agent = _selectedAgent;
-    if (agent == null) {
-      return SurfaceCard(
-        title: 'Sync Status',
-        subtitle:
-            'Select an agent to inspect table sync progress and trigger uploads or downloads.',
-        child: const EmptyStateCard(
-          message:
-              'No agents are available yet. Start the Windows agent first so the control plane has a machine to inspect.',
-        ),
-      );
-    }
-
-    final filteredTables = _filteredTables(_selectedTables);
-
-    return SurfaceCard(
-      title: 'Sync Status',
-      subtitle:
-          'This mirrors the Windows agent workflow: table sync state at the top, recent activity for the selected table below it.',
-      expandChild: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSearchField(
-            controller: _syncSearchController,
-            label: 'Search Tables',
-            hint:
-                'Search table names, statuses, messages, and last sync times.',
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
+  Widget _buildDashboardContent() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useSideBySide = constraints.maxWidth >= 1180;
+        if (useSideBySide) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              MetricPill(label: 'Agent', value: agent.clientName),
-              MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
-              MetricPill(
-                label: 'SQL',
-                value: agent.sqlConnected ? 'Ready' : 'Offline',
-              ),
-              MetricPill(
-                label: 'Server',
-                value: agent.server.isEmpty ? 'Not set' : agent.server,
-              ),
-              MetricPill(
-                label: 'Tables',
-                value: _selectedTables.length.toString(),
-              ),
-              MetricPill(
-                label: 'Backup Size',
-                value: _formatBytes(_selectedTableState?.snapshotBytes ?? 0),
-              ),
+              Expanded(flex: 7, child: _buildTableListCard()),
+              const SizedBox(width: 16),
+              Expanded(flex: 5, child: _buildDetailCard()),
             ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView(
-              children: [
-                if (filteredTables.isEmpty)
-                  EmptyStateCard(
-                    message:
-                        _syncSearchController.text.trim().isEmpty
-                            ? 'No tables are loaded on this agent yet.'
-                            : 'No tables matched your search.',
-                  )
-                else
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: DataTable(
-                      showCheckboxColumn: false,
-                      headingRowColor: const WidgetStatePropertyAll(
-                        Color(0xFFE7ECE6),
-                      ),
-                      columns: const [
-                        DataColumn(label: Text('Sync')),
-                        DataColumn(label: Text('Role')),
-                        DataColumn(label: Text('Table')),
-                        DataColumn(label: Text('Status')),
-                        DataColumn(label: Text('Progress')),
-                        DataColumn(label: Text('Rows')),
-                        DataColumn(label: Text('Last Sync')),
-                        DataColumn(label: Text('Backup')),
-                        DataColumn(label: Text('Message')),
-                        DataColumn(label: Text('Download')),
-                        DataColumn(label: Text('Upload')),
-                        DataColumn(label: Text('Sync')),
-                      ],
-                      rows: filteredTables
-                          .map(
-                            (table) => DataRow(
-                              selected: table.table == _selectedTableName,
-                              onSelectChanged: (_) => _selectTable(table.table),
-                              cells: [
-                                DataCell(
-                                  Icon(
-                                    table.enabled
-                                        ? Icons.check_circle
-                                        : Icons.pause_circle,
-                                    color:
-                                        table.enabled
-                                            ? const Color(0xFF2F855A)
-                                            : const Color(0xFF718096),
-                                    size: 18,
-                                  ),
-                                ),
-                                DataCell(
-                                  _buildRoleBadge(
-                                    agent.isMaster,
-                                    compact: true,
-                                  ),
-                                ),
-                                DataCell(Text(table.table)),
-                                DataCell(
-                                  StatusBadge(
-                                    label: table.status,
-                                    color: _statusColor(table.status),
-                                  ),
-                                ),
-                                DataCell(
-                                  SizedBox(
-                                    width: 150,
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        ProgressStrip(
-                                          progress: table.progress,
-                                          color: _statusColor(table.status),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text('${table.progress}%'),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                DataCell(Text(table.rowCount.toString())),
-                                DataCell(
-                                  Text(_formatTimestamp(table.lastSync)),
-                                ),
-                                DataCell(
-                                  Text(_formatBytes(table.snapshotBytes)),
-                                ),
-                                DataCell(
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 340,
-                                    ),
-                                    child: Text(
-                                      table.message.isEmpty
-                                          ? 'No sync message yet.'
-                                          : table.message,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ),
-                                DataCell(
-                                  IconButton(
-                                    tooltip: 'Download backup file',
-                                    onPressed:
-                                        _isBackupBusy(
-                                              agent.clientName,
-                                              table.table,
-                                            )
-                                            ? null
-                                            : () => _downloadSnapshotFile(
-                                              clientName: agent.clientName,
-                                              table: table.table,
-                                            ),
-                                    icon: const Icon(Icons.download_rounded),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                ),
-                                DataCell(
-                                  IconButton(
-                                    tooltip: 'Upload backup file',
-                                    onPressed:
-                                        _isBackupBusy(
-                                              agent.clientName,
-                                              table.table,
-                                            )
-                                            ? null
-                                            : () => _uploadSnapshotFile(
-                                              clientName: agent.clientName,
-                                              table: table.table,
-                                            ),
-                                    icon: const Icon(Icons.upload_file_rounded),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                ),
-                                DataCell(
-                                  Wrap(
-                                    spacing: 8,
-                                    children: [
-                                      TextButton(
-                                        onPressed:
-                                            table.enabled
-                                                ? () => _triggerJob(
-                                                  clientName: agent.clientName,
-                                                  table: table.table,
-                                                  direction: 'upload',
-                                                )
-                                                : null,
-                                        child: const Text('Push'),
-                                      ),
-                                      TextButton(
-                                        onPressed:
-                                            table.enabled
-                                                ? () => _triggerJob(
-                                                  clientName: agent.clientName,
-                                                  table: table.table,
-                                                  direction: 'download',
-                                                )
-                                                : null,
-                                        child: const Text('Pull'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  ),
-                const SizedBox(height: 18),
-                _buildTableClientOverview(),
-                const SizedBox(height: 18),
-                Text(
-                  '${_selectedTableName ?? 'Selected table'} activity for ${_selectedAgent?.clientName ?? 'the selected client'}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                if (_selectedTableJobs.isEmpty)
-                  const EmptyStateCard(
-                    message:
-                        'No sync jobs have been recorded yet for the selected table.',
-                  )
-                else
-                  ..._selectedTableJobs.map(_buildJobCard),
-              ],
-            ),
-          ),
-        ],
-      ),
+          );
+        }
+
+        return Column(
+          children: [
+            Expanded(flex: 6, child: _buildTableListCard()),
+            const SizedBox(height: 16),
+            Expanded(flex: 7, child: _buildDetailCard()),
+          ],
+        );
+      },
     );
   }
 
@@ -1450,198 +1664,49 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     );
   }
 
-  Widget _buildTableClientOverview() {
-    final tableName = _selectedTableName;
-    final agents = _agentsForTable(tableName);
-    if (tableName == null) {
-      return const EmptyStateCard(
-        message: 'Select a table to compare that table across every client.',
-      );
-    }
-    if (agents.isEmpty) {
-      return EmptyStateCard(message: 'No clients are exposing $tableName yet.');
-    }
+  Widget _buildPinnedSummaryBar() {
+    final summary = _selectedTableSummary;
+    final selectedClient = _selectedClientEntry;
+    final source = _selectedSnapshotSource;
+    final displayedRows =
+        _detailMode == _TableDetailMode.data && _snapshot != null
+            ? '${_filteredSnapshotRows(_snapshot!).length}/${_snapshot!.rowCount}'
+            : '${selectedClient?.tableState.rowCount ?? summary?.latestRowCount ?? 0}';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '$tableName across clients',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          'Click a client card to switch the history view below to that client and see whether it is running as master or slave.',
-          style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: agents.map(_buildClientTableCard).toList(growable: false),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildClientTableCard(AdminAgent agent) {
-    final tableName = _selectedTableName!;
-    final tableState = _tableStateForAgent(agent, tableName)!;
-    final selected = agent.clientName == _selectedClientName;
-    final recentJobs = _tableJobsForClient(agent.clientName, tableName);
-    final latestJob = recentJobs.isEmpty ? null : recentJobs.first;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: () => _focusClientTable(agent.clientName, tableName),
-      child: Container(
-        width: 280,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: selected ? const Color(0xFF1E6674) : const Color(0xFFD9DDD8),
-            width: selected ? 2 : 1,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    agent.clientName,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                _buildRoleBadge(agent.isMaster, compact: false),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              children: [
-                StatusBadge(
-                  label: tableState.status,
-                  color: _statusColor(tableState.status),
-                ),
-                MetricPill(
-                  label: 'Last Sync',
-                  value: _formatTimestamp(tableState.lastSync),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ProgressStrip(
-              progress: tableState.progress,
-              color: _statusColor(tableState.status),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 10,
-              runSpacing: 6,
-              children: [
-                Text(
-                  '${tableState.progress}%',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  '${tableState.rowCount} rows',
-                  style: const TextStyle(color: Color(0xFF5F6B76)),
-                ),
-                Text(
-                  _formatBytes(tableState.snapshotBytes),
-                  style: const TextStyle(color: Color(0xFF5F6B76)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              tableState.message.isEmpty
-                  ? 'No sync message yet.'
-                  : tableState.message,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(height: 1.35),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              latestJob == null
-                  ? 'No recent history yet.'
-                  : 'Latest: ${latestJob.direction.toUpperCase()} ${_formatTimestamp(latestJob.updatedAt)}',
-              style: const TextStyle(
-                color: Color(0xFF58656B),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
+    final footerItems = <Widget>[
+      InfoLine(label: 'Table', value: summary?.table ?? 'None'),
+      InfoLine(label: 'Clients', value: '${summary?.clientCount ?? 0}'),
+      InfoLine(label: 'Masters', value: '${summary?.masterCount ?? 0}'),
+      InfoLine(label: 'Slaves', value: '${summary?.slaveCount ?? 0}'),
+      InfoLine(label: 'Rows', value: displayedRows),
+      InfoLine(
+        label: 'Last Sync',
+        value: _formatTimestamp(summary?.lastSync ?? ''),
+      ),
+      InfoLine(
+        label: 'Panel',
+        value:
+            _detailMode == _TableDetailMode.clients
+                ? 'Client Table'
+                : 'Data Table',
+      ),
+      InfoLine(
+        label: _detailMode == _TableDetailMode.clients ? 'Client' : 'Source',
+        value:
+            _detailMode == _TableDetailMode.clients
+                ? selectedClient?.agent.clientName ?? 'None'
+                : source?.clientName ?? 'None',
+      ),
+      InfoLine(
+        label: 'Backup',
+        value: _formatBytes(
+          _snapshot?.snapshotBytes ??
+              selectedClient?.tableState.snapshotBytes ??
+              summary?.latestSnapshotBytes ??
+              0,
         ),
       ),
-    );
-  }
-
-  Widget _buildPinnedSummaryBar() {
-    final agent = _selectedAgent;
-    final tableState = _selectedTableState;
-    final footerItems =
-        _tabController.index == 0
-            ? <Widget>[
-              InfoLine(label: 'Agent', value: agent?.clientName ?? 'None'),
-              InfoLine(
-                label: 'Role',
-                value: agent == null ? 'None' : _roleLabel(agent.isMaster),
-              ),
-              InfoLine(label: 'Table', value: _selectedTableName ?? 'None'),
-              InfoLine(
-                label: 'Rows',
-                value:
-                    _snapshot == null
-                        ? '${tableState?.rowCount ?? 0}'
-                        : '${_filteredSnapshotRows(_snapshot!).length}/${_snapshot!.rowCount}',
-              ),
-              InfoLine(
-                label: 'Last Sync',
-                value: _formatTimestamp(tableState?.lastSync ?? ''),
-              ),
-              InfoLine(
-                label: 'Backup',
-                value: _formatBytes(tableState?.snapshotBytes ?? 0),
-              ),
-            ]
-            : <Widget>[
-              InfoLine(label: 'Agent', value: agent?.clientName ?? 'None'),
-              InfoLine(
-                label: 'Role',
-                value: agent == null ? 'None' : _roleLabel(agent.isMaster),
-              ),
-              InfoLine(
-                label: 'Tables',
-                value: _selectedTables.length.toString(),
-              ),
-              InfoLine(label: 'Selected', value: _selectedTableName ?? 'None'),
-              InfoLine(
-                label: 'Progress',
-                value: tableState == null ? '0%' : '${tableState.progress}%',
-              ),
-              InfoLine(label: 'Status', value: tableState?.status ?? 'Idle'),
-              InfoLine(
-                label: 'Last Sync',
-                value: _formatTimestamp(tableState?.lastSync ?? ''),
-              ),
-              InfoLine(
-                label: 'Backup',
-                value: _formatBytes(tableState?.snapshotBytes ?? 0),
-              ),
-            ];
+    ];
 
     return Container(
       width: double.infinity,
@@ -1677,7 +1742,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     return Tooltip(
       message:
           _state == null
-              ? 'Control plane connection status.'
+              ? 'Backend connection status.'
               : 'Last refresh ${_formatTimestamp(_state!.generatedAt)}',
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1694,70 +1759,47 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   Widget build(BuildContext context) {
     final state = _state;
     final title =
-        _selectedClientName == null
-            ? 'SQL Sync Control Plane'
-            : 'SQL Sync Control Plane - $_selectedClientName';
+        _selectedTableName == null
+            ? 'SQL Sync'
+            : 'SQL Sync - $_selectedTableName';
 
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.table_rows), text: 'Table Data'),
-            Tab(icon: Icon(Icons.sync), text: 'Sync Status'),
-          ],
-        ),
         actions: [
-          IconButton(
-            tooltip: 'Sign out',
-            onPressed: widget.onLogout,
-            icon: const Icon(Icons.logout_rounded),
-          ),
           IconButton(
             tooltip: 'Refresh now',
             onPressed: () => unawaited(_refreshState()),
             icon: const Icon(Icons.refresh),
           ),
+          IconButton(
+            tooltip: 'Sign out',
+            onPressed: widget.onLogout,
+            icon: const Icon(Icons.logout_rounded),
+          ),
         ],
       ),
       body: Padding(
-        padding: EdgeInsets.zero,
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSelectionHeader(),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: const Color(0xFFFFEEEE),
-                      ),
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(color: Colors.red),
-                      ),
-                    ),
-                  ],
-                ],
+            if (_error != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: const Color(0xFFFFEEEE),
+                ),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
               ),
-            ),
             Expanded(
               child:
                   _loading && state == null
                       ? const Center(child: CircularProgressIndicator())
-                      : TabBarView(
-                        controller: _tabController,
-                        children: [_buildTableDataTab(), _buildSyncStatusTab()],
-                      ),
+                      : _buildDashboardContent(),
             ),
           ],
         ),
@@ -1767,10 +1809,66 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   }
 }
 
-class _ScoredTableMatch {
-  const _ScoredTableMatch({required this.table, required this.score});
+enum _TableDetailMode { clients, data }
 
-  final AdminTableState table;
+class _TableAggregateSummary {
+  const _TableAggregateSummary({
+    required this.table,
+    required this.lastSync,
+    required this.clientCount,
+    required this.masterCount,
+    required this.slaveCount,
+    required this.latestRowCount,
+    required this.latestSnapshotBytes,
+    required this.sourceClientName,
+    required this.clients,
+  });
+
+  final String table;
+  final String lastSync;
+  final int clientCount;
+  final int masterCount;
+  final int slaveCount;
+  final int latestRowCount;
+  final int latestSnapshotBytes;
+  final String sourceClientName;
+  final List<_TableClientEntry> clients;
+}
+
+class _TableClientEntry {
+  const _TableClientEntry({required this.agent, required this.tableState});
+
+  final AdminAgent agent;
+  final AdminTableState tableState;
+}
+
+class _TableSnapshotSource {
+  const _TableSnapshotSource({
+    required this.clientName,
+    required this.table,
+    required this.createdAt,
+    required this.rowCount,
+    required this.snapshotBytes,
+  });
+
+  final String clientName;
+  final String table;
+  final String createdAt;
+  final int rowCount;
+  final int snapshotBytes;
+}
+
+class _ScoredTableSummary {
+  const _ScoredTableSummary({required this.summary, required this.score});
+
+  final _TableAggregateSummary summary;
+  final double score;
+}
+
+class _ScoredTableClient {
+  const _ScoredTableClient({required this.entry, required this.score});
+
+  final _TableClientEntry entry;
   final double score;
 }
 
