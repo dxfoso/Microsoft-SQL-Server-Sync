@@ -31,6 +31,7 @@ function createDefaultState() {
     agents: {},
     jobs: [],
     snapshots: {},
+    snapshotHistory: {},
   };
 }
 
@@ -91,7 +92,13 @@ async function loadState() {
       agents: parsed.agents || {},
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
       snapshots: parsed.snapshots || {},
+      snapshotHistory: parsed.snapshotHistory || {},
     };
+    for (const rawSnapshot of Object.values(state.snapshots)) {
+      const snapshot = finalizeSnapshot(rawSnapshot);
+      state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
+      state.snapshotHistory[snapshot.id] = state.snapshotHistory[snapshot.id] || snapshot;
+    }
   } catch {
     state = createDefaultState();
   }
@@ -299,6 +306,23 @@ function latestSnapshot(clientName, table) {
   return state.snapshots[snapshotKey(clientName, table)] || null;
 }
 
+function snapshotById(id) {
+  const snapshotId = String(id || "").trim();
+  if (!snapshotId) {
+    return null;
+  }
+
+  const historical = state.snapshotHistory[snapshotId];
+  if (historical) {
+    return finalizeSnapshot(historical);
+  }
+
+  const current = Object.values(state.snapshots).find((snapshot) => {
+    return String(snapshot.id || "").trim() === snapshotId;
+  });
+  return current ? finalizeSnapshot(current) : null;
+}
+
 function agentTableState(clientName, table) {
   const agent = state.agents[clientName];
   if (!agent || !agent.tables) {
@@ -458,6 +482,13 @@ function finalizeSnapshot(snapshot) {
     ...normalized,
     snapshotBytes: serialized.snapshotBytes,
   };
+}
+
+function rememberSnapshot(snapshot) {
+  const normalized = finalizeSnapshot(snapshot);
+  state.snapshots[snapshotKey(normalized.clientName, normalized.table)] = normalized;
+  state.snapshotHistory[normalized.id] = normalized;
+  return normalized;
 }
 
 function serializeSnapshot(snapshot) {
@@ -731,7 +762,7 @@ async function handleRequest(req, res) {
       return;
     }
 
-    state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
+    rememberSnapshot(snapshot);
 
     const agent = state.agents[snapshot.clientName];
     if (agent) {
@@ -754,6 +785,17 @@ async function handleRequest(req, res) {
 
     await queueSave();
     sendJson(res, 200, { snapshot: serializeSnapshot(snapshot) });
+    return;
+  }
+
+  const snapshotMatch = pathname.match(/^\/api\/snapshots\/([^/]+)$/);
+  if (req.method === "GET" && snapshotMatch) {
+    const snapshot = snapshotById(decodeURIComponent(snapshotMatch[1]));
+    if (!snapshot) {
+      sendJson(res, 404, { error: "snapshot not found" });
+      return;
+    }
+    sendJson(res, 200, serializeSnapshot(snapshot));
     return;
   }
 
@@ -818,7 +860,7 @@ async function handleRequest(req, res) {
         rows,
         sourceJobId: job.id,
       });
-      state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
+      rememberSnapshot(snapshot);
       updateJob(job, {
         status: "completed",
         progress: 100,

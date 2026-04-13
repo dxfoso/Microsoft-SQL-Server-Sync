@@ -1,6 +1,40 @@
 import 'dart:convert';
 import 'dart:io';
 
+const int kDefaultHistoryLimit = 5;
+const int kMaxHistoryLimit = 100;
+
+class SyncHistorySnapshotData {
+  const SyncHistorySnapshotData({required this.columns, required this.rows});
+
+  final List<String> columns;
+  final List<Map<String, String?>> rows;
+
+  factory SyncHistorySnapshotData.fromJson(Map<String, dynamic> json) {
+    final columns = (json['columns'] as List<dynamic>? ?? const [])
+        .map((item) => item.toString())
+        .toList(growable: false);
+    final rawRows = json['rows'] as List<dynamic>? ?? const [];
+
+    return SyncHistorySnapshotData(
+      columns: columns,
+      rows: rawRows
+          .map(
+            (row) => Map<String, String?>.fromEntries(
+              columns.map((column) {
+                final value =
+                    row is Map && row.containsKey(column) ? row[column] : null;
+                return MapEntry(column, value?.toString());
+              }),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'columns': columns, 'rows': rows};
+}
+
 class SyncHistoryEntry {
   const SyncHistoryEntry({
     required this.timestamp,
@@ -12,7 +46,9 @@ class SyncHistoryEntry {
     this.rowCount = 0,
     this.progress = 0,
     this.snapshotId,
+    this.snapshotCreatedAt,
     this.snapshotBytes = 0,
+    this.snapshotData,
   });
 
   final String timestamp;
@@ -24,7 +60,9 @@ class SyncHistoryEntry {
   final int rowCount;
   final int progress;
   final String? snapshotId;
+  final String? snapshotCreatedAt;
   final int snapshotBytes;
+  final SyncHistorySnapshotData? snapshotData;
 
   factory SyncHistoryEntry.fromJson(Map<String, dynamic> json) {
     return SyncHistoryEntry(
@@ -37,7 +75,14 @@ class SyncHistoryEntry {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       progress: (json['progress'] as num? ?? 0).round(),
       snapshotId: json['snapshotId'] as String?,
+      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
       snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
+      snapshotData:
+          json['snapshotData'] is Map
+              ? SyncHistorySnapshotData.fromJson(
+                Map<String, dynamic>.from(json['snapshotData'] as Map),
+              )
+              : null,
     );
   }
 
@@ -51,7 +96,9 @@ class SyncHistoryEntry {
     'rowCount': rowCount,
     'progress': progress,
     'snapshotId': snapshotId,
+    'snapshotCreatedAt': snapshotCreatedAt,
     'snapshotBytes': snapshotBytes,
+    'snapshotData': snapshotData?.toJson(),
   };
 }
 
@@ -148,10 +195,15 @@ class SyncTableState {
 }
 
 class SyncClientState {
-  const SyncClientState({required this.isMaster, required this.tables});
+  const SyncClientState({
+    required this.isMaster,
+    required this.tables,
+    this.historyLimit = kDefaultHistoryLimit,
+  });
 
   final bool isMaster;
   final Map<String, SyncTableState> tables;
+  final int historyLimit;
 
   factory SyncClientState.fromJson(Map<String, dynamic> json) {
     final tablesJson = Map<String, dynamic>.from(
@@ -159,6 +211,9 @@ class SyncClientState {
     );
     return SyncClientState(
       isMaster: json['isMaster'] as bool? ?? true,
+      historyLimit: (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
+          .round()
+          .clamp(1, kMaxHistoryLimit),
       tables: tablesJson.map(
         (key, value) => MapEntry(
           key,
@@ -170,15 +225,18 @@ class SyncClientState {
 
   Map<String, dynamic> toJson() => {
     'isMaster': isMaster,
+    'historyLimit': historyLimit,
     'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
   };
 
   SyncClientState copyWith({
     bool? isMaster,
     Map<String, SyncTableState>? tables,
+    int? historyLimit,
   }) {
     return SyncClientState(
       isMaster: isMaster ?? this.isMaster,
+      historyLimit: historyLimit ?? this.historyLimit,
       tables: tables ?? this.tables,
     );
   }

@@ -155,10 +155,69 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     SyncHistoryEntry entry,
   ) {
     final next = List<SyncHistoryEntry>.from(current)..insert(0, entry);
-    if (next.length > 20) {
-      next.removeRange(20, next.length);
+    final limit = _syncState.historyLimit.clamp(1, kMaxHistoryLimit);
+    if (next.length > limit) {
+      next.removeRange(limit, next.length);
     }
     return next;
+  }
+
+  List<SyncHistoryEntry> _trimHistoryEntries(
+    List<SyncHistoryEntry> entries, {
+    int? limit,
+  }) {
+    final normalizedLimit = (limit ?? _syncState.historyLimit).clamp(
+      1,
+      kMaxHistoryLimit,
+    );
+    if (entries.length <= normalizedLimit) {
+      return List<SyncHistoryEntry>.from(entries);
+    }
+    return List<SyncHistoryEntry>.from(
+      entries.take(normalizedLimit),
+      growable: false,
+    );
+  }
+
+  void _applyHistoryLimit(int nextLimit) {
+    final normalizedLimit = nextLimit.clamp(1, kMaxHistoryLimit);
+    if (normalizedLimit == _syncState.historyLimit) {
+      return;
+    }
+
+    final nextTables = Map<String, SyncTableState>.fromEntries(
+      _syncState.tables.entries.map(
+        (entry) => MapEntry(
+          entry.key,
+          entry.value.copyWith(
+            history: _trimHistoryEntries(
+              entry.value.history,
+              limit: normalizedLimit,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    _replaceSyncState(
+      _syncState.copyWith(historyLimit: normalizedLimit, tables: nextTables),
+    );
+  }
+
+  SyncHistorySnapshotData _createHistorySnapshotData({
+    required List<String> columns,
+    required List<Map<String, String?>> rows,
+  }) {
+    return SyncHistorySnapshotData(
+      columns: List<String>.from(columns),
+      rows: rows
+          .map(
+            (row) => Map<String, String?>.fromEntries(
+              columns.map((column) => MapEntry(column, row[column])),
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   void _updateSyncEnabledTable(String table, bool enabled) {
@@ -542,6 +601,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     bool appendHistory = false,
     bool success = true,
     String? overrideMessage,
+    String? historySnapshotCreatedAt,
+    SyncHistorySnapshotData? historySnapshotData,
   }) {
     setState(() {
       final nextJobs = <String, RemoteSyncJob>{
@@ -585,7 +646,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   rowCount: job.rowCount,
                   progress: job.progress,
                   snapshotId: job.snapshotId,
+                  snapshotCreatedAt:
+                      historySnapshotCreatedAt ?? job.snapshotCreatedAt,
                   snapshotBytes: job.snapshotBytes,
+                  snapshotData: historySnapshotData,
                 ),
               )
               : current.history,
@@ -805,6 +869,244 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  double _bestRowMatchScore(String query, String candidate) {
+    final normalizedQuery = query.trim().toLowerCase();
+    final normalizedCandidate = candidate.trim().toLowerCase();
+
+    if (normalizedQuery.isEmpty) {
+      return 1.0;
+    }
+    if (normalizedCandidate.isEmpty) {
+      return 0.0;
+    }
+    if (normalizedCandidate == normalizedQuery) {
+      return 1000.0;
+    }
+    if (normalizedCandidate.startsWith(normalizedQuery)) {
+      return 850 - normalizedCandidate.length / 1000;
+    }
+
+    final exactIndex = normalizedCandidate.indexOf(normalizedQuery);
+    if (exactIndex >= 0) {
+      return 700.0 - exactIndex;
+    }
+
+    final tokens = normalizedQuery
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+
+    var tokenHits = 0;
+    var tokenScore = 0.0;
+    for (final token in tokens) {
+      final index = normalizedCandidate.indexOf(token);
+      if (index >= 0) {
+        tokenHits += 1;
+        tokenScore += 140 - math.min(index.toDouble(), 120);
+      }
+    }
+
+    final subsequenceScore = _rowSubsequenceScore(
+      normalizedQuery,
+      normalizedCandidate,
+    );
+    if (tokenHits == 0 && subsequenceScore == 0) {
+      return 0.0;
+    }
+
+    if (tokens.isNotEmpty && tokenHits == tokens.length) {
+      tokenScore += 120;
+    }
+    return tokenScore + subsequenceScore;
+  }
+
+  double _rowSubsequenceScore(String query, String candidate) {
+    var matched = 0;
+    var start = 0;
+
+    for (final codePoint in query.runes) {
+      final char = String.fromCharCode(codePoint);
+      final index = candidate.indexOf(char, start);
+      if (index == -1) {
+        continue;
+      }
+      matched += 1;
+      start = index + 1;
+    }
+
+    if (matched == 0) {
+      return 0.0;
+    }
+    return matched / query.length * 90;
+  }
+
+  List<_ScoredHistorySnapshotRow> _filteredHistorySnapshotRows(
+    SyncHistorySnapshotData snapshot,
+    String query,
+  ) {
+    final normalizedQuery = query.trim();
+    final matches = snapshot.rows
+        .asMap()
+        .entries
+        .map((entry) {
+          final rowText = snapshot.columns
+              .map((column) => '$column ${entry.value[column] ?? 'NULL'}')
+              .join(' ');
+          return _ScoredHistorySnapshotRow(
+            originalIndex: entry.key,
+            row: entry.value,
+            score:
+                normalizedQuery.isEmpty
+                    ? 1
+                    : _bestRowMatchScore(normalizedQuery, rowText),
+          );
+        })
+        .where((match) => match.score > 0)
+        .toList(growable: false);
+
+    if (normalizedQuery.isEmpty) {
+      return matches;
+    }
+
+    matches.sort((left, right) {
+      final byScore = right.score.compareTo(left.score);
+      if (byScore != 0) {
+        return byScore;
+      }
+      return left.originalIndex.compareTo(right.originalIndex);
+    });
+    return matches;
+  }
+
+  Future<void> _openHistorySnapshotDialog(SyncHistoryEntry entry) async {
+    final snapshot = entry.snapshotData;
+    if (snapshot == null || snapshot.columns.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No snapshot data is stored for this history item.'),
+        ),
+      );
+      return;
+    }
+
+    final searchController = TextEditingController();
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final filteredRows = _filteredHistorySnapshotRows(
+                snapshot,
+                searchController.text,
+              );
+
+              return Dialog(
+                insetPadding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: 1180,
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${entry.table} Data',
+                                style: Theme.of(context).textTheme.headlineSmall
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Close',
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            _InfoLine(label: 'Status', value: entry.status),
+                            _InfoLine(
+                              label: 'Date',
+                              value: _formatTimestamp(
+                                entry.snapshotCreatedAt ?? entry.timestamp,
+                              ),
+                            ),
+                            _InfoLine(
+                              label: 'Rows',
+                              value:
+                                  '${filteredRows.length} / ${snapshot.rows.length}',
+                            ),
+                            _InfoLine(
+                              label: 'Size',
+                              value: _formatBytes(entry.snapshotBytes),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: searchController,
+                          onChanged: (_) => setDialogState(() {}),
+                          decoration: _compactInputDecoration(
+                            'Search Rows',
+                          ).copyWith(
+                            hintText:
+                                'Search across all visible columns for the best matching row.',
+                            prefixIcon: const Icon(Icons.search),
+                            suffixIcon:
+                                searchController.text.isEmpty
+                                    ? null
+                                    : IconButton(
+                                      tooltip: 'Clear search',
+                                      onPressed: () {
+                                        searchController.clear();
+                                        setDialogState(() {});
+                                      },
+                                      icon: const Icon(Icons.close),
+                                    ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child:
+                              filteredRows.isEmpty
+                                  ? AgentEmptyStateCard(
+                                    message:
+                                        searchController.text.trim().isEmpty
+                                            ? 'This snapshot has no rows.'
+                                            : 'No rows matched your search. Try a broader term or clear the search box.',
+                                  )
+                                  : _buildHistorySnapshotGrid(
+                                    snapshot,
+                                    filteredRows,
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
+  }
+
   _SnapshotFileDocument _createSnapshotFileDocument({
     required String clientName,
     required String table,
@@ -914,8 +1216,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           direction: 'file',
           rowCount: snapshot.totalRows,
           progress: current.progress,
-          snapshotId: current.snapshotId,
+          snapshotId: document.id,
+          snapshotCreatedAt: snapshot.snapshotCreatedAt,
           snapshotBytes: bytes,
+          snapshotData: _createHistorySnapshotData(
+            columns: snapshot.columns,
+            rows: snapshot.rows,
+          ),
         ),
       );
       _updateSyncTableState(
@@ -954,6 +1261,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               rowCount: current.rowCount,
               progress: current.progress,
               snapshotId: current.snapshotId,
+              snapshotCreatedAt: current.snapshotCreatedAt,
               snapshotBytes: current.snapshotBytes,
             ),
           ),
@@ -1025,7 +1333,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           rowCount: document.rowCount,
           progress: current.progress,
           snapshotId: document.id,
+          snapshotCreatedAt: document.createdAt,
           snapshotBytes: bytes,
+          snapshotData: _createHistorySnapshotData(
+            columns: document.columns,
+            rows: document.rows,
+          ),
         ),
       );
       _updateSyncTableState(
@@ -1069,6 +1382,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               rowCount: current.rowCount,
               progress: current.progress,
               snapshotId: current.snapshotId,
+              snapshotCreatedAt: current.snapshotCreatedAt,
               snapshotBytes: current.snapshotBytes,
             ),
           ),
@@ -1259,6 +1573,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         uploadResult.job,
         appendHistory: true,
         success: true,
+        historySnapshotCreatedAt: snapshot.snapshotCreatedAt,
+        historySnapshotData: _createHistorySnapshotData(
+          columns: snapshot.columns,
+          rows: snapshot.rows,
+        ),
       );
     } catch (error) {
       await _controlPlaneClient.failJob(
@@ -1360,6 +1679,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: true,
         overrideMessage:
             'Applied remote snapshot ${snapshot.id} with ${snapshot.rowCount} rows. Local pre-apply snapshot captured ${localSnapshot.totalRows} rows.',
+        historySnapshotCreatedAt: snapshot.createdAt,
+        historySnapshotData: _createHistorySnapshotData(
+          columns: snapshot.columns,
+          rows: snapshot.rows,
+        ),
       );
     } catch (error) {
       await _controlPlaneClient.failJob(
@@ -2249,7 +2573,11 @@ SELECT (
     final serverController = TextEditingController(
       text: _serverController.text,
     );
+    final historyLimitController = TextEditingController(
+      text: _syncState.historyLimit.toString(),
+    );
     var isMaster = _isMasterClient;
+    String? historyLimitError;
 
     _SqlConnectionProfile readDialogProfile() => _SqlConnectionProfile(
       server: serverController.text.trim(),
@@ -2278,6 +2606,19 @@ SELECT (
                       TextField(
                         controller: clientNameController,
                         decoration: _compactInputDecoration('Client Name'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: historyLimitController,
+                        keyboardType: TextInputType.number,
+                        decoration: _compactInputDecoration(
+                          'Keep Last History Items',
+                        ).copyWith(
+                          hintText: '$kDefaultHistoryLimit',
+                          helperText:
+                              'Choose how many recent history items to keep for each table.',
+                          errorText: historyLimitError,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       CheckboxListTile(
@@ -2332,6 +2673,19 @@ SELECT (
                 ),
                 FilledButton(
                   onPressed: () async {
+                    final nextHistoryLimit = int.tryParse(
+                      historyLimitController.text.trim(),
+                    );
+                    if (nextHistoryLimit == null ||
+                        nextHistoryLimit < 1 ||
+                        nextHistoryLimit > kMaxHistoryLimit) {
+                      setDialogState(() {
+                        historyLimitError =
+                            'Enter a number between 1 and $kMaxHistoryLimit.';
+                      });
+                      return;
+                    }
+
                     final dialogProfile = readDialogProfile();
                     final clientName =
                         clientNameController.text.trim().isEmpty
@@ -2350,6 +2704,7 @@ SELECT (
                       _errorMessage = null;
                     });
                     Navigator.of(context).pop();
+                    _applyHistoryLimit(nextHistoryLimit);
                     widget.onClientNameChanged(clientName);
                     final enabledTables = _setClientRole(isMaster);
 
@@ -2373,6 +2728,7 @@ SELECT (
 
     clientNameController.dispose();
     serverController.dispose();
+    historyLimitController.dispose();
   }
 
   Widget _buildSyncPanel() {
@@ -2582,7 +2938,7 @@ SELECT (
         runSpacing: 4,
         children: [
           _buildSyncActionIconButton(
-            tooltip: 'Open table data',
+            tooltip: 'Open current table data',
             onPressed: () => _openTableDataDialog(selectedRow.table),
             icon: Icons.table_rows_outlined,
           ),
@@ -3027,6 +3383,9 @@ SELECT (
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final entry = historyEntries[index];
+        final canOpenSnapshot =
+            entry.snapshotData != null &&
+            entry.snapshotData!.columns.isNotEmpty;
         return Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -3085,9 +3444,23 @@ SELECT (
                 ),
               ),
               const SizedBox(width: 12),
-              Text(
-                _formatTimestamp(entry.timestamp),
-                style: const TextStyle(color: Color(0xFF5F6B76)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _formatTimestamp(entry.timestamp),
+                    style: const TextStyle(color: Color(0xFF5F6B76)),
+                  ),
+                  const SizedBox(height: 6),
+                  _buildSyncActionIconButton(
+                    tooltip: 'Open history data',
+                    onPressed:
+                        canOpenSnapshot
+                            ? () => _openHistorySnapshotDialog(entry)
+                            : null,
+                    icon: Icons.table_rows_outlined,
+                  ),
+                ],
               ),
             ],
           ),
@@ -3184,6 +3557,131 @@ SELECT (
           final value = columnIndex < row.length ? row[columnIndex] : '';
           return _buildTableCell(value, cellWidth, alt: index.isOdd);
         }),
+      ],
+    );
+  }
+
+  Widget _buildHistorySnapshotGrid(
+    SyncHistorySnapshotData snapshot,
+    List<_ScoredHistorySnapshotRow> filteredRows,
+  ) {
+    const rowNumberWidth = 72.0;
+    const cellWidth = 220.0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final panelWidth =
+            constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width;
+        final totalWidth = math.max(
+          panelWidth,
+          rowNumberWidth + (snapshot.columns.length * cellWidth),
+        );
+        final panelHeight =
+            constraints.maxHeight.isFinite
+                ? constraints.maxHeight
+                : MediaQuery.sizeOf(context).height * 0.65;
+
+        return Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF7F9F6),
+            border: Border.all(color: const Color(0xFFD9DDD8)),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: totalWidth,
+                height: panelHeight,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        _buildHistorySnapshotHeaderCell('#', rowNumberWidth),
+                        ...snapshot.columns.map(
+                          (column) => _buildHistorySnapshotHeaderCell(
+                            column,
+                            cellWidth,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: filteredRows.length,
+                        itemBuilder: (context, index) {
+                          final match = filteredRows[index];
+                          return _buildHistorySnapshotRow(
+                            columns: snapshot.columns,
+                            row: match.row,
+                            rowNumber: match.originalIndex + 1,
+                            rowNumberWidth: rowNumberWidth,
+                            cellWidth: cellWidth,
+                            alternate: index.isOdd,
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHistorySnapshotHeaderCell(String value, double width) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFFE3E8E1),
+        border: Border(bottom: BorderSide(color: Color(0xFFBFC9BE))),
+      ),
+      child: Text(
+        value,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildHistorySnapshotRow({
+    required List<String> columns,
+    required Map<String, String?> row,
+    required int rowNumber,
+    required double rowNumberWidth,
+    required double cellWidth,
+    required bool alternate,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: rowNumberWidth,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: alternate ? Colors.white : const Color(0xFFFAFBF9),
+            border: const Border(bottom: BorderSide(color: Color(0xFFE4E8E3))),
+          ),
+          child: Text(
+            '$rowNumber',
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+        ),
+        ...columns.map(
+          (column) =>
+              _buildTableCell(row[column] ?? '', cellWidth, alt: alternate),
+        ),
       ],
     );
   }
@@ -3610,6 +4108,18 @@ class _InfoLine extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ScoredHistorySnapshotRow {
+  const _ScoredHistorySnapshotRow({
+    required this.originalIndex,
+    required this.row,
+    required this.score,
+  });
+
+  final int originalIndex;
+  final Map<String, String?> row;
+  final double score;
 }
 
 class _SnapshotFileDocument {

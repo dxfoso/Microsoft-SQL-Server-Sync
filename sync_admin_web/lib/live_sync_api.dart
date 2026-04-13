@@ -101,6 +101,30 @@ class LiveSyncApiClient {
     return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
   }
 
+  Future<AdminSnapshotDetail?> fetchSnapshotById(String snapshotId) async {
+    final trimmedId = snapshotId.trim();
+    if (trimmedId.isEmpty) {
+      return null;
+    }
+
+    final response = await _client.get(_uri('/snapshots/$trimmedId'));
+    if (response.statusCode == 404) {
+      return null;
+    }
+    if (response.statusCode != 200) {
+      throw LiveSyncApiException(
+        'Snapshot request failed with ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw const LiveSyncApiException('Unexpected snapshot payload.');
+    }
+
+    return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
+  }
+
   Future<AdminSnapshotDetail> importSnapshot({
     required String clientName,
     required String table,
