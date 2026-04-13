@@ -182,15 +182,21 @@ class AgentSurfaceCard extends StatelessWidget {
     required this.subtitle,
     required this.child,
     this.expandChild = false,
+    this.titleWidget,
+    this.headerTrailing,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
   final bool expandChild;
+  final Widget? titleWidget;
+  final Widget? headerTrailing;
 
   @override
   Widget build(BuildContext context) {
+    final hasSubtitle = subtitle.trim().isNotEmpty;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
@@ -208,16 +214,35 @@ class AgentSurfaceCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child:
+                    titleWidget ??
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+              ),
+              if (headerTrailing != null) ...[
+                const SizedBox(width: 12),
+                Flexible(child: headerTrailing!),
+              ],
+            ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
-          ),
-          const SizedBox(height: 18),
+          if (hasSubtitle) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
+            ),
+            const SizedBox(height: 18),
+          ] else
+            const SizedBox(height: 14),
           if (expandChild) Expanded(child: child) else child,
         ],
       ),

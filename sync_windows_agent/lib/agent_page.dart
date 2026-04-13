@@ -40,7 +40,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   );
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final ScrollController _tableScrollController = ScrollController();
   final AgentControlPlaneClient _controlPlaneClient = AgentControlPlaneClient();
   late SyncClientState _syncState;
   Timer? _connectionCheckTimer;
@@ -76,7 +75,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   void initState() {
     super.initState();
     _syncState = widget.initialSyncState;
-    _tableScrollController.addListener(_onTableScroll);
     _connectionCheckTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => unawaited(_checkServerConnection()),
@@ -109,7 +107,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _serverController.dispose();
     _userController.dispose();
     _passwordController.dispose();
-    _tableScrollController.dispose();
     super.dispose();
   }
 
@@ -257,32 +254,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return _selectedTable;
     }
     return tableNames.isNotEmpty ? tableNames.first : null;
-  }
-
-  Future<void> _onTableScroll() async {
-    if (!_tableScrollController.hasClients ||
-        _rowsLoading ||
-        !_hasMoreRows ||
-        _selectedDatabase == null ||
-        _selectedTable == null) {
-      return;
-    }
-    final position = _tableScrollController.position.pixels;
-    final max = _tableScrollController.position.maxScrollExtent;
-    if (max <= 0 || position < max - 200) {
-      return;
-    }
-    await _loadTableRows(
-      profile: _activeProfile(),
-      database: _selectedDatabase!,
-      table: _selectedTable!,
-      reset: false,
-      orderByColumn:
-          _sortColumnIndex != null && _sortColumnIndex! < _tableColumns.length
-              ? _tableColumns[_sortColumnIndex!]
-              : null,
-      orderAscending: _sortAscending,
-    );
   }
 
   Future<void> _refreshConnection({bool loadTables = true}) async {
@@ -478,19 +449,36 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
-    final sortColumn =
-        _sortColumnIndex != null && _sortColumnIndex! < _tableColumns.length
-            ? _tableColumns[_sortColumnIndex!]
-            : null;
-
     await _loadTableRows(
       profile: _activeProfile(),
       database: _selectedDatabase!,
       table: _selectedTable!,
       reset: true,
-      orderByColumn: sortColumn,
+      orderByColumn: _currentTableSortColumn(),
       orderAscending: _sortAscending,
     );
+  }
+
+  Future<void> _loadMoreCurrentTableRows() async {
+    if (_selectedDatabase == null || _selectedTable == null || !_hasMoreRows) {
+      return;
+    }
+
+    await _loadTableRows(
+      profile: _activeProfile(),
+      database: _selectedDatabase!,
+      table: _selectedTable!,
+      reset: false,
+      orderByColumn: _currentTableSortColumn(),
+      orderAscending: _sortAscending,
+    );
+  }
+
+  String? _currentTableSortColumn() {
+    if (_sortColumnIndex == null || _sortColumnIndex! >= _tableColumns.length) {
+      return null;
+    }
+    return _tableColumns[_sortColumnIndex!];
   }
 
   Map<String, SyncTableState> _heartbeatTablesPayload() {
@@ -2554,9 +2542,71 @@ SELECT (
       );
     }
 
+    final busy = _isFileBusy(selectedRow.table);
+
     return AgentSurfaceCard(
       title: selectedRow.table,
       subtitle: '',
+      titleWidget: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 10,
+        runSpacing: 8,
+        children: [
+          Text(
+            selectedRow.table,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          ),
+          _buildRoleIndicator(_isMasterClient, showLabel: false),
+        ],
+      ),
+      headerTrailing: Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 4,
+        runSpacing: 4,
+        children: [
+          _buildSyncActionIconButton(
+            tooltip: 'Open table data',
+            onPressed: () => _openTableDataDialog(selectedRow.table),
+            icon: Icons.table_rows_outlined,
+          ),
+          _buildSyncActionIconButton(
+            tooltip: 'Download backup',
+            onPressed:
+                _selectedDatabase == null || busy
+                    ? null
+                    : () => _exportTableBackup(selectedRow.table),
+            icon: Icons.download_rounded,
+          ),
+          _buildSyncActionIconButton(
+            tooltip: 'Upload backup',
+            onPressed:
+                _selectedDatabase == null || busy
+                    ? null
+                    : () => _importTableBackup(selectedRow.table),
+            icon: Icons.upload_file_rounded,
+          ),
+          _buildSyncActionIconButton(
+            tooltip: 'Push now',
+            onPressed:
+                selectedRow.state.enabled
+                    ? () =>
+                        _triggerSyncNow(selectedRow.table, direction: 'upload')
+                    : null,
+            icon: Icons.cloud_upload_rounded,
+          ),
+          _buildSyncActionIconButton(
+            tooltip: 'Pull now',
+            onPressed:
+                selectedRow.state.enabled
+                    ? () => _triggerSyncNow(
+                      selectedRow.table,
+                      direction: 'download',
+                    )
+                    : null,
+            icon: Icons.cloud_download_rounded,
+          ),
+        ],
+      ),
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2579,15 +2629,6 @@ SELECT (
                 value: _formatBytes(selectedRow.state.snapshotBytes),
               ),
             ],
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: _buildSyncActionIconButton(
-              tooltip: 'Open table data',
-              onPressed: () => _openTableDataDialog(selectedRow.table),
-              icon: Icons.table_rows_outlined,
-            ),
           ),
           const SizedBox(height: 14),
           SegmentedButton<_SyncDetailMode>(
@@ -2627,7 +2668,6 @@ SELECT (
   }
 
   Widget _buildSyncOverviewSide(_SyncTableRowData row) {
-    final busy = _isFileBusy(row.table);
     final statusColor = _statusColor(row.state.status);
 
     return ListView(
@@ -2636,7 +2676,6 @@ SELECT (
           spacing: 12,
           runSpacing: 12,
           children: [
-            _buildRoleIndicator(_isMasterClient),
             AgentMetricPill(
               label: 'Mode',
               value:
@@ -2695,52 +2734,6 @@ SELECT (
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          'Actions',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            _buildSyncActionIconButton(
-              tooltip: 'Download backup',
-              onPressed:
-                  _selectedDatabase == null || busy
-                      ? null
-                      : () => _exportTableBackup(row.table),
-              icon: Icons.download_rounded,
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Upload backup',
-              onPressed:
-                  _selectedDatabase == null || busy
-                      ? null
-                      : () => _importTableBackup(row.table),
-              icon: Icons.upload_file_rounded,
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Push now',
-              onPressed:
-                  row.state.enabled
-                      ? () => _triggerSyncNow(row.table, direction: 'upload')
-                      : null,
-              icon: Icons.cloud_upload_rounded,
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Pull now',
-              onPressed:
-                  row.state.enabled
-                      ? () => _triggerSyncNow(row.table, direction: 'download')
-                      : null,
-              icon: Icons.cloud_download_rounded,
-            ),
-          ],
         ),
       ],
     );
@@ -2950,6 +2943,21 @@ SELECT (
                       ),
                     ),
                   Expanded(child: _buildSpreadsheetTable()),
+                  if (_rowsLoading && _tableRows.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Center(child: CircularProgressIndicator()),
+                  ] else if (_hasMoreRows) ...[
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.center,
+                      child: OutlinedButton.icon(
+                        onPressed:
+                            _rowsLoading ? null : _loadMoreCurrentTableRows,
+                        icon: const Icon(Icons.expand_more_rounded),
+                        label: const Text('Load more rows'),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -3402,25 +3410,9 @@ SELECT (
                                       ),
                                     )
                                     : Scrollbar(
-                                      controller: _tableScrollController,
-                                      thumbVisibility: true,
                                       child: ListView.builder(
-                                        controller: _tableScrollController,
-                                        itemCount:
-                                            _tableRows.length +
-                                            (_rowsLoading ? 1 : 0),
+                                        itemCount: _tableRows.length,
                                         itemBuilder: (context, index) {
-                                          if (index >= _tableRows.length) {
-                                            return const Padding(
-                                              padding: EdgeInsets.symmetric(
-                                                vertical: 16,
-                                              ),
-                                              child: Center(
-                                                child:
-                                                    CircularProgressIndicator(),
-                                              ),
-                                            );
-                                          }
                                           return _buildTableRow(
                                             _tableRows[index],
                                             cellWidth,
