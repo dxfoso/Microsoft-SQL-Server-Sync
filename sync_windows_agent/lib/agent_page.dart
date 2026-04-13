@@ -701,11 +701,27 @@ class _AgentDashboardPageState extends State<AgentDashboardPage>
       return raw.isEmpty ? 'Never' : raw;
     }
     final local = parsed.toLocal();
-    final month = local.month.toString().padLeft(2, '0');
     final day = local.day.toString().padLeft(2, '0');
+    const monthNames = <String>[
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    final month = monthNames[local.month - 1];
+    final year = local.year.toString().padLeft(4, '0');
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
-    return '$month/$day $hour:$minute';
+    final second = local.second.toString().padLeft(2, '0');
+    return '$day.$month.$year $hour:$minute:$second';
   }
 
   Color _roleColor(bool isMaster) =>
@@ -3282,7 +3298,7 @@ SELECT (
     final tooltip =
         _lastServerCheck == null
             ? 'Checks the control plane health every minute.'
-            : 'Last checked at ${_lastServerCheck!.toLocal()}';
+            : 'Last checked at ${_formatTimestamp(_lastServerCheck!.toIso8601String())}';
 
     return Tooltip(
       message: tooltip,
