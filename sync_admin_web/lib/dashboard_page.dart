@@ -595,7 +595,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         jobs.isEmpty
                             ? const EmptyStateCard(
                               message:
-                                  'No sync jobs have been recorded yet for this client.',
+                                  'No sync jobs have been recorded yet for this client or table.',
                             )
                             : ListView.builder(
                               itemCount: jobs.length,
