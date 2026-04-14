@@ -49,6 +49,32 @@ app.kubernetes.io/managed-by: Helm
 {{- printf "{\"auths\":{\"%s\":{\"username\":\"%s\",\"password\":\"%s\",\"email\":\"%s\",\"auth\":\"%s\"}}}" .Values.dockerRegistry .Values.dockerUsername .Values.dockerPassword .Values.dockerEmail $auth | b64enc -}}
 {{- end -}}
 
+{{- define "sync-admin-web.imageRef" -}}
+{{- $image := . -}}
+{{- if kindIs "string" $image -}}
+{{- $image -}}
+{{- else -}}
+{{- $repository := $image.repository | default "" -}}
+{{- $tag := $image.tag | default "" -}}
+{{- $hasDigest := contains "@" $repository -}}
+{{- $hasTag := regexMatch ".+:[^/]+$" $repository -}}
+{{- if or $hasDigest $hasTag (eq $tag "") -}}
+{{- $repository -}}
+{{- else -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "sync-admin-web.imagePullPolicy" -}}
+{{- $image := . -}}
+{{- if and (kindIs "map" $image) $image.pullPolicy -}}
+{{- $image.pullPolicy -}}
+{{- else -}}
+Always
+{{- end -}}
+{{- end -}}
+
 {{- define "sync-admin-web.certManagerCreateClusterIssuer" -}}
 {{- if hasKey .Values.certManager "createClusterIssuer" -}}
 {{- .Values.certManager.createClusterIssuer -}}

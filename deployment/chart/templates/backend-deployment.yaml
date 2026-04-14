@@ -21,13 +21,14 @@ spec:
         app.kubernetes.io/component: backend
       annotations:
         rollout.sync-admin-web/revision: {{ .Release.Revision | quote }}
+        divclouds.com/restartedAt: {{ default (printf "%d" .Release.Revision) .Values.appReleaseDate | quote }}
     spec:
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
       containers:
         - name: backend
-          image: "{{ .Values.backend.image.repository }}"
-          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          image: "{{ include "sync-admin-web.imageRef" .Values.backend.image }}"
+          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" .Values.backend.image }}
           ports:
             - containerPort: {{ .Values.backend.service.port }}
           env:

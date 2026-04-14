@@ -17,7 +17,7 @@ const String _buildCommitDate = '2026-04-14 11:12:09 +0200';
 const String _buildCommitMessage = 'Update web about dialog commit metadata';
 const String _webTimestampRule = 'dd.MMMM.yyyy  HH:mm:ss';
 
-enum _ProfileMenuAction { about, signOut }
+enum _ProfileMenuAction { settings, about, signOut }
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({
@@ -2188,22 +2188,34 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             onPressed: () => unawaited(_refreshState()),
             icon: const Icon(Icons.refresh),
           ),
-          IconButton(
-            tooltip: 'Settings',
-            onPressed: _openSettingsDialog,
-            icon: const Icon(Icons.settings_outlined),
-          ),
           PopupMenuButton<_ProfileMenuAction>(
             tooltip: 'Profile',
+            position: PopupMenuPosition.under,
+            offset: const Offset(0, 10),
             onSelected: (value) {
-              if (value == _ProfileMenuAction.about) {
-                unawaited(_openAboutDialog());
-              } else {
-                widget.onLogout();
+              switch (value) {
+                case _ProfileMenuAction.settings:
+                  unawaited(_openSettingsDialog());
+                  break;
+                case _ProfileMenuAction.about:
+                  unawaited(_openAboutDialog());
+                  break;
+                case _ProfileMenuAction.signOut:
+                  widget.onLogout();
+                  break;
               }
             },
             itemBuilder:
                 (context) => const [
+                  PopupMenuItem<_ProfileMenuAction>(
+                    value: _ProfileMenuAction.settings,
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.settings_outlined),
+                      title: Text('Settings'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
                   PopupMenuItem<_ProfileMenuAction>(
                     value: _ProfileMenuAction.about,
                     child: ListTile(
