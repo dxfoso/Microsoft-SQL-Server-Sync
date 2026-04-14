@@ -18,6 +18,8 @@ spec:
       labels:
         {{- include "sync-admin-web.labels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
+      annotations:
+        rollout.sync-admin-web/revision: {{ .Release.Revision | quote }}
     spec:
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
