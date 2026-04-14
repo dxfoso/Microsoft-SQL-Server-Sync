@@ -12,6 +12,10 @@ import 'models.dart';
 const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
 const int _defaultHistoryLimit = 5;
 const int _maxHistoryLimit = 100;
+const String _buildCommitHash = '611856f4fccc6d997b9415d572557f1642f89a85';
+const String _buildCommitDate = '2026-04-13 23:53:38 +0200';
+
+enum _ProfileMenuAction { about, signOut }
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({
@@ -618,6 +622,37 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openAboutDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('About'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InfoLine(label: 'Commit date', value: _buildCommitDate),
+                const SizedBox(height: 10),
+                InfoLine(label: 'Commit hash', value: _buildCommitHash),
+                const SizedBox(height: 10),
+                InfoLine(label: 'Build', value: 'Web control plane'),
+              ],
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
         );
       },
     );
@@ -1412,8 +1447,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return SurfaceCard(
       title: 'Tables',
-      subtitle:
-          'This is the main table list. Select a table to view connected clients or the latest synced rows on the side.',
+      subtitle: '',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1507,8 +1541,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     if (summary == null) {
       return const SurfaceCard(
         title: 'Details',
-        subtitle:
-            'Choose a table from the main list to view connected clients or the latest synced data.',
+        subtitle: '',
         child: EmptyStateCard(
           message:
               'No table is selected yet. Pick a table from the left to open its side detail card.',
@@ -2156,10 +2189,49 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             onPressed: _openSettingsDialog,
             icon: const Icon(Icons.settings_outlined),
           ),
-          IconButton(
-            tooltip: 'Sign out',
-            onPressed: widget.onLogout,
-            icon: const Icon(Icons.logout_rounded),
+          PopupMenuButton<_ProfileMenuAction>(
+            tooltip: 'Profile',
+            onSelected: (value) {
+              if (value == _ProfileMenuAction.about) {
+                unawaited(_openAboutDialog());
+              } else {
+                widget.onLogout();
+              }
+            },
+            itemBuilder:
+                (context) => const [
+                  PopupMenuItem<_ProfileMenuAction>(
+                    value: _ProfileMenuAction.about,
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.info_outline),
+                      title: Text('About'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  PopupMenuItem<_ProfileMenuAction>(
+                    value: _ProfileMenuAction.signOut,
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.logout_rounded),
+                      title: Text('Sign out'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+            child: CircleAvatar(
+              radius: 16,
+              backgroundColor: const Color(0xFFE8F0EC),
+              child: Text(
+                widget.authenticatedEmail.isNotEmpty
+                    ? widget.authenticatedEmail[0].toUpperCase()
+                    : 'U',
+                style: const TextStyle(
+                  color: Color(0xFF17313A),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
           ),
         ],
       ),

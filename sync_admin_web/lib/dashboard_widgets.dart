@@ -61,7 +61,7 @@ class DashboardHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 const Text(
-                  'Work with the sync service in the same two-tab layout as the Windows agent.',
+                  'Sync status, history, and table data in one place.',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 28,
@@ -72,8 +72,8 @@ class DashboardHeader extends StatelessWidget {
                 const SizedBox(height: 12),
                 Text(
                   selectedAgent == null
-                      ? 'Pick an agent to inspect sync status and browse its latest uploaded table snapshot.'
-                      : 'Selected agent: $selectedAgent. Use Sync Status to trigger work and Table Data to search the latest snapshot rows.',
+                      ? 'Pick an agent to view sync status and browse table data.'
+                      : 'Selected agent: $selectedAgent.',
                   style: const TextStyle(color: Colors.white70, height: 1.45),
                 ),
               ],
