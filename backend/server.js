@@ -143,6 +143,18 @@ function normalizeTableState(tableState) {
   };
 }
 
+function mergeHeartbeatTableState(existingTableState, incomingTableState) {
+  const normalizedIncoming = normalizeTableState(incomingTableState);
+  const existingHistory = Array.isArray(existingTableState?.history)
+    ? existingTableState.history
+    : [];
+  return {
+    ...existingTableState,
+    ...normalizedIncoming,
+    history: existingHistory,
+  };
+}
+
 function ensureAgent(clientName) {
   if (!state.agents[clientName]) {
     state.agents[clientName] = {
@@ -619,12 +631,18 @@ async function handleRequest(req, res) {
     agent.lastHeartbeat = nowIso();
     agent.selectedTable = body.selectedTable ? String(body.selectedTable) : null;
     if (Array.isArray(body.tables)) {
-      agent.tables = Object.fromEntries(
-        body.tables
-          .map(normalizeTableState)
-          .filter((item) => item.table)
-          .map((item) => [item.table, item]),
-      );
+      const nextTables = {};
+      for (const tableState of body.tables) {
+        const normalizedTableState = normalizeTableState(tableState);
+        if (!normalizedTableState.table) {
+          continue;
+        }
+        nextTables[normalizedTableState.table] = mergeHeartbeatTableState(
+          agent.tables[normalizedTableState.table],
+          normalizedTableState,
+        );
+      }
+      agent.tables = nextTables;
     }
 
     await queueSave();

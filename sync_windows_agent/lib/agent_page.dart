@@ -562,13 +562,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return _syncState.tables;
     }
 
+    // Heartbeats only need live table metadata. History and row snapshots stay local.
     return Map<String, SyncTableState>.fromEntries(
-      _tables.map(
-        (table) => MapEntry(
+      _tables.map((table) {
+        final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+        return MapEntry(
           table,
-          _syncState.tables[table] ?? _defaultSyncTableState(table),
-        ),
-      ),
+          current.copyWith(history: const <SyncHistoryEntry>[]),
+        );
+      }),
     );
   }
 
