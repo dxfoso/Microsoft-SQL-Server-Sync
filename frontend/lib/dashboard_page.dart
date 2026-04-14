@@ -12,8 +12,8 @@ import 'models.dart';
 const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
 const int _defaultHistoryLimit = 5;
 const int _maxHistoryLimit = 100;
-const String _buildCommitHash = '611856f4fccc6d997b9415d572557f1642f89a85';
-const String _buildCommitDate = '2026-04-13 23:53:38 +0200';
+const String _buildCommitHash = '37710703516b6243a8e262823f756238b6ffd588';
+const String _buildCommitDate = '2026-04-14 11:10:49 +0200';
 
 enum _ProfileMenuAction { about, signOut }
 
