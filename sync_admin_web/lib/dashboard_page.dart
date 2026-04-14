@@ -12,8 +12,9 @@ import 'models.dart';
 const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
 const int _defaultHistoryLimit = 5;
 const int _maxHistoryLimit = 100;
-const String _buildCommitHash = '37710703516b6243a8e262823f756238b6ffd588';
-const String _buildCommitDate = '2026-04-14 11:10:49 +0200';
+const String _buildCommitHash = 'd6ad13468380fff48127806b860e02c2b8cee659';
+const String _buildCommitDate = '2026-04-14 11:12:09 +0200';
+const String _buildCommitMessage = 'Update web about dialog commit metadata';
 
 enum _ProfileMenuAction { about, signOut }
 
@@ -587,14 +588,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Showing the last ${jobs.length} sync items for $table. The website setting is currently set to keep $_historyLimit items.',
-                    style: const TextStyle(
-                      color: Color(0xFF58656B),
-                      height: 1.45,
-                    ),
-                  ),
                   const SizedBox(height: 18),
                   Expanded(
                     child:
@@ -640,6 +633,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 InfoLine(label: 'Commit date', value: _buildCommitDate),
+                const SizedBox(height: 10),
+                InfoLine(label: 'Commit message', value: _buildCommitMessage),
                 const SizedBox(height: 10),
                 InfoLine(label: 'Commit hash', value: _buildCommitHash),
                 const SizedBox(height: 10),
@@ -2222,14 +2217,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             child: CircleAvatar(
               radius: 16,
               backgroundColor: const Color(0xFFE8F0EC),
-              child: Text(
-                widget.authenticatedEmail.isNotEmpty
-                    ? widget.authenticatedEmail[0].toUpperCase()
-                    : 'U',
-                style: const TextStyle(
-                  color: Color(0xFF17313A),
-                  fontWeight: FontWeight.w800,
-                ),
+              child: const Icon(
+                Icons.person_outline,
+                size: 18,
+                color: Color(0xFF17313A),
               ),
             ),
           ),

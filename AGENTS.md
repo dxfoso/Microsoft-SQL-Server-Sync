@@ -3,6 +3,7 @@
 ## Workflow Rule
 
 - When a `.dart` file is changed in the workspace, restart the Windows Flutter app automatically using `agent.ps1`.
+- When any file under `sync_admin_web/` changes, redeploy the website automatically using the current redeploy link from `deployment/chart/.env`.
 
 Use this from the repository root:
 

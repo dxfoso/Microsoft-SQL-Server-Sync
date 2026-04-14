@@ -185,7 +185,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           ),
                           SizedBox(height: 14),
                           Text(
-                            'Sign in to inspect table sync status, browse the latest backup rows, and upload or download table backup files.',
+                            'Sign in to view table sync status, browse the latest backup rows, and upload or download table backup files.',
                             style: TextStyle(
                               color: Colors.white70,
                               fontSize: 15,
