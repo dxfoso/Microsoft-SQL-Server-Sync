@@ -558,18 +558,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Map<String, SyncTableState> _heartbeatTablesPayload() {
-    if (_tables.isEmpty) {
-      return _syncState.tables;
-    }
+    final tableNames =
+        _tables.isNotEmpty ? _tables : _syncState.tables.keys.toList(growable: false);
 
-    // Heartbeats only need live table metadata. History and row snapshots stay local.
+    // Heartbeats only need live table metadata. Keep the local history and snapshots
+    // out of the request body so the control-plane payload stays bounded.
     return Map<String, SyncTableState>.fromEntries(
-      _tables.map((table) {
+      tableNames.map((table) {
         final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
-        return MapEntry(
-          table,
-          current.copyWith(history: const <SyncHistoryEntry>[]),
-        );
+        return MapEntry(table, current.copyWith(history: const <SyncHistoryEntry>[]));
       }),
     );
   }

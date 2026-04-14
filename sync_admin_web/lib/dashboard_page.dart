@@ -2169,6 +2169,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _selectedTableName == null
             ? 'SQL Sync'
             : 'SQL Sync - $_selectedTableName';
+    final profileLabel = widget.authenticatedEmail.split('@').first;
 
     return Scaffold(
       appBar: AppBar(
@@ -2214,13 +2215,41 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                 ],
-            child: CircleAvatar(
-              radius: 16,
-              backgroundColor: const Color(0xFFE8F0EC),
-              child: const Icon(
-                Icons.person_outline,
-                size: 18,
-                color: Color(0xFF17313A),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F6F1),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: const Color(0xFFDDE6DA)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: const Color(0xFFE8F0EC),
+                    child: const Icon(
+                      Icons.person_outline,
+                      size: 16,
+                      color: Color(0xFF17313A),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    profileLabel,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF17313A),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: Color(0xFF58656B),
+                  ),
+                ],
               ),
             ),
           ),
