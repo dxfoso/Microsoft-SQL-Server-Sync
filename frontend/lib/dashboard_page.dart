@@ -15,6 +15,7 @@ const int _maxHistoryLimit = 100;
 const String _buildCommitHash = 'd6ad13468380fff48127806b860e02c2b8cee659';
 const String _buildCommitDate = '2026-04-14 11:12:09 +0200';
 const String _buildCommitMessage = 'Update web about dialog commit metadata';
+const String _webTimestampRule = 'dd.MMMM.yyyy  HH:mm:ss';
 
 enum _ProfileMenuAction { about, signOut }
 
@@ -594,7 +595,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         jobs.isEmpty
                             ? const EmptyStateCard(
                               message:
-                                  'No sync jobs have been recorded yet for this client and table.',
+                                  'No sync jobs have been recorded yet for this client.',
                             )
                             : ListView.builder(
                               itemCount: jobs.length,
@@ -632,7 +633,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                InfoLine(label: 'Commit date', value: _buildCommitDate),
+                InfoLine(
+                  label: 'Commit date',
+                  value: _formatTimestamp(_buildCommitDate),
+                ),
                 const SizedBox(height: 10),
                 InfoLine(label: 'Commit message', value: _buildCommitMessage),
                 const SizedBox(height: 10),
@@ -1055,7 +1059,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
     final second = local.second.toString().padLeft(2, '0');
-    return '$day.$month.$year $hour:$minute:$second';
+    return '$day.$month.$year  $hour:$minute:$second';
   }
 
   Color _statusColor(String status) {
@@ -2014,84 +2018,88 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE2D8CB)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           StatusBadge(label: job.status, color: _statusColor(job.status)),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${job.direction.toUpperCase()} - ${job.table}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        job.direction.toUpperCase(),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      _formatTimestamp(job.updatedAt),
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 6),
-                ProgressStrip(
-                  progress: job.progress,
-                  color: _statusColor(job.status),
-                ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 Text(
                   job.message.isEmpty
                       ? 'No job message recorded.'
                       : job.message,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(height: 1.35),
+                  style: const TextStyle(height: 1.2, fontSize: 12.5),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Wrap(
-                  spacing: 10,
-                  runSpacing: 6,
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     Text(
                       '${job.progress}%',
                       style: const TextStyle(
                         color: Color(0xFF5F6B76),
                         fontWeight: FontWeight.w700,
+                        fontSize: 12,
                       ),
                     ),
                     Text(
                       '${job.rowCount} rows',
-                      style: const TextStyle(color: Color(0xFF5F6B76)),
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontSize: 12,
+                      ),
                     ),
                     Text(
                       _formatBytes(job.snapshotBytes),
-                      style: const TextStyle(color: Color(0xFF5F6B76)),
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _formatTimestamp(job.updatedAt),
-                style: const TextStyle(color: Color(0xFF5F6B76)),
-              ),
-              const SizedBox(height: 6),
-              _buildActionIconButton(
-                tooltip: 'Open history data',
-                onPressed:
-                    canOpenSnapshot ? () => _openJobSnapshotDialog(job) : null,
-                icon: Icons.table_rows_outlined,
-              ),
-            ],
+          const SizedBox(width: 8),
+          _buildActionIconButton(
+            tooltip: 'Open history data',
+            onPressed: canOpenSnapshot ? () => _openJobSnapshotDialog(job) : null,
+            icon: Icons.table_rows_outlined,
           ),
         ],
       ),
@@ -2169,6 +2177,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _selectedTableName == null
             ? 'SQL Sync'
             : 'SQL Sync - $_selectedTableName';
+    final profileLabel = widget.authenticatedEmail.split('@').first;
 
     return Scaffold(
       appBar: AppBar(
@@ -2214,13 +2223,41 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                 ],
-            child: CircleAvatar(
-              radius: 16,
-              backgroundColor: const Color(0xFFE8F0EC),
-              child: const Icon(
-                Icons.person_outline,
-                size: 18,
-                color: Color(0xFF17313A),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F6F1),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: const Color(0xFFDDE6DA)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: const Color(0xFFE8F0EC),
+                    child: const Icon(
+                      Icons.person_outline,
+                      size: 16,
+                      color: Color(0xFF17313A),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    profileLabel,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF17313A),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: Color(0xFF58656B),
+                  ),
+                ],
               ),
             ),
           ),
