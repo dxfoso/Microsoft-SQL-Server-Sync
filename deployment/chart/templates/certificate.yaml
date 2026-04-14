@@ -1,6 +1,5 @@
 {{- if and .Values.certManager.enabled .Values.frontend.ingress.enabled .Values.frontend.ingress.tls }}
 {{- $tls := index .Values.frontend.ingress.tls 0 }}
-{{- $host := index $tls.hosts 0 }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -14,5 +13,7 @@ spec:
     name: {{ include "sync-admin-web.certManagerIssuerName" . }}
     kind: {{ include "sync-admin-web.certManagerIssuerKind" . }}
   dnsNames:
-    - {{ $host }}
+    {{- range $tls.hosts }}
+    - {{ . }}
+    {{- end }}
 {{- end }}

@@ -6,7 +6,7 @@ import 'sync_state.dart';
 
 const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
-  defaultValue: 'https://sync.velvet-leaf.com/api',
+  defaultValue: 'https://velvet-sync-divclouds-com.debtsassets.com/api',
 );
 
 class AgentControlPlaneClient {
@@ -20,7 +20,7 @@ class AgentControlPlaneClient {
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
     if (trimmed.isEmpty) {
-      return 'https://sync.velvet-leaf.com/api';
+      return 'https://velvet-sync-divclouds-com.debtsassets.com/api';
     }
     return trimmed.endsWith('/')
         ? trimmed.substring(0, trimmed.length - 1)
