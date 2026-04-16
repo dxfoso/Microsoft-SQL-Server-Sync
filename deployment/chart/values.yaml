@@ -1,5 +1,5 @@
 namespace: sync-admin-web
-domain: velvet-sync-divclouds-com.debtsassets.com
+domain: sync.velvet-leaf.com
 
 certManager:
   enabled: true
@@ -17,15 +17,11 @@ frontend:
     repository: sync-admin-web/frontend
     tag: latest
     pullPolicy: Always
-  backendBaseUrl: https://velvet-sync-divclouds-com.debtsassets.com/api
+  backendBaseUrl: https://sync.velvet-leaf.com/api
   ingress:
     enabled: true
     className: nginx
     hosts:
-      - host: velvet-sync-divclouds-com.debtsassets.com
-        paths:
-          - path: /
-            pathType: Prefix
       - host: sync.velvet-leaf.com
         paths:
           - path: /
@@ -33,7 +29,6 @@ frontend:
     tls:
       - secretName: sync-velvet-leaf-com-letsencrypt-tls
         hosts:
-          - velvet-sync-divclouds-com.debtsassets.com
           - sync.velvet-leaf.com
 
 backend:

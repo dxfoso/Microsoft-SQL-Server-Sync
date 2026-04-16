@@ -2352,6 +2352,7 @@ SELECT (
       '-S',
       profile.server,
       if (database != null && database.isNotEmpty) ...['-d', database],
+      '-C',
       '-b',
       '-h',
       '-1',
@@ -2399,6 +2400,7 @@ SELECT (
       '-S',
       profile.server,
       if (database != null && database.isNotEmpty) ...['-d', database],
+      '-C',
       '-b',
       '-w',
       '65535',
@@ -2983,26 +2985,6 @@ SELECT (
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              AgentMetricPill(label: 'Status', value: selectedRow.state.status),
-              AgentMetricPill(
-                label: 'Last Sync',
-                value: _formatTimestamp(selectedRow.state.lastSync),
-              ),
-              AgentMetricPill(
-                label: 'Rows',
-                value: selectedRow.state.rowCount.toString(),
-              ),
-              AgentMetricPill(
-                label: 'Backup',
-                value: _formatBytes(selectedRow.state.snapshotBytes),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
           SegmentedButton<_SyncDetailMode>(
             showSelectedIcon: false,
             segments: const [
@@ -3379,7 +3361,7 @@ SELECT (
 
     return ListView.separated(
       itemCount: historyEntries.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final entry = historyEntries[index];
         final canOpenSnapshot =
@@ -3387,14 +3369,14 @@ SELECT (
             entry.snapshotData!.columns.isNotEmpty;
         return Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: const Color(0xFFD9DDD8)),
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               AgentStatusPill(
                 label: entry.success ? 'Success' : 'Failed',
@@ -3403,38 +3385,66 @@ SELECT (
                         ? const Color(0xFF2F855A)
                         : const Color(0xFFC53030),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            entry.status,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          _formatTimestamp(entry.timestamp),
+                          style: const TextStyle(
+                            color: Color(0xFF5F6B76),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
                     Text(
-                      entry.status,
+                      entry.message,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
+                        height: 1.2,
+                        fontSize: 12.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(entry.message, style: const TextStyle(height: 1.35)),
-                    const SizedBox(height: 6),
                     Wrap(
-                      spacing: 10,
-                      runSpacing: 6,
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
                         Text(
                           '${entry.rowCount} rows',
-                          style: const TextStyle(color: Color(0xFF5F6B76)),
+                          style: const TextStyle(
+                            color: Color(0xFF5F6B76),
+                            fontSize: 12,
+                          ),
                         ),
                         Text(
                           _formatBytes(entry.snapshotBytes),
-                          style: const TextStyle(color: Color(0xFF5F6B76)),
+                          style: const TextStyle(
+                            color: Color(0xFF5F6B76),
+                            fontSize: 12,
+                          ),
                         ),
                         Text(
                           '${entry.progress}%',
                           style: const TextStyle(
                             color: Color(0xFF5F6B76),
                             fontWeight: FontWeight.w700,
+                            fontSize: 12,
                           ),
                         ),
                       ],
@@ -3442,24 +3452,14 @@ SELECT (
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _formatTimestamp(entry.timestamp),
-                    style: const TextStyle(color: Color(0xFF5F6B76)),
-                  ),
-                  const SizedBox(height: 6),
-                  _buildSyncActionIconButton(
-                    tooltip: 'Open history data',
-                    onPressed:
-                        canOpenSnapshot
-                            ? () => _openHistorySnapshotDialog(entry)
-                            : null,
-                    icon: Icons.table_rows_outlined,
-                  ),
-                ],
+              const SizedBox(width: 8),
+              _buildSyncActionIconButton(
+                tooltip: 'Open history data',
+                onPressed:
+                    canOpenSnapshot
+                        ? () => _openHistorySnapshotDialog(entry)
+                        : null,
+                icon: Icons.table_rows_outlined,
               ),
             ],
           ),
