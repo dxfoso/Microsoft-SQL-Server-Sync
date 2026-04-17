@@ -54,7 +54,7 @@ app.kubernetes.io/managed-by: Helm
 {{- if kindIs "string" $image -}}
 {{- $image -}}
 {{- else -}}
-{{- $repository := $image.repository | default "" -}}
+{{- $repository := $image.repository | default "" | lower -}}
 {{- $tag := $image.tag | default "" -}}
 {{- $hasDigest := contains "@" $repository -}}
 {{- $hasTag := regexMatch ".+:[^/]+$" $repository -}}
