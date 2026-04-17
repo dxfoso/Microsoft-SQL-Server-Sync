@@ -27,7 +27,11 @@ spec:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
       {{- $backendImage := .Values.backend.image -}}
       {{- if and .Values.image .Values.image.repository }}
-      {{- $backendImage = .Values.image -}}
+      {{- $backendRepo := .Values.image.repository | lower -}}
+      {{- if and .Values.dockerRegistry (not (contains "/" $backendRepo)) }}
+      {{- $backendRepo = printf "%s/%s" .Values.dockerRegistry $backendRepo -}}
+      {{- end }}
+      {{- $backendImage = dict "repository" $backendRepo "tag" .Values.image.tag "pullPolicy" .Values.image.pullPolicy -}}
       {{- end }}
       containers:
         - name: backend
