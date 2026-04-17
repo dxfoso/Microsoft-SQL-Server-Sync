@@ -25,10 +25,14 @@ spec:
     spec:
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
+      {{- $backendImage := .Values.backend.image -}}
+      {{- if and .Values.image .Values.image.repository }}
+      {{- $backendImage = .Values.image -}}
+      {{- end }}
       containers:
         - name: backend
-          image: "{{ include "sync-admin-web.imageRef" .Values.backend.image }}"
-          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" .Values.backend.image }}
+          image: "{{ include "sync-admin-web.imageRef" $backendImage }}"
+          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" $backendImage }}
           ports:
             - containerPort: {{ .Values.backend.service.port }}
           env:

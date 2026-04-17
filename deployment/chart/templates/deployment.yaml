@@ -24,10 +24,14 @@ spec:
     spec:
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
+      {{- $frontendImage := .Values.frontend.image -}}
+      {{- if and .Values.image .Values.image.repository }}
+      {{- $frontendImage = .Values.image -}}
+      {{- end }}
       containers:
         - name: frontend
-          image: "{{ include "sync-admin-web.imageRef" .Values.frontend.image }}"
-          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" .Values.frontend.image }}
+          image: "{{ include "sync-admin-web.imageRef" $frontendImage }}"
+          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" $frontendImage }}
           ports:
             - containerPort: 80
           env:
