@@ -2,8 +2,8 @@ namespace: sync-admin-web
 domain: sync.velvet-leaf.com
 
 certManager:
-  enabled: true
-  createClusterIssuer: true
+  enabled: false
+  createClusterIssuer: false
   issuerName: sync-admin-web-letsencrypt
   issuerKind: ClusterIssuer
   acme:
