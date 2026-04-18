@@ -6,6 +6,10 @@ sync-admin-web
 {{- printf "%s-%s" .Release.Name (include "sync-admin-web.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "sync-admin-web.resourceNamespace" -}}
+{{- .Release.Namespace -}}
+{{- end -}}
+
 {{- define "sync-admin-web.componentFullname" -}}
 {{- $root := index . 0 -}}
 {{- $suffix := index . 1 -}}

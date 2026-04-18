@@ -1,4 +1,4 @@
-namespace: sync-admin-web
+# Resources deploy into the Helm release namespace.
 domain: sync.velvet-leaf.com
 
 certManager:

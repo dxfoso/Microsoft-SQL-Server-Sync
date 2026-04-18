@@ -4,7 +4,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ include "sync-admin-web.fullname" . }}-tls
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:

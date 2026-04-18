@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "sync-admin-web.backendFullname" . }}
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:

@@ -9,7 +9,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "sync-admin-web.fullname" . }}
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
   {{- if .Values.certManager.enabled }}
