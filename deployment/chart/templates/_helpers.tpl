@@ -70,6 +70,21 @@ app.kubernetes.io/managed-by: Helm
 {{- end -}}
 {{- end -}}
 
+{{- define "sync-admin-web.componentImageRepository" -}}
+{{- $repository := index . 0 | default "" | lower -}}
+{{- $component := index . 1 -}}
+{{- $dockerRegistry := "" -}}
+{{- if ge (len .) 3 -}}
+{{- $dockerRegistry = index . 2 | default "" -}}
+{{- end -}}
+{{- if and $dockerRegistry (not (contains "/" $repository)) -}}
+{{- $repository = printf "%s/%s" $dockerRegistry $repository -}}
+{{- end -}}
+{{- $repository = trimSuffix "/frontend" $repository -}}
+{{- $repository = trimSuffix "/backend" $repository -}}
+{{- printf "%s/%s" ($repository | trimSuffix "/") $component -}}
+{{- end -}}
+
 {{- define "sync-admin-web.imagePullPolicy" -}}
 {{- $image := . -}}
 {{- if and (kindIs "map" $image) $image.pullPolicy -}}
