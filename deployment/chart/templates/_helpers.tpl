@@ -3,7 +3,7 @@ sync-admin-web
 {{- end -}}
 
 {{- define "sync-admin-web.fullname" -}}
-{{- printf "%s-%s" .Release.Name (include "sync-admin-web.name" .) | trunc 63 | trimSuffix "-" -}}
+sql-sync
 {{- end -}}
 
 {{- define "sync-admin-web.resourceNamespace" -}}
@@ -13,17 +13,17 @@ sync-admin-web
 {{- define "sync-admin-web.componentFullname" -}}
 {{- $root := index . 0 -}}
 {{- $suffix := index . 1 -}}
-{{- $base := printf "%s-%s" $root.Release.Name (include "sync-admin-web.name" $root) -}}
+{{- $base := include "sync-admin-web.fullname" $root -}}
 {{- $budget := int (sub 63 (add 1 (len $suffix))) -}}
 {{- printf "%s-%s" ($base | trunc $budget | trimSuffix "-") $suffix | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "sync-admin-web.frontendFullname" -}}
-{{- include "sync-admin-web.componentFullname" (list . "frontend") -}}
+{{- include "sync-admin-web.componentFullname" (list . "front") -}}
 {{- end -}}
 
 {{- define "sync-admin-web.backendFullname" -}}
-{{- include "sync-admin-web.componentFullname" (list . "backend") -}}
+{{- include "sync-admin-web.componentFullname" (list . "back") -}}
 {{- end -}}
 
 {{- define "sync-admin-web.backendEnabled" -}}
