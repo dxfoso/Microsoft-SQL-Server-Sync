@@ -2,9 +2,9 @@
 domain: sync.velvet-leaf.com
 
 certManager:
-  enabled: false
+  enabled: true
   createClusterIssuer: false
-  issuerName: sync-admin-web-letsencrypt
+  issuerName: letsencrypt-http01
   issuerKind: ClusterIssuer
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
