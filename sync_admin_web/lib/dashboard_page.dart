@@ -12,10 +12,19 @@ import 'models.dart';
 const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
 const int _defaultHistoryLimit = 5;
 const int _maxHistoryLimit = 100;
-const String _buildCommitHash = 'd6ad13468380fff48127806b860e02c2b8cee659';
-const String _buildCommitDate = '2026-04-14 11:12:09 +0200';
+const String _buildCommitHash = String.fromEnvironment(
+  'BUILD_COMMIT_HASH',
+  defaultValue: 'd6ad13468380fff48127806b860e02c2b8cee659',
+);
+const String _buildCommitDate = String.fromEnvironment(
+  'BUILD_COMMIT_DATE',
+  defaultValue: '2026-04-14 11:12:09 +0200',
+);
+const String _buildReleaseDate = String.fromEnvironment(
+  'BUILD_RELEASE_DATE',
+  defaultValue: '2026-04-14 11:12:09 +0200',
+);
 const String _buildCommitMessage = 'Update web about dialog commit metadata';
-const String _webTimestampRule = 'dd.MMMM.yyyy  HH:mm:ss';
 
 enum _ProfileMenuAction { settings, about, signOut }
 
@@ -636,6 +645,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 InfoLine(
                   label: 'Commit date',
                   value: _formatTimestamp(_buildCommitDate),
+                ),
+                const SizedBox(height: 10),
+                InfoLine(
+                  label: 'Release date',
+                  value: _formatTimestamp(_buildReleaseDate),
                 ),
                 const SizedBox(height: 10),
                 InfoLine(label: 'Commit message', value: _buildCommitMessage),
@@ -2098,7 +2112,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           const SizedBox(width: 8),
           _buildActionIconButton(
             tooltip: 'Open history data',
-            onPressed: canOpenSnapshot ? () => _openJobSnapshotDialog(job) : null,
+            onPressed:
+                canOpenSnapshot ? () => _openJobSnapshotDialog(job) : null,
             icon: Icons.table_rows_outlined,
           ),
         ],

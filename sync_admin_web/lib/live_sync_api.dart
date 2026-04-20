@@ -6,7 +6,7 @@ import 'models.dart';
 
 const String _defaultBackendBaseUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
-  defaultValue: 'http://localhost:9001/api',
+  defaultValue: '/api',
 );
 
 class LiveSyncApiClient {
@@ -20,7 +20,7 @@ class LiveSyncApiClient {
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
     if (trimmed.isEmpty) {
-      return 'http://localhost:9001/api';
+      return '/api';
     }
     return trimmed.endsWith('/')
         ? trimmed.substring(0, trimmed.length - 1)
