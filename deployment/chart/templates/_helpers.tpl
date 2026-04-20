@@ -106,7 +106,43 @@ true
 {{- if eq (include "sync-admin-web.certManagerCreateClusterIssuer" .) "true" -}}
 {{- printf "%s-letsencrypt" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- .Values.certManager.issuerName | default "letsencrypt-prod" -}}
+{{- $issuerName := .Values.certManager.issuerName | default "" -}}
+{{- if or (eq $issuerName "") (eq $issuerName "sync-admin-web-letsencrypt") -}}
+letsencrypt-http01
+{{- else -}}
+{{- $issuerName -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "sync-admin-web.certManagerShouldManageTls" -}}
+{{- $enabled := false -}}
+{{- if .Values.certManager -}}
+{{- if hasKey .Values.certManager "enabled" -}}
+{{- $enabled = .Values.certManager.enabled -}}
+{{- else -}}
+{{- $enabled = true -}}
+{{- end -}}
+{{- end -}}
+{{- if $enabled -}}
+true
+{{- else -}}
+{{- $tlsConfigured := and .Values.frontend .Values.frontend.ingress .Values.frontend.ingress.enabled .Values.frontend.ingress.tls -}}
+{{- if $tlsConfigured -}}
+{{- $tls := index .Values.frontend.ingress.tls 0 -}}
+{{- if and $tls $tls.secretName -}}
+{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $tls.secretName -}}
+{{- if $existingSecret -}}
+false
+{{- else -}}
+true
+{{- end -}}
+{{- else -}}
+false
+{{- end -}}
+{{- else -}}
+false
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

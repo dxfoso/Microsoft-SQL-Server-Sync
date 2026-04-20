@@ -12,7 +12,7 @@ metadata:
   namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
-  {{- if .Values.certManager.enabled }}
+  {{- if eq (include "sync-admin-web.certManagerShouldManageTls" .) "true" }}
   annotations:
     {{ include "sync-admin-web.certManagerAnnotationKey" . }}: {{ include "sync-admin-web.certManagerIssuerName" . | quote }}
   {{- end }}

@@ -1,4 +1,4 @@
-{{- if and .Values.certManager.enabled .Values.frontend.ingress.enabled .Values.frontend.ingress.tls }}
+{{- if and (eq (include "sync-admin-web.certManagerShouldManageTls" .) "true") .Values.frontend.ingress.enabled .Values.frontend.ingress.tls }}
 {{- $tls := index .Values.frontend.ingress.tls 0 }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
