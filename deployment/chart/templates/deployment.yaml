@@ -25,7 +25,7 @@ spec:
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
       {{- $frontendImage := .Values.frontend.image -}}
-      {{- if and .Values.image .Values.image.repository }}
+      {{- if and (not (kindIs "string" $frontendImage)) .Values.image .Values.image.repository }}
       {{- $frontendRepo := include "sync-admin-web.componentImageRepository" (list .Values.image.repository "frontend" .Values.dockerRegistry) -}}
       {{- $frontendImage = dict "repository" $frontendRepo "tag" .Values.image.tag "pullPolicy" .Values.image.pullPolicy -}}
       {{- end }}
