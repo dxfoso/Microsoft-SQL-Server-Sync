@@ -510,9 +510,6 @@ function canAccessClientUser(viewer, clientUser) {
   if (!viewer || !clientUser || clientUser.role !== ROLE_CLIENT) {
     return false;
   }
-  if (viewer.role === ROLE_ADMIN) {
-    return true;
-  }
   return viewer.role === ROLE_OWNER && clientUser.ownerUserId === viewer.id;
 }
 
@@ -534,9 +531,6 @@ function visibleUsersFor(viewer) {
 function viewerCanAccessRecord(viewer, ownerUserId, clientUserId) {
   if (!viewer) {
     return false;
-  }
-  if (viewer.role === ROLE_ADMIN) {
-    return true;
   }
   if (viewer.role === ROLE_OWNER) {
     return ownerUserId === viewer.id;
@@ -1374,7 +1368,6 @@ async function handleRequest(req, res) {
     const clientUser = findClientUserByName(clientIdentity);
     const clientName = clientUser?.username || normalizeUsername(clientIdentity);
     if (
-      context.user.role !== ROLE_ADMIN &&
       (context.user.role !== ROLE_CLIENT || context.user.id !== clientUser?.id) &&
       !canAccessClientUser(context.user, clientUser)
     ) {
