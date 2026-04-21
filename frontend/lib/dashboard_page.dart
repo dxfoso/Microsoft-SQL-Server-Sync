@@ -695,6 +695,188 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               }
             }
 
+            Future<void> openResetPasswordDialog(AuthenticatedUser user) async {
+              if (!widget.authenticatedUser.isAdmin) {
+                return;
+              }
+
+              final newPasswordController = TextEditingController();
+              final confirmPasswordController = TextEditingController();
+              final confirmPasswordFocusNode = FocusNode();
+              String? resetErrorText;
+              bool resetSubmitting = false;
+              bool showNewPassword = false;
+              bool showConfirmPassword = false;
+
+              try {
+                await showDialog<void>(
+                  context: context,
+                  builder: (context) {
+                    return StatefulBuilder(
+                      builder: (context, setResetState) {
+                        Future<void> submitReset() async {
+                          final scaffoldMessenger = ScaffoldMessenger.of(
+                            this.context,
+                          );
+                          final newPassword = newPasswordController.text;
+                          final confirmPassword = confirmPasswordController.text;
+
+                          if (newPassword.isEmpty || confirmPassword.isEmpty) {
+                            setResetState(() {
+                              resetErrorText =
+                                  'New password and confirm password are required.';
+                            });
+                            return;
+                          }
+
+                          if (newPassword != confirmPassword) {
+                            setResetState(() {
+                              resetErrorText =
+                                  'New password and confirm password must match.';
+                            });
+                            return;
+                          }
+
+                          setResetState(() {
+                            resetSubmitting = true;
+                            resetErrorText = null;
+                          });
+
+                          try {
+                            await _api.resetUserPassword(
+                              userId: user.id,
+                              newPassword: newPassword,
+                            );
+                            if (!context.mounted) {
+                              return;
+                            }
+                            Navigator.of(context).pop();
+                            scaffoldMessenger.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Password reset for ${user.name}.',
+                                ),
+                              ),
+                            );
+                          } catch (error) {
+                            setResetState(() {
+                              resetSubmitting = false;
+                              resetErrorText = error.toString();
+                            });
+                          }
+                        }
+
+                        return AlertDialog(
+                          title: Text('Reset Password for ${user.name}'),
+                          content: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 380),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                TextField(
+                                  controller: newPasswordController,
+                                  obscureText: !showNewPassword,
+                                  enableSuggestions: false,
+                                  autocorrect: false,
+                                  textInputAction: TextInputAction.next,
+                                  decoration: InputDecoration(
+                                    labelText: 'New Password',
+                                    suffixIcon: IconButton(
+                                      tooltip:
+                                          showNewPassword
+                                              ? 'Hide password'
+                                              : 'Show password',
+                                      onPressed: () {
+                                        setResetState(() {
+                                          showNewPassword = !showNewPassword;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        showNewPassword
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                      ),
+                                    ),
+                                  ),
+                                  onSubmitted:
+                                      (_) => confirmPasswordFocusNode.requestFocus(),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: confirmPasswordController,
+                                  focusNode: confirmPasswordFocusNode,
+                                  obscureText: !showConfirmPassword,
+                                  enableSuggestions: false,
+                                  autocorrect: false,
+                                  textInputAction: TextInputAction.done,
+                                  decoration: InputDecoration(
+                                    labelText: 'Confirm Password',
+                                    suffixIcon: IconButton(
+                                      tooltip:
+                                          showConfirmPassword
+                                              ? 'Hide password'
+                                              : 'Show password',
+                                      onPressed: () {
+                                        setResetState(() {
+                                          showConfirmPassword =
+                                              !showConfirmPassword;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        showConfirmPassword
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                      ),
+                                    ),
+                                  ),
+                                  onSubmitted: (_) => unawaited(submitReset()),
+                                ),
+                                if (resetErrorText != null) ...[
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    resetErrorText!,
+                                    style: const TextStyle(
+                                      color: Color(0xFFC53030),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed:
+                                  resetSubmitting
+                                      ? null
+                                      : () => Navigator.of(context).pop(),
+                              child: const Text('Cancel'),
+                            ),
+                            FilledButton(
+                              onPressed:
+                                  resetSubmitting
+                                      ? null
+                                      : () => unawaited(submitReset()),
+                              child: Text(
+                                resetSubmitting
+                                    ? 'Resetting...'
+                                    : 'Reset Password',
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                );
+              } finally {
+                newPasswordController.dispose();
+                confirmPasswordController.dispose();
+                confirmPasswordFocusNode.dispose();
+              }
+            }
+
             return Dialog(
               insetPadding: const EdgeInsets.all(24),
               child: ConstrainedBox(
@@ -932,6 +1114,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                               ),
                                             ),
                                           ),
+                                          if (widget.authenticatedUser.isAdmin) ...[
+                                            const SizedBox(width: 12),
+                                            OutlinedButton(
+                                              onPressed:
+                                                  () => unawaited(
+                                                    openResetPasswordDialog(
+                                                      user,
+                                                    ),
+                                                  ),
+                                              child: const Text(
+                                                'Reset Password',
+                                              ),
+                                            ),
+                                          ],
                                         ],
                                       ),
                                     );

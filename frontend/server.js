@@ -146,6 +146,13 @@ function createStoredUser({
   };
 }
 
+function setStoredUserPassword(user, password) {
+  const salt = crypto.randomUUID();
+  user.passwordSalt = salt;
+  user.passwordHash = passwordHash(password, salt);
+  user.updatedAt = nowIso();
+}
+
 function normalizeStoredUser(raw, usedUsernames = null) {
   const normalizedEmail = normalizeEmail(raw?.email);
   const preferredUsername =
@@ -1295,6 +1302,39 @@ async function handleRequest(req, res) {
     state.users[user.id] = user;
     await queueSave();
     sendJson(res, 201, { user: publicUserPayload(user) });
+    return;
+  }
+
+  const resetPasswordMatch =
+    req.method === "POST"
+      ? pathname.match(/^\/api\/users\/([^/]+)\/reset-password$/)
+      : null;
+  if (resetPasswordMatch) {
+    const context = requireAuth(req, res, {
+      allowedRoles: [ROLE_ADMIN],
+      app: APP_WEB,
+    });
+    if (!context) {
+      return;
+    }
+
+    const userId = decodeURIComponent(resetPasswordMatch[1] || "");
+    const user = state.users[userId] || null;
+    if (!user) {
+      sendJson(res, 404, { error: "user not found" });
+      return;
+    }
+
+    const body = await parseJsonBody(req);
+    const password = String(body.password || "");
+    if (!password.trim()) {
+      sendJson(res, 400, { error: "password is required" });
+      return;
+    }
+
+    setStoredUserPassword(user, password);
+    await queueSave();
+    sendJson(res, 200, { ok: true });
     return;
   }
 

@@ -163,6 +163,22 @@ class LiveSyncApiClient {
     );
   }
 
+  Future<void> resetUserPassword({
+    required String userId,
+    required String newPassword,
+  }) async {
+    final trimmedUserId = userId.trim();
+    final response = await _client.post(
+      _uri('/users/$trimmedUserId/reset-password'),
+      headers: _headers(json: true),
+      body: jsonEncode({'password': newPassword}),
+    );
+
+    if (response.statusCode != 200) {
+      throw LiveSyncApiException(_errorMessageFromResponse(response));
+    }
+  }
+
   Future<AdminLiveState> fetchLiveState() async {
     final response = await _client.get(
       _uri('/live-state'),
