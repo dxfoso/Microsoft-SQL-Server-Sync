@@ -20,9 +20,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   Map<String, SyncClientState> _syncStatesByClient = {};
   Timer? _saveDebounce;
   final AgentControlPlaneClient _authClient = AgentControlPlaneClient();
-  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   String? _authToken;
+  String? _accountUsername;
   String? _accountEmail;
   String? _accountName;
   String? _loginError;
@@ -48,11 +49,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void _loadState() {
     final store = SyncAppStateStore.loadSync();
     _authToken = store.authToken?.trim();
+    _accountUsername = store.accountUsername?.trim();
     _accountEmail = store.accountEmail?.trim();
     _accountName = store.accountName?.trim();
     _clientName =
-        (_accountEmail != null && _accountEmail!.isNotEmpty)
-            ? _accountEmail!
+        (_accountUsername != null && _accountUsername!.isNotEmpty)
+            ? _accountUsername!
             : (store.lastClientName.trim().isEmpty
                 ? 'Local Agent'
                 : store.lastClientName.trim());
@@ -75,6 +77,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       lastClientName: _clientName,
       clients: _syncStatesByClient,
       authToken: _authToken,
+      accountUsername: _accountUsername,
       accountEmail: _accountEmail,
       accountName: _accountName,
     );
@@ -82,7 +85,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   }
 
   void _updateClientName(String value) {
-    if (_accountEmail != null && _accountEmail!.isNotEmpty) {
+    if (_accountUsername != null && _accountUsername!.isNotEmpty) {
       return;
     }
     final nextName = value.trim().isEmpty ? 'Local Agent' : value.trim();
@@ -110,9 +113,28 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void dispose() {
     _saveDebounce?.cancel();
     _authClient.dispose();
-    _emailController.dispose();
+    _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  void _migrateStoredClientState(String fromClientName, String toClientName) {
+    final fromKey = fromClientName.trim();
+    final toKey = toClientName.trim();
+    if (fromKey.isEmpty || toKey.isEmpty || fromKey == toKey) {
+      return;
+    }
+
+    final existing = _syncStatesByClient[fromKey];
+    if (existing == null || _syncStatesByClient.containsKey(toKey)) {
+      return;
+    }
+
+    _syncStatesByClient = {
+      for (final entry in _syncStatesByClient.entries)
+        if (entry.key != fromKey) entry.key: entry.value,
+      toKey: existing,
+    };
   }
 
   Future<void> _restoreSession() async {
@@ -122,10 +144,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         return;
       }
       setState(() {
+        _migrateStoredClientState(_clientName, user.username);
         _authToken = user.token;
+        _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
-        _clientName = user.email;
+        _clientName = user.username;
         _restoringSession = false;
         _loginError = null;
       });
@@ -136,6 +160,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       }
       setState(() {
         _authToken = null;
+        _accountUsername = null;
         _accountEmail = null;
         _accountName = null;
         _clientName = 'Local Agent';
@@ -147,11 +172,11 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   }
 
   Future<void> _handleLogin() async {
-    final email = _emailController.text.trim();
+    final username = _usernameController.text.trim();
     final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) {
+    if (username.isEmpty || password.isEmpty) {
       setState(() {
-        _loginError = 'Email and password are required.';
+        _loginError = 'Username and password are required.';
       });
       return;
     }
@@ -163,17 +188,19 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
     try {
       final user = await _authClient.loginClient(
-        email: email,
+        username: username,
         password: password,
       );
       if (!mounted) {
         return;
       }
       setState(() {
+        _migrateStoredClientState(_clientName, user.username);
         _authToken = user.token;
+        _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
-        _clientName = user.email;
+        _clientName = user.username;
         _submittingLogin = false;
         _loginError = null;
         _passwordController.clear();
@@ -195,6 +222,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     _authClient.setAuthToken(null);
     setState(() {
       _authToken = null;
+      _accountUsername = null;
       _accountEmail = null;
       _accountName = null;
       _clientName = 'Local Agent';
@@ -302,11 +330,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                           ),
                           const SizedBox(height: 20),
                           TextField(
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
+                            controller: _usernameController,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              labelText: 'Email',
+                              labelText: 'Username',
                             ),
                           ),
                           const SizedBox(height: 14),
@@ -404,11 +431,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
               ? const Scaffold(body: Center(child: CircularProgressIndicator()))
               : (_authToken == null ||
                   _authToken!.isEmpty ||
-                  _accountEmail == null ||
-                  _accountEmail!.isEmpty)
+                  _accountUsername == null ||
+                  _accountUsername!.isEmpty)
               ? _buildLoginShell()
               : AgentDashboardPage(
                 authToken: _authToken!,
+                authenticatedAccountUsername: _accountUsername,
                 authenticatedAccountEmail: _accountEmail,
                 authenticatedAccountName: _accountName,
                 onLogout: _handleLogout,

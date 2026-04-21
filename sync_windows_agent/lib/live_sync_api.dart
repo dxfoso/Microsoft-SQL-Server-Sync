@@ -47,14 +47,14 @@ class AgentControlPlaneClient {
   }
 
   Future<AgentAuthenticatedUser> loginClient({
-    required String email,
+    required String username,
     required String password,
   }) async {
     final response = await _client.post(
       _uri('/auth/login'),
       headers: _headers(json: true),
       body: jsonEncode({
-        'email': email.trim(),
+        'username': username.trim(),
         'password': password,
         'app': 'windows',
       }),
@@ -72,10 +72,12 @@ class AgentControlPlaneClient {
     final user = AgentAuthenticatedUser(
       token: decoded['token'] as String? ?? '',
       id: (decoded['user'] as Map)['id'] as String? ?? '',
+      username: (decoded['user'] as Map)['username'] as String? ?? '',
       email: (decoded['user'] as Map)['email'] as String? ?? '',
       name: (decoded['user'] as Map)['name'] as String? ?? '',
       role: (decoded['user'] as Map)['role'] as String? ?? '',
       ownerUserId: (decoded['user'] as Map)['ownerUserId'] as String?,
+      ownerUsername: (decoded['user'] as Map)['ownerUsername'] as String?,
       ownerEmail: (decoded['user'] as Map)['ownerEmail'] as String?,
       ownerName: (decoded['user'] as Map)['ownerName'] as String?,
     );
@@ -99,10 +101,12 @@ class AgentControlPlaneClient {
     return AgentAuthenticatedUser(
       token: _authToken ?? '',
       id: user['id'] as String? ?? '',
+      username: user['username'] as String? ?? '',
       email: user['email'] as String? ?? '',
       name: user['name'] as String? ?? '',
       role: user['role'] as String? ?? '',
       ownerUserId: user['ownerUserId'] as String?,
+      ownerUsername: user['ownerUsername'] as String?,
       ownerEmail: user['ownerEmail'] as String?,
       ownerName: user['ownerName'] as String?,
     );
@@ -392,20 +396,24 @@ class AgentAuthenticatedUser {
   const AgentAuthenticatedUser({
     required this.token,
     required this.id,
+    required this.username,
     required this.email,
     required this.name,
     required this.role,
     required this.ownerUserId,
+    required this.ownerUsername,
     required this.ownerEmail,
     required this.ownerName,
   });
 
   final String token;
   final String id;
+  final String username;
   final String email;
   final String name;
   final String role;
   final String? ownerUserId;
+  final String? ownerUsername;
   final String? ownerEmail;
   final String? ownerName;
 }

@@ -15,6 +15,7 @@ class AgentDashboardPage extends StatefulWidget {
     super.key,
     this.autoLoadOnStart = true,
     required this.authToken,
+    required this.authenticatedAccountUsername,
     required this.authenticatedAccountEmail,
     required this.authenticatedAccountName,
     required this.onLogout,
@@ -27,6 +28,7 @@ class AgentDashboardPage extends StatefulWidget {
 
   final bool autoLoadOnStart;
   final String authToken;
+  final String? authenticatedAccountUsername;
   final String? authenticatedAccountEmail;
   final String? authenticatedAccountName;
   final VoidCallback onLogout;
@@ -2658,12 +2660,25 @@ SELECT (
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                widget.authenticatedAccountEmail ??
+                                widget.authenticatedAccountUsername ??
                                     widget.clientName,
                                 style: const TextStyle(
                                   color: Color(0xFF58656B),
                                 ),
                               ),
+                              if (widget.authenticatedAccountEmail
+                                      ?.trim()
+                                      .isNotEmpty ==
+                                  true) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.authenticatedAccountEmail!.trim(),
+                                  style: const TextStyle(
+                                    color: Color(0xFF7D878D),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 8),
                               const Text(
                                 'Client identity is managed by the website and cannot be changed here.',

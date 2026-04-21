@@ -1,10 +1,12 @@
 class AuthenticatedUser {
   const AuthenticatedUser({
     required this.id,
+    required this.username,
     required this.email,
     required this.name,
     required this.role,
     required this.ownerUserId,
+    required this.ownerUsername,
     required this.ownerEmail,
     required this.ownerName,
     required this.createdByUserId,
@@ -12,10 +14,12 @@ class AuthenticatedUser {
   });
 
   final String id;
+  final String username;
   final String email;
   final String name;
   final String role;
   final String? ownerUserId;
+  final String? ownerUsername;
   final String? ownerEmail;
   final String? ownerName;
   final String? createdByUserId;
@@ -24,10 +28,12 @@ class AuthenticatedUser {
   factory AuthenticatedUser.fromJson(Map<String, dynamic> json) {
     return AuthenticatedUser(
       id: json['id'] as String? ?? '',
+      username: json['username'] as String? ?? '',
       email: json['email'] as String? ?? '',
       name: json['name'] as String? ?? '',
       role: json['role'] as String? ?? '',
       ownerUserId: json['ownerUserId'] as String?,
+      ownerUsername: json['ownerUsername'] as String?,
       ownerEmail: json['ownerEmail'] as String?,
       ownerName: json['ownerName'] as String?,
       createdByUserId: json['createdByUserId'] as String?,
@@ -37,10 +43,12 @@ class AuthenticatedUser {
 
   Map<String, dynamic> toJson() => {
     'id': id,
+    'username': username,
     'email': email,
     'name': name,
     'role': role,
     'ownerUserId': ownerUserId,
+    'ownerUsername': ownerUsername,
     'ownerEmail': ownerEmail,
     'ownerName': ownerName,
     'createdByUserId': createdByUserId,

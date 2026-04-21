@@ -50,14 +50,14 @@ class LiveSyncApiClient {
   }
 
   Future<AuthLoginResult> loginWeb({
-    required String email,
+    required String username,
     required String password,
   }) async {
     final response = await _client.post(
       _uri('/auth/login'),
       headers: _headers(json: true),
       body: jsonEncode({
-        'email': email.trim(),
+        'username': username.trim(),
         'password': password,
         'app': 'web',
       }),
@@ -131,7 +131,8 @@ class LiveSyncApiClient {
 
   Future<AuthenticatedUser> createUser({
     required String name,
-    required String email,
+    required String username,
+    String? email,
     required String password,
     required String role,
     String? ownerUserId,
@@ -141,7 +142,8 @@ class LiveSyncApiClient {
       headers: _headers(json: true),
       body: jsonEncode({
         'name': name.trim(),
-        'email': email.trim(),
+        'username': username.trim(),
+        'email': email?.trim() ?? '',
         'password': password,
         'role': role,
         if (ownerUserId != null && ownerUserId.trim().isNotEmpty)

@@ -10,6 +10,7 @@ const STATE_FILE =
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), "public");
 const MAX_BODY_SIZE = 100 * 1024 * 1024;
 const AGENT_ONLINE_WINDOW_MS = 60 * 1000;
+const ADMIN_USERNAME = "dxfoso";
 const ADMIN_EMAIL = "dxfoso@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
 const ADMIN_NAME = "dxfoso";
@@ -48,6 +49,38 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeUsername(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function usernameFromEmail(value) {
+  const normalizedEmail = normalizeEmail(value);
+  if (!normalizedEmail) {
+    return "";
+  }
+  return normalizeUsername(normalizedEmail.split("@")[0]);
+}
+
+function allocateUsername(preferredUsername, usedUsernames, fallback = "user") {
+  const base =
+    normalizeUsername(preferredUsername) ||
+    normalizeUsername(fallback) ||
+    "user";
+  let candidate = base;
+  let counter = 2;
+  while (usedUsernames.has(candidate)) {
+    candidate = `${base}-${counter}`;
+    counter += 1;
+  }
+  usedUsernames.add(candidate);
+  return candidate;
+}
+
 function normalizeRole(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (
@@ -72,6 +105,10 @@ function userDisplayName(user) {
   if (preferred) {
     return preferred;
   }
+  const username = normalizeUsername(user?.username);
+  if (username) {
+    return username;
+  }
   const email = normalizeEmail(user?.email);
   if (email) {
     return email.split("@")[0];
@@ -80,6 +117,7 @@ function userDisplayName(user) {
 }
 
 function createStoredUser({
+  username,
   email,
   password,
   role,
@@ -89,10 +127,17 @@ function createStoredUser({
 }) {
   const salt = crypto.randomUUID();
   const createdAt = nowIso();
+  const normalizedUsername = normalizeUsername(username);
+  const normalizedEmail = normalizeEmail(email);
   return {
     id: crypto.randomUUID(),
-    email: normalizeEmail(email),
-    name: String(name || "").trim() || normalizeEmail(email),
+    username: normalizedUsername,
+    email: normalizedEmail,
+    name:
+      String(name || "").trim() ||
+      normalizedUsername ||
+      usernameFromEmail(normalizedEmail) ||
+      "user",
     role: normalizeRole(role),
     ownerUserId: ownerUserId ? String(ownerUserId) : null,
     createdByUserId: createdByUserId ? String(createdByUserId) : null,
@@ -103,12 +148,29 @@ function createStoredUser({
   };
 }
 
-function normalizeStoredUser(raw) {
+function normalizeStoredUser(raw, usedUsernames = null) {
   const normalizedEmail = normalizeEmail(raw?.email);
+  const preferredUsername =
+    normalizeUsername(raw?.username) ||
+    usernameFromEmail(normalizedEmail) ||
+    normalizeUsername(raw?.name);
+  const normalizedUsername =
+    usedUsernames instanceof Set
+      ? allocateUsername(
+          preferredUsername,
+          usedUsernames,
+          normalizedEmail || raw?.name || "user",
+        )
+      : preferredUsername;
   return {
     id: String(raw?.id || crypto.randomUUID()),
+    username: normalizedUsername || "user",
     email: normalizedEmail,
-    name: String(raw?.name || "").trim() || normalizedEmail,
+    name:
+      String(raw?.name || "").trim() ||
+      normalizedUsername ||
+      usernameFromEmail(normalizedEmail) ||
+      "user",
     role: normalizeRole(raw?.role),
     ownerUserId: raw?.ownerUserId ? String(raw.ownerUserId) : null,
     createdByUserId: raw?.createdByUserId ? String(raw.createdByUserId) : null,
@@ -126,17 +188,174 @@ function normalizePersistedState(parsed) {
     ...parsed,
     users: {},
     sessions: {},
-    agents: parsed?.agents || {},
-    jobs: Array.isArray(parsed?.jobs) ? parsed.jobs : [],
-    snapshots: parsed?.snapshots || {},
+    agents: {},
+    jobs: [],
+    snapshots: {},
   };
 
-  for (const [id, user] of Object.entries(parsed?.users || {})) {
-    const normalizedUser = normalizeStoredUser({ id, ...user });
-    if (!normalizedUser.email || !normalizedUser.role) {
+  const rawUsers = Object.entries(parsed?.users || {}).map(([id, user]) => ({
+    id,
+    user,
+  }));
+  const usedUsernames = new Set();
+  const adminLikeIndex = rawUsers.findIndex(
+    ({ user }) =>
+      normalizeUsername(user?.username) === ADMIN_USERNAME ||
+      normalizeEmail(user?.email) === ADMIN_EMAIL,
+  );
+
+  if (adminLikeIndex >= 0) {
+    const [adminEntry] = rawUsers.splice(adminLikeIndex, 1);
+    const normalizedUser = normalizeStoredUser(
+      { id: adminEntry.id, ...adminEntry.user, username: ADMIN_USERNAME },
+      usedUsernames,
+    );
+    if (normalizedUser.username && normalizedUser.role) {
+      normalized.users[normalizedUser.id] = normalizedUser;
+    }
+  } else {
+    usedUsernames.add(ADMIN_USERNAME);
+  }
+
+  for (const { id, user } of rawUsers) {
+    const normalizedUser = normalizeStoredUser({ id, ...user }, usedUsernames);
+    if (!normalizedUser.username || !normalizedUser.role) {
       continue;
     }
     normalized.users[normalizedUser.id] = normalizedUser;
+  }
+
+  const clientUsers = Object.values(normalized.users).filter(
+    (user) => user.role === ROLE_CLIENT,
+  );
+  const findNormalizedClientUser = (identity, clientUserId = null) => {
+    if (clientUserId) {
+      const byId = normalized.users[String(clientUserId)] || null;
+      if (byId?.role === ROLE_CLIENT) {
+        return byId;
+      }
+    }
+
+    const normalizedIdentity = normalizeUsername(identity);
+    if (normalizedIdentity) {
+      const byUsername = clientUsers.find(
+        (user) => user.username === normalizedIdentity,
+      );
+      if (byUsername) {
+        return byUsername;
+      }
+    }
+
+    const normalizedIdentityEmail = normalizeEmail(identity);
+    if (!normalizedIdentityEmail) {
+      return null;
+    }
+
+    const byEmail = clientUsers.filter(
+      (user) => normalizeEmail(user.email) === normalizedIdentityEmail,
+    );
+    return byEmail.length === 1 ? byEmail[0] : null;
+  };
+
+  const normalizeClientIdentity = (identity, clientUserId = null) => {
+    const user = findNormalizedClientUser(identity, clientUserId);
+    if (user) {
+      return user.username;
+    }
+    return (
+      normalizeUsername(identity) ||
+      String(identity || "").trim() ||
+      `client-${crypto.randomUUID()}`
+    );
+  };
+
+  for (const [legacyKey, agent] of Object.entries(parsed?.agents || {})) {
+    const rawClientIdentity = String(agent?.clientName || legacyKey || "");
+    const clientUser = findNormalizedClientUser(
+      rawClientIdentity,
+      agent?.clientUserId,
+    );
+    const clientName = normalizeClientIdentity(
+      rawClientIdentity,
+      agent?.clientUserId,
+    );
+    normalized.agents[clientName] = {
+      clientName,
+      clientUserId: clientUser?.id || (agent?.clientUserId ? String(agent.clientUserId) : null),
+      ownerUserId:
+        clientUser?.ownerUserId ||
+        (agent?.ownerUserId ? String(agent.ownerUserId) : null),
+      machineName: String(agent?.machineName || clientName),
+      server: String(agent?.server || ""),
+      database: String(agent?.database || ""),
+      isOnline: Boolean(agent?.isOnline),
+      isMaster: agent?.isMaster !== false,
+      serverConnected: Boolean(agent?.serverConnected),
+      sqlConnected: Boolean(agent?.sqlConnected),
+      lastHeartbeat: String(agent?.lastHeartbeat || ""),
+      selectedTable: agent?.selectedTable ? String(agent.selectedTable) : null,
+      tables: agent?.tables || {},
+    };
+  }
+
+  normalized.jobs = (Array.isArray(parsed?.jobs) ? parsed.jobs : [])
+    .map((job) => {
+      const clientUser = findNormalizedClientUser(job?.clientName, job?.clientUserId);
+      const sourceClientUser = findNormalizedClientUser(
+        job?.sourceClientName,
+        job?.sourceClientUserId,
+      );
+      const clientName = normalizeClientIdentity(
+        job?.clientName,
+        job?.clientUserId,
+      );
+      const sourceClientName = normalizeClientIdentity(
+        job?.sourceClientName || job?.clientName,
+        job?.sourceClientUserId,
+      );
+      return {
+        ...job,
+        clientName,
+        clientUserId:
+          clientUser?.id || (job?.clientUserId ? String(job.clientUserId) : null),
+        ownerUserId:
+          clientUser?.ownerUserId ||
+          (job?.ownerUserId ? String(job.ownerUserId) : null),
+        sourceClientName,
+        sourceClientUserId:
+          sourceClientUser?.id ||
+          (job?.sourceClientUserId ? String(job.sourceClientUserId) : null),
+      };
+    })
+    .filter((job) => String(job.clientName || "").trim() && String(job.table || "").trim());
+
+  for (const [legacyKey, snapshot] of Object.entries(parsed?.snapshots || {})) {
+    const [legacyClientName = "", legacyTable = ""] = String(legacyKey).split("::");
+    const rawClientIdentity = String(snapshot?.clientName || legacyClientName || "");
+    const clientUser = findNormalizedClientUser(
+      rawClientIdentity,
+      snapshot?.clientUserId,
+    );
+    const normalizedSnapshot = normalizeSnapshot({
+      ...snapshot,
+      clientName: normalizeClientIdentity(
+        rawClientIdentity,
+        snapshot?.clientUserId,
+      ),
+      clientUserId:
+        clientUser?.id ||
+        (snapshot?.clientUserId ? String(snapshot.clientUserId) : null),
+      ownerUserId:
+        clientUser?.ownerUserId ||
+        (snapshot?.ownerUserId ? String(snapshot.ownerUserId) : null),
+      table: snapshot?.table || legacyTable,
+    });
+    if (!normalizedSnapshot.clientName || !normalizedSnapshot.table) {
+      continue;
+    }
+    normalized.snapshots[
+      snapshotKey(normalizedSnapshot.clientName, normalizedSnapshot.table)
+    ] = normalizedSnapshot;
   }
 
   for (const [tokenHash, session] of Object.entries(parsed?.sessions || {})) {
@@ -152,14 +371,24 @@ function normalizePersistedState(parsed) {
   return normalized;
 }
 
-function findUserByEmail(email) {
-  const normalizedEmail = normalizeEmail(email);
+function findUserByUsername(username) {
+  const normalized = normalizeUsername(username);
   for (const user of Object.values(state.users || {})) {
-    if (normalizeEmail(user.email) === normalizedEmail) {
+    if (normalizeUsername(user.username) === normalized) {
       return user;
     }
   }
   return null;
+}
+
+function findUsersByEmail(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) {
+    return [];
+  }
+  return Object.values(state.users || {}).filter(
+    (user) => normalizeEmail(user.email) === normalized,
+  );
 }
 
 function ownerForUser(user) {
@@ -173,10 +402,12 @@ function publicUserPayload(user) {
   const owner = ownerForUser(user);
   return {
     id: user.id,
-    email: user.email,
+    username: user.username,
+    email: user.email || "",
     name: userDisplayName(user),
     role: user.role,
     ownerUserId: user.ownerUserId,
+    ownerUsername: owner ? owner.username : null,
     ownerEmail: owner ? owner.email : null,
     ownerName: owner ? userDisplayName(owner) : null,
     createdByUserId: user.createdByUserId,
@@ -185,9 +416,11 @@ function publicUserPayload(user) {
 }
 
 function ensureSeedUsers() {
-  let admin = findUserByEmail(ADMIN_EMAIL);
+  let admin =
+    findUserByUsername(ADMIN_USERNAME) || findUsersByEmail(ADMIN_EMAIL)[0] || null;
   if (!admin) {
     admin = createStoredUser({
+      username: ADMIN_USERNAME,
       email: ADMIN_EMAIL,
       password: ADMIN_PASSWORD,
       role: ROLE_ADMIN,
@@ -198,8 +431,16 @@ function ensureSeedUsers() {
   }
 
   let changed = false;
+  if (admin.username !== ADMIN_USERNAME) {
+    admin.username = ADMIN_USERNAME;
+    changed = true;
+  }
   if (admin.role !== ROLE_ADMIN) {
     admin.role = ROLE_ADMIN;
+    changed = true;
+  }
+  if (normalizeEmail(admin.email) !== ADMIN_EMAIL) {
+    admin.email = ADMIN_EMAIL;
     changed = true;
   }
   if (!String(admin.name || "").trim()) {
@@ -306,16 +547,25 @@ function viewerCanAccessRecord(viewer, ownerUserId, clientUserId) {
 }
 
 function findClientUserByName(clientName) {
-  const normalized = normalizeEmail(clientName);
-  for (const user of Object.values(state.users || {})) {
-    if (user.role !== ROLE_CLIENT) {
-      continue;
-    }
-    if (normalizeEmail(user.email) === normalized) {
-      return user;
+  const normalizedUsername = normalizeUsername(clientName);
+  if (normalizedUsername) {
+    const byUsername = Object.values(state.users || {}).find(
+      (user) => user.role === ROLE_CLIENT && user.username === normalizedUsername,
+    );
+    if (byUsername) {
+      return byUsername;
     }
   }
-  return null;
+
+  const normalizedEmail = normalizeEmail(clientName);
+  if (!normalizedEmail) {
+    return null;
+  }
+  const emailMatches = Object.values(state.users || {}).filter(
+    (user) =>
+      user.role === ROLE_CLIENT && normalizeEmail(user.email) === normalizedEmail,
+  );
+  return emailMatches.length === 1 ? emailMatches[0] : null;
 }
 
 function sortUsers(users) {
@@ -329,7 +579,7 @@ function sortUsers(users) {
     if (byRole !== 0) {
       return byRole;
     }
-    return userDisplayName(left).localeCompare(userDisplayName(right));
+    return (left.username || "").localeCompare(right.username || "");
   });
 }
 
@@ -671,7 +921,11 @@ function resolveDownloadSource(
 ) {
   const explicitSource = String(requestedSourceClientName || "").trim();
   if (explicitSource) {
-    const snapshot = latestSnapshot(explicitSource, table);
+    const explicitSourceUser = findClientUserByName(explicitSource);
+    const explicitSourceClientName = explicitSourceUser
+      ? explicitSourceUser.username
+      : explicitSource;
+    const snapshot = latestSnapshot(explicitSourceClientName, table);
     if (!snapshot || (snapshot.ownerUserId || null) !== (ownerUserId || null)) {
       return null;
     }
@@ -918,13 +1172,13 @@ async function handleRequest(req, res) {
 
   if (req.method === "POST" && pathname === "/api/auth/login") {
     const body = await parseJsonBody(req);
-    const email = normalizeEmail(body.email);
+    const username = normalizeUsername(body.username);
     const password = String(body.password || "");
     const app = String(body.app || APP_WEB).trim().toLowerCase();
-    const user = findUserByEmail(email);
+    const user = findUserByUsername(username);
 
     if (!user || passwordHash(password, user.passwordSalt) !== user.passwordHash) {
-      sendJson(res, 401, { error: "invalid email or password" });
+      sendJson(res, 401, { error: "invalid username or password" });
       return;
     }
 
@@ -999,19 +1253,20 @@ async function handleRequest(req, res) {
 
     const body = await parseJsonBody(req);
     const role = normalizeRole(body.role);
+    const username = normalizeUsername(body.username);
     const email = normalizeEmail(body.email);
     const password = String(body.password || "");
     const name = String(body.name || "").trim();
 
-    if (!email || !password || !name || !role) {
+    if (!username || !password || !name || !role) {
       sendJson(res, 400, {
-        error: "name, email, password, and role are required",
+        error: "name, username, password, and role are required",
       });
       return;
     }
 
-    if (findUserByEmail(email)) {
-      sendJson(res, 409, { error: "an account with that email already exists" });
+    if (findUserByUsername(username)) {
+      sendJson(res, 409, { error: "an account with that username already exists" });
       return;
     }
 
@@ -1038,6 +1293,7 @@ async function handleRequest(req, res) {
     }
 
     const user = createStoredUser({
+      username,
       email,
       password,
       role,
@@ -1072,7 +1328,7 @@ async function handleRequest(req, res) {
       return;
     }
     const body = await parseJsonBody(req);
-    const clientName = context.user.email;
+    const clientName = context.user.username;
 
     const agent = ensureAgent(clientName, {
       clientUserId: context.user.id,
@@ -1115,13 +1371,15 @@ async function handleRequest(req, res) {
     if (!context) {
       return;
     }
-    const clientName = decodeURIComponent(
+    const clientIdentity = decodeURIComponent(
       pathname.replace("/api/agents/", "").replace("/jobs", ""),
     );
+    const clientUser = findClientUserByName(clientIdentity);
+    const clientName = clientUser?.username || normalizeUsername(clientIdentity);
     if (
       context.user.role !== ROLE_ADMIN &&
-      context.user.email !== clientName &&
-      !canAccessClientUser(context.user, findClientUserByName(clientName))
+      (context.user.role !== ROLE_CLIENT || context.user.id !== clientUser?.id) &&
+      !canAccessClientUser(context.user, clientUser)
     ) {
       sendJson(res, 403, { error: "permission denied" });
       return;
@@ -1151,14 +1409,14 @@ async function handleRequest(req, res) {
     let clientName = "";
     if (context.user.role === ROLE_CLIENT) {
       clientUser = context.user;
-      clientName = context.user.email;
+      clientName = context.user.username;
     } else {
-      clientName = normalizeEmail(body.clientName);
-      clientUser = findClientUserByName(clientName);
+      clientUser = findClientUserByName(body.clientName);
       if (!clientUser || !canAccessClientUser(context.user, clientUser)) {
         sendJson(res, 403, { error: "permission denied for that client account" });
         return;
       }
+      clientName = clientUser.username;
     }
 
     const jobs = tables.flatMap((table) => {
@@ -1221,14 +1479,14 @@ async function handleRequest(req, res) {
     if (!context) {
       return;
     }
-    const clientName = normalizeEmail(url.searchParams.get("clientName") || "");
+    const clientIdentity = String(url.searchParams.get("clientName") || "").trim();
     const table = String(url.searchParams.get("table") || "").trim();
-    const clientUser = findClientUserByName(clientName);
+    const clientUser = findClientUserByName(clientIdentity);
     if (!clientUser || !canAccessClientUser(context.user, clientUser)) {
       sendJson(res, 403, { error: "permission denied" });
       return;
     }
-    const snapshot = latestSnapshot(clientName, table);
+    const snapshot = latestSnapshot(clientUser.username, table);
     if (!snapshot) {
       sendJson(res, 404, { error: "snapshot not found" });
       return;
@@ -1242,14 +1500,14 @@ async function handleRequest(req, res) {
     if (!context) {
       return;
     }
-    const clientName = normalizeEmail(url.searchParams.get("clientName") || "");
+    const clientIdentity = String(url.searchParams.get("clientName") || "").trim();
     const table = String(url.searchParams.get("table") || "").trim();
-    const clientUser = findClientUserByName(clientName);
+    const clientUser = findClientUserByName(clientIdentity);
     if (!clientUser || !canAccessClientUser(context.user, clientUser)) {
       sendJson(res, 403, { error: "permission denied" });
       return;
     }
-    const snapshot = latestSnapshot(clientName, table);
+    const snapshot = latestSnapshot(clientUser.username, table);
     if (!snapshot) {
       sendJson(res, 404, { error: "snapshot not found" });
       return;
@@ -1315,7 +1573,7 @@ async function handleRequest(req, res) {
       body.snapshot && typeof body.snapshot === "object" ? body.snapshot : body;
     const snapshot = finalizeSnapshot({
       ...rawSnapshot,
-      clientName: clientUser.email,
+      clientName: clientUser.username,
       clientUserId: clientUser.id,
       ownerUserId: clientUser.ownerUserId || null,
       table: body.table || rawSnapshot.table,

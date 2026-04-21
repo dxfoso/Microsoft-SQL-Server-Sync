@@ -77,7 +77,7 @@ class _WebsiteShell extends StatefulWidget {
 
 class _WebsiteShellState extends State<_WebsiteShell> {
   final LiveSyncApiClient _api = LiveSyncApiClient();
-  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
   AuthenticatedUser? _activeUser;
@@ -95,7 +95,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
   @override
   void dispose() {
     _api.dispose();
-    _emailController.dispose();
+    _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -139,11 +139,11 @@ class _WebsiteShellState extends State<_WebsiteShell> {
   }
 
   Future<void> _handleLogin() async {
-    final email = _emailController.text.trim().toLowerCase();
+    final username = _usernameController.text.trim();
     final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) {
+    if (username.isEmpty || password.isEmpty) {
       setState(() {
-        _error = 'Email and password are required.';
+        _error = 'Username and password are required.';
       });
       return;
     }
@@ -154,7 +154,10 @@ class _WebsiteShellState extends State<_WebsiteShell> {
     });
 
     try {
-      final result = await _api.loginWeb(email: email, password: password);
+      final result = await _api.loginWeb(
+        username: username,
+        password: password,
+      );
       writeBrowserStorage(_websiteSessionTokenKey, result.token);
       if (!mounted) {
         return;
@@ -305,12 +308,11 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           ),
                           const SizedBox(height: 20),
                           TextField(
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
+                            controller: _usernameController,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              labelText: 'Email',
-                              hintText: 'dxfoso@gmail.com',
+                              labelText: 'Username',
+                              hintText: 'dxfoso',
                             ),
                           ),
                           const SizedBox(height: 14),

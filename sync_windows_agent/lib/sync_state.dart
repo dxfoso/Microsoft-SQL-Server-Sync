@@ -247,6 +247,7 @@ class SyncAppStateStore {
     required this.lastClientName,
     required this.clients,
     this.authToken,
+    this.accountUsername,
     this.accountEmail,
     this.accountName,
   });
@@ -254,6 +255,7 @@ class SyncAppStateStore {
   final String lastClientName;
   final Map<String, SyncClientState> clients;
   final String? authToken;
+  final String? accountUsername;
   final String? accountEmail;
   final String? accountName;
 
@@ -278,6 +280,7 @@ class SyncAppStateStore {
         lastClientName: 'Local Agent',
         clients: {},
         authToken: null,
+        accountUsername: null,
         accountEmail: null,
         accountName: null,
       );
@@ -291,6 +294,7 @@ class SyncAppStateStore {
           lastClientName: 'Local Agent',
           clients: {},
           authToken: null,
+          accountUsername: null,
           accountEmail: null,
           accountName: null,
         );
@@ -303,6 +307,9 @@ class SyncAppStateStore {
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
         authToken: json['authToken'] as String?,
+        accountUsername:
+            json['accountUsername'] as String? ??
+            json['accountEmail'] as String?,
         accountEmail: json['accountEmail'] as String?,
         accountName: json['accountName'] as String?,
         clients: clientsJson.map(
@@ -317,6 +324,7 @@ class SyncAppStateStore {
         lastClientName: 'Local Agent',
         clients: {},
         authToken: null,
+        accountUsername: null,
         accountEmail: null,
         accountName: null,
       );
@@ -330,6 +338,7 @@ class SyncAppStateStore {
         lastClientName: 'Local Agent',
         clients: {},
         authToken: null,
+        accountUsername: null,
         accountEmail: null,
         accountName: null,
       );
@@ -343,6 +352,7 @@ class SyncAppStateStore {
           lastClientName: 'Local Agent',
           clients: {},
           authToken: null,
+          accountUsername: null,
           accountEmail: null,
           accountName: null,
         );
@@ -355,6 +365,9 @@ class SyncAppStateStore {
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
         authToken: json['authToken'] as String?,
+        accountUsername:
+            json['accountUsername'] as String? ??
+            json['accountEmail'] as String?,
         accountEmail: json['accountEmail'] as String?,
         accountName: json['accountName'] as String?,
         clients: clientsJson.map(
@@ -369,6 +382,7 @@ class SyncAppStateStore {
         lastClientName: 'Local Agent',
         clients: {},
         authToken: null,
+        accountUsername: null,
         accountEmail: null,
         accountName: null,
       );
@@ -385,6 +399,7 @@ class SyncAppStateStore {
     final payload = jsonEncode({
       'lastClientName': lastClientName,
       'authToken': authToken,
+      'accountUsername': accountUsername,
       'accountEmail': accountEmail,
       'accountName': accountName,
       'clients': clients.map((key, value) => MapEntry(key, value.toJson())),

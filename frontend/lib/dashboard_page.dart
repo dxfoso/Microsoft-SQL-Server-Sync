@@ -604,6 +604,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
 
     final nameController = TextEditingController();
+    final usernameController = TextEditingController();
     final emailController = TextEditingController();
     final passwordController = TextEditingController();
     var dialogUsers = List<AuthenticatedUser>.from(users);
@@ -631,15 +632,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
             Future<void> submit() async {
               final name = nameController.text.trim();
+              final username = usernameController.text.trim();
               final email = emailController.text.trim();
               final password = passwordController.text;
 
               if (name.isEmpty ||
-                  email.isEmpty ||
+                  username.isEmpty ||
                   password.isEmpty ||
                   selectedRole.isEmpty) {
                 setDialogState(() {
-                  errorText = 'Name, email, password, and role are required.';
+                  errorText =
+                      'Name, username, password, and role are required.';
                 });
                 return;
               }
@@ -662,7 +665,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               try {
                 final createdUser = await _api.createUser(
                   name: name,
-                  email: email,
+                  username: username,
+                  email: email.isEmpty ? null : email,
                   password: password,
                   role: selectedRole,
                   ownerUserId:
@@ -686,6 +690,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   submitting = false;
                   errorText = null;
                   nameController.clear();
+                  usernameController.clear();
                   emailController.clear();
                   passwordController.clear();
                 });
@@ -739,12 +744,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             ),
                           ),
                           SizedBox(
+                            width: 220,
+                            child: TextField(
+                              controller: usernameController,
+                              textInputAction: TextInputAction.next,
+                              decoration: const InputDecoration(
+                                labelText: 'Username',
+                              ),
+                            ),
+                          ),
+                          SizedBox(
                             width: 260,
                             child: TextField(
                               controller: emailController,
                               keyboardType: TextInputType.emailAddress,
                               decoration: const InputDecoration(
-                                labelText: 'Email',
+                                labelText: 'Email (Optional)',
                               ),
                             ),
                           ),
@@ -854,6 +869,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                     final user = dialogUsers[index];
                                     final ownerLabel =
                                         user.ownerName ??
+                                        user.ownerUsername ??
                                         user.ownerEmail ??
                                         (user.isOwner ? 'Self' : 'Unassigned');
                                     return Container(
@@ -880,11 +896,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                                 ),
                                                 const SizedBox(height: 4),
                                                 Text(
-                                                  user.email,
+                                                  user.username,
                                                   style: const TextStyle(
                                                     color: Color(0xFF58656B),
+                                                    fontWeight: FontWeight.w600,
                                                   ),
                                                 ),
+                                                if (user.email
+                                                    .trim()
+                                                    .isNotEmpty)
+                                                  Text(
+                                                    user.email,
+                                                    style: const TextStyle(
+                                                      color: Color(0xFF8A949A),
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
                                               ],
                                             ),
                                           ),
@@ -937,6 +964,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
 
     nameController.dispose();
+    usernameController.dispose();
     emailController.dispose();
     passwordController.dispose();
   }
@@ -2565,7 +2593,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             : 'SQL Sync - $_selectedTableName';
     final profileLabel =
         widget.authenticatedUser.name.trim().isEmpty
-            ? widget.authenticatedUser.email.split('@').first
+            ? widget.authenticatedUser.username
             : widget.authenticatedUser.name;
 
     return Scaffold(
