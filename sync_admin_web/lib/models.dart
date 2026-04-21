@@ -1,3 +1,65 @@
+class AuthenticatedUser {
+  const AuthenticatedUser({
+    required this.id,
+    required this.email,
+    required this.name,
+    required this.role,
+    required this.ownerUserId,
+    required this.ownerEmail,
+    required this.ownerName,
+    required this.createdByUserId,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String email;
+  final String name;
+  final String role;
+  final String? ownerUserId;
+  final String? ownerEmail;
+  final String? ownerName;
+  final String? createdByUserId;
+  final String createdAt;
+
+  factory AuthenticatedUser.fromJson(Map<String, dynamic> json) {
+    return AuthenticatedUser(
+      id: json['id'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      role: json['role'] as String? ?? '',
+      ownerUserId: json['ownerUserId'] as String?,
+      ownerEmail: json['ownerEmail'] as String?,
+      ownerName: json['ownerName'] as String?,
+      createdByUserId: json['createdByUserId'] as String?,
+      createdAt: json['createdAt'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'email': email,
+    'name': name,
+    'role': role,
+    'ownerUserId': ownerUserId,
+    'ownerEmail': ownerEmail,
+    'ownerName': ownerName,
+    'createdByUserId': createdByUserId,
+    'createdAt': createdAt,
+  };
+
+  bool get isAdmin => role == 'admin';
+  bool get isOwner => role == 'owner';
+  bool get isClient => role == 'client';
+  bool get canManageUsers => isAdmin || isOwner;
+}
+
+class AuthLoginResult {
+  const AuthLoginResult({required this.token, required this.user});
+
+  final String token;
+  final AuthenticatedUser user;
+}
+
 class AdminLiveState {
   const AdminLiveState({
     required this.generatedAt,

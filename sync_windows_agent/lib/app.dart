@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'agent_page.dart';
+import 'live_sync_api.dart';
 import 'sync_state.dart';
 
 class SyncWindowsAgentApp extends StatefulWidget {
@@ -18,6 +19,15 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String _clientName = 'Local Agent';
   Map<String, SyncClientState> _syncStatesByClient = {};
   Timer? _saveDebounce;
+  final AgentControlPlaneClient _authClient = AgentControlPlaneClient();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  String? _authToken;
+  String? _accountEmail;
+  String? _accountName;
+  String? _loginError;
+  bool _restoringSession = true;
+  bool _submittingLogin = false;
 
   static const SyncClientState _defaultClientState = SyncClientState(
     isMaster: true,
@@ -37,11 +47,22 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   void _loadState() {
     final store = SyncAppStateStore.loadSync();
+    _authToken = store.authToken?.trim();
+    _accountEmail = store.accountEmail?.trim();
+    _accountName = store.accountName?.trim();
     _clientName =
-        store.lastClientName.trim().isEmpty
-            ? 'Local Agent'
-            : store.lastClientName.trim();
+        (_accountEmail != null && _accountEmail!.isNotEmpty)
+            ? _accountEmail!
+            : (store.lastClientName.trim().isEmpty
+                ? 'Local Agent'
+                : store.lastClientName.trim());
     _syncStatesByClient = store.clients.isEmpty ? {} : store.clients;
+    if (_authToken != null && _authToken!.isNotEmpty) {
+      _authClient.setAuthToken(_authToken);
+      unawaited(_restoreSession());
+    } else {
+      _restoringSession = false;
+    }
   }
 
   void _scheduleSave() {
@@ -53,11 +74,17 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     final store = SyncAppStateStore(
       lastClientName: _clientName,
       clients: _syncStatesByClient,
+      authToken: _authToken,
+      accountEmail: _accountEmail,
+      accountName: _accountName,
     );
     await store.save();
   }
 
   void _updateClientName(String value) {
+    if (_accountEmail != null && _accountEmail!.isNotEmpty) {
+      return;
+    }
     final nextName = value.trim().isEmpty ? 'Local Agent' : value.trim();
     final previousName = _clientName;
     final currentState =
@@ -82,7 +109,249 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   @override
   void dispose() {
     _saveDebounce?.cancel();
+    _authClient.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _restoreSession() async {
+    try {
+      final user = await _authClient.fetchCurrentUser();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authToken = user.token;
+        _accountEmail = user.email;
+        _accountName = user.name;
+        _clientName = user.email;
+        _restoringSession = false;
+        _loginError = null;
+      });
+      _scheduleSave();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authToken = null;
+        _accountEmail = null;
+        _accountName = null;
+        _clientName = 'Local Agent';
+        _restoringSession = false;
+      });
+      _authClient.setAuthToken(null);
+      _scheduleSave();
+    }
+  }
+
+  Future<void> _handleLogin() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() {
+        _loginError = 'Email and password are required.';
+      });
+      return;
+    }
+
+    setState(() {
+      _submittingLogin = true;
+      _loginError = null;
+    });
+
+    try {
+      final user = await _authClient.loginClient(
+        email: email,
+        password: password,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authToken = user.token;
+        _accountEmail = user.email;
+        _accountName = user.name;
+        _clientName = user.email;
+        _submittingLogin = false;
+        _loginError = null;
+        _passwordController.clear();
+      });
+      _scheduleSave();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _submittingLogin = false;
+        _loginError = error.toString();
+      });
+    }
+  }
+
+  void _handleLogout() {
+    unawaited(_authClient.logout().catchError((_) {}));
+    _authClient.setAuthToken(null);
+    setState(() {
+      _authToken = null;
+      _accountEmail = null;
+      _accountName = null;
+      _clientName = 'Local Agent';
+      _loginError = null;
+      _passwordController.clear();
+    });
+    _scheduleSave();
+  }
+
+  Widget _buildLoginShell() {
+    return Scaffold(
+      body: Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFFF2F1ED), Color(0xFFE2ECE9), Color(0xFFF5E3BE)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 960),
+              child: Wrap(
+                spacing: 24,
+                runSpacing: 24,
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 480),
+                    child: Container(
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(30),
+                        gradient: const LinearGradient(
+                          colors: [
+                            Color(0xFF143842),
+                            Color(0xFF1E6674),
+                            Color(0xFFD8A23A),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'SQL Sync Windows Agent',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 30,
+                              fontWeight: FontWeight.w800,
+                              height: 1.05,
+                            ),
+                          ),
+                          SizedBox(height: 14),
+                          Text(
+                            'Sign in with a client account. Owner and admin accounts are blocked here and work only on the website.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 15,
+                              height: 1.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 400),
+                    child: Container(
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x12000000),
+                            blurRadius: 28,
+                            offset: Offset(0, 16),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Client Login',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Use a client account created on the website by dxfoso or by your owner account.',
+                            style: TextStyle(
+                              color: Color(0xFF58656B),
+                              height: 1.45,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          TextField(
+                            controller: _emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Email',
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: true,
+                            onSubmitted: (_) => unawaited(_handleLogin()),
+                            decoration: const InputDecoration(
+                              labelText: 'Password',
+                            ),
+                          ),
+                          if (_loginError != null) ...[
+                            const SizedBox(height: 14),
+                            Text(
+                              _loginError!,
+                              style: const TextStyle(
+                                color: Color(0xFFC53030),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 20),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton(
+                              onPressed:
+                                  _submittingLogin
+                                      ? null
+                                      : () => unawaited(_handleLogin()),
+                              child: Text(
+                                _submittingLogin ? 'Signing In...' : 'Sign In',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -130,13 +399,26 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
           ),
         ),
       ),
-      home: AgentDashboardPage(
-        autoLoadOnStart: widget.autoLoadOnStart,
-        clientName: _clientName,
-        onClientNameChanged: _updateClientName,
-        initialSyncState: _stateForClient(_clientName),
-        onSyncStateChanged: _updateSyncStateForClient,
-      ),
+      home:
+          _restoringSession
+              ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+              : (_authToken == null ||
+                  _authToken!.isEmpty ||
+                  _accountEmail == null ||
+                  _accountEmail!.isEmpty)
+              ? _buildLoginShell()
+              : AgentDashboardPage(
+                authToken: _authToken!,
+                authenticatedAccountEmail: _accountEmail,
+                authenticatedAccountName: _accountName,
+                onLogout: _handleLogout,
+                clientNameLocked: true,
+                autoLoadOnStart: widget.autoLoadOnStart,
+                clientName: _clientName,
+                onClientNameChanged: _updateClientName,
+                initialSyncState: _stateForClient(_clientName),
+                onSyncStateChanged: _updateSyncStateForClient,
+              ),
     );
   }
 }

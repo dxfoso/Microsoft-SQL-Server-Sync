@@ -14,6 +14,11 @@ class AgentDashboardPage extends StatefulWidget {
   const AgentDashboardPage({
     super.key,
     this.autoLoadOnStart = true,
+    required this.authToken,
+    required this.authenticatedAccountEmail,
+    required this.authenticatedAccountName,
+    required this.onLogout,
+    required this.clientNameLocked,
     required this.clientName,
     required this.onClientNameChanged,
     required this.initialSyncState,
@@ -21,6 +26,11 @@ class AgentDashboardPage extends StatefulWidget {
   });
 
   final bool autoLoadOnStart;
+  final String authToken;
+  final String? authenticatedAccountEmail;
+  final String? authenticatedAccountName;
+  final VoidCallback onLogout;
+  final bool clientNameLocked;
   final String clientName;
   final ValueChanged<String> onClientNameChanged;
   final SyncClientState initialSyncState;
@@ -76,6 +86,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   void initState() {
     super.initState();
     _syncState = widget.initialSyncState;
+    _controlPlaneClient.setAuthToken(widget.authToken);
     _connectionCheckTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => unawaited(_checkServerConnection()),
@@ -300,6 +311,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   @override
   void didUpdateWidget(covariant AgentDashboardPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.authToken != widget.authToken) {
+      _controlPlaneClient.setAuthToken(widget.authToken);
+      unawaited(_syncWithControlPlane());
+    }
     if (oldWidget.clientName != widget.clientName) {
       _syncState = widget.initialSyncState;
       unawaited(_syncWithControlPlane());
@@ -559,14 +574,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Map<String, SyncTableState> _heartbeatTablesPayload() {
     final tableNames =
-        _tables.isNotEmpty ? _tables : _syncState.tables.keys.toList(growable: false);
+        _tables.isNotEmpty
+            ? _tables
+            : _syncState.tables.keys.toList(growable: false);
 
     // Heartbeats only need live table metadata. Keep the local history and snapshots
     // out of the request body so the control-plane payload stays bounded.
     return Map<String, SyncTableState>.fromEntries(
       tableNames.map((table) {
-        final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
-        return MapEntry(table, current.copyWith(history: const <SyncHistoryEntry>[]));
+        final current =
+            _syncState.tables[table] ?? _defaultSyncTableState(table);
+        return MapEntry(
+          table,
+          current.copyWith(history: const <SyncHistoryEntry>[]),
+        );
       }),
     );
   }
@@ -2604,10 +2625,61 @@ SELECT (
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextField(
-                        controller: clientNameController,
-                        decoration: _compactInputDecoration('Client Name'),
-                      ),
+                      if (widget.clientNameLocked)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF5F7F4),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: const Color(0xFFD5DDD2)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Client Account',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF17313A),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                widget.authenticatedAccountName
+                                            ?.trim()
+                                            .isNotEmpty ==
+                                        true
+                                    ? widget.authenticatedAccountName!.trim()
+                                    : widget.clientName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                widget.authenticatedAccountEmail ??
+                                    widget.clientName,
+                                style: const TextStyle(
+                                  color: Color(0xFF58656B),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Client identity is managed by the website and cannot be changed here.',
+                                style: TextStyle(
+                                  color: Color(0xFF58656B),
+                                  height: 1.35,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        TextField(
+                          controller: clientNameController,
+                          decoration: _compactInputDecoration('Client Name'),
+                        ),
                       const SizedBox(height: 12),
                       TextField(
                         controller: historyLimitController,
@@ -2689,9 +2761,11 @@ SELECT (
 
                     final dialogProfile = readDialogProfile();
                     final clientName =
-                        clientNameController.text.trim().isEmpty
-                            ? 'Local Agent'
-                            : clientNameController.text.trim();
+                        widget.clientNameLocked
+                            ? widget.clientName
+                            : (clientNameController.text.trim().isEmpty
+                                ? 'Local Agent'
+                                : clientNameController.text.trim());
 
                     setState(() {
                       _serverController.text = dialogProfile.server;
@@ -3415,10 +3489,7 @@ SELECT (
                       entry.message,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        height: 1.2,
-                        fontSize: 12.5,
-                      ),
+                      style: const TextStyle(height: 1.2, fontSize: 12.5),
                     ),
                     const SizedBox(height: 4),
                     Wrap(
@@ -4011,6 +4082,14 @@ SELECT (
                       visualDensity: VisualDensity.compact,
                     ),
                     onPressed: _openSettingsDialog,
+                  ),
+                  IconButton(
+                    tooltip: 'Sign out',
+                    icon: const Icon(Icons.logout_rounded),
+                    style: IconButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: widget.onLogout,
                   ),
                 ],
               ),

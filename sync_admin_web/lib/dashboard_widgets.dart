@@ -41,8 +41,7 @@ class DashboardHeader extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 720),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-              ],
+              children: [],
             ),
           ),
           Wrap(

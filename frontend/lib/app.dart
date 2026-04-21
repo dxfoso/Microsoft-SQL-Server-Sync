@@ -1,12 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'browser_bridge.dart';
 import 'dashboard_page.dart';
+import 'live_sync_api.dart';
+import 'models.dart';
 
-const Map<String, String> _websiteCredentials = <String, String>{
-  'dxfoso@gmail.com': 'Admin@123',
-};
-const String _websiteSessionKey = 'sync_admin_web.active_email';
+const String _websiteSessionTokenKey = 'sync_admin_web.auth_token';
 
 class SyncAdminApp extends StatelessWidget {
   const SyncAdminApp({super.key});
@@ -75,61 +76,134 @@ class _WebsiteShell extends StatefulWidget {
 }
 
 class _WebsiteShellState extends State<_WebsiteShell> {
+  final LiveSyncApiClient _api = LiveSyncApiClient();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  String? _activeEmail;
+  AuthenticatedUser? _activeUser;
+  String? _authToken;
   String? _error;
+  bool _restoringSession = true;
+  bool _submitting = false;
 
   @override
   void initState() {
     super.initState();
-    final storedEmail =
-        readBrowserStorage(_websiteSessionKey)?.trim().toLowerCase();
-    if (storedEmail != null && _websiteCredentials.containsKey(storedEmail)) {
-      _activeEmail = storedEmail;
-    }
+    _restoreSession();
   }
 
   @override
   void dispose() {
+    _api.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
-  void _handleLogin() {
-    final email = _emailController.text.trim().toLowerCase();
-    final password = _passwordController.text;
-    if (_websiteCredentials[email] != password) {
+  Future<void> _restoreSession() async {
+    final token = readBrowserStorage(_websiteSessionTokenKey)?.trim();
+    if (token == null || token.isEmpty) {
+      if (!mounted) {
+        return;
+      }
       setState(() {
-        _error = 'Invalid email or password.';
+        _restoringSession = false;
       });
       return;
     }
 
-    writeBrowserStorage(_websiteSessionKey, email);
+    _api.setAuthToken(token);
+    try {
+      final user = await _api.fetchCurrentUser();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authToken = token;
+        _activeUser = user;
+        _restoringSession = false;
+        _error = null;
+      });
+    } catch (_) {
+      removeBrowserStorage(_websiteSessionTokenKey);
+      _api.setAuthToken(null);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authToken = null;
+        _activeUser = null;
+        _restoringSession = false;
+      });
+    }
+  }
+
+  Future<void> _handleLogin() async {
+    final email = _emailController.text.trim().toLowerCase();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() {
+        _error = 'Email and password are required.';
+      });
+      return;
+    }
+
     setState(() {
-      _activeEmail = email;
+      _submitting = true;
       _error = null;
-      _passwordController.clear();
     });
+
+    try {
+      final result = await _api.loginWeb(email: email, password: password);
+      writeBrowserStorage(_websiteSessionTokenKey, result.token);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authToken = result.token;
+        _activeUser = result.user;
+        _error = null;
+        _submitting = false;
+        _passwordController.clear();
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+        _submitting = false;
+      });
+    }
   }
 
   void _handleLogout() {
-    removeBrowserStorage(_websiteSessionKey);
+    final token = _authToken;
+    removeBrowserStorage(_websiteSessionTokenKey);
+    _api.setAuthToken(null);
     setState(() {
-      _activeEmail = null;
+      _authToken = null;
+      _activeUser = null;
       _error = null;
       _passwordController.clear();
     });
+    if (token != null && token.isNotEmpty) {
+      _api.setAuthToken(token);
+      unawaited(_api.logout().catchError((_) {}));
+      _api.setAuthToken(null);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_activeEmail != null) {
+    if (_restoringSession) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    if (_activeUser != null && _authToken != null) {
       return AdminDashboardPage(
-        authenticatedEmail: _activeEmail!,
+        authenticatedUser: _activeUser!,
+        authToken: _authToken!,
         onLogout: _handleLogout,
       );
     }
@@ -223,7 +297,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            'Use the website credentials to unlock the live sync dashboard.',
+                            'Admin and owner accounts can sign in here. Client accounts work only in the Windows app.',
                             style: TextStyle(
                               color: Color(0xFF58656B),
                               height: 1.45,
@@ -243,7 +317,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           TextField(
                             controller: _passwordController,
                             obscureText: true,
-                            onSubmitted: (_) => _handleLogin(),
+                            onSubmitted: (_) => unawaited(_handleLogin()),
                             decoration: const InputDecoration(
                               labelText: 'Password',
                             ),
@@ -262,8 +336,13 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
-                              onPressed: _handleLogin,
-                              child: const Text('Sign In'),
+                              onPressed:
+                                  _submitting
+                                      ? null
+                                      : () => unawaited(_handleLogin()),
+                              child: Text(
+                                _submitting ? 'Signing In...' : 'Sign In',
+                              ),
                             ),
                           ),
                         ],

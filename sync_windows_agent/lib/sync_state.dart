@@ -246,10 +246,16 @@ class SyncAppStateStore {
   const SyncAppStateStore({
     required this.lastClientName,
     required this.clients,
+    this.authToken,
+    this.accountEmail,
+    this.accountName,
   });
 
   final String lastClientName;
   final Map<String, SyncClientState> clients;
+  final String? authToken;
+  final String? accountEmail;
+  final String? accountName;
 
   static Directory _stateDirectory() {
     final base =
@@ -271,6 +277,9 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        authToken: null,
+        accountEmail: null,
+        accountName: null,
       );
     }
 
@@ -281,6 +290,9 @@ class SyncAppStateStore {
         return const SyncAppStateStore(
           lastClientName: 'Local Agent',
           clients: {},
+          authToken: null,
+          accountEmail: null,
+          accountName: null,
         );
       }
 
@@ -290,6 +302,9 @@ class SyncAppStateStore {
       );
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        authToken: json['authToken'] as String?,
+        accountEmail: json['accountEmail'] as String?,
+        accountName: json['accountName'] as String?,
         clients: clientsJson.map(
           (key, value) => MapEntry(
             key,
@@ -301,6 +316,9 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        authToken: null,
+        accountEmail: null,
+        accountName: null,
       );
     }
   }
@@ -311,6 +329,9 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        authToken: null,
+        accountEmail: null,
+        accountName: null,
       );
     }
 
@@ -321,6 +342,9 @@ class SyncAppStateStore {
         return const SyncAppStateStore(
           lastClientName: 'Local Agent',
           clients: {},
+          authToken: null,
+          accountEmail: null,
+          accountName: null,
         );
       }
 
@@ -330,6 +354,9 @@ class SyncAppStateStore {
       );
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        authToken: json['authToken'] as String?,
+        accountEmail: json['accountEmail'] as String?,
+        accountName: json['accountName'] as String?,
         clients: clientsJson.map(
           (key, value) => MapEntry(
             key,
@@ -341,6 +368,9 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        authToken: null,
+        accountEmail: null,
+        accountName: null,
       );
     }
   }
@@ -354,6 +384,9 @@ class SyncAppStateStore {
     final file = _stateFile();
     final payload = jsonEncode({
       'lastClientName': lastClientName,
+      'authToken': authToken,
+      'accountEmail': accountEmail,
+      'accountName': accountName,
       'clients': clients.map((key, value) => MapEntry(key, value.toJson())),
     });
     await file.writeAsString(payload);

@@ -16,6 +16,7 @@ class AgentControlPlaneClient {
 
   final http.Client _client;
   final String _baseUrl;
+  String? _authToken;
 
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
@@ -28,6 +29,98 @@ class AgentControlPlaneClient {
   }
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
+
+  void setAuthToken(String? token) {
+    final trimmed = token?.trim();
+    _authToken = trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  Map<String, String> _headers({bool json = false}) {
+    final headers = <String, String>{};
+    if (json) {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (_authToken != null) {
+      headers['Authorization'] = 'Bearer $_authToken';
+    }
+    return headers;
+  }
+
+  Future<AgentAuthenticatedUser> loginClient({
+    required String email,
+    required String password,
+  }) async {
+    final response = await _client.post(
+      _uri('/auth/login'),
+      headers: _headers(json: true),
+      body: jsonEncode({
+        'email': email.trim(),
+        'password': password,
+        'app': 'windows',
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map || decoded['user'] is! Map) {
+      throw const AgentControlPlaneException('Unexpected login payload.');
+    }
+
+    final user = AgentAuthenticatedUser(
+      token: decoded['token'] as String? ?? '',
+      id: (decoded['user'] as Map)['id'] as String? ?? '',
+      email: (decoded['user'] as Map)['email'] as String? ?? '',
+      name: (decoded['user'] as Map)['name'] as String? ?? '',
+      role: (decoded['user'] as Map)['role'] as String? ?? '',
+      ownerUserId: (decoded['user'] as Map)['ownerUserId'] as String?,
+      ownerEmail: (decoded['user'] as Map)['ownerEmail'] as String?,
+      ownerName: (decoded['user'] as Map)['ownerName'] as String?,
+    );
+    setAuthToken(user.token);
+    return user;
+  }
+
+  Future<AgentAuthenticatedUser> fetchCurrentUser() async {
+    final response = await _client.get(_uri('/auth/me'), headers: _headers());
+    if (response.statusCode != 200) {
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map || decoded['user'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected current-user payload.',
+      );
+    }
+    final user = Map<String, dynamic>.from(decoded['user'] as Map);
+    return AgentAuthenticatedUser(
+      token: _authToken ?? '',
+      id: user['id'] as String? ?? '',
+      email: user['email'] as String? ?? '',
+      name: user['name'] as String? ?? '',
+      role: user['role'] as String? ?? '',
+      ownerUserId: user['ownerUserId'] as String?,
+      ownerEmail: user['ownerEmail'] as String?,
+      ownerName: user['ownerName'] as String?,
+    );
+  }
+
+  Future<void> logout() async {
+    if (_authToken == null) {
+      return;
+    }
+    final response = await _client.post(
+      _uri('/auth/logout'),
+      headers: _headers(json: true),
+    );
+    if (response.statusCode != 200) {
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+    }
+    setAuthToken(null);
+  }
 
   Future<bool> checkHealth() async {
     try {
@@ -51,7 +144,7 @@ class AgentControlPlaneClient {
   }) async {
     final response = await _client.post(
       _uri('/agents/heartbeat'),
-      headers: const {'Content-Type': 'application/json'},
+      headers: _headers(json: true),
       body: jsonEncode({
         'clientName': clientName,
         'machineName': machineName,
@@ -68,9 +161,7 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(
-        'Heartbeat failed with ${response.statusCode}.',
-      );
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
     }
 
     final decoded = jsonDecode(response.body);
@@ -95,7 +186,7 @@ class AgentControlPlaneClient {
   }) async {
     final response = await _client.post(
       _uri('/jobs'),
-      headers: const {'Content-Type': 'application/json'},
+      headers: _headers(json: true),
       body: jsonEncode({
         'clientName': clientName,
         if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
@@ -106,9 +197,7 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw AgentControlPlaneException(
-        'Queueing jobs failed with ${response.statusCode}.',
-      );
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
     }
 
     final decoded = jsonDecode(response.body);
@@ -132,7 +221,7 @@ class AgentControlPlaneClient {
   }) async {
     final response = await _client.post(
       _uri('/jobs/$jobId/start'),
-      headers: const {'Content-Type': 'application/json'},
+      headers: _headers(json: true),
       body: jsonEncode({
         'status': status,
         'progress': progress,
@@ -152,7 +241,7 @@ class AgentControlPlaneClient {
   }) async {
     final response = await _client.post(
       _uri('/jobs/$jobId/progress'),
-      headers: const {'Content-Type': 'application/json'},
+      headers: _headers(json: true),
       body: jsonEncode({
         'status': status,
         'progress': progress,
@@ -176,7 +265,7 @@ class AgentControlPlaneClient {
   }) async {
     final response = await _client.post(
       _uri('/jobs/$jobId/upload'),
-      headers: const {'Content-Type': 'application/json'},
+      headers: _headers(json: true),
       body: jsonEncode({
         'clientName': clientName,
         'table': table,
@@ -189,9 +278,7 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(
-        'Snapshot upload failed with ${response.statusCode}.',
-      );
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
     }
 
     final decoded = jsonDecode(response.body);
@@ -210,11 +297,12 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
-    final response = await _client.get(_uri('/jobs/$jobId/download-snapshot'));
+    final response = await _client.get(
+      _uri('/jobs/$jobId/download-snapshot'),
+      headers: _headers(),
+    );
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(
-        'Snapshot download failed with ${response.statusCode}.',
-      );
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
     }
 
     final decoded = jsonDecode(response.body);
@@ -239,7 +327,7 @@ class AgentControlPlaneClient {
   }) async {
     final response = await _client.post(
       _uri('/jobs/$jobId/complete'),
-      headers: const {'Content-Type': 'application/json'},
+      headers: _headers(json: true),
       body: jsonEncode({
         'status': status,
         'progress': progress,
@@ -256,7 +344,7 @@ class AgentControlPlaneClient {
   Future<void> failJob(String jobId, String message, {int? progress}) async {
     final response = await _client.post(
       _uri('/jobs/$jobId/fail'),
-      headers: const {'Content-Type': 'application/json'},
+      headers: _headers(json: true),
       body: jsonEncode({
         'message': message,
         if (progress != null) 'progress': progress,
@@ -264,17 +352,13 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(
-        'Job failure callback failed with ${response.statusCode}.',
-      );
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
     }
   }
 
   RemoteSyncJob _parseJobResponse(http.Response response, String phase) {
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(
-        '$phase failed with ${response.statusCode}.',
-      );
+      throw AgentControlPlaneException(_errorMessageFromResponse(response));
     }
 
     final decoded = jsonDecode(response.body);
@@ -292,6 +376,38 @@ class AgentControlPlaneClient {
   void dispose() {
     _client.close();
   }
+
+  String _errorMessageFromResponse(http.Response response) {
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['error'] is String) {
+        return decoded['error'] as String;
+      }
+    } catch (_) {}
+    return 'Request failed with ${response.statusCode}.';
+  }
+}
+
+class AgentAuthenticatedUser {
+  const AgentAuthenticatedUser({
+    required this.token,
+    required this.id,
+    required this.email,
+    required this.name,
+    required this.role,
+    required this.ownerUserId,
+    required this.ownerEmail,
+    required this.ownerName,
+  });
+
+  final String token;
+  final String id;
+  final String email;
+  final String name;
+  final String role;
+  final String? ownerUserId;
+  final String? ownerEmail;
+  final String? ownerName;
 }
 
 class RemoteSyncJob {

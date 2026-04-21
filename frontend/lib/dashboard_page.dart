@@ -26,16 +26,18 @@ const String _buildReleaseDate = String.fromEnvironment(
 );
 const String _buildCommitMessage = 'Update web about dialog commit metadata';
 
-enum _ProfileMenuAction { settings, about, signOut }
+enum _ProfileMenuAction { settings, users, about, signOut }
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({
     super.key,
-    required this.authenticatedEmail,
+    required this.authenticatedUser,
+    required this.authToken,
     required this.onLogout,
   });
 
-  final String authenticatedEmail;
+  final AuthenticatedUser authenticatedUser;
+  final String authToken;
   final VoidCallback onLogout;
 
   @override
@@ -67,6 +69,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   @override
   void initState() {
     super.initState();
+    _api.setAuthToken(widget.authToken);
     _historyLimit = _readStoredHistoryLimit();
     _syncSearchController.addListener(_handleSearchChange);
     _dataSearchController.addListener(_handleSearchChange);
@@ -86,6 +89,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _dataSearchController.dispose();
     _api.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminDashboardPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.authToken != widget.authToken) {
+      _api.setAuthToken(widget.authToken);
+    }
   }
 
   void _handleSearchChange() {
@@ -568,6 +579,366 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     setState(() {
       _historyLimit = nextLimit;
     });
+  }
+
+  Future<void> _openUserManagementDialog() async {
+    if (!widget.authenticatedUser.canManageUsers) {
+      return;
+    }
+
+    List<AuthenticatedUser> users;
+    try {
+      users = await _api.listUsers();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    final nameController = TextEditingController();
+    final emailController = TextEditingController();
+    final passwordController = TextEditingController();
+    var dialogUsers = List<AuthenticatedUser>.from(users);
+    var selectedRole = widget.authenticatedUser.isAdmin ? 'owner' : 'client';
+    var selectedOwnerUserId =
+        widget.authenticatedUser.isOwner ? widget.authenticatedUser.id : null;
+    String? errorText;
+    bool submitting = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final owners = dialogUsers
+                .where((user) => user.isOwner)
+                .toList(growable: false);
+            if (widget.authenticatedUser.isAdmin &&
+                selectedRole == 'client' &&
+                owners.isNotEmpty &&
+                (selectedOwnerUserId == null ||
+                    !owners.any((owner) => owner.id == selectedOwnerUserId))) {
+              selectedOwnerUserId = owners.first.id;
+            }
+
+            Future<void> submit() async {
+              final name = nameController.text.trim();
+              final email = emailController.text.trim();
+              final password = passwordController.text;
+
+              if (name.isEmpty ||
+                  email.isEmpty ||
+                  password.isEmpty ||
+                  selectedRole.isEmpty) {
+                setDialogState(() {
+                  errorText = 'Name, email, password, and role are required.';
+                });
+                return;
+              }
+
+              if (selectedRole == 'client' &&
+                  widget.authenticatedUser.isAdmin &&
+                  (selectedOwnerUserId == null ||
+                      selectedOwnerUserId!.trim().isEmpty)) {
+                setDialogState(() {
+                  errorText = 'Select an owner for the client account.';
+                });
+                return;
+              }
+
+              setDialogState(() {
+                submitting = true;
+                errorText = null;
+              });
+
+              try {
+                final createdUser = await _api.createUser(
+                  name: name,
+                  email: email,
+                  password: password,
+                  role: selectedRole,
+                  ownerUserId:
+                      selectedRole == 'client'
+                          ? (widget.authenticatedUser.isOwner
+                              ? widget.authenticatedUser.id
+                              : selectedOwnerUserId)
+                          : null,
+                );
+                setDialogState(() {
+                  dialogUsers = <AuthenticatedUser>[
+                    createdUser,
+                    ...dialogUsers,
+                  ];
+                  selectedRole =
+                      widget.authenticatedUser.isAdmin ? 'owner' : 'client';
+                  selectedOwnerUserId =
+                      widget.authenticatedUser.isOwner
+                          ? widget.authenticatedUser.id
+                          : (owners.isNotEmpty ? owners.first.id : null);
+                  submitting = false;
+                  errorText = null;
+                  nameController.clear();
+                  emailController.clear();
+                  passwordController.clear();
+                });
+              } catch (error) {
+                setDialogState(() {
+                  submitting = false;
+                  errorText = error.toString();
+                });
+              }
+            }
+
+            return Dialog(
+              insetPadding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 880,
+                  maxHeight: 720,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(22),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'User Management',
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        widget.authenticatedUser.isAdmin
+                            ? 'Admin can create owner or client accounts. Owners can create client accounts only.'
+                            : 'Owner accounts can create client accounts for the Windows app.',
+                        style: const TextStyle(
+                          color: Color(0xFF58656B),
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          SizedBox(
+                            width: 220,
+                            child: TextField(
+                              controller: nameController,
+                              decoration: const InputDecoration(
+                                labelText: 'Name',
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 260,
+                            child: TextField(
+                              controller: emailController,
+                              keyboardType: TextInputType.emailAddress,
+                              decoration: const InputDecoration(
+                                labelText: 'Email',
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 220,
+                            child: TextField(
+                              controller: passwordController,
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Password',
+                              ),
+                              onSubmitted: (_) => unawaited(submit()),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 180,
+                            child: DropdownButtonFormField<String>(
+                              value: selectedRole,
+                              decoration: const InputDecoration(
+                                labelText: 'Role',
+                              ),
+                              items: [
+                                if (widget.authenticatedUser.isAdmin)
+                                  const DropdownMenuItem(
+                                    value: 'owner',
+                                    child: Text('Owner'),
+                                  ),
+                                const DropdownMenuItem(
+                                  value: 'client',
+                                  child: Text('Client'),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                setDialogState(() {
+                                  selectedRole = value;
+                                });
+                              },
+                            ),
+                          ),
+                          if (widget.authenticatedUser.isAdmin &&
+                              selectedRole == 'client')
+                            SizedBox(
+                              width: 220,
+                              child: DropdownButtonFormField<String>(
+                                value: selectedOwnerUserId,
+                                decoration: const InputDecoration(
+                                  labelText: 'Owner',
+                                ),
+                                items: owners
+                                    .map(
+                                      (owner) => DropdownMenuItem(
+                                        value: owner.id,
+                                        child: Text(owner.name),
+                                      ),
+                                    )
+                                    .toList(growable: false),
+                                onChanged: (value) {
+                                  setDialogState(() {
+                                    selectedOwnerUserId = value;
+                                  });
+                                },
+                              ),
+                            ),
+                          FilledButton(
+                            onPressed:
+                                submitting ? null : () => unawaited(submit()),
+                            child: Text(
+                              submitting ? 'Creating...' : 'Create User',
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (errorText != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          errorText!,
+                          style: const TextStyle(
+                            color: Color(0xFFC53030),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      const Text(
+                        'Visible Users',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child:
+                            dialogUsers.isEmpty
+                                ? const EmptyStateCard(
+                                  message:
+                                      'No accounts are visible for this user.',
+                                )
+                                : ListView.separated(
+                                  itemCount: dialogUsers.length,
+                                  separatorBuilder:
+                                      (_, _) => const SizedBox(height: 8),
+                                  itemBuilder: (context, index) {
+                                    final user = dialogUsers[index];
+                                    final ownerLabel =
+                                        user.ownerName ??
+                                        user.ownerEmail ??
+                                        (user.isOwner ? 'Self' : 'Unassigned');
+                                    return Container(
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(18),
+                                        border: Border.all(
+                                          color: const Color(0xFFD9DDD8),
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  user.name,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  user.email,
+                                                  style: const TextStyle(
+                                                    color: Color(0xFF58656B),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          StatusBadge(
+                                            label: user.role.toUpperCase(),
+                                            color:
+                                                user.isAdmin
+                                                    ? const Color(0xFF143842)
+                                                    : user.isOwner
+                                                    ? const Color(0xFF2B6F73)
+                                                    : const Color(0xFFD8A23A),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          SizedBox(
+                                            width: 180,
+                                            child: Text(
+                                              user.isClient
+                                                  ? 'Owner: $ownerLabel'
+                                                  : 'Web account',
+                                              textAlign: TextAlign.right,
+                                              style: const TextStyle(
+                                                color: Color(0xFF58656B),
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                      ),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: FilledButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Close'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
   }
 
   Future<void> _openHistoryDialog({
@@ -2192,7 +2563,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _selectedTableName == null
             ? 'SQL Sync'
             : 'SQL Sync - $_selectedTableName';
-    final profileLabel = widget.authenticatedEmail.split('@').first;
+    final profileLabel =
+        widget.authenticatedUser.name.trim().isEmpty
+            ? widget.authenticatedUser.email.split('@').first
+            : widget.authenticatedUser.name;
 
     return Scaffold(
       appBar: AppBar(
@@ -2212,6 +2586,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 case _ProfileMenuAction.settings:
                   unawaited(_openSettingsDialog());
                   break;
+                case _ProfileMenuAction.users:
+                  unawaited(_openUserManagementDialog());
+                  break;
                 case _ProfileMenuAction.about:
                   unawaited(_openAboutDialog());
                   break;
@@ -2221,8 +2598,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               }
             },
             itemBuilder:
-                (context) => const [
-                  PopupMenuItem<_ProfileMenuAction>(
+                (context) => [
+                  const PopupMenuItem<_ProfileMenuAction>(
                     value: _ProfileMenuAction.settings,
                     child: ListTile(
                       dense: true,
@@ -2231,7 +2608,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  PopupMenuItem<_ProfileMenuAction>(
+                  if (widget.authenticatedUser.canManageUsers)
+                    const PopupMenuItem<_ProfileMenuAction>(
+                      value: _ProfileMenuAction.users,
+                      child: ListTile(
+                        dense: true,
+                        leading: Icon(Icons.manage_accounts_outlined),
+                        title: Text('Users'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  const PopupMenuItem<_ProfileMenuAction>(
                     value: _ProfileMenuAction.about,
                     child: ListTile(
                       dense: true,
@@ -2240,7 +2627,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  PopupMenuItem<_ProfileMenuAction>(
+                  const PopupMenuItem<_ProfileMenuAction>(
                     value: _ProfileMenuAction.signOut,
                     child: ListTile(
                       dense: true,
