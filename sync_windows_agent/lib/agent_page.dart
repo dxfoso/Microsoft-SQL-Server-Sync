@@ -2867,7 +2867,7 @@ SELECT (
     return AgentSurfaceCard(
       title: 'Sync Tables',
       subtitle:
-          'This is the main sync table list. Click a table row to open its right-side sync history and details.',
+          'Compact live table list for the local SQL client.',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2893,94 +2893,111 @@ SELECT (
           ),
           const SizedBox(height: 14),
           Expanded(
-            child: SingleChildScrollView(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  showCheckboxColumn: false,
-                  headingRowColor: const WidgetStatePropertyAll(
-                    Color(0xFFE7ECE6),
+            child: ListView.separated(
+              itemCount: syncRows.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              itemBuilder:
+                  (context, index) => _buildSyncTableTile(
+                    row: syncRows[index],
+                    selected: syncRows[index].table == selectedRow?.table,
                   ),
-                  dataRowMinHeight: 48,
-                  dataRowMaxHeight: 56,
-                  columns: const [
-                    DataColumn(label: Text('Sync')),
-                    DataColumn(label: Text('Role')),
-                    DataColumn(label: Text('Table')),
-                    DataColumn(label: Text('Status')),
-                    DataColumn(label: Text('Progress')),
-                    DataColumn(label: Text('Rows')),
-                    DataColumn(label: Text('Last Sync')),
-                    DataColumn(label: Text('Backup')),
-                  ],
-                  rows: syncRows
-                      .map(
-                        (row) => DataRow(
-                          selected: row.table == selectedRow?.table,
-                          onSelectChanged: (_) {
-                            setState(() {
-                              _selectedSyncTable = row.table;
-                              _syncDetailMode = _SyncDetailMode.history;
-                            });
-                          },
-                          cells: [
-                            DataCell(
-                              Checkbox(
-                                value: row.state.enabled,
-                                onChanged: (value) {
-                                  if (value == null) {
-                                    return;
-                                  }
-                                  _updateSyncEnabledTable(row.table, value);
-                                },
-                              ),
-                            ),
-                            DataCell(
-                              _buildRoleIndicator(
-                                _isMasterClient,
-                                showLabel: false,
-                              ),
-                            ),
-                            DataCell(Text(row.table)),
-                            DataCell(
-                              AgentStatusPill(
-                                label: row.state.status,
-                                color: _statusColor(row.state.status),
-                              ),
-                            ),
-                            DataCell(
-                              SizedBox(
-                                width: 132,
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    AgentProgressStrip(
-                                      progress: row.state.progress,
-                                      color: _statusColor(row.state.status),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text('${row.state.progress}%'),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            DataCell(Text(row.state.rowCount.toString())),
-                            DataCell(
-                              Text(_formatTimestamp(row.state.lastSync)),
-                            ),
-                            DataCell(
-                              Text(_formatBytes(row.state.snapshotBytes)),
-                            ),
-                          ],
-                        ),
-                      )
-                      .toList(growable: false),
-                ),
-              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSyncTableTile({
+    required _SyncTableRowData row,
+    required bool selected,
+  }) {
+    final statusColor = _statusColor(row.state.status);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () {
+        setState(() {
+          _selectedSyncTable = row.table;
+          _syncDetailMode = _SyncDetailMode.history;
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFF0F7F8) : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color:
+                selected
+                    ? const Color(0xFF8CB9BF)
+                    : const Color(0xFFD8E0E5),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Checkbox(
+                  value: row.state.enabled,
+                  visualDensity: VisualDensity.compact,
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    _updateSyncEnabledTable(row.table, value);
+                  },
+                ),
+                Expanded(
+                  child: Text(
+                    row.table,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                _buildRoleIndicator(_isMasterClient, showLabel: false),
+                const SizedBox(width: 8),
+                AgentStatusPill(label: row.state.status, color: statusColor),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                AgentMetricPill(label: 'Rows', value: '${row.state.rowCount}'),
+                AgentMetricPill(
+                  label: 'Last Sync',
+                  value: _formatTimestamp(row.state.lastSync),
+                ),
+                AgentMetricPill(
+                  label: 'Backup',
+                  value: _formatBytes(row.state.snapshotBytes),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: AgentProgressStrip(
+                    progress: row.state.progress,
+                    color: statusColor,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '${row.state.progress}%',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4066,7 +4083,7 @@ SELECT (
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(72),
         child: Material(
-          color: Theme.of(context).colorScheme.surface,
+          color: const Color(0xFFF3F5F7),
           child: SafeArea(
             bottom: false,
             child: Container(
@@ -4087,6 +4104,8 @@ SELECT (
                     icon: const Icon(Icons.more_vert),
                     style: IconButton.styleFrom(
                       visualDensity: VisualDensity.compact,
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFFD8E0E5)),
                     ),
                     onPressed: _openSettingsDialog,
                   ),
@@ -4095,6 +4114,8 @@ SELECT (
                     icon: const Icon(Icons.logout_rounded),
                     style: IconButton.styleFrom(
                       visualDensity: VisualDensity.compact,
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFFD8E0E5)),
                     ),
                     onPressed: widget.onLogout,
                   ),
@@ -4104,7 +4125,20 @@ SELECT (
           ),
         ),
       ),
-      body: Padding(padding: const EdgeInsets.all(16), child: _buildSyncTab()),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            AgentHeroBanner(
+              controlPlaneConnected: _serverConnected,
+              sqlConnected: _selectedDatabase != null,
+              pollMinutes: _autoSyncInterval.inMinutes,
+            ),
+            const SizedBox(height: 16),
+            Expanded(child: _buildSyncTab()),
+          ],
+        ),
+      ),
       bottomNavigationBar: _buildPinnedSummaryBar(),
     );
   }

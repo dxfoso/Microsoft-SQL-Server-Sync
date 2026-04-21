@@ -239,18 +239,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     return Scaffold(
       body: Container(
         width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF2F1ED), Color(0xFFE2ECE9), Color(0xFFF5E3BE)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
+        color: const Color(0xFFF3F5F7),
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 960),
+              constraints: const BoxConstraints(maxWidth: 1080),
               child: Wrap(
                 spacing: 24,
                 runSpacing: 24,
@@ -258,58 +252,64 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 480),
+                    constraints: const BoxConstraints(maxWidth: 560),
                     child: Container(
-                      padding: const EdgeInsets.all(28),
+                      padding: const EdgeInsets.all(32),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(30),
-                        gradient: const LinearGradient(
-                          colors: [
-                            Color(0xFF143842),
-                            Color(0xFF1E6674),
-                            Color(0xFFD8A23A),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        color: const Color(0xFF142630),
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(color: const Color(0xFF223A49)),
                       ),
                       child: const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          _AgentHeroTag(label: 'Windows SQL Agent'),
+                          SizedBox(height: 22),
                           Text(
-                            'SQL Sync Windows Agent',
+                            'Run a compact desktop sync console that keeps SQL credentials local and only ships snapshots through the control plane.',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 30,
+                              fontSize: 34,
                               fontWeight: FontWeight.w800,
-                              height: 1.05,
+                              height: 1.02,
                             ),
                           ),
                           SizedBox(height: 14),
                           Text(
-                            'Sign in with a client account. Owner and admin accounts are blocked here and work only on the website.',
+                            'Client accounts sign in here, load local table metadata, and open current data or saved history snapshots from focused dialogs.',
                             style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 15,
+                              color: Color(0xFFB7C5CE),
+                              fontSize: 14.5,
                               height: 1.5,
                             ),
+                          ),
+                          SizedBox(height: 22),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              _AgentHeroPill(label: 'Flat compact UI'),
+                              _AgentHeroPill(label: 'Local SQL only'),
+                              _AgentHeroPill(label: 'History snapshot dialogs'),
+                            ],
                           ),
                         ],
                       ),
                     ),
                   ),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 400),
+                    constraints: const BoxConstraints(maxWidth: 408),
                     child: Container(
-                      padding: const EdgeInsets.all(28),
+                      padding: const EdgeInsets.all(26),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(28),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(color: const Color(0xFFD8E0E5)),
                         boxShadow: const [
                           BoxShadow(
-                            color: Color(0x12000000),
-                            blurRadius: 28,
-                            offset: Offset(0, 16),
+                            color: Color(0x0F14212B),
+                            blurRadius: 30,
+                            offset: Offset(0, 12),
                           ),
                         ],
                       ),
@@ -319,27 +319,29 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                           const Text(
                             'Client Login',
                             style: TextStyle(
-                              fontSize: 24,
+                              fontSize: 26,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            'Use a client account created on the website by dxfoso or by your owner account.',
+                            'Owner and admin accounts are blocked here and stay on the website.',
                             style: TextStyle(
-                              color: Color(0xFF58656B),
-                              height: 1.45,
+                              color: Color(0xFF62717C),
+                              fontSize: 14,
+                              height: 1.5,
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 22),
                           TextField(
                             controller: _usernameController,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
                               labelText: 'Name',
+                              hintText: 'client-name',
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 12),
                           TextField(
                             controller: _passwordController,
                             obscureText: !_showPassword,
@@ -367,16 +369,27 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                             ),
                           ),
                           if (_loginError != null) ...[
-                            const SizedBox(height: 14),
-                            Text(
-                              _loginError!,
-                              style: const TextStyle(
-                                color: Color(0xFFC53030),
-                                fontWeight: FontWeight.w700,
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF0EE),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: const Color(0xFFF2C5BE),
+                                ),
+                              ),
+                              child: Text(
+                                _loginError!,
+                                style: const TextStyle(
+                                  color: Color(0xFFB5422A),
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ],
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 18),
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
@@ -385,7 +398,9 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                                       ? null
                                       : () => unawaited(_handleLogin()),
                               child: Text(
-                                _submittingLogin ? 'Signing In...' : 'Sign In',
+                                _submittingLogin
+                                    ? 'Signing In...'
+                                    : 'Open Agent',
                               ),
                             ),
                           ),
@@ -404,9 +419,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   @override
   Widget build(BuildContext context) {
-    const mist = Color(0xFFF2F1ED);
-    const ink = Color(0xFF17313A);
+    const shell = Color(0xFFF3F5F7);
+    const ink = Color(0xFF14212B);
     const teal = Color(0xFF1E6674);
+    const accent = Color(0xFFEEA63A);
     final appTitle =
         _clientName == 'Local Agent' ? 'SQL Sync Agent' : _clientName;
 
@@ -416,34 +432,66 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       builder: (context, child) {
         return Title(
           title: appTitle,
-          color: mist,
+          color: shell,
           child: child ?? const SizedBox.shrink(),
         );
       },
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: mist,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: teal,
-          brightness: Brightness.light,
+        scaffoldBackgroundColor: shell,
+        colorScheme: const ColorScheme.light(
           primary: teal,
-          secondary: const Color(0xFFD8A23A),
+          secondary: accent,
           surface: Colors.white,
+          onSurface: ink,
         ),
         textTheme: ThemeData.light().textTheme.apply(
           bodyColor: ink,
           displayColor: ink,
         ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: teal,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(0, 44),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: ink,
+            minimumSize: const Size(0, 40),
+            side: const BorderSide(color: Color(0xFFD9E0E5)),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
+          isDense: true,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: BorderSide.none,
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFD7DEE3)),
           ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFD7DEE3)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: teal, width: 1.2),
+          ),
+          labelStyle: const TextStyle(color: Color(0xFF74818A)),
+          hintStyle: const TextStyle(color: Color(0xFF94A1AA)),
           contentPadding: const EdgeInsets.symmetric(
-            horizontal: 18,
-            vertical: 16,
+            horizontal: 14,
+            vertical: 14,
           ),
         ),
       ),
@@ -468,6 +516,57 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 initialSyncState: _stateForClient(_clientName),
                 onSyncStateChanged: _updateSyncStateForClient,
               ),
+    );
+  }
+}
+
+class _AgentHeroTag extends StatelessWidget {
+  const _AgentHeroTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFF213643),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF314855)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentHeroPill extends StatelessWidget {
+  const _AgentHeroPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E313D),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF304853)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFFD5E0E6),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }

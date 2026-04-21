@@ -14,25 +14,27 @@ class SyncAdminApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const sand = Color(0xFFF6F7F3);
-    const ink = Color(0xFF18212B);
-    const teal = Color(0xFF2B6F73);
+    const shell = Color(0xFFF3F5F7);
+    const surface = Color(0xFFFCFDFD);
+    const ink = Color(0xFF14212B);
+    const teal = Color(0xFF1E6674);
+    const slate = Color(0xFF74818A);
+    const accent = Color(0xFFEEA63A);
 
     return MaterialApp(
       title: 'SQL Sync Control Plane',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: sand,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: teal,
-          brightness: Brightness.light,
-          primary: const Color(0xFF20313C),
-          secondary: teal,
-          surface: Colors.white,
+        scaffoldBackgroundColor: shell,
+        colorScheme: const ColorScheme.light(
+          primary: teal,
+          secondary: accent,
+          surface: surface,
+          onSurface: ink,
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white,
+          backgroundColor: shell,
           foregroundColor: ink,
           elevation: 0,
           scrolledUnderElevation: 0,
@@ -42,24 +44,57 @@ class SyncAdminApp extends StatelessWidget {
           color: Colors.white,
           elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: const BorderSide(color: Color(0xFFE5E9E2)),
+            borderRadius: BorderRadius.circular(22),
+            side: const BorderSide(color: Color(0xFFD7DEE3)),
           ),
         ),
         textTheme: ThemeData.light().textTheme.apply(
           bodyColor: ink,
           displayColor: ink,
         ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: teal,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(0, 44),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: ink,
+            minimumSize: const Size(0, 40),
+            side: const BorderSide(color: Color(0xFFD9E0E5)),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFFFAFBF8),
+          fillColor: Colors.white,
+          isDense: true,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0xFFE1E6DD)),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFD7DEE3)),
           ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFD7DEE3)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: teal, width: 1.2),
+          ),
+          labelStyle: const TextStyle(color: slate),
+          hintStyle: const TextStyle(color: Color(0xFF94A1AA)),
           contentPadding: const EdgeInsets.symmetric(
-            horizontal: 18,
-            vertical: 16,
+            horizontal: 14,
+            vertical: 14,
           ),
         ),
       ),
@@ -212,18 +247,12 @@ class _WebsiteShellState extends State<_WebsiteShell> {
     return Scaffold(
       body: Container(
         width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF6F7F3), Color(0xFFE8F0EC), Color(0xFFF7E9CC)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
+        decoration: const BoxDecoration(color: Color(0xFFF3F5F7)),
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1040),
+              constraints: const BoxConstraints(maxWidth: 1100),
               child: Wrap(
                 spacing: 24,
                 runSpacing: 24,
@@ -231,58 +260,64 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 520),
+                    constraints: const BoxConstraints(maxWidth: 560),
                     child: Container(
-                      padding: const EdgeInsets.all(28),
+                      padding: const EdgeInsets.all(32),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(30),
-                        gradient: const LinearGradient(
-                          colors: [
-                            Color(0xFF143842),
-                            Color(0xFF1E6674),
-                            Color(0xFFD8A23A),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        color: const Color(0xFF152630),
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(color: const Color(0xFF243A48)),
                       ),
                       child: const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          _HeroTag(label: 'Web Control Plane'),
+                          SizedBox(height: 22),
                           Text(
-                            'SQL Sync Control Plane',
+                            'Monitor sync health, review compact history, and open saved table data only when you need it.',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 32,
+                              fontSize: 34,
                               fontWeight: FontWeight.w800,
-                              height: 1.05,
+                              height: 1.02,
                             ),
                           ),
                           SizedBox(height: 14),
                           Text(
-                            'Sign in to view table sync status, browse the latest backup rows, and upload or download table backup files.',
+                            'Admin and owner accounts sign in here. Client data opens from the exact history event that produced the saved snapshot, not from a permanent inline data table.',
                             style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 15,
+                              color: Color(0xFFB7C5CE),
+                              fontSize: 14.5,
                               height: 1.5,
                             ),
+                          ),
+                          SizedBox(height: 22),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              _HeroPill(label: 'Compact layout'),
+                              _HeroPill(label: 'Saved snapshot dialogs'),
+                              _HeroPill(label: 'Owner + admin access'),
+                            ],
                           ),
                         ],
                       ),
                     ),
                   ),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
+                    constraints: const BoxConstraints(maxWidth: 408),
                     child: Container(
-                      padding: const EdgeInsets.all(28),
+                      padding: const EdgeInsets.all(26),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(28),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(color: const Color(0xFFD8E0E5)),
                         boxShadow: const [
                           BoxShadow(
-                            color: Color(0x12000000),
-                            blurRadius: 28,
-                            offset: Offset(0, 16),
+                            color: Color(0x0F14212B),
+                            blurRadius: 30,
+                            offset: Offset(0, 12),
                           ),
                         ],
                       ),
@@ -292,28 +327,29 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           const Text(
                             'Website Login',
                             style: TextStyle(
-                              fontSize: 24,
+                              fontSize: 26,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            'Admin and owner accounts can sign in here. Client accounts work only in the Windows app.',
+                            'Use the owner or admin account name created in the control plane.',
                             style: TextStyle(
-                              color: Color(0xFF58656B),
-                              height: 1.45,
+                              color: Color(0xFF62717C),
+                              fontSize: 14,
+                              height: 1.5,
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 22),
                           TextField(
                             controller: _nameController,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
                               labelText: 'Name',
-                              hintText: 'dxfoso@gmail.com',
+                              hintText: 'owner-name',
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 12),
                           TextField(
                             controller: _passwordController,
                             obscureText: !_showPassword,
@@ -341,16 +377,27 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                             ),
                           ),
                           if (_error != null) ...[
-                            const SizedBox(height: 14),
-                            Text(
-                              _error!,
-                              style: const TextStyle(
-                                color: Color(0xFFC53030),
-                                fontWeight: FontWeight.w700,
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF0EE),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: const Color(0xFFF2C5BE),
+                                ),
+                              ),
+                              child: Text(
+                                _error!,
+                                style: const TextStyle(
+                                  color: Color(0xFFB5422A),
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ],
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 18),
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
@@ -359,8 +406,18 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                       ? null
                                       : () => unawaited(_handleLogin()),
                               child: Text(
-                                _submitting ? 'Signing In...' : 'Sign In',
+                                _submitting
+                                    ? 'Signing In...'
+                                    : 'Open Dashboard',
                               ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Client accounts are restricted to the Windows app.',
+                            style: TextStyle(
+                              color: Color(0xFF7A8790),
+                              fontSize: 12.5,
                             ),
                           ),
                         ],
@@ -371,6 +428,57 @@ class _WebsiteShellState extends State<_WebsiteShell> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroTag extends StatelessWidget {
+  const _HeroTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFF213643),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF314855)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroPill extends StatelessWidget {
+  const _HeroPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E313D),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF304853)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFFD5E0E6),
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

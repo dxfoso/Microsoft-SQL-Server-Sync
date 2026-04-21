@@ -20,12 +20,9 @@ class AgentHeroBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF143842), Color(0xFF1E6674), Color(0xFFD8A23A)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: const Color(0xFF152630),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF233A48)),
       ),
       child: Wrap(
         spacing: 20,
@@ -44,8 +41,9 @@ class AgentHeroBanner extends StatelessWidget {
                     vertical: 7,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white12,
+                    color: const Color(0xFF213643),
                     borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0xFF314855)),
                   ),
                   child: const Text(
                     'SQL Sync Agent',
@@ -70,7 +68,10 @@ class AgentHeroBanner extends StatelessWidget {
                   'Control plane: ${controlPlaneConnected ? 'connected' : 'offline'} | '
                   'SQL link: ${sqlConnected ? 'ready' : 'not ready'} | '
                   'Poll interval: every $pollMinutes minutes',
-                  style: const TextStyle(color: Colors.white70, height: 1.45),
+                  style: const TextStyle(
+                    color: Color(0xFFB7C5CE),
+                    height: 1.45,
+                  ),
                 ),
               ],
             ),
@@ -79,9 +80,9 @@ class AgentHeroBanner extends StatelessWidget {
             width: 280,
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white24),
+              color: const Color(0xFF1D313D),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFF304853)),
             ),
             child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -140,15 +141,16 @@ class AgentSectionShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFFBFBF8),
-        borderRadius: BorderRadius.circular(28),
+        color: const Color(0xFFFCFDFD),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFD8E0E5)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x12000000),
-            blurRadius: 28,
-            offset: Offset(0, 16),
+            color: Color(0x0B14212B),
+            blurRadius: 24,
+            offset: Offset(0, 10),
           ),
         ],
       ),
@@ -223,7 +225,7 @@ class AgentSurfaceCard extends StatelessWidget {
                     Text(
                       title,
                       style: const TextStyle(
-                        fontSize: 22,
+                        fontSize: 18,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -262,25 +264,27 @@ class AgentMetricPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFD9DDD8)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD8E0E5)),
       ),
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(
-                color: Color(0xFF58656B),
-                fontWeight: FontWeight.w600,
-              ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF74818A),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
             ),
-            TextSpan(
-              text: value,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ],
       ),
     );
   }
@@ -303,7 +307,7 @@ class AgentProgressStrip extends StatelessWidget {
       borderRadius: BorderRadius.circular(999),
       child: LinearProgressIndicator(
         value: value,
-        minHeight: 6,
+        minHeight: 5,
         backgroundColor: const Color(0xFFE7ECE6),
         valueColor: AlwaysStoppedAnimation<Color>(color),
       ),
@@ -320,13 +324,16 @@ class AgentEmptyStateCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF9FBFC),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFD9DDD8)),
+        border: Border.all(color: const Color(0xFFD8E0E5)),
       ),
-      child: Text(message, style: const TextStyle(height: 1.45)),
+      child: Text(
+        message,
+        style: const TextStyle(height: 1.45, color: Color(0xFF5B6872)),
+      ),
     );
   }
 }
@@ -351,8 +358,8 @@ class AgentMetricCard extends StatelessWidget {
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: const Color(0xFFD9DDD8)),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFD8E0E5)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -388,14 +395,19 @@ class AgentStatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Text(
         label,
-        style: TextStyle(color: color, fontWeight: FontWeight.w700),
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
       ),
     );
   }
