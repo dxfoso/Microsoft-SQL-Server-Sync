@@ -10,10 +10,10 @@ const STATE_FILE =
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), "public");
 const MAX_BODY_SIZE = 100 * 1024 * 1024;
 const AGENT_ONLINE_WINDOW_MS = 60 * 1000;
-const ADMIN_USERNAME = "dxfoso";
+const ADMIN_USERNAME = "dxfoso@gmail.com";
 const ADMIN_EMAIL = "dxfoso@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
-const ADMIN_NAME = "dxfoso";
+const ADMIN_NAME = "dxfoso@gmail.com";
 const ROLE_ADMIN = "admin";
 const ROLE_OWNER = "owner";
 const ROLE_CLIENT = "client";
@@ -54,7 +54,7 @@ function normalizeUsername(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/[^a-z0-9._@-]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
 
@@ -127,17 +127,15 @@ function createStoredUser({
 }) {
   const salt = crypto.randomUUID();
   const createdAt = nowIso();
-  const normalizedUsername = normalizeUsername(username);
   const normalizedEmail = normalizeEmail(email);
+  const normalizedUsername = normalizeUsername(
+    name || username || usernameFromEmail(normalizedEmail),
+  );
   return {
     id: crypto.randomUUID(),
     username: normalizedUsername,
     email: normalizedEmail,
-    name:
-      String(name || "").trim() ||
-      normalizedUsername ||
-      usernameFromEmail(normalizedEmail) ||
-      "user",
+    name: normalizedUsername || "user",
     role: normalizeRole(role),
     ownerUserId: ownerUserId ? String(ownerUserId) : null,
     createdByUserId: createdByUserId ? String(createdByUserId) : null,
@@ -152,8 +150,8 @@ function normalizeStoredUser(raw, usedUsernames = null) {
   const normalizedEmail = normalizeEmail(raw?.email);
   const preferredUsername =
     normalizeUsername(raw?.username) ||
-    usernameFromEmail(normalizedEmail) ||
-    normalizeUsername(raw?.name);
+    normalizeUsername(raw?.name) ||
+    usernameFromEmail(normalizedEmail);
   const normalizedUsername =
     usedUsernames instanceof Set
       ? allocateUsername(
@@ -166,11 +164,7 @@ function normalizeStoredUser(raw, usedUsernames = null) {
     id: String(raw?.id || crypto.randomUUID()),
     username: normalizedUsername || "user",
     email: normalizedEmail,
-    name:
-      String(raw?.name || "").trim() ||
-      normalizedUsername ||
-      usernameFromEmail(normalizedEmail) ||
-      "user",
+    name: normalizedUsername || "user",
     role: normalizeRole(raw?.role),
     ownerUserId: raw?.ownerUserId ? String(raw.ownerUserId) : null,
     createdByUserId: raw?.createdByUserId ? String(raw.createdByUserId) : null,
@@ -402,14 +396,14 @@ function publicUserPayload(user) {
   const owner = ownerForUser(user);
   return {
     id: user.id,
-    username: user.username,
+    username: user.name,
     email: user.email || "",
-    name: userDisplayName(user),
+    name: user.name,
     role: user.role,
     ownerUserId: user.ownerUserId,
-    ownerUsername: owner ? owner.username : null,
+    ownerUsername: owner ? owner.name : null,
     ownerEmail: owner ? owner.email : null,
-    ownerName: owner ? userDisplayName(owner) : null,
+    ownerName: owner ? owner.name : null,
     createdByUserId: user.createdByUserId,
     createdAt: user.createdAt,
   };
@@ -433,6 +427,10 @@ function ensureSeedUsers() {
   let changed = false;
   if (admin.username !== ADMIN_USERNAME) {
     admin.username = ADMIN_USERNAME;
+    changed = true;
+  }
+  if (admin.name !== ADMIN_NAME) {
+    admin.name = ADMIN_NAME;
     changed = true;
   }
   if (admin.role !== ROLE_ADMIN) {
@@ -579,7 +577,7 @@ function sortUsers(users) {
     if (byRole !== 0) {
       return byRole;
     }
-    return (left.username || "").localeCompare(right.username || "");
+    return (left.name || "").localeCompare(right.name || "");
   });
 }
 
@@ -1172,13 +1170,13 @@ async function handleRequest(req, res) {
 
   if (req.method === "POST" && pathname === "/api/auth/login") {
     const body = await parseJsonBody(req);
-    const username = normalizeUsername(body.username);
+    const username = normalizeUsername(body.name || body.username);
     const password = String(body.password || "");
     const app = String(body.app || APP_WEB).trim().toLowerCase();
     const user = findUserByUsername(username);
 
     if (!user || passwordHash(password, user.passwordSalt) !== user.passwordHash) {
-      sendJson(res, 401, { error: "invalid username or password" });
+      sendJson(res, 401, { error: "invalid name or password" });
       return;
     }
 
@@ -1253,20 +1251,19 @@ async function handleRequest(req, res) {
 
     const body = await parseJsonBody(req);
     const role = normalizeRole(body.role);
-    const username = normalizeUsername(body.username);
     const email = normalizeEmail(body.email);
     const password = String(body.password || "");
-    const name = String(body.name || "").trim();
+    const name = normalizeUsername(body.name || body.username);
 
-    if (!username || !password || !name || !role) {
+    if (!name || !password || !role) {
       sendJson(res, 400, {
-        error: "name, username, password, and role are required",
+        error: "name, password, and role are required",
       });
       return;
     }
 
-    if (findUserByUsername(username)) {
-      sendJson(res, 409, { error: "an account with that username already exists" });
+    if (findUserByUsername(name)) {
+      sendJson(res, 409, { error: "an account with that name already exists" });
       return;
     }
 
@@ -1293,7 +1290,7 @@ async function handleRequest(req, res) {
     }
 
     const user = createStoredUser({
-      username,
+      username: name,
       email,
       password,
       role,

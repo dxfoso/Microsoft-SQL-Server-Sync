@@ -29,6 +29,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String? _loginError;
   bool _restoringSession = true;
   bool _submittingLogin = false;
+  bool _showPassword = false;
 
   static const SyncClientState _defaultClientState = SyncClientState(
     isMaster: true,
@@ -53,7 +54,9 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     _accountEmail = store.accountEmail?.trim();
     _accountName = store.accountName?.trim();
     _clientName =
-        (_accountUsername != null && _accountUsername!.isNotEmpty)
+        (_accountName != null && _accountName!.isNotEmpty)
+            ? _accountName!
+            : (_accountUsername != null && _accountUsername!.isNotEmpty)
             ? _accountUsername!
             : (store.lastClientName.trim().isEmpty
                 ? 'Local Agent'
@@ -144,12 +147,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         return;
       }
       setState(() {
-        _migrateStoredClientState(_clientName, user.username);
+        _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
-        _accountUsername = user.username;
+        _accountUsername = user.name;
         _accountEmail = user.email;
         _accountName = user.name;
-        _clientName = user.username;
+        _clientName = user.name;
         _restoringSession = false;
         _loginError = null;
       });
@@ -172,11 +175,11 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   }
 
   Future<void> _handleLogin() async {
-    final username = _usernameController.text.trim();
+    final name = _usernameController.text.trim();
     final password = _passwordController.text;
-    if (username.isEmpty || password.isEmpty) {
+    if (name.isEmpty || password.isEmpty) {
       setState(() {
-        _loginError = 'Username and password are required.';
+        _loginError = 'Name and password are required.';
       });
       return;
     }
@@ -188,19 +191,19 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
     try {
       final user = await _authClient.loginClient(
-        username: username,
+        name: name,
         password: password,
       );
       if (!mounted) {
         return;
       }
       setState(() {
-        _migrateStoredClientState(_clientName, user.username);
+        _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
-        _accountUsername = user.username;
+        _accountUsername = user.name;
         _accountEmail = user.email;
         _accountName = user.name;
-        _clientName = user.username;
+        _clientName = user.name;
         _submittingLogin = false;
         _loginError = null;
         _passwordController.clear();
@@ -333,16 +336,28 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                             controller: _usernameController,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              labelText: 'Username',
+                              labelText: 'Name',
                             ),
                           ),
                           const SizedBox(height: 14),
                           TextField(
                             controller: _passwordController,
-                            obscureText: true,
+                            obscureText: !_showPassword,
                             onSubmitted: (_) => unawaited(_handleLogin()),
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               labelText: 'Password',
+                              suffixIcon: IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _showPassword = !_showPassword;
+                                  });
+                                },
+                                icon: Icon(
+                                  _showPassword
+                                      ? Icons.visibility_off_outlined
+                                      : Icons.visibility_outlined,
+                                ),
+                              ),
                             ),
                           ),
                           if (_loginError != null) ...[

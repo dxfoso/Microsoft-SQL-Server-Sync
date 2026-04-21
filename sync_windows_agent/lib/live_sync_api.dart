@@ -47,14 +47,14 @@ class AgentControlPlaneClient {
   }
 
   Future<AgentAuthenticatedUser> loginClient({
-    required String username,
+    required String name,
     required String password,
   }) async {
     final response = await _client.post(
       _uri('/auth/login'),
       headers: _headers(json: true),
       body: jsonEncode({
-        'username': username.trim(),
+        'name': name.trim(),
         'password': password,
         'app': 'windows',
       }),

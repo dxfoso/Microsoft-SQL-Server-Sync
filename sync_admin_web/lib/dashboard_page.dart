@@ -604,7 +604,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
 
     final nameController = TextEditingController();
-    final usernameController = TextEditingController();
     final emailController = TextEditingController();
     final passwordController = TextEditingController();
     var dialogUsers = List<AuthenticatedUser>.from(users);
@@ -613,6 +612,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         widget.authenticatedUser.isOwner ? widget.authenticatedUser.id : null;
     String? errorText;
     bool submitting = false;
+    bool showPassword = false;
 
     await showDialog<void>(
       context: context,
@@ -632,17 +632,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
             Future<void> submit() async {
               final name = nameController.text.trim();
-              final username = usernameController.text.trim();
               final email = emailController.text.trim();
               final password = passwordController.text;
 
-              if (name.isEmpty ||
-                  username.isEmpty ||
-                  password.isEmpty ||
-                  selectedRole.isEmpty) {
+              if (name.isEmpty || password.isEmpty || selectedRole.isEmpty) {
                 setDialogState(() {
-                  errorText =
-                      'Name, username, password, and role are required.';
+                  errorText = 'Name, password, and role are required.';
                 });
                 return;
               }
@@ -665,7 +660,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               try {
                 final createdUser = await _api.createUser(
                   name: name,
-                  username: username,
                   email: email.isEmpty ? null : email,
                   password: password,
                   role: selectedRole,
@@ -690,7 +684,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   submitting = false;
                   errorText = null;
                   nameController.clear();
-                  usernameController.clear();
                   emailController.clear();
                   passwordController.clear();
                 });
@@ -735,21 +728,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         runSpacing: 12,
                         children: [
                           SizedBox(
-                            width: 220,
+                            width: 260,
                             child: TextField(
                               controller: nameController,
                               decoration: const InputDecoration(
                                 labelText: 'Name',
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 220,
-                            child: TextField(
-                              controller: usernameController,
-                              textInputAction: TextInputAction.next,
-                              decoration: const InputDecoration(
-                                labelText: 'Username',
                               ),
                             ),
                           ),
@@ -767,9 +750,21 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             width: 220,
                             child: TextField(
                               controller: passwordController,
-                              obscureText: true,
-                              decoration: const InputDecoration(
+                              obscureText: !showPassword,
+                              decoration: InputDecoration(
                                 labelText: 'Password',
+                                suffixIcon: IconButton(
+                                  onPressed: () {
+                                    setDialogState(() {
+                                      showPassword = !showPassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    showPassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
                               ),
                               onSubmitted: (_) => unawaited(submit()),
                             ),
@@ -894,14 +889,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                                     fontWeight: FontWeight.w800,
                                                   ),
                                                 ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  user.username,
-                                                  style: const TextStyle(
-                                                    color: Color(0xFF58656B),
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
                                                 if (user.email
                                                     .trim()
                                                     .isNotEmpty)
@@ -964,7 +951,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
 
     nameController.dispose();
-    usernameController.dispose();
     emailController.dispose();
     passwordController.dispose();
   }

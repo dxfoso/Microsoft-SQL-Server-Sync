@@ -77,7 +77,7 @@ class _WebsiteShell extends StatefulWidget {
 
 class _WebsiteShellState extends State<_WebsiteShell> {
   final LiveSyncApiClient _api = LiveSyncApiClient();
-  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
   AuthenticatedUser? _activeUser;
@@ -85,6 +85,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
   String? _error;
   bool _restoringSession = true;
   bool _submitting = false;
+  bool _showPassword = false;
 
   @override
   void initState() {
@@ -95,7 +96,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
   @override
   void dispose() {
     _api.dispose();
-    _usernameController.dispose();
+    _nameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -139,11 +140,11 @@ class _WebsiteShellState extends State<_WebsiteShell> {
   }
 
   Future<void> _handleLogin() async {
-    final username = _usernameController.text.trim();
+    final name = _nameController.text.trim();
     final password = _passwordController.text;
-    if (username.isEmpty || password.isEmpty) {
+    if (name.isEmpty || password.isEmpty) {
       setState(() {
-        _error = 'Username and password are required.';
+        _error = 'Name and password are required.';
       });
       return;
     }
@@ -154,10 +155,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
     });
 
     try {
-      final result = await _api.loginWeb(
-        username: username,
-        password: password,
-      );
+      final result = await _api.loginWeb(name: name, password: password);
       writeBrowserStorage(_websiteSessionTokenKey, result.token);
       if (!mounted) {
         return;
@@ -308,20 +306,32 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           ),
                           const SizedBox(height: 20),
                           TextField(
-                            controller: _usernameController,
+                            controller: _nameController,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              labelText: 'Username',
-                              hintText: 'dxfoso',
+                              labelText: 'Name',
+                              hintText: 'dxfoso@gmail.com',
                             ),
                           ),
                           const SizedBox(height: 14),
                           TextField(
                             controller: _passwordController,
-                            obscureText: true,
+                            obscureText: !_showPassword,
                             onSubmitted: (_) => unawaited(_handleLogin()),
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               labelText: 'Password',
+                              suffixIcon: IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _showPassword = !_showPassword;
+                                  });
+                                },
+                                icon: Icon(
+                                  _showPassword
+                                      ? Icons.visibility_off_outlined
+                                      : Icons.visibility_outlined,
+                                ),
+                              ),
                             ),
                           ),
                           if (_error != null) ...[

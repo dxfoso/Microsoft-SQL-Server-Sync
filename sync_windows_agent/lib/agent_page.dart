@@ -2658,19 +2658,11 @@ SELECT (
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                widget.authenticatedAccountUsername ??
-                                    widget.clientName,
-                                style: const TextStyle(
-                                  color: Color(0xFF58656B),
-                                ),
-                              ),
                               if (widget.authenticatedAccountEmail
                                       ?.trim()
                                       .isNotEmpty ==
                                   true) ...[
-                                const SizedBox(height: 2),
+                                const SizedBox(height: 4),
                                 Text(
                                   widget.authenticatedAccountEmail!.trim(),
                                   style: const TextStyle(
