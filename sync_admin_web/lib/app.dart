@@ -317,10 +317,16 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                           TextField(
                             controller: _passwordController,
                             obscureText: !_showPassword,
+                            enableSuggestions: false,
+                            autocorrect: false,
                             onSubmitted: (_) => unawaited(_handleLogin()),
                             decoration: InputDecoration(
                               labelText: 'Password',
                               suffixIcon: IconButton(
+                                tooltip:
+                                    _showPassword
+                                        ? 'Hide password'
+                                        : 'Show password',
                                 onPressed: () {
                                   setState(() {
                                     _showPassword = !_showPassword;

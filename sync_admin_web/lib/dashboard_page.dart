@@ -751,9 +751,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             child: TextField(
                               controller: passwordController,
                               obscureText: !showPassword,
+                              enableSuggestions: false,
+                              autocorrect: false,
                               decoration: InputDecoration(
                                 labelText: 'Password',
                                 suffixIcon: IconButton(
+                                  tooltip:
+                                      showPassword
+                                          ? 'Hide password'
+                                          : 'Show password',
                                   onPressed: () {
                                     setDialogState(() {
                                       showPassword = !showPassword;
