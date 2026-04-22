@@ -114,6 +114,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return parsed.clamp(1, _maxHistoryLimit);
   }
 
+  bool _isAuthFailure(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('authentication required') ||
+        message.contains('session required') ||
+        message.contains('unauthorized') ||
+        message.contains('forbidden');
+  }
+
   Future<void> _refreshState({bool silent = false}) async {
     if (!silent && mounted) {
       setState(() {
@@ -148,8 +156,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return;
       }
 
+      if (_isAuthFailure(error)) {
+        widget.onLogout();
+        return;
+      }
+
+      final backendHealthy = await _api.checkHealth();
+      if (!mounted) {
+        return;
+      }
+
       setState(() {
-        _connected = false;
+        _connected = backendHealthy;
         _loading = false;
         _error = error.toString();
       });
