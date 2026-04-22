@@ -64,13 +64,7 @@ class DashboardHeader extends StatelessWidget {
               ),
               if (selectedAgent != null && selectedAgent!.trim().isNotEmpty)
                 _HeaderBadge(
-                  label: 'Selected $selectedAgent',
-                  color: const Color(0xFF1E313D),
-                  textColor: const Color(0xFFD7E2E8),
-                ),
-              if (authenticatedEmail != null)
-                _HeaderBadge(
-                  label: authenticatedEmail!,
+                  label: 'Client $selectedAgent',
                   color: const Color(0xFF1E313D),
                   textColor: const Color(0xFFD7E2E8),
                 ),

@@ -295,7 +295,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                 const _HeroTag(label: 'Web Control Plane'),
                                 const SizedBox(height: 22),
                                 Text(
-                                  'Monitor sync health, review compact history, and open saved table data only when you need it.',
+                                  'Open sync status, history, and saved data.',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: heroFontSize,
@@ -303,24 +303,14 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                     height: 1.02,
                                   ),
                                 ),
-                                const SizedBox(height: 14),
+                                const SizedBox(height: 10),
                                 const Text(
-                                  'Admin and owner accounts sign in here. Client data opens from the exact history event that produced the saved snapshot, not from a permanent inline data table.',
+                                  'Owner and admin accounts only.',
                                   style: TextStyle(
                                     color: Color(0xFFB7C5CE),
                                     fontSize: 14.5,
-                                    height: 1.5,
+                                    height: 1.35,
                                   ),
-                                ),
-                                const SizedBox(height: 22),
-                                const Wrap(
-                                  spacing: 10,
-                                  runSpacing: 10,
-                                  children: [
-                                    _HeroPill(label: 'Compact layout'),
-                                    _HeroPill(label: 'Saved snapshot dialogs'),
-                                    _HeroPill(label: 'Owner + admin access'),
-                                  ],
                                 ),
                               ],
                             ),
@@ -360,11 +350,11 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                 ),
                                 const SizedBox(height: 8),
                                 const Text(
-                                  'Use the owner or admin account name created in the control plane.',
+                                  'Owner and admin accounts only.',
                                   style: TextStyle(
                                     color: Color(0xFF62717C),
                                     fontSize: 14,
-                                    height: 1.5,
+                                    height: 1.35,
                                   ),
                                 ),
                                 const SizedBox(height: 22),
@@ -441,7 +431,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                 ),
                                 const SizedBox(height: 12),
                                 const Text(
-                                  'Client accounts are restricted to the Windows app.',
+                                  'Client accounts use the Windows app.',
                                   style: TextStyle(
                                     color: Color(0xFF7A8790),
                                     fontSize: 12.5,
@@ -484,31 +474,6 @@ class _HeroTag extends StatelessWidget {
           color: Colors.white,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.2,
-        ),
-      ),
-    );
-  }
-}
-
-class _HeroPill extends StatelessWidget {
-  const _HeroPill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E313D),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFF304853)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFFD5E0E6),
-          fontWeight: FontWeight.w700,
         ),
       ),
     );
