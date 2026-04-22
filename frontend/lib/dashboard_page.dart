@@ -2611,7 +2611,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildDashboardContent() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final mobileStack = constraints.maxWidth < 760;
         final useSideBySide = constraints.maxWidth >= 1180;
+        if (mobileStack) {
+          return ListView(
+            children: [
+              SizedBox(height: 520, child: _buildTableListCard()),
+              const SizedBox(height: 16),
+              SizedBox(height: 780, child: _buildDetailCard()),
+            ],
+          );
+        }
         if (useSideBySide) {
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2859,6 +2869,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget build(BuildContext context) {
     final state = _state;
     final screenWidth = MediaQuery.sizeOf(context).width;
+    final mobileLayout = screenWidth < 760;
     final compactAppBar = screenWidth < 760;
     final profileCompact = screenWidth < 560;
     final pagePadding =
@@ -3033,7 +3044,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ],
         ),
       ),
-      bottomNavigationBar: _buildPinnedSummaryBar(),
+      bottomNavigationBar: mobileLayout ? null : _buildPinnedSummaryBar(),
     );
   }
 }
