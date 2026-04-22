@@ -245,190 +245,220 @@ class _WebsiteShellState extends State<_WebsiteShell> {
     }
 
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(color: Color(0xFFF3F5F7)),
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1100),
-              child: Wrap(
-                spacing: 24,
-                runSpacing: 24,
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: Container(
-                      padding: const EdgeInsets.all(32),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF152630),
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: const Color(0xFF243A48)),
-                      ),
-                      child: const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _HeroTag(label: 'Web Control Plane'),
-                          SizedBox(height: 22),
-                          Text(
-                            'Monitor sync health, review compact history, and open saved table data only when you need it.',
-                            style: TextStyle(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final width =
+              constraints.maxWidth.isFinite
+                  ? constraints.maxWidth
+                  : MediaQuery.sizeOf(context).width;
+          final compact = width < 760;
+          final tight = width < 480;
+          final heroFontSize = tight ? 24.0 : (compact ? 28.0 : 34.0);
+          final outerPadding = tight ? 16.0 : 24.0;
+          final heroPadding = tight ? 22.0 : 32.0;
+          final formPadding = tight ? 20.0 : 26.0;
+
+          return Container(
+            width: double.infinity,
+            decoration: const BoxDecoration(color: Color(0xFFF3F5F7)),
+            child: SafeArea(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.all(outerPadding),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: compact ? 560 : 1100),
+                    child: Wrap(
+                      spacing: 24,
+                      runSpacing: 24,
+                      alignment:
+                          compact ? WrapAlignment.start : WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: compact ? 560 : 560,
+                          ),
+                          child: Container(
+                            padding: EdgeInsets.all(heroPadding),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF152630),
+                              borderRadius: BorderRadius.circular(
+                                compact ? 22 : 28,
+                              ),
+                              border: Border.all(
+                                color: const Color(0xFF243A48),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const _HeroTag(label: 'Web Control Plane'),
+                                const SizedBox(height: 22),
+                                Text(
+                                  'Monitor sync health, review compact history, and open saved table data only when you need it.',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: heroFontSize,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.02,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                const Text(
+                                  'Admin and owner accounts sign in here. Client data opens from the exact history event that produced the saved snapshot, not from a permanent inline data table.',
+                                  style: TextStyle(
+                                    color: Color(0xFFB7C5CE),
+                                    fontSize: 14.5,
+                                    height: 1.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 22),
+                                const Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: [
+                                    _HeroPill(label: 'Compact layout'),
+                                    _HeroPill(label: 'Saved snapshot dialogs'),
+                                    _HeroPill(label: 'Owner + admin access'),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: compact ? 560 : 408,
+                          ),
+                          child: Container(
+                            padding: EdgeInsets.all(formPadding),
+                            decoration: BoxDecoration(
                               color: Colors.white,
-                              fontSize: 34,
-                              fontWeight: FontWeight.w800,
-                              height: 1.02,
+                              borderRadius: BorderRadius.circular(
+                                compact ? 24 : 30,
+                              ),
+                              border: Border.all(
+                                color: const Color(0xFFD8E0E5),
+                              ),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x0F14212B),
+                                  blurRadius: 30,
+                                  offset: Offset(0, 12),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Website Login',
+                                  style: TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Use the owner or admin account name created in the control plane.',
+                                  style: TextStyle(
+                                    color: Color(0xFF62717C),
+                                    fontSize: 14,
+                                    height: 1.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 22),
+                                TextField(
+                                  controller: _nameController,
+                                  textInputAction: TextInputAction.next,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Name',
+                                    hintText: 'owner-name',
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _passwordController,
+                                  obscureText: !_showPassword,
+                                  enableSuggestions: false,
+                                  autocorrect: false,
+                                  onSubmitted: (_) => unawaited(_handleLogin()),
+                                  decoration: InputDecoration(
+                                    labelText: 'Password',
+                                    suffixIcon: IconButton(
+                                      tooltip:
+                                          _showPassword
+                                              ? 'Hide password'
+                                              : 'Show password',
+                                      onPressed: () {
+                                        setState(() {
+                                          _showPassword = !_showPassword;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        _showPassword
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (_error != null) ...[
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFF0EE),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: const Color(0xFFF2C5BE),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      _error!,
+                                      style: const TextStyle(
+                                        color: Color(0xFFB5422A),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 18),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton(
+                                    onPressed:
+                                        _submitting
+                                            ? null
+                                            : () => unawaited(_handleLogin()),
+                                    child: Text(
+                                      _submitting
+                                          ? 'Signing In...'
+                                          : 'Open Dashboard',
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'Client accounts are restricted to the Windows app.',
+                                  style: TextStyle(
+                                    color: Color(0xFF7A8790),
+                                    fontSize: 12.5,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          SizedBox(height: 14),
-                          Text(
-                            'Admin and owner accounts sign in here. Client data opens from the exact history event that produced the saved snapshot, not from a permanent inline data table.',
-                            style: TextStyle(
-                              color: Color(0xFFB7C5CE),
-                              fontSize: 14.5,
-                              height: 1.5,
-                            ),
-                          ),
-                          SizedBox(height: 22),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [
-                              _HeroPill(label: 'Compact layout'),
-                              _HeroPill(label: 'Saved snapshot dialogs'),
-                              _HeroPill(label: 'Owner + admin access'),
-                            ],
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 408),
-                    child: Container(
-                      padding: const EdgeInsets.all(26),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(30),
-                        border: Border.all(color: const Color(0xFFD8E0E5)),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x0F14212B),
-                            blurRadius: 30,
-                            offset: Offset(0, 12),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Website Login',
-                            style: TextStyle(
-                              fontSize: 26,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Use the owner or admin account name created in the control plane.',
-                            style: TextStyle(
-                              color: Color(0xFF62717C),
-                              fontSize: 14,
-                              height: 1.5,
-                            ),
-                          ),
-                          const SizedBox(height: 22),
-                          TextField(
-                            controller: _nameController,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'Name',
-                              hintText: 'owner-name',
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _passwordController,
-                            obscureText: !_showPassword,
-                            enableSuggestions: false,
-                            autocorrect: false,
-                            onSubmitted: (_) => unawaited(_handleLogin()),
-                            decoration: InputDecoration(
-                              labelText: 'Password',
-                              suffixIcon: IconButton(
-                                tooltip:
-                                    _showPassword
-                                        ? 'Hide password'
-                                        : 'Show password',
-                                onPressed: () {
-                                  setState(() {
-                                    _showPassword = !_showPassword;
-                                  });
-                                },
-                                icon: Icon(
-                                  _showPassword
-                                      ? Icons.visibility_off_outlined
-                                      : Icons.visibility_outlined,
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (_error != null) ...[
-                            const SizedBox(height: 12),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFFF0EE),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: const Color(0xFFF2C5BE),
-                                ),
-                              ),
-                              child: Text(
-                                _error!,
-                                style: const TextStyle(
-                                  color: Color(0xFFB5422A),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 18),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton(
-                              onPressed:
-                                  _submitting
-                                      ? null
-                                      : () => unawaited(_handleLogin()),
-                              child: Text(
-                                _submitting
-                                    ? 'Signing In...'
-                                    : 'Open Dashboard',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'Client accounts are restricted to the Windows app.',
-                            style: TextStyle(
-                              color: Color(0xFF7A8790),
-                              fontSize: 12.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }

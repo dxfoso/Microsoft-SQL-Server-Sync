@@ -64,7 +64,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   int? _sortColumnIndex;
   bool _sortAscending = true;
   String? _selectedSyncTable;
-  _SyncDetailMode _syncDetailMode = _SyncDetailMode.overview;
   int _totalTableRows = 0;
   bool _serverConnected = false;
   bool _checkingServerConnection = false;
@@ -2866,8 +2865,7 @@ SELECT (
 
     return AgentSurfaceCard(
       title: 'Sync Tables',
-      subtitle:
-          'Compact live table list for the local SQL client.',
+      subtitle: 'Compact live table list for the local SQL client.',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2919,7 +2917,6 @@ SELECT (
       onTap: () {
         setState(() {
           _selectedSyncTable = row.table;
-          _syncDetailMode = _SyncDetailMode.history;
         });
       },
       child: AnimatedContainer(
@@ -2929,74 +2926,130 @@ SELECT (
           color: selected ? const Color(0xFFF0F7F8) : Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color:
-                selected
-                    ? const Color(0xFF8CB9BF)
-                    : const Color(0xFFD8E0E5),
+            color: selected ? const Color(0xFF8CB9BF) : const Color(0xFFD8E0E5),
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final stack = constraints.maxWidth < 620;
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Checkbox(
-                  value: row.state.enabled,
-                  visualDensity: VisualDensity.compact,
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    _updateSyncEnabledTable(row.table, value);
-                  },
-                ),
-                Expanded(
-                  child: Text(
-                    row.table,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                    ),
+                if (stack) ...[
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: row.state.enabled,
+                        visualDensity: VisualDensity.compact,
+                        onChanged: (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          _updateSyncEnabledTable(row.table, value);
+                        },
+                      ),
+                      Expanded(
+                        child: Text(
+                          row.table,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _buildRoleIndicator(_isMasterClient, showLabel: false),
+                      AgentStatusPill(
+                        label: row.state.status,
+                        color: statusColor,
+                      ),
+                    ],
+                  ),
+                ] else
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: row.state.enabled,
+                        visualDensity: VisualDensity.compact,
+                        onChanged: (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          _updateSyncEnabledTable(row.table, value);
+                        },
+                      ),
+                      Expanded(
+                        child: Text(
+                          row.table,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      _buildRoleIndicator(_isMasterClient, showLabel: false),
+                      const SizedBox(width: 8),
+                      AgentStatusPill(
+                        label: row.state.status,
+                        color: statusColor,
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    AgentMetricPill(
+                      label: 'Rows',
+                      value: '${row.state.rowCount}',
+                    ),
+                    AgentMetricPill(
+                      label: 'Last Sync',
+                      value: _formatTimestamp(row.state.lastSync),
+                    ),
+                    AgentMetricPill(
+                      label: 'Backup',
+                      value: _formatBytes(row.state.snapshotBytes),
+                    ),
+                  ],
                 ),
-                _buildRoleIndicator(_isMasterClient, showLabel: false),
-                const SizedBox(width: 8),
-                AgentStatusPill(label: row.state.status, color: statusColor),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                AgentMetricPill(label: 'Rows', value: '${row.state.rowCount}'),
-                AgentMetricPill(
-                  label: 'Last Sync',
-                  value: _formatTimestamp(row.state.lastSync),
-                ),
-                AgentMetricPill(
-                  label: 'Backup',
-                  value: _formatBytes(row.state.snapshotBytes),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: AgentProgressStrip(
+                const SizedBox(height: 12),
+                if (stack) ...[
+                  AgentProgressStrip(
                     progress: row.state.progress,
                     color: statusColor,
                   ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  '${row.state.progress}%',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${row.state.progress}%',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ] else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AgentProgressStrip(
+                          progress: row.state.progress,
+                          color: statusColor,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${row.state.progress}%',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -3082,39 +3135,41 @@ SELECT (
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SegmentedButton<_SyncDetailMode>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment<_SyncDetailMode>(
-                value: _SyncDetailMode.overview,
-                icon: Icon(Icons.sync_alt_rounded),
-                label: Text('Overview'),
-              ),
-              ButtonSegment<_SyncDetailMode>(
-                value: _SyncDetailMode.history,
-                icon: Icon(Icons.history_rounded),
-                label: Text('History'),
-              ),
-            ],
-            selected: <_SyncDetailMode>{_syncDetailMode},
-            onSelectionChanged: (selection) {
-              if (selection.isEmpty) {
-                return;
-              }
-              setState(() {
-                _syncDetailMode = selection.first;
-              });
-            },
-          ),
-          const SizedBox(height: 14),
-          Expanded(
-            child:
-                _syncDetailMode == _SyncDetailMode.overview
-                    ? _buildSyncOverviewSide(selectedRow)
-                    : _buildSyncHistorySide(selectedRow),
-          ),
-        ],
+        children: [Expanded(child: _buildMergedSyncDetailBody(selectedRow))],
+      ),
+    );
+  }
+
+  Widget _buildMergedSyncDetailBody(_SyncTableRowData row) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 720;
+
+        return ListView(
+          children: [
+            _buildSectionLabel('Overview'),
+            const SizedBox(height: 10),
+            _buildSyncOverviewSide(row),
+            const SizedBox(height: 18),
+            _buildSectionLabel('History'),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: compact ? 300 : 360,
+              child: _buildSyncHistorySide(row),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSectionLabel(String value) {
+    return Text(
+      value,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w800,
+        color: Color(0xFF62717C),
       ),
     );
   }
@@ -3122,7 +3177,8 @@ SELECT (
   Widget _buildSyncOverviewSide(_SyncTableRowData row) {
     final statusColor = _statusColor(row.state.status);
 
-    return ListView(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
           spacing: 12,
@@ -3473,90 +3529,177 @@ SELECT (
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: const Color(0xFFD9DDD8)),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              AgentStatusPill(
-                label: entry.success ? 'Success' : 'Failed',
-                color:
-                    entry.success
-                        ? const Color(0xFF2F855A)
-                        : const Color(0xFFC53030),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final stack = constraints.maxWidth < 540;
+
+              return stack
+                  ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          AgentStatusPill(
+                            label: entry.success ? 'Success' : 'Failed',
+                            color:
+                                entry.success
+                                    ? const Color(0xFF2F855A)
+                                    : const Color(0xFFC53030),
+                          ),
+                          Text(
                             entry.status,
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 13,
                             ),
                           ),
-                        ),
-                        Text(
-                          _formatTimestamp(entry.timestamp),
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontSize: 12,
+                          Text(
+                            _formatTimestamp(entry.timestamp),
+                            style: const TextStyle(
+                              color: Color(0xFF5F6B76),
+                              fontSize: 12,
+                            ),
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        entry.message,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(height: 1.2, fontSize: 12.5),
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          Text(
+                            '${entry.rowCount} rows',
+                            style: const TextStyle(
+                              color: Color(0xFF5F6B76),
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            _formatBytes(entry.snapshotBytes),
+                            style: const TextStyle(
+                              color: Color(0xFF5F6B76),
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            '${entry.progress}%',
+                            style: const TextStyle(
+                              color: Color(0xFF5F6B76),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (canOpenSnapshot) ...[
+                        const SizedBox(height: 8),
+                        _buildSyncActionIconButton(
+                          tooltip: 'Open history data',
+                          onPressed: () => _openHistorySnapshotDialog(entry),
+                          icon: Icons.table_rows_outlined,
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      entry.message,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(height: 1.2, fontSize: 12.5),
-                    ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        Text(
-                          '${entry.rowCount} rows',
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontSize: 12,
-                          ),
+                    ],
+                  )
+                  : Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      AgentStatusPill(
+                        label: entry.success ? 'Success' : 'Failed',
+                        color:
+                            entry.success
+                                ? const Color(0xFF2F855A)
+                                : const Color(0xFFC53030),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    entry.status,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  _formatTimestamp(entry.timestamp),
+                                  style: const TextStyle(
+                                    color: Color(0xFF5F6B76),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              entry.message,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                height: 1.2,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                Text(
+                                  '${entry.rowCount} rows',
+                                  style: const TextStyle(
+                                    color: Color(0xFF5F6B76),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  _formatBytes(entry.snapshotBytes),
+                                  style: const TextStyle(
+                                    color: Color(0xFF5F6B76),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  '${entry.progress}%',
+                                  style: const TextStyle(
+                                    color: Color(0xFF5F6B76),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                        Text(
-                          _formatBytes(entry.snapshotBytes),
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontSize: 12,
-                          ),
-                        ),
-                        Text(
-                          '${entry.progress}%',
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              _buildSyncActionIconButton(
-                tooltip: 'Open history data',
-                onPressed:
-                    canOpenSnapshot
-                        ? () => _openHistorySnapshotDialog(entry)
-                        : null,
-                icon: Icons.table_rows_outlined,
-              ),
-            ],
+                      ),
+                      const SizedBox(width: 8),
+                      _buildSyncActionIconButton(
+                        tooltip: 'Open history data',
+                        onPressed:
+                            canOpenSnapshot
+                                ? () => _openHistorySnapshotDialog(entry)
+                                : null,
+                        icon: Icons.table_rows_outlined,
+                      ),
+                    ],
+                  );
+            },
           ),
         );
       },
@@ -3845,28 +3988,52 @@ SELECT (
       ),
     ];
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFFC9D2C7))),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: Wrap(
-                spacing: 14,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: footerItems,
-              ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack = constraints.maxWidth < 760;
+
+        return Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: Color(0xFFC9D2C7))),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child:
+                  stack
+                      ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Wrap(
+                            spacing: 14,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: footerItems,
+                          ),
+                          const SizedBox(height: 10),
+                          _buildServerStatusIndicator(),
+                        ],
+                      )
+                      : Row(
+                        children: [
+                          Expanded(
+                            child: Wrap(
+                              spacing: 14,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: footerItems,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          _buildServerStatusIndicator(),
+                        ],
+                      ),
             ),
-            const SizedBox(width: 16),
-            _buildServerStatusIndicator(),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -4079,6 +4246,15 @@ SELECT (
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final compactAppBar = screenWidth < 760;
+    final pagePadding =
+        screenWidth < 480
+            ? const EdgeInsets.all(12)
+            : (screenWidth < 760
+                ? const EdgeInsets.all(14)
+                : const EdgeInsets.all(16));
+
     return Scaffold(
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(72),
@@ -4093,6 +4269,7 @@ SELECT (
                   Expanded(
                     child: Text(
                       widget.clientName,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -4109,6 +4286,7 @@ SELECT (
                     ),
                     onPressed: _openSettingsDialog,
                   ),
+                  SizedBox(width: compactAppBar ? 4 : 8),
                   IconButton(
                     tooltip: 'Sign out',
                     icon: const Icon(Icons.logout_rounded),
@@ -4126,7 +4304,7 @@ SELECT (
         ),
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: pagePadding,
         child: Column(
           children: [
             AgentHeroBanner(
@@ -4143,8 +4321,6 @@ SELECT (
     );
   }
 }
-
-enum _SyncDetailMode { overview, history }
 
 class _SyncTableRowData {
   const _SyncTableRowData({required this.table, required this.state});

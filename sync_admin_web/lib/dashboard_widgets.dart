@@ -20,52 +20,64 @@ class DashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF152630),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF233A48)),
-      ),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: [
-          _HeaderBadge(
-            label: isConnected ? 'Backend online' : 'Backend offline',
-            color:
-                isConnected
-                    ? const Color(0xFF173D2A)
-                    : const Color(0xFF482222),
-            textColor:
-                isConnected
-                    ? const Color(0xFFB7F2CC)
-                    : const Color(0xFFFFD4CE),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 640;
+
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(compact ? 14 : 18),
+          decoration: BoxDecoration(
+            color: const Color(0xFF152630),
+            borderRadius: BorderRadius.circular(compact ? 20 : 24),
+            border: Border.all(color: const Color(0xFF233A48)),
           ),
-          _HeaderBadge(
-            label: 'Agents $totalAgents',
-            color: const Color(0xFF1E313D),
-            textColor: const Color(0xFFD7E2E8),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _HeaderBadge(
+                label: isConnected ? 'Backend online' : 'Backend offline',
+                color:
+                    isConnected
+                        ? const Color(0xFF173D2A)
+                        : const Color(0xFF482222),
+                textColor:
+                    isConnected
+                        ? const Color(0xFFB7F2CC)
+                        : const Color(0xFFFFD4CE),
+              ),
+              _HeaderBadge(
+                label: 'Agents $totalAgents',
+                color: const Color(0xFF1E313D),
+                textColor: const Color(0xFFD7E2E8),
+              ),
+              _HeaderBadge(
+                label: 'Jobs $totalJobs',
+                color: const Color(0xFF1E313D),
+                textColor: const Color(0xFFD7E2E8),
+              ),
+              _HeaderBadge(
+                label: 'Refresh $lastUpdated',
+                color: const Color(0xFF1E313D),
+                textColor: const Color(0xFFD7E2E8),
+              ),
+              if (selectedAgent != null && selectedAgent!.trim().isNotEmpty)
+                _HeaderBadge(
+                  label: 'Selected $selectedAgent',
+                  color: const Color(0xFF1E313D),
+                  textColor: const Color(0xFFD7E2E8),
+                ),
+              if (authenticatedEmail != null)
+                _HeaderBadge(
+                  label: authenticatedEmail!,
+                  color: const Color(0xFF1E313D),
+                  textColor: const Color(0xFFD7E2E8),
+                ),
+            ],
           ),
-          _HeaderBadge(
-            label: 'Jobs $totalJobs',
-            color: const Color(0xFF1E313D),
-            textColor: const Color(0xFFD7E2E8),
-          ),
-          _HeaderBadge(
-            label: 'Refresh $lastUpdated',
-            color: const Color(0xFF1E313D),
-            textColor: const Color(0xFFD7E2E8),
-          ),
-          if (authenticatedEmail != null)
-            _HeaderBadge(
-              label: authenticatedEmail!,
-              color: const Color(0xFF1E313D),
-              textColor: const Color(0xFFD7E2E8),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -89,61 +101,66 @@ class SurfaceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasSubtitle = subtitle.trim().isNotEmpty;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFCFDFD),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFD8E0E5)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0B14212B),
-            blurRadius: 24,
-            offset: Offset(0, 10),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stackHeader = constraints.maxWidth < 720;
+
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(stackHeader ? 14 : 18),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFCFDFD),
+            borderRadius: BorderRadius.circular(stackHeader ? 18 : 22),
+            border: Border.all(color: const Color(0xFFD8E0E5)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x0B14212B),
+                blurRadius: 24,
+                offset: Offset(0, 10),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
+              if (stackHeader) ...[
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    _SurfaceCardHeading(
+                      title: title,
+                      subtitle: subtitle,
+                      hasSubtitle: hasSubtitle,
                     ),
-                    if (hasSubtitle) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(
-                          color: Color(0xFF62717C),
-                          height: 1.42,
-                        ),
-                      ),
+                    if (headerTrailing != null) ...[
+                      const SizedBox(height: 12),
+                      headerTrailing!,
                     ],
                   ],
                 ),
-              ),
-              if (headerTrailing != null) ...[
-                const SizedBox(width: 12),
-                Flexible(child: headerTrailing!),
-              ],
+              ] else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _SurfaceCardHeading(
+                        title: title,
+                        subtitle: subtitle,
+                        hasSubtitle: hasSubtitle,
+                      ),
+                    ),
+                    if (headerTrailing != null) ...[
+                      const SizedBox(width: 12),
+                      Flexible(child: headerTrailing!),
+                    ],
+                  ],
+                ),
+              const SizedBox(height: 16),
+              if (expandChild) Expanded(child: child) else child,
             ],
           ),
-          const SizedBox(height: 16),
-          if (expandChild) Expanded(child: child) else child,
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -224,10 +241,7 @@ class MetricPill extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -284,6 +298,38 @@ class EmptyStateCard extends StatelessWidget {
         message,
         style: const TextStyle(height: 1.45, color: Color(0xFF5B6872)),
       ),
+    );
+  }
+}
+
+class _SurfaceCardHeading extends StatelessWidget {
+  const _SurfaceCardHeading({
+    required this.title,
+    required this.subtitle,
+    required this.hasSubtitle,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool hasSubtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        if (hasSubtitle) ...[
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: const TextStyle(color: Color(0xFF62717C), height: 1.42),
+          ),
+        ],
+      ],
     );
   }
 }

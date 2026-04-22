@@ -16,109 +16,124 @@ class AgentHeroBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: const Color(0xFF152630),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF233A48)),
-      ),
-      child: Wrap(
-        spacing: 20,
-        runSpacing: 20,
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF213643),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: const Color(0xFF314855)),
-                  ),
-                  child: const Text(
-                    'SQL Sync Agent',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 720;
+        final heroFontSize =
+            compact ? 22.0 : (constraints.maxWidth < 1100 ? 26.0 : 30.0);
+
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(compact ? 16 : 24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF152630),
+            borderRadius: BorderRadius.circular(compact ? 20 : 24),
+            border: Border.all(color: const Color(0xFF233A48)),
+          ),
+          child: Wrap(
+            spacing: 20,
+            runSpacing: 20,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: compact ? constraints.maxWidth : 720,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF213643),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFF314855)),
+                      ),
+                      child: const Text(
+                        'SQL Sync Agent',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Run the machine-side sync service on Windows and keep the local SQL Server connection away from the browser.',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: heroFontSize,
+                        fontWeight: FontWeight.w800,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Control plane: ${controlPlaneConnected ? 'connected' : 'offline'} | '
+                      'SQL link: ${sqlConnected ? 'ready' : 'not ready'} | '
+                      'Poll interval: every $pollMinutes minutes',
+                      style: const TextStyle(
+                        color: Color(0xFFB7C5CE),
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: compact ? constraints.maxWidth : 280,
+                  minWidth: compact ? constraints.maxWidth : 280,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1D313D),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFF304853)),
+                  ),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Agent Responsibilities',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      Text(
+                        '1. Register with the domain',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        '2. Hold local SQL credentials',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        '3. Pull sync plans every 5 minutes',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        '4. Push status and logs back',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 18),
-                const Text(
-                  'Run the machine-side sync service on Windows and keep the local SQL Server connection away from the browser.',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
-                    height: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Control plane: ${controlPlaneConnected ? 'connected' : 'offline'} | '
-                  'SQL link: ${sqlConnected ? 'ready' : 'not ready'} | '
-                  'Poll interval: every $pollMinutes minutes',
-                  style: const TextStyle(
-                    color: Color(0xFFB7C5CE),
-                    height: 1.45,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          Container(
-            width: 280,
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1D313D),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFF304853)),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Agent Responsibilities',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                SizedBox(height: 12),
-                Text(
-                  '1. Register with the domain',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  '2. Hold local SQL credentials',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  '3. Pull sync plans every 5 minutes',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  '4. Push status and logs back',
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -198,30 +213,29 @@ class AgentSurfaceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasSubtitle = subtitle.trim().isNotEmpty;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stackHeader = constraints.maxWidth < 720;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFBFBF8),
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x12000000),
-            blurRadius: 28,
-            offset: Offset(0, 16),
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(stackHeader ? 16 : 22),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFBFBF8),
+            borderRadius: BorderRadius.circular(stackHeader ? 22 : 28),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x12000000),
+                blurRadius: 28,
+                offset: Offset(0, 16),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child:
-                    titleWidget ??
+              if (stackHeader) ...[
+                titleWidget ??
                     Text(
                       title,
                       style: const TextStyle(
@@ -229,25 +243,45 @@ class AgentSurfaceCard extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-              ),
-              if (headerTrailing != null) ...[
-                const SizedBox(width: 12),
-                Flexible(child: headerTrailing!),
-              ],
+                if (headerTrailing != null) ...[
+                  const SizedBox(height: 12),
+                  headerTrailing!,
+                ],
+              ] else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child:
+                          titleWidget ??
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                    ),
+                    if (headerTrailing != null) ...[
+                      const SizedBox(width: 12),
+                      Flexible(child: headerTrailing!),
+                    ],
+                  ],
+                ),
+              if (hasSubtitle) ...[
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
+                ),
+                const SizedBox(height: 18),
+              ] else
+                const SizedBox(height: 14),
+              if (expandChild) Expanded(child: child) else child,
             ],
           ),
-          if (hasSubtitle) ...[
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              style: const TextStyle(color: Color(0xFF58656B), height: 1.4),
-            ),
-            const SizedBox(height: 18),
-          ] else
-            const SizedBox(height: 14),
-          if (expandChild) Expanded(child: child) else child,
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -280,10 +314,7 @@ class AgentMetricPill extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -352,36 +383,45 @@ class AgentMetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 248,
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFD8E0E5)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(0xFF58656B),
-                fontWeight: FontWeight.w600,
-              ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 280;
+
+        return SizedBox(
+          width: narrow ? double.infinity : 248,
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFD8E0E5)),
             ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF58656B),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(detail, style: const TextStyle(height: 1.35)),
+              ],
             ),
-            const SizedBox(height: 6),
-            Text(detail, style: const TextStyle(height: 1.35)),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

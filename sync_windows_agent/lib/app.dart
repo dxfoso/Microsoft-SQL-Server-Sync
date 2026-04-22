@@ -237,182 +237,212 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   Widget _buildLoginShell() {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        color: const Color(0xFFF3F5F7),
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1080),
-              child: Wrap(
-                spacing: 24,
-                runSpacing: 24,
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: Container(
-                      padding: const EdgeInsets.all(32),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF142630),
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: const Color(0xFF223A49)),
-                      ),
-                      child: const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _AgentHeroTag(label: 'Windows SQL Agent'),
-                          SizedBox(height: 22),
-                          Text(
-                            'Run a compact desktop sync console that keeps SQL credentials local and only ships snapshots through the control plane.',
-                            style: TextStyle(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final width =
+              constraints.maxWidth.isFinite
+                  ? constraints.maxWidth
+                  : MediaQuery.sizeOf(context).width;
+          final compact = width < 760;
+          final tight = width < 480;
+          final heroFontSize = tight ? 24.0 : (compact ? 28.0 : 34.0);
+          final outerPadding = tight ? 16.0 : 24.0;
+          final heroPadding = tight ? 22.0 : 32.0;
+          final formPadding = tight ? 20.0 : 26.0;
+
+          return Container(
+            width: double.infinity,
+            color: const Color(0xFFF3F5F7),
+            child: SafeArea(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.all(outerPadding),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: compact ? 560 : 1080),
+                    child: Wrap(
+                      spacing: 24,
+                      runSpacing: 24,
+                      alignment:
+                          compact ? WrapAlignment.start : WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 560),
+                          child: Container(
+                            padding: EdgeInsets.all(heroPadding),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF142630),
+                              borderRadius: BorderRadius.circular(
+                                compact ? 22 : 28,
+                              ),
+                              border: Border.all(
+                                color: const Color(0xFF223A49),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const _AgentHeroTag(label: 'Windows SQL Agent'),
+                                const SizedBox(height: 22),
+                                Text(
+                                  'Run a compact desktop sync console that keeps SQL credentials local and only ships snapshots through the control plane.',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: heroFontSize,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.02,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                const Text(
+                                  'Client accounts sign in here, load local table metadata, and open current data or saved history snapshots from focused dialogs.',
+                                  style: TextStyle(
+                                    color: Color(0xFFB7C5CE),
+                                    fontSize: 14.5,
+                                    height: 1.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 22),
+                                const Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: [
+                                    _AgentHeroPill(label: 'Flat compact UI'),
+                                    _AgentHeroPill(label: 'Local SQL only'),
+                                    _AgentHeroPill(
+                                      label: 'History snapshot dialogs',
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: compact ? 560 : 408,
+                          ),
+                          child: Container(
+                            padding: EdgeInsets.all(formPadding),
+                            decoration: BoxDecoration(
                               color: Colors.white,
-                              fontSize: 34,
-                              fontWeight: FontWeight.w800,
-                              height: 1.02,
+                              borderRadius: BorderRadius.circular(
+                                compact ? 24 : 30,
+                              ),
+                              border: Border.all(
+                                color: const Color(0xFFD8E0E5),
+                              ),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x0F14212B),
+                                  blurRadius: 30,
+                                  offset: Offset(0, 12),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Client Login',
+                                  style: TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Owner and admin accounts are blocked here and stay on the website.',
+                                  style: TextStyle(
+                                    color: Color(0xFF62717C),
+                                    fontSize: 14,
+                                    height: 1.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 22),
+                                TextField(
+                                  controller: _usernameController,
+                                  textInputAction: TextInputAction.next,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Name',
+                                    hintText: 'client-name',
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _passwordController,
+                                  obscureText: !_showPassword,
+                                  enableSuggestions: false,
+                                  autocorrect: false,
+                                  onSubmitted: (_) => unawaited(_handleLogin()),
+                                  decoration: InputDecoration(
+                                    labelText: 'Password',
+                                    suffixIcon: IconButton(
+                                      tooltip:
+                                          _showPassword
+                                              ? 'Hide password'
+                                              : 'Show password',
+                                      onPressed: () {
+                                        setState(() {
+                                          _showPassword = !_showPassword;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        _showPassword
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (_loginError != null) ...[
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFF0EE),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: const Color(0xFFF2C5BE),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      _loginError!,
+                                      style: const TextStyle(
+                                        color: Color(0xFFB5422A),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 18),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton(
+                                    onPressed:
+                                        _submittingLogin
+                                            ? null
+                                            : () => unawaited(_handleLogin()),
+                                    child: Text(
+                                      _submittingLogin
+                                          ? 'Signing In...'
+                                          : 'Open Agent',
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          SizedBox(height: 14),
-                          Text(
-                            'Client accounts sign in here, load local table metadata, and open current data or saved history snapshots from focused dialogs.',
-                            style: TextStyle(
-                              color: Color(0xFFB7C5CE),
-                              fontSize: 14.5,
-                              height: 1.5,
-                            ),
-                          ),
-                          SizedBox(height: 22),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [
-                              _AgentHeroPill(label: 'Flat compact UI'),
-                              _AgentHeroPill(label: 'Local SQL only'),
-                              _AgentHeroPill(label: 'History snapshot dialogs'),
-                            ],
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 408),
-                    child: Container(
-                      padding: const EdgeInsets.all(26),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(30),
-                        border: Border.all(color: const Color(0xFFD8E0E5)),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x0F14212B),
-                            blurRadius: 30,
-                            offset: Offset(0, 12),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Client Login',
-                            style: TextStyle(
-                              fontSize: 26,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Owner and admin accounts are blocked here and stay on the website.',
-                            style: TextStyle(
-                              color: Color(0xFF62717C),
-                              fontSize: 14,
-                              height: 1.5,
-                            ),
-                          ),
-                          const SizedBox(height: 22),
-                          TextField(
-                            controller: _usernameController,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'Name',
-                              hintText: 'client-name',
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _passwordController,
-                            obscureText: !_showPassword,
-                            enableSuggestions: false,
-                            autocorrect: false,
-                            onSubmitted: (_) => unawaited(_handleLogin()),
-                            decoration: InputDecoration(
-                              labelText: 'Password',
-                              suffixIcon: IconButton(
-                                tooltip:
-                                    _showPassword
-                                        ? 'Hide password'
-                                        : 'Show password',
-                                onPressed: () {
-                                  setState(() {
-                                    _showPassword = !_showPassword;
-                                  });
-                                },
-                                icon: Icon(
-                                  _showPassword
-                                      ? Icons.visibility_off_outlined
-                                      : Icons.visibility_outlined,
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (_loginError != null) ...[
-                            const SizedBox(height: 12),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFFF0EE),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: const Color(0xFFF2C5BE),
-                                ),
-                              ),
-                              child: Text(
-                                _loginError!,
-                                style: const TextStyle(
-                                  color: Color(0xFFB5422A),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 18),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton(
-                              onPressed:
-                                  _submittingLogin
-                                      ? null
-                                      : () => unawaited(_handleLogin()),
-                              child: Text(
-                                _submittingLogin
-                                    ? 'Signing In...'
-                                    : 'Open Agent',
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
