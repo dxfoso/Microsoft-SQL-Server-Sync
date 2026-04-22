@@ -13,10 +13,9 @@ certManager:
     ingressClassName: nginx
 
 frontend:
-  image:
-    repository: sync-admin-web/frontend
-    tag: latest
-    pullPolicy: Always
+  # Keep this as a string because the cloud deploy runner overrides
+  # frontend.image/backend.image as full image refs.
+  image: sync-admin-web/frontend:latest
   backendBaseUrl: https://sync.velvet-leaf.com/api
   ingress:
     enabled: true
@@ -33,10 +32,7 @@ frontend:
 
 backend:
   enabled: false
-  image:
-    repository: sync-admin-web/backend
-    tag: latest
-    pullPolicy: Always
+  image: sync-admin-web/backend:latest
   service:
     port: 9001
   stateFile: /app/data/state.json
