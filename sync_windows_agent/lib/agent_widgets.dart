@@ -20,7 +20,13 @@ class AgentHeroBanner extends StatelessWidget {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 720;
         final heroFontSize =
-            compact ? 22.0 : (constraints.maxWidth < 1100 ? 26.0 : 30.0);
+            compact ? 20.0 : (constraints.maxWidth < 1100 ? 23.0 : 26.0);
+        final controlPlaneColor =
+            controlPlaneConnected
+                ? const Color(0xFF2F855A)
+                : const Color(0xFFC53030);
+        final sqlColor =
+            sqlConnected ? const Color(0xFF2F855A) : const Color(0xFFD69E2E);
 
         return Container(
           width: double.infinity,
@@ -31,39 +37,36 @@ class AgentHeroBanner extends StatelessWidget {
             border: Border.all(color: const Color(0xFF233A48)),
           ),
           child: Wrap(
-            spacing: 20,
-            runSpacing: 20,
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 14,
+            runSpacing: 14,
             children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF213643),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: const Color(0xFF314855)),
+                ),
+                child: const Text(
+                  'SQL Sync Agent',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
               ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: compact ? constraints.maxWidth : 720,
+                  maxWidth: compact ? constraints.maxWidth : 860,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF213643),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: const Color(0xFF314855)),
-                      ),
-                      child: const Text(
-                        'SQL Sync Agent',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
                     Text(
-                      'Run the machine-side sync service on Windows and keep the local SQL Server connection away from the browser.',
+                      'Keep SQL credentials local and sync through the control plane.',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: heroFontSize,
@@ -72,62 +75,32 @@ class AgentHeroBanner extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      'Control plane: ${controlPlaneConnected ? 'connected' : 'offline'} | '
-                      'SQL link: ${sqlConnected ? 'ready' : 'not ready'} | '
-                      'Poll interval: every $pollMinutes minutes',
-                      style: const TextStyle(
-                        color: Color(0xFFB7C5CE),
-                        height: 1.45,
-                      ),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        AgentStatusPill(
+                          label:
+                              controlPlaneConnected
+                                  ? 'Control Plane Online'
+                                  : 'Control Plane Offline',
+                          color: controlPlaneColor,
+                        ),
+                        AgentStatusPill(
+                          label: sqlConnected ? 'SQL Ready' : 'SQL Not Ready',
+                          color: sqlColor,
+                        ),
+                        const AgentStatusPill(
+                          label: 'Local SQL Only',
+                          color: Color(0xFF8A6C16),
+                        ),
+                        AgentStatusPill(
+                          label: 'Poll $pollMinutes min',
+                          color: const Color(0xFF4A6A77),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-              ),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: compact ? constraints.maxWidth : 280,
-                  minWidth: compact ? constraints.maxWidth : 280,
-                ),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1D313D),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFF304853)),
-                  ),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Agent Responsibilities',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      SizedBox(height: 12),
-                      Text(
-                        '1. Register with the domain',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        '2. Hold local SQL credentials',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        '3. Pull sync plans every 5 minutes',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        '4. Push status and logs back',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ],

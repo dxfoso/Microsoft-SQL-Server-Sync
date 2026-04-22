@@ -285,7 +285,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                                 const _AgentHeroTag(label: 'Windows SQL Agent'),
                                 const SizedBox(height: 22),
                                 Text(
-                                  'Run a compact desktop sync console that keeps SQL credentials local and only ships snapshots through the control plane.',
+                                  'Run the local sync agent and open data only when needed.',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: heroFontSize,
@@ -293,26 +293,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                                     height: 1.02,
                                   ),
                                 ),
-                                const SizedBox(height: 14),
+                                const SizedBox(height: 10),
                                 const Text(
-                                  'Client accounts sign in here, load local table metadata, and open current data or saved history snapshots from focused dialogs.',
+                                  'Client accounts only. Owner and admin accounts stay on the website.',
                                   style: TextStyle(
                                     color: Color(0xFFB7C5CE),
                                     fontSize: 14.5,
-                                    height: 1.5,
+                                    height: 1.35,
                                   ),
-                                ),
-                                const SizedBox(height: 22),
-                                const Wrap(
-                                  spacing: 10,
-                                  runSpacing: 10,
-                                  children: [
-                                    _AgentHeroPill(label: 'Flat compact UI'),
-                                    _AgentHeroPill(label: 'Local SQL only'),
-                                    _AgentHeroPill(
-                                      label: 'History snapshot dialogs',
-                                    ),
-                                  ],
                                 ),
                               ],
                             ),
@@ -352,11 +340,11 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                                 ),
                                 const SizedBox(height: 8),
                                 const Text(
-                                  'Owner and admin accounts are blocked here and stay on the website.',
+                                  'Client accounts only.',
                                   style: TextStyle(
                                     color: Color(0xFF62717C),
                                     fontSize: 14,
-                                    height: 1.5,
+                                    height: 1.35,
                                   ),
                                 ),
                                 const SizedBox(height: 22),
@@ -570,31 +558,6 @@ class _AgentHeroTag extends StatelessWidget {
           color: Colors.white,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.2,
-        ),
-      ),
-    );
-  }
-}
-
-class _AgentHeroPill extends StatelessWidget {
-  const _AgentHeroPill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E313D),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFF304853)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFFD5E0E6),
-          fontWeight: FontWeight.w700,
         ),
       ),
     );
