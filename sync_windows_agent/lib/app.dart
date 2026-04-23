@@ -26,6 +26,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String? _accountUsername;
   String? _accountEmail;
   String? _accountName;
+  String? _rememberedLoginName;
+  String? _rememberedLoginPassword;
   String? _loginError;
   bool _restoringSession = true;
   bool _submittingLogin = false;
@@ -53,6 +55,13 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     _accountUsername = store.accountUsername?.trim();
     _accountEmail = store.accountEmail?.trim();
     _accountName = store.accountName?.trim();
+    _rememberedLoginName =
+        store.rememberedLoginName?.trim().isNotEmpty == true
+            ? store.rememberedLoginName!.trim()
+            : null;
+    _rememberedLoginPassword = store.rememberedLoginPassword ?? '';
+    _usernameController.text = _rememberedLoginName ?? '';
+    _passwordController.text = _rememberedLoginPassword ?? '';
     _clientName =
         (_accountName != null && _accountName!.isNotEmpty)
             ? _accountName!
@@ -83,6 +92,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       accountUsername: _accountUsername,
       accountEmail: _accountEmail,
       accountName: _accountName,
+      rememberedLoginName: _rememberedLoginName,
+      rememberedLoginPassword: _rememberedLoginPassword,
     );
     await store.save();
   }
@@ -203,10 +214,11 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _accountUsername = user.name;
         _accountEmail = user.email;
         _accountName = user.name;
+        _rememberedLoginName = name;
+        _rememberedLoginPassword = password;
         _clientName = user.name;
         _submittingLogin = false;
         _loginError = null;
-        _passwordController.clear();
       });
       _scheduleSave();
     } catch (error) {
@@ -230,7 +242,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       _accountName = null;
       _clientName = 'Local Agent';
       _loginError = null;
-      _passwordController.clear();
+      _usernameController.text = _rememberedLoginName ?? '';
+      _passwordController.text = _rememberedLoginPassword ?? '';
     });
     _scheduleSave();
   }

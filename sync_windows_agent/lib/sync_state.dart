@@ -250,6 +250,8 @@ class SyncAppStateStore {
     this.accountUsername,
     this.accountEmail,
     this.accountName,
+    this.rememberedLoginName,
+    this.rememberedLoginPassword,
   });
 
   final String lastClientName;
@@ -258,6 +260,8 @@ class SyncAppStateStore {
   final String? accountUsername;
   final String? accountEmail;
   final String? accountName;
+  final String? rememberedLoginName;
+  final String? rememberedLoginPassword;
 
   static Directory _stateDirectory() {
     final base =
@@ -283,6 +287,8 @@ class SyncAppStateStore {
         accountUsername: null,
         accountEmail: null,
         accountName: null,
+        rememberedLoginName: null,
+        rememberedLoginPassword: null,
       );
     }
 
@@ -297,6 +303,8 @@ class SyncAppStateStore {
           accountUsername: null,
           accountEmail: null,
           accountName: null,
+          rememberedLoginName: null,
+          rememberedLoginPassword: null,
         );
       }
 
@@ -312,6 +320,11 @@ class SyncAppStateStore {
             json['accountEmail'] as String?,
         accountEmail: json['accountEmail'] as String?,
         accountName: json['accountName'] as String?,
+        rememberedLoginName:
+            json['rememberedLoginName'] as String? ??
+            json['accountUsername'] as String? ??
+            json['accountEmail'] as String?,
+        rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
         clients: clientsJson.map(
           (key, value) => MapEntry(
             key,
@@ -327,6 +340,8 @@ class SyncAppStateStore {
         accountUsername: null,
         accountEmail: null,
         accountName: null,
+        rememberedLoginName: null,
+        rememberedLoginPassword: null,
       );
     }
   }
@@ -341,6 +356,8 @@ class SyncAppStateStore {
         accountUsername: null,
         accountEmail: null,
         accountName: null,
+        rememberedLoginName: null,
+        rememberedLoginPassword: null,
       );
     }
 
@@ -355,6 +372,8 @@ class SyncAppStateStore {
           accountUsername: null,
           accountEmail: null,
           accountName: null,
+          rememberedLoginName: null,
+          rememberedLoginPassword: null,
         );
       }
 
@@ -370,6 +389,11 @@ class SyncAppStateStore {
             json['accountEmail'] as String?,
         accountEmail: json['accountEmail'] as String?,
         accountName: json['accountName'] as String?,
+        rememberedLoginName:
+            json['rememberedLoginName'] as String? ??
+            json['accountUsername'] as String? ??
+            json['accountEmail'] as String?,
+        rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
         clients: clientsJson.map(
           (key, value) => MapEntry(
             key,
@@ -385,6 +409,8 @@ class SyncAppStateStore {
         accountUsername: null,
         accountEmail: null,
         accountName: null,
+        rememberedLoginName: null,
+        rememberedLoginPassword: null,
       );
     }
   }
@@ -402,6 +428,8 @@ class SyncAppStateStore {
       'accountUsername': accountUsername,
       'accountEmail': accountEmail,
       'accountName': accountName,
+      'rememberedLoginName': rememberedLoginName,
+      'rememberedLoginPassword': rememberedLoginPassword,
       'clients': clients.map((key, value) => MapEntry(key, value.toJson())),
     });
     await file.writeAsString(payload);

@@ -3139,25 +3139,17 @@ SELECT (
   }
 
   Widget _buildMergedSyncDetailBody(_SyncTableRowData row) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 720;
-
-        return ListView(
-          children: [
-            _buildSectionLabel('Overview'),
-            const SizedBox(height: 10),
-            _buildSyncOverviewSide(row),
-            const SizedBox(height: 18),
-            _buildSectionLabel('History'),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: compact ? 300 : 360,
-              child: _buildSyncHistorySide(row),
-            ),
-          ],
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Overview'),
+        const SizedBox(height: 10),
+        _buildSyncOverviewSide(row),
+        const SizedBox(height: 18),
+        _buildSectionLabel('History'),
+        const SizedBox(height: 10),
+        Expanded(child: _buildSyncHistorySide(row)),
+      ],
     );
   }
 

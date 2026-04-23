@@ -19,8 +19,6 @@ class AgentHeroBanner extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 720;
-        final heroFontSize =
-            compact ? 20.0 : (constraints.maxWidth < 1100 ? 23.0 : 26.0);
         final controlPlaneColor =
             controlPlaneConnected
                 ? const Color(0xFF2F855A)
@@ -30,15 +28,19 @@ class AgentHeroBanner extends StatelessWidget {
 
         return Container(
           width: double.infinity,
-          padding: EdgeInsets.all(compact ? 16 : 24),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 16 : 20,
+            vertical: compact ? 14 : 16,
+          ),
           decoration: BoxDecoration(
             color: const Color(0xFF152630),
             borderRadius: BorderRadius.circular(compact ? 20 : 24),
             border: Border.all(color: const Color(0xFF233A48)),
           ),
           child: Wrap(
-            spacing: 14,
-            runSpacing: 14,
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(
@@ -58,50 +60,20 @@ class AgentHeroBanner extends StatelessWidget {
                   ),
                 ),
               ),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: compact ? constraints.maxWidth : 860,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Keep SQL credentials local and sync through the control plane.',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: heroFontSize,
-                        fontWeight: FontWeight.w800,
-                        height: 1.1,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        AgentStatusPill(
-                          label:
-                              controlPlaneConnected
-                                  ? 'Control Plane Online'
-                                  : 'Control Plane Offline',
-                          color: controlPlaneColor,
-                        ),
-                        AgentStatusPill(
-                          label: sqlConnected ? 'SQL Ready' : 'SQL Not Ready',
-                          color: sqlColor,
-                        ),
-                        const AgentStatusPill(
-                          label: 'Local SQL Only',
-                          color: Color(0xFF8A6C16),
-                        ),
-                        AgentStatusPill(
-                          label: 'Poll $pollMinutes min',
-                          color: const Color(0xFF4A6A77),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+              AgentStatusPill(
+                label:
+                    controlPlaneConnected
+                        ? 'Control Plane Online'
+                        : 'Control Plane Offline',
+                color: controlPlaneColor,
+              ),
+              AgentStatusPill(
+                label: sqlConnected ? 'SQL Ready' : 'SQL Not Ready',
+                color: sqlColor,
+              ),
+              AgentStatusPill(
+                label: 'Poll $pollMinutes min',
+                color: const Color(0xFF4A6A77),
               ),
             ],
           ),
