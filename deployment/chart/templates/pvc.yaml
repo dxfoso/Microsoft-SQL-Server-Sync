@@ -1,0 +1,29 @@
+{{- if and (eq (include "sync-admin-web.persistenceEnabled" .) "true") (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sync-admin-web.statePvcName" . }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+  {{- if or .Values.persistence.retain .Values.persistence.annotations }}
+  annotations:
+    {{- if .Values.persistence.retain }}
+    helm.sh/resource-policy: keep
+    {{- end }}
+    {{- with .Values.persistence.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName | quote }}
+  {{- end }}
+{{- end }}

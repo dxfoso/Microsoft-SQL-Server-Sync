@@ -26,6 +26,14 @@ sql-sync
 {{- include "sync-admin-web.componentFullname" (list . "back") -}}
 {{- end -}}
 
+{{- define "sync-admin-web.statePvcName" -}}
+{{- if and .Values.persistence .Values.persistence.existingClaim -}}
+{{- .Values.persistence.existingClaim -}}
+{{- else -}}
+{{- include "sync-admin-web.componentFullname" (list . "state") -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "sync-admin-web.backendEnabled" -}}
 {{- if .Values.backend -}}
 {{- if hasKey .Values.backend "enabled" -}}
@@ -91,6 +99,14 @@ app.kubernetes.io/managed-by: Helm
 {{- $image.pullPolicy -}}
 {{- else -}}
 Always
+{{- end -}}
+{{- end -}}
+
+{{- define "sync-admin-web.persistenceEnabled" -}}
+{{- if and .Values.persistence .Values.persistence.enabled -}}
+true
+{{- else -}}
+false
 {{- end -}}
 {{- end -}}
 

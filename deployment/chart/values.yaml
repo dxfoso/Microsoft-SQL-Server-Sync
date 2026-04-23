@@ -17,6 +17,7 @@ frontend:
   # frontend.image/backend.image as full image refs.
   image: sync-admin-web/frontend:latest
   backendBaseUrl: https://sync.velvet-leaf.com/api
+  stateFile: /app/data/state.json
   ingress:
     enabled: true
     className: nginx
@@ -36,3 +37,14 @@ backend:
   service:
     port: 9001
   stateFile: /app/data/state.json
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  mountPath: /app/data
+  retain: true
+  annotations: {}

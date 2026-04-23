@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:
+  {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
+  strategy:
+    type: Recreate
+  {{- end }}
   revisionHistoryLimit: 2
   replicas: 1
   selector:
@@ -38,6 +42,13 @@ spec:
           env:
             - name: BACKEND_BASE_URL
               value: {{ .Values.frontend.backendBaseUrl | quote }}
+            - name: STATE_FILE
+              value: {{ .Values.frontend.stateFile | quote }}
+          {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
+          volumeMounts:
+            - name: state-data
+              mountPath: {{ .Values.persistence.mountPath | quote }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /
@@ -50,3 +61,9 @@ spec:
               port: 80
             initialDelaySeconds: 15
             periodSeconds: 20
+      {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
+      volumes:
+        - name: state-data
+          persistentVolumeClaim:
+            claimName: {{ include "sync-admin-web.statePvcName" . }}
+      {{- end }}
