@@ -253,6 +253,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final buckets = <String, List<_TableClientEntry>>{};
     for (final agent in state.agents) {
       for (final tableState in agent.tables) {
+        if (!_hasSyncedTableState(tableState)) {
+          continue;
+        }
         final entries = buckets.putIfAbsent(
           tableState.table,
           () => <_TableClientEntry>[],
@@ -309,7 +312,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final entries = <_TableClientEntry>[];
     for (final agent in state.agents) {
       final tableState = _tableStateForAgent(agent, tableName);
-      if (tableState != null) {
+      if (tableState != null && _hasSyncedTableState(tableState)) {
         entries.add(_TableClientEntry(agent: agent, tableState: tableState));
       }
     }
@@ -324,6 +327,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
     }
     return null;
+  }
+
+  bool _hasSyncedTableState(AdminTableState tableState) {
+    return tableState.lastSync.trim().isNotEmpty ||
+        (tableState.snapshotId?.trim().isNotEmpty ?? false) ||
+        (tableState.snapshotCreatedAt?.trim().isNotEmpty ?? false) ||
+        tableState.snapshotBytes > 0;
   }
 
   int _compareClientEntries(_TableClientEntry left, _TableClientEntry right) {
@@ -1175,58 +1185,122 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }) async {
     _selectClient(clientName);
     final jobs = _jobsForClientAndTable(clientName: clientName, table: table);
+    final searchController = TextEditingController();
+    AdminJob? selectedJob;
+    Future<AdminSnapshotDetail?>? selectedSnapshotFuture;
 
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 860,
-              maxHeight: MediaQuery.sizeOf(context).height * 0.8,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(22),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$clientName History',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final job = selectedJob;
+              final showingData = job != null;
+
+              return Dialog(
+                insetPadding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: showingData ? 1180 : 860,
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.84,
                   ),
-                  const SizedBox(height: 18),
-                  Expanded(
-                    child:
-                        jobs.isEmpty
-                            ? const EmptyStateCard(
-                              message:
-                                  'No sync jobs have been recorded yet for this client or table.',
-                            )
-                            : ListView.builder(
-                              itemCount: jobs.length,
-                              itemBuilder: (context, index) {
-                                return _buildJobCard(jobs[index]);
-                              },
+                  child: Padding(
+                    padding: const EdgeInsets.all(22),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            if (showingData) ...[
+                              IconButton(
+                                tooltip: 'Back to history',
+                                onPressed: () {
+                                  setDialogState(() {
+                                    selectedJob = null;
+                                    selectedSnapshotFuture = null;
+                                    searchController.clear();
+                                  });
+                                },
+                                icon: const Icon(Icons.arrow_back_rounded),
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Expanded(
+                              child: Text(
+                                showingData
+                                    ? '${job.table} Data'
+                                    : '$clientName History',
+                                style: Theme.of(context).textTheme.headlineSmall
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
                             ),
-                  ),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Close'),
+                            IconButton(
+                              tooltip: 'Close',
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        Expanded(
+                          child:
+                              showingData
+                                  ? FutureBuilder<AdminSnapshotDetail?>(
+                                    future: selectedSnapshotFuture,
+                                    builder: (context, snapshotState) {
+                                      return _buildSnapshotDataContent(
+                                        job: job,
+                                        snapshotState: snapshotState,
+                                        searchController: searchController,
+                                        onSearchChanged:
+                                            () => setDialogState(() {}),
+                                      );
+                                    },
+                                  )
+                                  : jobs.isEmpty
+                                  ? const EmptyStateCard(
+                                    message:
+                                        'No sync jobs have been recorded yet for this client or table.',
+                                  )
+                                  : ListView.separated(
+                                    itemCount: jobs.length,
+                                    separatorBuilder:
+                                        (_, _) => const SizedBox(height: 8),
+                                    itemBuilder: (context, index) {
+                                      final historyJob = jobs[index];
+                                      return _buildJobCard(
+                                        historyJob,
+                                        onOpenSnapshot: () {
+                                          final snapshotId =
+                                              historyJob.snapshotId?.trim() ??
+                                              '';
+                                          if (snapshotId.isEmpty) {
+                                            return;
+                                          }
+                                          setDialogState(() {
+                                            selectedJob = historyJob;
+                                            selectedSnapshotFuture = _api
+                                                .fetchSnapshotById(snapshotId);
+                                            searchController.clear();
+                                          });
+                                        },
+                                      );
+                                    },
+                                  ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
   }
 
   Future<void> _openAboutDialog() async {
@@ -1429,6 +1503,88 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     } finally {
       searchController.dispose();
     }
+  }
+
+  Widget _buildSnapshotDataContent({
+    required AdminJob job,
+    required AsyncSnapshot<AdminSnapshotDetail?> snapshotState,
+    required TextEditingController searchController,
+    required VoidCallback onSearchChanged,
+  }) {
+    final snapshot = snapshotState.data;
+    final filteredRows =
+        snapshot == null
+            ? const <_ScoredSnapshotRow>[]
+            : _filteredSnapshotRowsForQuery(snapshot, searchController.text);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            MetricPill(label: 'Client', value: job.clientName),
+            MetricPill(label: 'Status', value: job.status.toUpperCase()),
+            MetricPill(
+              label: 'Date',
+              value: _formatTimestamp(job.completedAt ?? job.updatedAt),
+            ),
+            MetricPill(
+              label: 'Rows',
+              value:
+                  snapshot == null
+                      ? '${job.rowCount}'
+                      : '${filteredRows.length} / ${snapshot.rowCount}',
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: searchController,
+          onChanged: (_) => onSearchChanged(),
+          decoration: InputDecoration(
+            labelText: 'Search Rows',
+            hintText:
+                'Search across all visible columns for the best matching row.',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon:
+                searchController.text.isEmpty
+                    ? null
+                    : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        searchController.clear();
+                        onSearchChanged();
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Expanded(
+          child:
+              snapshotState.connectionState == ConnectionState.waiting &&
+                      snapshot == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : snapshotState.hasError
+                  ? EmptyStateCard(message: snapshotState.error.toString())
+                  : snapshot == null
+                  ? const EmptyStateCard(
+                    message:
+                        'No snapshot data is available for this history item.',
+                  )
+                  : filteredRows.isEmpty
+                  ? EmptyStateCard(
+                    message:
+                        searchController.text.trim().isEmpty
+                            ? 'This snapshot has no rows.'
+                            : 'No rows matched your search. Try a broader term or clear the search box.',
+                  )
+                  : _buildSnapshotGrid(snapshot, filteredRows),
+        ),
+      ],
+    );
   }
 
   Future<void> _triggerJob({
@@ -1926,6 +2082,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   List<AdminJob> _filteredHistoryJobs({
     required String table,
     String? clientName,
+    bool limit = true,
   }) {
     final query = _dataSearchController.text.trim();
     final matches = _jobs
@@ -1960,10 +2117,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return _compareTimestamps(right.job.updatedAt, left.job.updatedAt);
     });
 
-    return matches
-        .map((item) => item.job)
-        .take(_historyLimit)
-        .toList(growable: false);
+    final jobs = matches.map((item) => item.job);
+    return (limit ? jobs.take(_historyLimit) : jobs).toList(growable: false);
   }
 
   Widget _buildSearchField({
@@ -2190,48 +2345,160 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildMergedDetailBody(_TableAggregateSummary summary) {
     final selectedClient = _selectedClientEntry;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 720;
-
-        return ListView(
-          children: [
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+    return DefaultTabController(
+      key: ValueKey(summary.table),
+      length: 2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              MetricPill(label: 'Clients', value: '${summary.clientCount}'),
+              MetricPill(
+                label: 'Client',
+                value: selectedClient?.agent.clientName ?? 'All',
+              ),
+              MetricPill(
+                label: 'Last Sync',
+                value: _formatTimestamp(summary.lastSync),
+              ),
+              MetricPill(
+                label: 'Backup',
+                value: _formatBytes(summary.latestSnapshotBytes),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const TabBar(
+            isScrollable: true,
+            tabs: [Tab(text: 'Client'), Tab(text: 'All History')],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: TabBarView(
               children: [
-                MetricPill(label: 'Clients', value: '${summary.clientCount}'),
-                MetricPill(
-                  label: 'Client',
-                  value: selectedClient?.agent.clientName ?? 'All',
-                ),
-                MetricPill(
-                  label: 'Last Sync',
-                  value: _formatTimestamp(summary.lastSync),
-                ),
-                MetricPill(
-                  label: 'Backup',
-                  value: _formatBytes(summary.latestSnapshotBytes),
-                ),
+                _buildClientDetailTab(summary),
+                _buildAllHistoryTab(summary),
               ],
             ),
-            const SizedBox(height: 16),
-            _buildSectionLabel('Clients'),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: compact ? 280 : 320,
-              child: _buildClientTableSide(summary),
-            ),
-            const SizedBox(height: 18),
-            _buildSectionLabel('History'),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: compact ? 300 : 360,
-              child: _buildHistoryTableSide(summary),
-            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientDetailTab(_TableAggregateSummary summary) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack = constraints.maxWidth < 760;
+        if (stack) {
+          return ListView(
+            children: [
+              SizedBox(height: 300, child: _buildClientListPanel(summary)),
+              const SizedBox(height: 16),
+              SizedBox(height: 460, child: _buildSelectedClientPanel(summary)),
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 5, child: _buildClientListPanel(summary)),
+            const SizedBox(width: 16),
+            Expanded(flex: 6, child: _buildSelectedClientPanel(summary)),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildClientListPanel(_TableAggregateSummary summary) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Clients'),
+        const SizedBox(height: 10),
+        Expanded(child: _buildClientTableSide(summary)),
+      ],
+    );
+  }
+
+  Widget _buildSelectedClientPanel(_TableAggregateSummary summary) {
+    final selectedClient = _selectedClientEntry;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Client Info'),
+        const SizedBox(height: 10),
+        _buildSelectedClientInfo(selectedClient),
+        const SizedBox(height: 14),
+        _buildSectionLabel('Client History'),
+        const SizedBox(height: 10),
+        Expanded(
+          child: _buildHistoryTableSide(
+            summary,
+            clientName: selectedClient?.agent.clientName,
+            limit: false,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAllHistoryTab(_TableAggregateSummary summary) {
+    return _buildHistoryTableSide(summary, limit: false);
+  }
+
+  Widget _buildSelectedClientInfo(_TableClientEntry? selectedClient) {
+    if (selectedClient == null) {
+      return const EmptyStateCard(
+        message: 'Select a client to view its table info and history.',
+      );
+    }
+
+    final agent = selectedClient.agent;
+    final tableState = selectedClient.tableState;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAFB),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD8E0E5)),
+      ),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          MetricPill(label: 'Client', value: agent.clientName),
+          MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
+          MetricPill(
+            label: 'Status',
+            value: agent.isOnline ? 'Online' : 'Offline',
+          ),
+          MetricPill(
+            label: 'SQL',
+            value: agent.sqlConnected ? 'Connected' : 'Disconnected',
+          ),
+          MetricPill(label: 'Machine', value: agent.machineName),
+          MetricPill(label: 'Server', value: agent.server),
+          MetricPill(label: 'Database', value: agent.database),
+          MetricPill(
+            label: 'Last Sync',
+            value: _formatTimestamp(_tableTimestampToken(tableState)),
+          ),
+          MetricPill(label: 'Rows', value: '${tableState.rowCount}'),
+          MetricPill(
+            label: 'Backup',
+            value: _formatBytes(tableState.snapshotBytes),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2431,12 +2698,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildHistoryTableSide(_TableAggregateSummary summary) {
-    final selectedClient = _selectedClientEntry;
+  Widget _buildHistoryTableSide(
+    _TableAggregateSummary summary, {
+    String? clientName,
+    bool limit = true,
+  }) {
     final jobs = _filteredHistoryJobs(
       table: summary.table,
-      clientName: selectedClient?.agent.clientName,
+      clientName: clientName,
+      limit: limit,
     );
+    final historyLabel = clientName ?? 'All clients';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2445,28 +2717,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           spacing: 12,
           runSpacing: 12,
           children: [
-            MetricPill(
-              label: 'Client',
-              value: selectedClient?.agent.clientName ?? 'All',
-            ),
+            MetricPill(label: 'Client', value: historyLabel),
             MetricPill(label: 'Events', value: '${jobs.length}'),
           ],
         ),
         const SizedBox(height: 12),
-        if (selectedClient != null)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed:
-                  () => _openHistoryDialog(
-                    clientName: selectedClient.agent.clientName,
-                    table: summary.table,
-                  ),
-              icon: const Icon(Icons.open_in_new_rounded, size: 16),
-              label: const Text('View All History'),
-            ),
-          ),
-        const SizedBox(height: 4),
         Expanded(
           child:
               jobs.isEmpty
@@ -2662,7 +2917,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildJobCard(AdminJob job) {
+  Widget _buildJobCard(AdminJob job, {VoidCallback? onOpenSnapshot}) {
     final canOpenSnapshot = (job.snapshotId?.trim().isNotEmpty ?? false);
     final eventTime = _formatTimestamp(job.completedAt ?? job.updatedAt);
 
@@ -2670,7 +2925,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: canOpenSnapshot ? () => _openJobSnapshotDialog(job) : null,
+        onTap:
+            canOpenSnapshot
+                ? (onOpenSnapshot ?? () => _openJobSnapshotDialog(job))
+                : null,
         child: Ink(
           width: double.infinity,
           decoration: BoxDecoration(
@@ -2769,6 +3027,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       spacing: 8,
                       runSpacing: 4,
                       children: [
+                        Text(
+                          job.clientName,
+                          style: const TextStyle(
+                            color: Color(0xFF5F6B76),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
                         Text(
                           '${job.progress}%',
                           style: const TextStyle(
