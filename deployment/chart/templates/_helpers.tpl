@@ -27,8 +27,10 @@ sql-sync
 {{- end -}}
 
 {{- define "sync-admin-web.statePvcName" -}}
-{{- if and .Values.persistence .Values.persistence.existingClaim -}}
-{{- .Values.persistence.existingClaim -}}
+{{- $persistence := .Values.persistence | default dict -}}
+{{- $existingClaim := $persistence.existingClaim | default "" -}}
+{{- if $existingClaim -}}
+{{- $existingClaim -}}
 {{- else -}}
 {{- include "sync-admin-web.componentFullname" (list . "state") -}}
 {{- end -}}
@@ -103,10 +105,15 @@ Always
 {{- end -}}
 
 {{- define "sync-admin-web.persistenceEnabled" -}}
-{{- if and .Values.persistence .Values.persistence.enabled -}}
+{{- $persistence := .Values.persistence | default dict -}}
+{{- if hasKey $persistence "enabled" -}}
+{{- if $persistence.enabled -}}
 true
 {{- else -}}
 false
+{{- end -}}
+{{- else -}}
+true
 {{- end -}}
 {{- end -}}
 

@@ -1,4 +1,11 @@
-{{- if and (eq (include "sync-admin-web.persistenceEnabled" .) "true") (not .Values.persistence.existingClaim) }}
+{{- $persistence := .Values.persistence | default dict -}}
+{{- $existingClaim := $persistence.existingClaim | default "" -}}
+{{- $annotations := $persistence.annotations | default dict -}}
+{{- $retain := true -}}
+{{- if hasKey $persistence "retain" -}}
+{{- $retain = $persistence.retain -}}
+{{- end -}}
+{{- if and (eq (include "sync-admin-web.persistenceEnabled" .) "true") (not $existingClaim) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -6,24 +13,24 @@ metadata:
   namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
-  {{- if or .Values.persistence.retain .Values.persistence.annotations }}
+  {{- if or $retain $annotations }}
   annotations:
-    {{- if .Values.persistence.retain }}
+    {{- if $retain }}
     helm.sh/resource-policy: keep
     {{- end }}
-    {{- with .Values.persistence.annotations }}
+    {{- with $annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
   {{- end }}
 spec:
   accessModes:
-    {{- range .Values.persistence.accessModes }}
+    {{- range ($persistence.accessModes | default (list "ReadWriteOnce")) }}
     - {{ . | quote }}
     {{- end }}
   resources:
     requests:
-      storage: {{ .Values.persistence.size | quote }}
-  {{- if .Values.persistence.storageClassName }}
-  storageClassName: {{ .Values.persistence.storageClassName | quote }}
+      storage: {{ ($persistence.size | default "1Gi") | quote }}
+  {{- if $persistence.storageClassName }}
+  storageClassName: {{ $persistence.storageClassName | quote }}
   {{- end }}
 {{- end }}

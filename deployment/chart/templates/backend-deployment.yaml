@@ -1,4 +1,8 @@
 {{- if eq (include "sync-admin-web.backendEnabled" .) "true" }}
+{{- $persistence := .Values.persistence | default dict -}}
+{{- $stateMountPath := $persistence.mountPath | default "/app/data" -}}
+{{- $backend := .Values.backend | default dict -}}
+{{- $backendStateFile := $backend.stateFile | default (printf "%s/state.json" $stateMountPath) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -44,11 +48,11 @@ spec:
             - name: PORT
               value: {{ .Values.backend.service.port | quote }}
             - name: STATE_FILE
-              value: {{ .Values.backend.stateFile | quote }}
+              value: {{ $backendStateFile | quote }}
           {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
           volumeMounts:
             - name: state-data
-              mountPath: {{ .Values.persistence.mountPath | quote }}
+              mountPath: {{ $stateMountPath | quote }}
           {{- end }}
           readinessProbe:
             httpGet:
