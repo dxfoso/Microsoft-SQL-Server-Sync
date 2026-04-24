@@ -5,8 +5,7 @@ void main() {
   testWidgets('renders the website login gate', (tester) async {
     await tester.pumpWidget(const SyncAdminApp());
 
-    expect(find.text('SQL Sync Control Plane'), findsAtLeastNWidgets(1));
     expect(find.text('Website Login'), findsOneWidget);
-    expect(find.text('Sign In'), findsOneWidget);
+    expect(find.text('Open Dashboard'), findsOneWidget);
   });
 }

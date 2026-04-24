@@ -3,6 +3,9 @@ import 'dart:io';
 
 const int kDefaultHistoryLimit = 5;
 const int kMaxHistoryLimit = 100;
+const int kDefaultAutoSyncIntervalMinutes = 1;
+const int kMinAutoSyncIntervalMinutes = 1;
+const int kMaxAutoSyncIntervalMinutes = 1440;
 
 class SyncHistorySnapshotData {
   const SyncHistorySnapshotData({required this.columns, required this.rows});
@@ -199,11 +202,13 @@ class SyncClientState {
     required this.isMaster,
     required this.tables,
     this.historyLimit = kDefaultHistoryLimit,
+    this.autoSyncIntervalMinutes = kDefaultAutoSyncIntervalMinutes,
   });
 
   final bool isMaster;
   final Map<String, SyncTableState> tables;
   final int historyLimit;
+  final int autoSyncIntervalMinutes;
 
   factory SyncClientState.fromJson(Map<String, dynamic> json) {
     final tablesJson = Map<String, dynamic>.from(
@@ -211,9 +216,17 @@ class SyncClientState {
     );
     return SyncClientState(
       isMaster: json['isMaster'] as bool? ?? true,
-      historyLimit: (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
-          .round()
-          .clamp(1, kMaxHistoryLimit),
+      historyLimit:
+          (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
+              .round()
+              .clamp(1, kMaxHistoryLimit)
+              .toInt(),
+      autoSyncIntervalMinutes:
+          (json['autoSyncIntervalMinutes'] as num? ??
+                  kDefaultAutoSyncIntervalMinutes)
+              .round()
+              .clamp(kMinAutoSyncIntervalMinutes, kMaxAutoSyncIntervalMinutes)
+              .toInt(),
       tables: tablesJson.map(
         (key, value) => MapEntry(
           key,
@@ -226,6 +239,7 @@ class SyncClientState {
   Map<String, dynamic> toJson() => {
     'isMaster': isMaster,
     'historyLimit': historyLimit,
+    'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
     'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
   };
 
@@ -233,10 +247,13 @@ class SyncClientState {
     bool? isMaster,
     Map<String, SyncTableState>? tables,
     int? historyLimit,
+    int? autoSyncIntervalMinutes,
   }) {
     return SyncClientState(
       isMaster: isMaster ?? this.isMaster,
       historyLimit: historyLimit ?? this.historyLimit,
+      autoSyncIntervalMinutes:
+          autoSyncIntervalMinutes ?? this.autoSyncIntervalMinutes,
       tables: tables ?? this.tables,
     );
   }

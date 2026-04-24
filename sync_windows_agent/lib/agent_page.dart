@@ -45,7 +45,6 @@ class AgentDashboardPage extends StatefulWidget {
 class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
-  static const Duration _autoSyncInterval = Duration(minutes: 1);
 
   final TextEditingController _serverController = TextEditingController(
     text: 'localhost',
@@ -82,6 +81,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   int _rowOffset = 0;
 
   bool get _isMasterClient => _syncState.isMaster;
+  Duration get _autoSyncInterval =>
+      Duration(minutes: _syncState.autoSyncIntervalMinutes);
 
   @override
   void initState() {
@@ -178,10 +179,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     List<SyncHistoryEntry> entries, {
     int? limit,
   }) {
-    final normalizedLimit = (limit ?? _syncState.historyLimit).clamp(
-      1,
-      kMaxHistoryLimit,
-    );
+    final normalizedLimit =
+        (limit ?? _syncState.historyLimit).clamp(1, kMaxHistoryLimit).toInt();
     if (entries.length <= normalizedLimit) {
       return List<SyncHistoryEntry>.from(entries);
     }
@@ -192,7 +191,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   void _applyHistoryLimit(int nextLimit) {
-    final normalizedLimit = nextLimit.clamp(1, kMaxHistoryLimit);
+    final normalizedLimit = nextLimit.clamp(1, kMaxHistoryLimit).toInt();
     if (normalizedLimit == _syncState.historyLimit) {
       return;
     }
@@ -213,6 +212,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _replaceSyncState(
       _syncState.copyWith(historyLimit: normalizedLimit, tables: nextTables),
+    );
+  }
+
+  void _applyAutoSyncInterval(int nextMinutes) {
+    final normalizedMinutes =
+        nextMinutes
+            .clamp(kMinAutoSyncIntervalMinutes, kMaxAutoSyncIntervalMinutes)
+            .toInt();
+    if (normalizedMinutes == _syncState.autoSyncIntervalMinutes) {
+      return;
+    }
+
+    _replaceSyncState(
+      _syncState.copyWith(autoSyncIntervalMinutes: normalizedMinutes),
     );
   }
 
@@ -2599,8 +2612,12 @@ SELECT (
     final historyLimitController = TextEditingController(
       text: _syncState.historyLimit.toString(),
     );
+    final autoSyncIntervalController = TextEditingController(
+      text: _syncState.autoSyncIntervalMinutes.toString(),
+    );
     var isMaster = _isMasterClient;
     String? historyLimitError;
+    String? autoSyncIntervalError;
 
     _SqlConnectionProfile readDialogProfile() => _SqlConnectionProfile(
       server: serverController.text.trim(),
@@ -2700,6 +2717,20 @@ SELECT (
                         ),
                       ),
                       const SizedBox(height: 12),
+                      TextField(
+                        controller: autoSyncIntervalController,
+                        keyboardType: TextInputType.number,
+                        onChanged: (_) => setDialogState(() {}),
+                        decoration: _compactInputDecoration(
+                          'Sync Interval (Minutes)',
+                        ).copyWith(
+                          hintText: '$kDefaultAutoSyncIntervalMinutes',
+                          helperText:
+                              'Queue enabled sync tables every xx minutes.',
+                          errorText: autoSyncIntervalError,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       CheckboxListTile(
                         value: isMaster,
                         contentPadding: EdgeInsets.zero,
@@ -2731,6 +2762,11 @@ SELECT (
                           ),
                           _InfoLine(label: 'Role', value: _roleLabel(isMaster)),
                           _InfoLine(
+                            label: 'Interval',
+                            value:
+                                '${autoSyncIntervalController.text.trim().isEmpty ? kDefaultAutoSyncIntervalMinutes.toString() : autoSyncIntervalController.text.trim()} min',
+                          ),
+                          _InfoLine(
                             label: 'Server',
                             value:
                                 serverController.text.trim().isEmpty
@@ -2761,6 +2797,21 @@ SELECT (
                       setDialogState(() {
                         historyLimitError =
                             'Enter a number between 1 and $kMaxHistoryLimit.';
+                        autoSyncIntervalError = null;
+                      });
+                      return;
+                    }
+
+                    final nextAutoSyncInterval = int.tryParse(
+                      autoSyncIntervalController.text.trim(),
+                    );
+                    if (nextAutoSyncInterval == null ||
+                        nextAutoSyncInterval < kMinAutoSyncIntervalMinutes ||
+                        nextAutoSyncInterval > kMaxAutoSyncIntervalMinutes) {
+                      setDialogState(() {
+                        historyLimitError = null;
+                        autoSyncIntervalError =
+                            'Enter a number between $kMinAutoSyncIntervalMinutes and $kMaxAutoSyncIntervalMinutes.';
                       });
                       return;
                     }
@@ -2786,6 +2837,7 @@ SELECT (
                     });
                     Navigator.of(context).pop();
                     _applyHistoryLimit(nextHistoryLimit);
+                    _applyAutoSyncInterval(nextAutoSyncInterval);
                     widget.onClientNameChanged(clientName);
                     final enabledTables = _setClientRole(isMaster);
 
@@ -2810,6 +2862,7 @@ SELECT (
     clientNameController.dispose();
     serverController.dispose();
     historyLimitController.dispose();
+    autoSyncIntervalController.dispose();
   }
 
   Widget _buildSyncPanel() {
@@ -3942,6 +3995,10 @@ SELECT (
     final footerItems = <Widget>[
       _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
       _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
+      _InfoLine(
+        label: 'Interval',
+        value: '${_syncState.autoSyncIntervalMinutes} min',
+      ),
       _InfoLine(label: 'Table', value: selectedSyncRow?.table ?? 'None'),
       _InfoLine(label: 'Active', value: activeSyncCount.toString()),
       _InfoLine(
@@ -4272,7 +4329,7 @@ SELECT (
             AgentHeroBanner(
               controlPlaneConnected: _serverConnected,
               sqlConnected: _selectedDatabase != null,
-              pollMinutes: _autoSyncInterval.inMinutes,
+              syncIntervalMinutes: _syncState.autoSyncIntervalMinutes,
             ),
             const SizedBox(height: 16),
             Expanded(child: _buildSyncTab()),

@@ -7,12 +7,12 @@ class AgentHeroBanner extends StatelessWidget {
     super.key,
     required this.controlPlaneConnected,
     required this.sqlConnected,
-    required this.pollMinutes,
+    required this.syncIntervalMinutes,
   });
 
   final bool controlPlaneConnected;
   final bool sqlConnected;
-  final int pollMinutes;
+  final int syncIntervalMinutes;
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +72,7 @@ class AgentHeroBanner extends StatelessWidget {
                 color: sqlColor,
               ),
               AgentStatusPill(
-                label: 'Poll $pollMinutes min',
+                label: 'Sync every $syncIntervalMinutes min',
                 color: const Color(0xFF4A6A77),
               ),
             ],

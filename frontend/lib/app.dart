@@ -44,7 +44,7 @@ class SyncAdminApp extends StatelessWidget {
           color: Colors.white,
           elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(8),
             side: const BorderSide(color: Color(0xFFD7DEE3)),
           ),
         ),
@@ -56,21 +56,21 @@ class SyncAdminApp extends StatelessWidget {
           style: FilledButton.styleFrom(
             backgroundColor: teal,
             foregroundColor: Colors.white,
-            minimumSize: const Size(0, 44),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            minimumSize: const Size(0, 36),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(8),
             ),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
             foregroundColor: ink,
-            minimumSize: const Size(0, 40),
+            minimumSize: const Size(0, 34),
             side: const BorderSide(color: Color(0xFFD9E0E5)),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(8),
             ),
           ),
         ),
@@ -79,22 +79,22 @@ class SyncAdminApp extends StatelessWidget {
           fillColor: Colors.white,
           isDense: true,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: Color(0xFFD7DEE3)),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: Color(0xFFD7DEE3)),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: teal, width: 1.2),
           ),
           labelStyle: const TextStyle(color: slate),
           hintStyle: const TextStyle(color: Color(0xFF94A1AA)),
           contentPadding: const EdgeInsets.symmetric(
-            horizontal: 14,
-            vertical: 14,
+            horizontal: 10,
+            vertical: 10,
           ),
         ),
       ),
@@ -253,10 +253,10 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                   : MediaQuery.sizeOf(context).width;
           final compact = width < 760;
           final tight = width < 480;
-          final heroFontSize = tight ? 24.0 : (compact ? 28.0 : 34.0);
-          final outerPadding = tight ? 16.0 : 24.0;
-          final heroPadding = tight ? 22.0 : 32.0;
-          final formPadding = tight ? 20.0 : 26.0;
+          final heroFontSize = tight ? 22.0 : (compact ? 26.0 : 30.0);
+          final outerPadding = tight ? 12.0 : 18.0;
+          final heroPadding = tight ? 18.0 : 24.0;
+          final formPadding = tight ? 16.0 : 20.0;
 
           return Container(
             width: double.infinity,
@@ -268,8 +268,8 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                   child: ConstrainedBox(
                     constraints: BoxConstraints(maxWidth: compact ? 560 : 1100),
                     child: Wrap(
-                      spacing: 24,
-                      runSpacing: 24,
+                      spacing: 16,
+                      runSpacing: 16,
                       alignment:
                           compact ? WrapAlignment.start : WrapAlignment.center,
                       crossAxisAlignment: WrapCrossAlignment.center,
@@ -282,9 +282,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                             padding: EdgeInsets.all(heroPadding),
                             decoration: BoxDecoration(
                               color: const Color(0xFF152630),
-                              borderRadius: BorderRadius.circular(
-                                compact ? 22 : 28,
-                              ),
+                              borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: const Color(0xFF243A48),
                               ),
@@ -293,7 +291,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const _HeroTag(label: 'Web Control Plane'),
-                                const SizedBox(height: 22),
+                                const SizedBox(height: 16),
                                 Text(
                                   'Open sync status, history, and saved data.',
                                   style: TextStyle(
@@ -324,9 +322,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                             padding: EdgeInsets.all(formPadding),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(
-                                compact ? 24 : 30,
-                              ),
+                              borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: const Color(0xFFD8E0E5),
                               ),
@@ -348,7 +344,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 6),
                                 const Text(
                                   'Owner and admin accounts only.',
                                   style: TextStyle(
@@ -357,7 +353,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                     height: 1.35,
                                   ),
                                 ),
-                                const SizedBox(height: 22),
+                                const SizedBox(height: 16),
                                 TextField(
                                   controller: _nameController,
                                   textInputAction: TextInputAction.next,
@@ -366,7 +362,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                     hintText: 'owner-name',
                                   ),
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 10),
                                 TextField(
                                   controller: _passwordController,
                                   obscureText: !_showPassword,
@@ -394,13 +390,13 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                   ),
                                 ),
                                 if (_error != null) ...[
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: 10),
                                   Container(
                                     width: double.infinity,
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFFFFF0EE),
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(8),
                                       border: Border.all(
                                         color: const Color(0xFFF2C5BE),
                                       ),
@@ -414,7 +410,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                     ),
                                   ),
                                 ],
-                                const SizedBox(height: 18),
+                                const SizedBox(height: 14),
                                 SizedBox(
                                   width: double.infinity,
                                   child: FilledButton(
@@ -429,7 +425,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                     ),
                                   ),
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 10),
                                 const Text(
                                   'Client accounts use the Windows app.',
                                   style: TextStyle(
@@ -465,7 +461,7 @@ class _HeroTag extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
         color: const Color(0xFF213643),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF314855)),
       ),
       child: Text(

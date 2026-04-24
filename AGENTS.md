@@ -15,6 +15,8 @@ This ensures the app is relaunched with the updated Dart code.
 
 ## Deployment Rule
 
+- Before triggering a cloud redeploy for local code changes, commit the changes and push the commit so the redeploy link can build the latest committed revision.
+- Do not expect the redeploy link to include uncommitted local files; it deploys the latest commit visible to the remote deployment runner.
 - When redeploying to the cloud, use the deployment links stored in `deployment/chart/.env`.
 - Treat `deployment/chart/.env` as the source of truth for the current redeploy URL, deployment debug URL, and namespace resource URL.
 - Do not rely on old redeploy links or tokens copied from chat if `deployment/chart/.env` is available.

@@ -1199,14 +1199,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               final showingData = job != null;
 
               return Dialog(
-                insetPadding: const EdgeInsets.all(24),
+                insetPadding: const EdgeInsets.all(20),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
                     maxWidth: showingData ? 1180 : 860,
                     maxHeight: MediaQuery.sizeOf(context).height * 0.84,
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.all(22),
+                    padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1242,7 +1242,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 12),
                         Expanded(
                           child:
                               showingData
@@ -1266,7 +1266,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   : ListView.separated(
                                     itemCount: jobs.length,
                                     separatorBuilder:
-                                        (_, _) => const SizedBox(height: 8),
+                                        (_, _) => const SizedBox(height: 6),
                                     itemBuilder: (context, index) {
                                       final historyJob = jobs[index];
                                       return _buildJobCard(
@@ -1368,14 +1368,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           return StatefulBuilder(
             builder: (context, setDialogState) {
               return Dialog(
-                insetPadding: const EdgeInsets.all(24),
+                insetPadding: const EdgeInsets.all(20),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
                     maxWidth: 1180,
                     maxHeight: MediaQuery.sizeOf(context).height * 0.82,
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.all(22),
+                    padding: const EdgeInsets.all(16),
                     child: FutureBuilder<AdminSnapshotDetail?>(
                       future: snapshotFuture,
                       builder: (context, snapshotState) {
@@ -1503,6 +1503,164 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     } finally {
       searchController.dispose();
     }
+  }
+
+  Future<void> _openClientDetailDialog({
+    required _TableAggregateSummary summary,
+    required _TableClientEntry entry,
+  }) async {
+    _selectClient(entry.agent.clientName);
+    final jobs = _jobsForClientAndTable(
+      clientName: entry.agent.clientName,
+      table: summary.table,
+    );
+    final recentJobs = jobs.take(_historyLimit).toList(growable: false);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final busy = _isBackupBusy(entry.agent.clientName, summary.table);
+
+        return Dialog(
+          insetPadding: const EdgeInsets.all(20),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 940,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.84,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          entry.agent.clientName,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildRoleBadge(entry.agent.isMaster),
+                      const SizedBox(width: 8),
+                      StatusBadge(
+                        label: entry.tableState.status,
+                        color: _statusColor(entry.tableState.status),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _buildSelectedClientInfo(entry),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed:
+                            busy
+                                ? null
+                                : () => _downloadSnapshotFile(
+                                  clientName: entry.agent.clientName,
+                                  table: summary.table,
+                                ),
+                        icon: const Icon(Icons.download_rounded, size: 16),
+                        label: const Text('Download'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed:
+                            busy
+                                ? null
+                                : () => _uploadSnapshotFile(
+                                  clientName: entry.agent.clientName,
+                                  table: summary.table,
+                                ),
+                        icon: const Icon(Icons.upload_file_rounded, size: 16),
+                        label: const Text('Upload'),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed:
+                            entry.tableState.enabled
+                                ? () => _triggerJob(
+                                  clientName: entry.agent.clientName,
+                                  table: summary.table,
+                                  direction: 'upload',
+                                )
+                                : null,
+                        icon: const Icon(Icons.north_rounded, size: 16),
+                        label: const Text('Push'),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed:
+                            entry.tableState.enabled
+                                ? () => _triggerJob(
+                                  clientName: entry.agent.clientName,
+                                  table: summary.table,
+                                  direction: 'download',
+                                )
+                                : null,
+                        icon: const Icon(Icons.south_rounded, size: 16),
+                        label: const Text('Pull'),
+                      ),
+                      TextButton.icon(
+                        onPressed:
+                            () => _openHistoryDialog(
+                              clientName: entry.agent.clientName,
+                              table: summary.table,
+                            ),
+                        icon: const Icon(Icons.history_rounded, size: 16),
+                        label: const Text('Full History'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      _buildSectionLabel('Recent History'),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${recentJobs.length} of ${jobs.length}',
+                        style: const TextStyle(
+                          color: Color(0xFF62717C),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child:
+                        recentJobs.isEmpty
+                            ? const EmptyStateCard(
+                              message:
+                                  'No sync jobs have been recorded yet for this client or table.',
+                            )
+                            : ListView.separated(
+                              itemCount: recentJobs.length,
+                              separatorBuilder:
+                                  (_, _) => const SizedBox(height: 6),
+                              itemBuilder:
+                                  (context, index) =>
+                                      _buildJobCard(recentJobs[index]),
+                            ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildSnapshotDataContent({
@@ -1855,7 +2013,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildRoleBadge(bool isMaster, {bool compact = false}) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10, vertical: 6),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8, vertical: 4),
       decoration: BoxDecoration(
         color: _roleColor(isMaster).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
@@ -1865,12 +2023,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         children: [
           Icon(_roleIcon(isMaster), size: 16, color: _roleColor(isMaster)),
           if (!compact) ...[
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Text(
               _roleLabel(isMaster),
               style: TextStyle(
                 color: _roleColor(isMaster),
                 fontWeight: FontWeight.w700,
+                fontSize: 12,
               ),
             ),
           ],
@@ -2151,7 +2310,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return SurfaceCard(
       title: 'Tables',
-      subtitle: 'Live table list.',
+      subtitle: '',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2161,10 +2320,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             label: 'Search Tables',
             hint: 'Search table names and clients.',
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               MetricPill(label: 'Tables', value: totalTables.toString()),
               MetricPill(label: 'Clients', value: totalClients.toString()),
@@ -2174,7 +2333,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           Expanded(
             child:
                 summaries.isEmpty
@@ -2186,7 +2345,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     )
                     : ListView.separated(
                       itemCount: summaries.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 10),
+                      separatorBuilder: (_, _) => const SizedBox(height: 6),
                       itemBuilder:
                           (context, index) =>
                               _buildTableSummaryTile(summaries[index]),
@@ -2201,21 +2360,21 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final selected = summary.table == _selectedTableName;
 
     return InkWell(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(8),
       onTap: () => _selectTable(summary.table),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFF0F7F8) : Colors.white,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: selected ? const Color(0xFF8CB9BF) : const Color(0xFFD8E0E5),
           ),
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final stack = constraints.maxWidth < 620;
+            final stack = constraints.maxWidth < 560;
 
             return stack
                 ? Column(
@@ -2236,10 +2395,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         fontSize: 12.5,
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
-                      runSpacing: 8,
+                      runSpacing: 6,
                       children: [
                         MetricPill(
                           label: 'Clients',
@@ -2281,10 +2440,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Wrap(
                       spacing: 8,
-                      runSpacing: 8,
+                      runSpacing: 6,
                       alignment: WrapAlignment.end,
                       children: [
                         MetricPill(
@@ -2331,11 +2490,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         children: [
           _buildSearchField(
             controller: _dataSearchController,
-            label: 'Search Clients And History',
+            label: 'Search Clients / History',
             hint:
                 'Search client names, roles, statuses, directions, messages, and sync time.',
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Expanded(child: _buildMergedDetailBody(summary)),
         ],
       ),
@@ -2352,8 +2511,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               MetricPill(label: 'Clients', value: '${summary.clientCount}'),
               MetricPill(
@@ -2370,12 +2529,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           const TabBar(
             isScrollable: true,
             tabs: [Tab(text: 'Client'), Tab(text: 'All History')],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Expanded(
             child: TabBarView(
               children: [
@@ -2390,29 +2549,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildClientDetailTab(_TableAggregateSummary summary) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final stack = constraints.maxWidth < 760;
-        if (stack) {
-          return ListView(
-            children: [
-              SizedBox(height: 300, child: _buildClientListPanel(summary)),
-              const SizedBox(height: 16),
-              SizedBox(height: 460, child: _buildSelectedClientPanel(summary)),
-            ],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(flex: 5, child: _buildClientListPanel(summary)),
-            const SizedBox(width: 16),
-            Expanded(flex: 6, child: _buildSelectedClientPanel(summary)),
-          ],
-        );
-      },
-    );
+    return _buildClientListPanel(summary);
   }
 
   Widget _buildClientListPanel(_TableAggregateSummary summary) {
@@ -2420,31 +2557,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionLabel('Clients'),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Expanded(child: _buildClientTableSide(summary)),
-      ],
-    );
-  }
-
-  Widget _buildSelectedClientPanel(_TableAggregateSummary summary) {
-    final selectedClient = _selectedClientEntry;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionLabel('Client Info'),
-        const SizedBox(height: 10),
-        _buildSelectedClientInfo(selectedClient),
-        const SizedBox(height: 14),
-        _buildSectionLabel('Client History'),
-        const SizedBox(height: 10),
-        Expanded(
-          child: _buildHistoryTableSide(
-            summary,
-            clientName: selectedClient?.agent.clientName,
-            limit: false,
-          ),
-        ),
       ],
     );
   }
@@ -2465,15 +2579,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFFF7FAFB),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFD8E0E5)),
       ),
       child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
+        spacing: 8,
+        runSpacing: 8,
         children: [
           MetricPill(label: 'Client', value: agent.clientName),
           MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
@@ -2530,7 +2644,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   )
                   : ListView.separated(
                     itemCount: clients.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    separatorBuilder: (_, _) => const SizedBox(height: 6),
                     itemBuilder:
                         (context, index) => _buildClientEntryTile(
                           summary: summary,
@@ -2547,148 +2661,80 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required _TableClientEntry entry,
   }) {
     final selected = entry.agent.clientName == _selectedClientName;
-    final busy = _isBackupBusy(entry.agent.clientName, summary.table);
+    final lastSync = _formatTimestamp(_tableTimestampToken(entry.tableState));
 
     return InkWell(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(8),
       onTap: () => _selectClient(entry.agent.clientName),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.all(14),
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFF7FAFB) : Colors.white,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: selected ? const Color(0xFF9FB6C2) : const Color(0xFFD8E0E5),
           ),
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final stack = constraints.maxWidth < 620;
+            final showSync = constraints.maxWidth >= 640;
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                if (stack) ...[
-                  Text(
+                Expanded(
+                  child: Text(
                     entry.agent.clientName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontWeight: FontWeight.w800,
                       fontSize: 14,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _buildRoleBadge(entry.agent.isMaster),
-                      StatusBadge(
-                        label: entry.tableState.status,
-                        color: _statusColor(entry.tableState.status),
-                      ),
-                    ],
-                  ),
-                ] else
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          entry.agent.clientName,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      _buildRoleBadge(entry.agent.isMaster),
-                      const SizedBox(width: 8),
-                      StatusBadge(
-                        label: entry.tableState.status,
-                        color: _statusColor(entry.tableState.status),
-                      ),
-                    ],
-                  ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    MetricPill(
-                      label: 'Last Sync',
-                      value: _formatTimestamp(entry.tableState.lastSync),
-                    ),
-                    MetricPill(
-                      label: 'Rows',
-                      value: '${entry.tableState.rowCount}',
-                    ),
-                    MetricPill(
-                      label: 'Backup',
-                      value: _formatBytes(entry.tableState.snapshotBytes),
-                    ),
-                  ],
                 ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed:
-                          busy
-                              ? null
-                              : () => _downloadSnapshotFile(
-                                clientName: entry.agent.clientName,
-                                table: summary.table,
-                              ),
-                      icon: const Icon(Icons.download_rounded, size: 16),
-                      label: const Text('Download'),
+                const SizedBox(width: 8),
+                _buildRoleBadge(entry.agent.isMaster, compact: true),
+                const SizedBox(width: 6),
+                StatusBadge(
+                  label: entry.tableState.status,
+                  color: _statusColor(entry.tableState.status),
+                ),
+                if (showSync) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      lastSync,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: Color(0xFF62717C),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed:
-                          busy
-                              ? null
-                              : () => _uploadSnapshotFile(
-                                clientName: entry.agent.clientName,
-                                table: summary.table,
-                              ),
-                      icon: const Icon(Icons.upload_file_rounded, size: 16),
-                      label: const Text('Upload'),
+                  ),
+                ],
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'Open client details',
+                  child: IconButton(
+                    constraints: const BoxConstraints.tightFor(
+                      width: 32,
+                      height: 32,
                     ),
-                    OutlinedButton.icon(
-                      onPressed:
-                          () => _openHistoryDialog(
-                            clientName: entry.agent.clientName,
-                            table: summary.table,
-                          ),
-                      icon: const Icon(Icons.history_rounded, size: 16),
-                      label: const Text('History'),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed:
-                          entry.tableState.enabled
-                              ? () => _triggerJob(
-                                clientName: entry.agent.clientName,
-                                table: summary.table,
-                                direction: 'upload',
-                              )
-                              : null,
-                      icon: const Icon(Icons.north_rounded, size: 16),
-                      label: const Text('Push'),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed:
-                          entry.tableState.enabled
-                              ? () => _triggerJob(
-                                clientName: entry.agent.clientName,
-                                table: summary.table,
-                                direction: 'download',
-                              )
-                              : null,
-                      icon: const Icon(Icons.south_rounded, size: 16),
-                      label: const Text('Pull'),
-                    ),
-                  ],
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    onPressed:
+                        () => _openClientDetailDialog(
+                          summary: summary,
+                          entry: entry,
+                        ),
+                    icon: const Icon(Icons.info_outline_rounded, size: 18),
+                  ),
                 ),
               ],
             );
@@ -2714,14 +2760,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
-          spacing: 12,
-          runSpacing: 12,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             MetricPill(label: 'Client', value: historyLabel),
             MetricPill(label: 'Events', value: '${jobs.length}'),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Expanded(
           child:
               jobs.isEmpty
@@ -2733,7 +2779,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   )
                   : ListView.separated(
                     itemCount: jobs.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    separatorBuilder: (_, _) => const SizedBox(height: 6),
                     itemBuilder: (context, index) => _buildJobCard(jobs[index]),
                   ),
         ),
@@ -2767,10 +2813,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           decoration: BoxDecoration(
             color: const Color(0xFFF7F9F6),
             border: Border.all(color: const Color(0xFFD9DDD8)),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(8),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(8),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: SizedBox(
@@ -2889,9 +2935,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         if (mobileStack) {
           return ListView(
             children: [
-              SizedBox(height: 520, child: _buildTableListCard()),
-              const SizedBox(height: 16),
-              SizedBox(height: 780, child: _buildDetailCard()),
+              SizedBox(height: 460, child: _buildTableListCard()),
+              const SizedBox(height: 10),
+              SizedBox(height: 600, child: _buildDetailCard()),
             ],
           );
         }
@@ -2900,7 +2946,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(flex: 7, child: _buildTableListCard()),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10),
               Expanded(flex: 5, child: _buildDetailCard()),
             ],
           );
@@ -2909,7 +2955,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return Column(
           children: [
             Expanded(flex: 6, child: _buildTableListCard()),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             Expanded(flex: 7, child: _buildDetailCard()),
           ],
         );
@@ -2920,11 +2966,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildJobCard(AdminJob job, {VoidCallback? onOpenSnapshot}) {
     final canOpenSnapshot = (job.snapshotId?.trim().isNotEmpty ?? false);
     final eventTime = _formatTimestamp(job.completedAt ?? job.updatedAt);
+    final message =
+        job.message.isEmpty ? 'No job message recorded.' : job.message;
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(8),
         onTap:
             canOpenSnapshot
                 ? (onOpenSnapshot ?? () => _openJobSnapshotDialog(job))
@@ -2933,22 +2981,65 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           width: double.infinity,
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(color: const Color(0xFFE2D8CB)),
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final stack = constraints.maxWidth < 520;
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                final stack = constraints.maxWidth < 620;
+                final trailing = Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    if (stack) ...[
+                    Text(
+                      job.clientName,
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                    Text(
+                      '${job.progress}%',
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                    Text(
+                      '${job.rowCount} rows',
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontSize: 11.5,
+                      ),
+                    ),
+                    Text(
+                      _formatBytes(job.snapshotBytes),
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontSize: 11.5,
+                      ),
+                    ),
+                    if (canOpenSnapshot)
+                      const Icon(
+                        Icons.table_rows_outlined,
+                        size: 15,
+                        color: Color(0xFF62717C),
+                      ),
+                  ],
+                );
+
+                if (stack) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Wrap(
                         spacing: 8,
-                        runSpacing: 8,
+                        runSpacing: 6,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           StatusBadge(
@@ -2959,106 +3050,77 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             job.direction.toUpperCase(),
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
-                              fontSize: 13,
+                              fontSize: 12,
                             ),
                           ),
                           Text(
                             eventTime,
                             style: const TextStyle(
                               color: Color(0xFF5F6B76),
-                              fontSize: 12,
-                            ),
-                          ),
-                          if (canOpenSnapshot)
-                            const Icon(
-                              Icons.table_rows_outlined,
-                              size: 16,
-                              color: Color(0xFF62717C),
-                            ),
-                        ],
-                      ),
-                    ] else
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          StatusBadge(
-                            label: job.status,
-                            color: _statusColor(job.status),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              job.direction.toUpperCase(),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            eventTime,
-                            style: const TextStyle(
-                              color: Color(0xFF5F6B76),
-                              fontSize: 12,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          if (canOpenSnapshot) ...[
-                            const SizedBox(width: 8),
-                            const Icon(
-                              Icons.table_rows_outlined,
-                              size: 16,
-                              color: Color(0xFF62717C),
-                            ),
-                          ],
                         ],
                       ),
-                    const SizedBox(height: 4),
-                    Text(
-                      job.message.isEmpty
-                          ? 'No job message recorded.'
-                          : job.message,
-                      maxLines: stack ? 2 : 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(height: 1.2, fontSize: 12.5),
+                      const SizedBox(height: 4),
+                      Text(
+                        message,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(height: 1.15, fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                      trailing,
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    StatusBadge(
+                      label: job.status,
+                      color: _statusColor(job.status),
                     ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        Text(
-                          job.clientName,
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                          ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 84,
+                      child: Text(
+                        job.direction.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
                         ),
-                        Text(
-                          '${job.progress}%',
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                          ),
-                        ),
-                        Text(
-                          '${job.rowCount} rows',
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontSize: 12,
-                          ),
-                        ),
-                        Text(
-                          _formatBytes(job.snapshotBytes),
-                          style: const TextStyle(
-                            color: Color(0xFF5F6B76),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
+                    Expanded(
+                      child: Text(
+                        message,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(height: 1.15, fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 154,
+                      child: Text(
+                        eventTime,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: Color(0xFF5F6B76),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    trailing,
                   ],
                 );
               },
@@ -3091,19 +3153,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child:
                   stack
                       ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Wrap(
-                            spacing: 14,
-                            runSpacing: 8,
+                            spacing: 12,
+                            runSpacing: 6,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: footerItems,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 8),
                           _buildBackendStatusIndicator(),
                         ],
                       )
@@ -3111,13 +3173,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         children: [
                           Expanded(
                             child: Wrap(
-                              spacing: 14,
-                              runSpacing: 8,
+                              spacing: 12,
+                              runSpacing: 6,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: footerItems,
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 12),
                           _buildBackendStatusIndicator(),
                         ],
                       ),
@@ -3158,10 +3220,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final profileCompact = screenWidth < 560;
     final pagePadding =
         screenWidth < 480
-            ? const EdgeInsets.all(12)
+            ? const EdgeInsets.all(8)
             : (screenWidth < 760
-                ? const EdgeInsets.all(14)
-                : const EdgeInsets.all(16));
+                ? const EdgeInsets.all(10)
+                : const EdgeInsets.all(12));
     final title =
         _selectedTableName == null
             ? 'SQL Sync'
@@ -3307,14 +3369,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               totalJobs: _jobs.length,
               selectedAgent: _selectedClientName,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             if (_error != null)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
-                margin: const EdgeInsets.only(bottom: 12),
+                margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(8),
                   color: const Color(0xFFFFEEEE),
                 ),
                 child: Text(_error!, style: const TextStyle(color: Colors.red)),

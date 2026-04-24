@@ -26,15 +26,18 @@ class DashboardHeader extends StatelessWidget {
 
         return Container(
           width: double.infinity,
-          padding: EdgeInsets.all(compact ? 14 : 18),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 12,
+            vertical: compact ? 8 : 10,
+          ),
           decoration: BoxDecoration(
             color: const Color(0xFF152630),
-            borderRadius: BorderRadius.circular(compact ? 20 : 24),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(color: const Color(0xFF233A48)),
           ),
           child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               _HeaderBadge(
                 label: isConnected ? 'Backend online' : 'Backend offline',
@@ -101,10 +104,10 @@ class SurfaceCard extends StatelessWidget {
 
         return Container(
           width: double.infinity,
-          padding: EdgeInsets.all(stackHeader ? 14 : 18),
+          padding: EdgeInsets.all(stackHeader ? 10 : 12),
           decoration: BoxDecoration(
             color: const Color(0xFFFCFDFD),
-            borderRadius: BorderRadius.circular(stackHeader ? 18 : 22),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(color: const Color(0xFFD8E0E5)),
             boxShadow: const [
               BoxShadow(
@@ -127,7 +130,7 @@ class SurfaceCard extends StatelessWidget {
                       hasSubtitle: hasSubtitle,
                     ),
                     if (headerTrailing != null) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       headerTrailing!,
                     ],
                   ],
@@ -144,12 +147,12 @@ class SurfaceCard extends StatelessWidget {
                       ),
                     ),
                     if (headerTrailing != null) ...[
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       Flexible(child: headerTrailing!),
                     ],
                   ],
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               if (expandChild) Expanded(child: child) else child,
             ],
           ),
@@ -168,7 +171,7 @@ class StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.11),
         borderRadius: BorderRadius.circular(999),
@@ -179,7 +182,7 @@ class StatusBadge extends StatelessWidget {
         style: TextStyle(
           color: color,
           fontWeight: FontWeight.w700,
-          fontSize: 12,
+          fontSize: 11,
         ),
       ),
     );
@@ -216,27 +219,34 @@ class MetricPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFD8E0E5)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF74818A),
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label ',
+              style: const TextStyle(
+                color: Color(0xFF74818A),
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-        ],
+            TextSpan(
+              text: value,
+              style: const TextStyle(
+                color: Color(0xFF14212B),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12),
       ),
     );
   }
@@ -258,6 +268,7 @@ class InfoLine extends StatelessWidget {
             style: const TextStyle(
               color: Color(0xFF6B7780),
               fontWeight: FontWeight.w700,
+              fontSize: 12,
             ),
           ),
           TextSpan(
@@ -265,6 +276,7 @@ class InfoLine extends StatelessWidget {
             style: const TextStyle(
               color: Color(0xFF14212B),
               fontWeight: FontWeight.w800,
+              fontSize: 12,
             ),
           ),
         ],
@@ -282,10 +294,10 @@ class EmptyStateCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFF9FBFC),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFD8E0E5)),
       ),
       child: Text(
@@ -314,13 +326,17 @@ class _SurfaceCardHeading extends StatelessWidget {
       children: [
         Text(
           title,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
         if (hasSubtitle) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             subtitle,
-            style: const TextStyle(color: Color(0xFF62717C), height: 1.42),
+            style: const TextStyle(
+              color: Color(0xFF62717C),
+              fontSize: 12,
+              height: 1.3,
+            ),
           ),
         ],
       ],
@@ -342,7 +358,7 @@ class _HeaderBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(999),
@@ -352,7 +368,7 @@ class _HeaderBadge extends StatelessWidget {
         style: TextStyle(
           color: textColor,
           fontWeight: FontWeight.w700,
-          fontSize: 12,
+          fontSize: 11.5,
         ),
       ),
     );

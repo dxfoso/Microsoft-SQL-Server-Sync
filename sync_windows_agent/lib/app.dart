@@ -36,6 +36,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   static const SyncClientState _defaultClientState = SyncClientState(
     isMaster: true,
     historyLimit: kDefaultHistoryLimit,
+    autoSyncIntervalMinutes: kDefaultAutoSyncIntervalMinutes,
     tables: {},
   );
 
