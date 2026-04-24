@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'agent_page.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
+import 'window_settings.dart';
 
 class SyncWindowsAgentApp extends StatefulWidget {
   const SyncWindowsAgentApp({super.key, this.autoLoadOnStart = true});
@@ -32,6 +33,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   bool _restoringSession = true;
   bool _submittingLogin = false;
   bool _showPassword = false;
+  bool _startMinimized = false;
+  bool _startOnStartup = false;
 
   static const SyncClientState _defaultClientState = SyncClientState(
     isMaster: true,
@@ -61,6 +64,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
             ? store.rememberedLoginName!.trim()
             : null;
     _rememberedLoginPassword = store.rememberedLoginPassword ?? '';
+    _startMinimized = store.startMinimized;
+    _startOnStartup =
+        store.startOnStartup ||
+        WindowsAgentWindowSettings.isStartOnStartupEnabledSync();
     _usernameController.text = _rememberedLoginName ?? '';
     _passwordController.text = _rememberedLoginPassword ?? '';
     _clientName =
@@ -78,6 +85,25 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     } else {
       _restoringSession = false;
     }
+    if (_startMinimized) {
+      _minimizeAfterFirstFrame();
+    }
+    if (_startOnStartup &&
+        !WindowsAgentWindowSettings.isStartOnStartupEnabledSync()) {
+      unawaited(
+        WindowsAgentWindowSettings.setStartOnStartup(true).catchError((_) {}),
+      );
+    }
+  }
+
+  void _minimizeAfterFirstFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 500), () async {
+          await WindowsAgentWindowSettings.minimizeWindow();
+        }).catchError((_) {}),
+      );
+    });
   }
 
   void _scheduleSave() {
@@ -89,6 +115,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     final store = SyncAppStateStore(
       lastClientName: _clientName,
       clients: _syncStatesByClient,
+      startMinimized: _startMinimized,
+      startOnStartup: _startOnStartup,
       authToken: _authToken,
       accountUsername: _accountUsername,
       accountEmail: _accountEmail,
@@ -115,6 +143,31 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       _clientName = nextName;
     });
     _scheduleSave();
+  }
+
+  void _updateStartMinimized(bool value) {
+    if (value == _startMinimized) {
+      return;
+    }
+    setState(() {
+      _startMinimized = value;
+    });
+    _scheduleSave();
+  }
+
+  Future<void> _updateStartOnStartup(bool value) async {
+    await WindowsAgentWindowSettings.setStartOnStartup(value);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _startOnStartup = value;
+    });
+    _scheduleSave();
+  }
+
+  Future<void> _minimizeWindow() async {
+    await WindowsAgentWindowSettings.minimizeWindow();
   }
 
   void _updateSyncStateForClient(SyncClientState state) {
@@ -547,6 +600,11 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 onClientNameChanged: _updateClientName,
                 initialSyncState: _stateForClient(_clientName),
                 onSyncStateChanged: _updateSyncStateForClient,
+                startMinimized: _startMinimized,
+                startOnStartup: _startOnStartup,
+                onStartMinimizedChanged: _updateStartMinimized,
+                onStartOnStartupChanged: _updateStartOnStartup,
+                onMinimizeWindow: _minimizeWindow,
               ),
     );
   }

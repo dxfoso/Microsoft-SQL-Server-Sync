@@ -263,6 +263,8 @@ class SyncAppStateStore {
   const SyncAppStateStore({
     required this.lastClientName,
     required this.clients,
+    this.startMinimized = false,
+    this.startOnStartup = false,
     this.authToken,
     this.accountUsername,
     this.accountEmail,
@@ -273,6 +275,8 @@ class SyncAppStateStore {
 
   final String lastClientName;
   final Map<String, SyncClientState> clients;
+  final bool startMinimized;
+  final bool startOnStartup;
   final String? authToken;
   final String? accountUsername;
   final String? accountEmail;
@@ -300,6 +304,8 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        startMinimized: false,
+        startOnStartup: false,
         authToken: null,
         accountUsername: null,
         accountEmail: null,
@@ -316,6 +322,8 @@ class SyncAppStateStore {
         return const SyncAppStateStore(
           lastClientName: 'Local Agent',
           clients: {},
+          startMinimized: false,
+          startOnStartup: false,
           authToken: null,
           accountUsername: null,
           accountEmail: null,
@@ -331,6 +339,8 @@ class SyncAppStateStore {
       );
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        startMinimized: json['startMinimized'] as bool? ?? false,
+        startOnStartup: json['startOnStartup'] as bool? ?? false,
         authToken: json['authToken'] as String?,
         accountUsername:
             json['accountUsername'] as String? ??
@@ -353,6 +363,8 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        startMinimized: false,
+        startOnStartup: false,
         authToken: null,
         accountUsername: null,
         accountEmail: null,
@@ -369,6 +381,8 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        startMinimized: false,
+        startOnStartup: false,
         authToken: null,
         accountUsername: null,
         accountEmail: null,
@@ -385,6 +399,8 @@ class SyncAppStateStore {
         return const SyncAppStateStore(
           lastClientName: 'Local Agent',
           clients: {},
+          startMinimized: false,
+          startOnStartup: false,
           authToken: null,
           accountUsername: null,
           accountEmail: null,
@@ -400,6 +416,8 @@ class SyncAppStateStore {
       );
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        startMinimized: json['startMinimized'] as bool? ?? false,
+        startOnStartup: json['startOnStartup'] as bool? ?? false,
         authToken: json['authToken'] as String?,
         accountUsername:
             json['accountUsername'] as String? ??
@@ -422,6 +440,8 @@ class SyncAppStateStore {
       return const SyncAppStateStore(
         lastClientName: 'Local Agent',
         clients: {},
+        startMinimized: false,
+        startOnStartup: false,
         authToken: null,
         accountUsername: null,
         accountEmail: null,
@@ -441,6 +461,8 @@ class SyncAppStateStore {
     final file = _stateFile();
     final payload = jsonEncode({
       'lastClientName': lastClientName,
+      'startMinimized': startMinimized,
+      'startOnStartup': startOnStartup,
       'authToken': authToken,
       'accountUsername': accountUsername,
       'accountEmail': accountEmail,

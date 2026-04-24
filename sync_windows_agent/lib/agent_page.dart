@@ -24,6 +24,11 @@ class AgentDashboardPage extends StatefulWidget {
     required this.onClientNameChanged,
     required this.initialSyncState,
     required this.onSyncStateChanged,
+    required this.startMinimized,
+    required this.startOnStartup,
+    required this.onStartMinimizedChanged,
+    required this.onStartOnStartupChanged,
+    required this.onMinimizeWindow,
   });
 
   final bool autoLoadOnStart;
@@ -37,6 +42,11 @@ class AgentDashboardPage extends StatefulWidget {
   final ValueChanged<String> onClientNameChanged;
   final SyncClientState initialSyncState;
   final ValueChanged<SyncClientState> onSyncStateChanged;
+  final bool startMinimized;
+  final bool startOnStartup;
+  final ValueChanged<bool> onStartMinimizedChanged;
+  final Future<void> Function(bool value) onStartOnStartupChanged;
+  final Future<void> Function() onMinimizeWindow;
 
   @override
   State<AgentDashboardPage> createState() => _AgentDashboardPageState();
@@ -2616,8 +2626,12 @@ SELECT (
       text: _syncState.autoSyncIntervalMinutes.toString(),
     );
     var isMaster = _isMasterClient;
+    var startMinimized = widget.startMinimized;
+    var startOnStartup = widget.startOnStartup;
+    var saving = false;
     String? historyLimitError;
     String? autoSyncIntervalError;
+    String? startupError;
 
     _SqlConnectionProfile readDialogProfile() => _SqlConnectionProfile(
       server: serverController.text.trim(),
@@ -2731,6 +2745,56 @@ SELECT (
                         ),
                       ),
                       const SizedBox(height: 12),
+                      SwitchListTile(
+                        value: startMinimized,
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Start Minimized'),
+                        subtitle: const Text(
+                          'Open the app minimized to the taskbar after launch.',
+                        ),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            startMinimized = value;
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        value: startOnStartup,
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Start On Windows Startup'),
+                        subtitle: const Text(
+                          'Launch SQL Sync Agent when this Windows user signs in.',
+                        ),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            startOnStartup = value;
+                            startupError = null;
+                          });
+                        },
+                      ),
+                      if (startupError != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          startupError!,
+                          style: const TextStyle(
+                            color: Color(0xFFC53030),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                          onPressed: widget.onMinimizeWindow,
+                          icon: const Icon(Icons.minimize_rounded, size: 16),
+                          label: const Text('Minimize Now'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       CheckboxListTile(
                         value: isMaster,
                         contentPadding: EdgeInsets.zero,
@@ -2762,6 +2826,10 @@ SELECT (
                           ),
                           _InfoLine(label: 'Role', value: _roleLabel(isMaster)),
                           _InfoLine(
+                            label: 'Startup',
+                            value: startOnStartup ? 'On' : 'Off',
+                          ),
+                          _InfoLine(
                             label: 'Interval',
                             value:
                                 '${autoSyncIntervalController.text.trim().isEmpty ? kDefaultAutoSyncIntervalMinutes.toString() : autoSyncIntervalController.text.trim()} min',
@@ -2787,70 +2855,105 @@ SELECT (
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () async {
-                    final nextHistoryLimit = int.tryParse(
-                      historyLimitController.text.trim(),
-                    );
-                    if (nextHistoryLimit == null ||
-                        nextHistoryLimit < 1 ||
-                        nextHistoryLimit > kMaxHistoryLimit) {
-                      setDialogState(() {
-                        historyLimitError =
-                            'Enter a number between 1 and $kMaxHistoryLimit.';
-                        autoSyncIntervalError = null;
-                      });
-                      return;
-                    }
+                  onPressed:
+                      saving
+                          ? null
+                          : () async {
+                            final nextHistoryLimit = int.tryParse(
+                              historyLimitController.text.trim(),
+                            );
+                            if (nextHistoryLimit == null ||
+                                nextHistoryLimit < 1 ||
+                                nextHistoryLimit > kMaxHistoryLimit) {
+                              setDialogState(() {
+                                historyLimitError =
+                                    'Enter a number between 1 and $kMaxHistoryLimit.';
+                                autoSyncIntervalError = null;
+                                startupError = null;
+                              });
+                              return;
+                            }
 
-                    final nextAutoSyncInterval = int.tryParse(
-                      autoSyncIntervalController.text.trim(),
-                    );
-                    if (nextAutoSyncInterval == null ||
-                        nextAutoSyncInterval < kMinAutoSyncIntervalMinutes ||
-                        nextAutoSyncInterval > kMaxAutoSyncIntervalMinutes) {
-                      setDialogState(() {
-                        historyLimitError = null;
-                        autoSyncIntervalError =
-                            'Enter a number between $kMinAutoSyncIntervalMinutes and $kMaxAutoSyncIntervalMinutes.';
-                      });
-                      return;
-                    }
+                            final nextAutoSyncInterval = int.tryParse(
+                              autoSyncIntervalController.text.trim(),
+                            );
+                            if (nextAutoSyncInterval == null ||
+                                nextAutoSyncInterval <
+                                    kMinAutoSyncIntervalMinutes ||
+                                nextAutoSyncInterval >
+                                    kMaxAutoSyncIntervalMinutes) {
+                              setDialogState(() {
+                                historyLimitError = null;
+                                autoSyncIntervalError =
+                                    'Enter a number between $kMinAutoSyncIntervalMinutes and $kMaxAutoSyncIntervalMinutes.';
+                                startupError = null;
+                              });
+                              return;
+                            }
 
-                    final dialogProfile = readDialogProfile();
-                    final clientName =
-                        widget.clientNameLocked
-                            ? widget.clientName
-                            : (clientNameController.text.trim().isEmpty
-                                ? 'Local Agent'
-                                : clientNameController.text.trim());
+                            final dialogProfile = readDialogProfile();
+                            final clientName =
+                                widget.clientNameLocked
+                                    ? widget.clientName
+                                    : (clientNameController.text.trim().isEmpty
+                                        ? 'Local Agent'
+                                        : clientNameController.text.trim());
 
-                    setState(() {
-                      _serverController.text = dialogProfile.server;
-                      _selectedDatabase = null;
-                      _tables = const [];
-                      _selectedTable = null;
-                      _tableColumns = const [];
-                      _tableRows = const [];
-                      _hasMoreRows = false;
-                      _rowOffset = 0;
-                      _errorMessage = null;
-                    });
-                    Navigator.of(context).pop();
-                    _applyHistoryLimit(nextHistoryLimit);
-                    _applyAutoSyncInterval(nextAutoSyncInterval);
-                    widget.onClientNameChanged(clientName);
-                    final enabledTables = _setClientRole(isMaster);
+                            setDialogState(() {
+                              saving = true;
+                              historyLimitError = null;
+                              autoSyncIntervalError = null;
+                              startupError = null;
+                            });
 
-                    await _loadDatabases(
-                      profile: dialogProfile,
-                      loadTables: true,
-                      preserveSelection: false,
-                    );
-                    if (enabledTables.isNotEmpty) {
-                      await _queueEnabledRoleJobs(forceTables: enabledTables);
-                    }
-                  },
-                  child: const Text('Save'),
+                            try {
+                              if (startOnStartup != widget.startOnStartup) {
+                                await widget.onStartOnStartupChanged(
+                                  startOnStartup,
+                                );
+                              }
+                              widget.onStartMinimizedChanged(startMinimized);
+                            } catch (error) {
+                              setDialogState(() {
+                                saving = false;
+                                startupError = error.toString();
+                              });
+                              return;
+                            }
+
+                            if (!context.mounted || !mounted) {
+                              return;
+                            }
+
+                            setState(() {
+                              _serverController.text = dialogProfile.server;
+                              _selectedDatabase = null;
+                              _tables = const [];
+                              _selectedTable = null;
+                              _tableColumns = const [];
+                              _tableRows = const [];
+                              _hasMoreRows = false;
+                              _rowOffset = 0;
+                              _errorMessage = null;
+                            });
+                            Navigator.of(context).pop();
+                            _applyHistoryLimit(nextHistoryLimit);
+                            _applyAutoSyncInterval(nextAutoSyncInterval);
+                            widget.onClientNameChanged(clientName);
+                            final enabledTables = _setClientRole(isMaster);
+
+                            await _loadDatabases(
+                              profile: dialogProfile,
+                              loadTables: true,
+                              preserveSelection: false,
+                            );
+                            if (enabledTables.isNotEmpty) {
+                              await _queueEnabledRoleJobs(
+                                forceTables: enabledTables,
+                              );
+                            }
+                          },
+                  child: Text(saving ? 'Saving...' : 'Save'),
                 ),
               ],
             );
