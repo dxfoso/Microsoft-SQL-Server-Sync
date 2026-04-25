@@ -61,7 +61,7 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
 
     final decoded = jsonDecode(response.body);
@@ -88,7 +88,7 @@ class AgentControlPlaneClient {
   Future<AgentAuthenticatedUser> fetchCurrentUser() async {
     final response = await _client.get(_uri('/auth/me'), headers: _headers());
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
 
     final decoded = jsonDecode(response.body);
@@ -121,7 +121,7 @@ class AgentControlPlaneClient {
       headers: _headers(json: true),
     );
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
     setAuthToken(null);
   }
@@ -165,7 +165,7 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
 
     final decoded = jsonDecode(response.body);
@@ -201,7 +201,7 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
 
     final decoded = jsonDecode(response.body);
@@ -282,7 +282,7 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
 
     final decoded = jsonDecode(response.body);
@@ -306,7 +306,7 @@ class AgentControlPlaneClient {
       headers: _headers(),
     );
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
 
     final decoded = jsonDecode(response.body);
@@ -356,13 +356,13 @@ class AgentControlPlaneClient {
     );
 
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
   }
 
   RemoteSyncJob _parseJobResponse(http.Response response, String phase) {
     if (response.statusCode != 200) {
-      throw AgentControlPlaneException(_errorMessageFromResponse(response));
+      throw _exceptionFromResponse(response);
     }
 
     final decoded = jsonDecode(response.body);
@@ -382,6 +382,9 @@ class AgentControlPlaneClient {
   }
 
   String _errorMessageFromResponse(http.Response response) {
+    if (response.statusCode == 503) {
+      return 'Control plane is temporarily unavailable. Retrying automatically.';
+    }
     try {
       final decoded = jsonDecode(response.body);
       if (decoded is Map && decoded['error'] is String) {
@@ -389,6 +392,13 @@ class AgentControlPlaneClient {
       }
     } catch (_) {}
     return 'Request failed with ${response.statusCode}.';
+  }
+
+  AgentControlPlaneException _exceptionFromResponse(http.Response response) {
+    return AgentControlPlaneException(
+      _errorMessageFromResponse(response),
+      statusCode: response.statusCode,
+    );
   }
 }
 
@@ -547,9 +557,10 @@ class UploadSnapshotResult {
 }
 
 class AgentControlPlaneException implements Exception {
-  const AgentControlPlaneException(this.message);
+  const AgentControlPlaneException(this.message, {this.statusCode});
 
   final String message;
+  final int? statusCode;
 
   @override
   String toString() => message;

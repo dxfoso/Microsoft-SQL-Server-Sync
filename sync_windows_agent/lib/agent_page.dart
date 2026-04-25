@@ -1488,6 +1488,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
+  bool _isTemporaryControlPlaneUnavailable(Object error) {
+    return error is AgentControlPlaneException && error.statusCode == 503;
+  }
+
+  void _markControlPlaneTemporarilyUnavailable() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _serverConnected = false;
+      _checkingServerConnection = false;
+      _lastServerCheck = DateTime.now();
+      _errorMessage = null;
+    });
+  }
+
   Future<void> _syncWithControlPlane() async {
     if (!mounted || _syncLoopBusy) {
       return;
@@ -1528,11 +1544,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (!mounted) {
         return;
       }
+      final temporaryControlPlaneUnavailable =
+          _isTemporaryControlPlaneUnavailable(error);
       setState(() {
         _serverConnected = false;
         _checkingServerConnection = false;
         _lastServerCheck = DateTime.now();
-        _errorMessage = error.toString();
+        _errorMessage =
+            temporaryControlPlaneUnavailable ? null : error.toString();
       });
     } finally {
       _syncLoopBusy = false;
@@ -1624,6 +1643,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         ),
       );
     } catch (error) {
+      if (_isTemporaryControlPlaneUnavailable(error)) {
+        _markControlPlaneTemporarilyUnavailable();
+        return;
+      }
       await _controlPlaneClient.failJob(
         job.id,
         error.toString(),
@@ -1730,6 +1753,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         ),
       );
     } catch (error) {
+      if (_isTemporaryControlPlaneUnavailable(error)) {
+        _markControlPlaneTemporarilyUnavailable();
+        return;
+      }
       await _controlPlaneClient.failJob(
         job.id,
         error.toString(),
@@ -4376,6 +4403,21 @@ SELECT (
             : (screenWidth < 760
                 ? const EdgeInsets.all(14)
                 : const EdgeInsets.all(16));
+    final controlPlaneColor =
+        _checkingServerConnection
+            ? const Color(0xFFD69E2E)
+            : _serverConnected
+            ? const Color(0xFF2F855A)
+            : const Color(0xFFC53030);
+    final controlPlaneLabel =
+        _checkingServerConnection
+            ? 'checking'
+            : _serverConnected
+            ? 'online'
+            : 'offline';
+    final sqlLabel = _selectedDatabase == null ? 'SQL pending' : 'SQL ready';
+    final headerStatus =
+        'Agent $controlPlaneLabel / $sqlLabel / Every ${_syncState.autoSyncIntervalMinutes} min';
 
     return Scaffold(
       appBar: PreferredSize(
@@ -4400,15 +4442,27 @@ SELECT (
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.w800),
                         ),
-                        Text(
-                          '${_roleLabel(_isMasterClient)} / ${_syncState.autoSyncIntervalMinutes} min',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF64727A),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.circle,
+                              color: controlPlaneColor,
+                              size: 7,
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                headerStatus,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF64727A),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -4478,20 +4532,7 @@ SELECT (
           ),
         ),
       ),
-      body: Padding(
-        padding: pagePadding,
-        child: Column(
-          children: [
-            AgentHeroBanner(
-              controlPlaneConnected: _serverConnected,
-              sqlConnected: _selectedDatabase != null,
-              syncIntervalMinutes: _syncState.autoSyncIntervalMinutes,
-            ),
-            const SizedBox(height: 10),
-            Expanded(child: _buildSyncTab()),
-          ],
-        ),
-      ),
+      body: Padding(padding: pagePadding, child: _buildSyncTab()),
       bottomNavigationBar: _buildPinnedSummaryBar(),
     );
   }
