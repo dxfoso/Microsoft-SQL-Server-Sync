@@ -3235,123 +3235,142 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 52,
+        titleSpacing: 12,
         title: Text(
           compactAppBar ? 'SQL Sync' : title,
           overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
         ),
         actions: [
-          IconButton(
-            tooltip: 'Refresh now',
-            onPressed: () => unawaited(_refreshState()),
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.white,
-              side: const BorderSide(color: Color(0xFFD8E0E5)),
+          Container(
+            height: 36,
+            margin: EdgeInsets.only(right: compactAppBar ? 4 : 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: const Color(0xFFD8E0E5)),
             ),
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-          const SizedBox(width: 8),
-          PopupMenuButton<_ProfileMenuAction>(
-            tooltip: 'Profile',
-            position: PopupMenuPosition.under,
-            offset: const Offset(0, 10),
-            onSelected: (value) {
-              switch (value) {
-                case _ProfileMenuAction.settings:
-                  unawaited(_openSettingsDialog());
-                  break;
-                case _ProfileMenuAction.users:
-                  unawaited(_openUserManagementDialog());
-                  break;
-                case _ProfileMenuAction.about:
-                  unawaited(_openAboutDialog());
-                  break;
-                case _ProfileMenuAction.signOut:
-                  widget.onLogout();
-                  break;
-              }
-            },
-            itemBuilder:
-                (context) => [
-                  const PopupMenuItem<_ProfileMenuAction>(
-                    value: _ProfileMenuAction.settings,
-                    child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.settings_outlined),
-                      title: Text('Settings'),
-                      contentPadding: EdgeInsets.zero,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Refresh now',
+                  onPressed: () => unawaited(_refreshState()),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 34,
+                    height: 34,
+                  ),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                ),
+                Container(width: 1, height: 20, color: const Color(0xFFD8E0E5)),
+                PopupMenuButton<_ProfileMenuAction>(
+                  tooltip: 'Profile',
+                  position: PopupMenuPosition.under,
+                  offset: const Offset(0, 8),
+                  onSelected: (value) {
+                    switch (value) {
+                      case _ProfileMenuAction.settings:
+                        unawaited(_openSettingsDialog());
+                        break;
+                      case _ProfileMenuAction.users:
+                        unawaited(_openUserManagementDialog());
+                        break;
+                      case _ProfileMenuAction.about:
+                        unawaited(_openAboutDialog());
+                        break;
+                      case _ProfileMenuAction.signOut:
+                        widget.onLogout();
+                        break;
+                    }
+                  },
+                  itemBuilder:
+                      (context) => [
+                        const PopupMenuItem<_ProfileMenuAction>(
+                          value: _ProfileMenuAction.settings,
+                          child: ListTile(
+                            dense: true,
+                            leading: Icon(Icons.settings_outlined),
+                            title: Text('Settings'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        if (widget.authenticatedUser.canManageUsers)
+                          const PopupMenuItem<_ProfileMenuAction>(
+                            value: _ProfileMenuAction.users,
+                            child: ListTile(
+                              dense: true,
+                              leading: Icon(Icons.manage_accounts_outlined),
+                              title: Text('Users'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        const PopupMenuItem<_ProfileMenuAction>(
+                          value: _ProfileMenuAction.about,
+                          child: ListTile(
+                            dense: true,
+                            leading: Icon(Icons.info_outline),
+                            title: Text('About'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuItem<_ProfileMenuAction>(
+                          value: _ProfileMenuAction.signOut,
+                          child: ListTile(
+                            dense: true,
+                            leading: Icon(Icons.logout_rounded),
+                            title: Text('Sign out'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      ],
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      left: profileCompact ? 7 : 8,
+                      right: 8,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircleAvatar(
+                          radius: 12,
+                          backgroundColor: Color(0xFFEAF3F5),
+                          child: Icon(
+                            Icons.person_outline,
+                            size: 14,
+                            color: Color(0xFF1E6674),
+                          ),
+                        ),
+                        if (!profileCompact) ...[
+                          const SizedBox(width: 7),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 140),
+                            child: Text(
+                              profileLabel,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF17313A),
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(width: 2),
+                        const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 16,
+                          color: Color(0xFF58656B),
+                        ),
+                      ],
                     ),
                   ),
-                  if (widget.authenticatedUser.canManageUsers)
-                    const PopupMenuItem<_ProfileMenuAction>(
-                      value: _ProfileMenuAction.users,
-                      child: ListTile(
-                        dense: true,
-                        leading: Icon(Icons.manage_accounts_outlined),
-                        title: Text('Users'),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
-                  const PopupMenuItem<_ProfileMenuAction>(
-                    value: _ProfileMenuAction.about,
-                    child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.info_outline),
-                      title: Text('About'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                  const PopupMenuItem<_ProfileMenuAction>(
-                    value: _ProfileMenuAction.signOut,
-                    child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.logout_rounded),
-                      title: Text('Sign out'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                ],
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: const Color(0xFFD8E0E5)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircleAvatar(
-                    radius: 14,
-                    backgroundColor: const Color(0xFFEAF3F5),
-                    child: const Icon(
-                      Icons.person_outline,
-                      size: 16,
-                      color: Color(0xFF1E6674),
-                    ),
-                  ),
-                  if (!profileCompact) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      profileLabel,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF17313A),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      size: 18,
-                      color: Color(0xFF58656B),
-                    ),
-                  ],
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          SizedBox(width: compactAppBar ? 4 : 8),
         ],
       ),
       body: Padding(
@@ -3369,7 +3388,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               totalJobs: _jobs.length,
               selectedAgent: _selectedClientName,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             if (_error != null)
               Container(
                 width: double.infinity,

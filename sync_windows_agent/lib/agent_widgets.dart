@@ -25,54 +25,48 @@ class AgentHeroBanner extends StatelessWidget {
                 : const Color(0xFFC53030);
         final sqlColor =
             sqlConnected ? const Color(0xFF2F855A) : const Color(0xFFD69E2E);
+        final statusColor =
+            !controlPlaneConnected
+                ? controlPlaneColor
+                : (sqlConnected ? controlPlaneColor : sqlColor);
+        final statusLabel =
+            '${controlPlaneConnected ? 'Online' : 'Offline'} / ${sqlConnected ? 'SQL ready' : 'SQL pending'}';
 
         return Container(
           width: double.infinity,
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 16 : 20,
-            vertical: compact ? 14 : 16,
+            horizontal: compact ? 10 : 12,
+            vertical: compact ? 8 : 9,
           ),
           decoration: BoxDecoration(
             color: const Color(0xFF152630),
-            borderRadius: BorderRadius.circular(compact ? 20 : 24),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(color: const Color(0xFF233A48)),
           ),
           child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 7,
+            runSpacing: 7,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 7,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
                   color: const Color(0xFF213643),
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(color: const Color(0xFF314855)),
                 ),
                 child: const Text(
-                  'SQL Sync Agent',
+                  'Agent',
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
+                    fontSize: 12,
                   ),
                 ),
               ),
+              AgentStatusPill(label: statusLabel, color: statusColor),
               AgentStatusPill(
-                label:
-                    controlPlaneConnected
-                        ? 'Control Plane Online'
-                        : 'Control Plane Offline',
-                color: controlPlaneColor,
-              ),
-              AgentStatusPill(
-                label: sqlConnected ? 'SQL Ready' : 'SQL Not Ready',
-                color: sqlColor,
-              ),
-              AgentStatusPill(
-                label: 'Sync every $syncIntervalMinutes min',
+                label: 'Every $syncIntervalMinutes min',
                 color: const Color(0xFF4A6A77),
               ),
             ],
@@ -380,7 +374,7 @@ class AgentStatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
@@ -391,7 +385,7 @@ class AgentStatusPill extends StatelessWidget {
         style: TextStyle(
           color: color,
           fontWeight: FontWeight.w700,
-          fontSize: 12,
+          fontSize: 11,
         ),
       ),
     );

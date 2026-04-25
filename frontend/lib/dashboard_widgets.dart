@@ -23,12 +23,17 @@ class DashboardHeader extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 640;
+        final statusLabel = isConnected ? 'Online' : 'Offline';
+        final statusColor =
+            isConnected ? const Color(0xFF173D2A) : const Color(0xFF482222);
+        final statusTextColor =
+            isConnected ? const Color(0xFFB7F2CC) : const Color(0xFFFFD4CE);
 
         return Container(
           width: double.infinity,
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 10 : 12,
-            vertical: compact ? 8 : 10,
+            horizontal: compact ? 8 : 10,
+            vertical: compact ? 6 : 7,
           ),
           decoration: BoxDecoration(
             color: const Color(0xFF152630),
@@ -36,32 +41,17 @@ class DashboardHeader extends StatelessWidget {
             border: Border.all(color: const Color(0xFF233A48)),
           ),
           child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _HeaderBadge(
-                label: isConnected ? 'Backend online' : 'Backend offline',
-                color:
-                    isConnected
-                        ? const Color(0xFF173D2A)
-                        : const Color(0xFF482222),
-                textColor:
-                    isConnected
-                        ? const Color(0xFFB7F2CC)
-                        : const Color(0xFFFFD4CE),
+                label: '$statusLabel / $lastUpdated',
+                color: statusColor,
+                textColor: statusTextColor,
               ),
               _HeaderBadge(
-                label: 'Agents $totalAgents',
-                color: const Color(0xFF1E313D),
-                textColor: const Color(0xFFD7E2E8),
-              ),
-              _HeaderBadge(
-                label: 'Jobs $totalJobs',
-                color: const Color(0xFF1E313D),
-                textColor: const Color(0xFFD7E2E8),
-              ),
-              _HeaderBadge(
-                label: 'Refresh $lastUpdated',
+                label: 'Agents $totalAgents / Jobs $totalJobs',
                 color: const Color(0xFF1E313D),
                 textColor: const Color(0xFFD7E2E8),
               ),
@@ -358,7 +348,7 @@ class _HeaderBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(999),
@@ -368,7 +358,7 @@ class _HeaderBadge extends StatelessWidget {
         style: TextStyle(
           color: textColor,
           fontWeight: FontWeight.w700,
-          fontSize: 11.5,
+          fontSize: 11,
         ),
       ),
     );

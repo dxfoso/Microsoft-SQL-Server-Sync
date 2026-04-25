@@ -4379,45 +4379,98 @@ SELECT (
 
     return Scaffold(
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(72),
+        preferredSize: const Size.fromHeight(52),
         child: Material(
           color: const Color(0xFFF3F5F7),
           child: SafeArea(
             bottom: false,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      widget.clientName,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.clientName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        Text(
+                          '${_roleLabel(_isMasterClient)} / ${_syncState.autoSyncIntervalMinutes} min',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF64727A),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'Settings',
-                    icon: const Icon(Icons.more_vert),
-                    style: IconButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      backgroundColor: Colors.white,
-                      side: const BorderSide(color: Color(0xFFD8E0E5)),
-                    ),
-                    onPressed: _openSettingsDialog,
                   ),
                   SizedBox(width: compactAppBar ? 4 : 8),
-                  IconButton(
-                    tooltip: 'Sign out',
-                    icon: const Icon(Icons.logout_rounded),
-                    style: IconButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      backgroundColor: Colors.white,
-                      side: const BorderSide(color: Color(0xFFD8E0E5)),
+                  PopupMenuButton<String>(
+                    tooltip: 'Agent actions',
+                    position: PopupMenuPosition.under,
+                    offset: const Offset(0, 8),
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'settings':
+                          _openSettingsDialog();
+                          break;
+                        case 'minimize':
+                          unawaited(widget.onMinimizeWindow());
+                          break;
+                        case 'signOut':
+                          widget.onLogout();
+                          break;
+                      }
+                    },
+                    itemBuilder:
+                        (context) => const [
+                          PopupMenuItem<String>(
+                            value: 'settings',
+                            child: ListTile(
+                              dense: true,
+                              leading: Icon(Icons.settings_outlined),
+                              title: Text('Settings'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                          PopupMenuItem<String>(
+                            value: 'minimize',
+                            child: ListTile(
+                              dense: true,
+                              leading: Icon(Icons.minimize_rounded),
+                              title: Text('Minimize'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                          PopupMenuItem<String>(
+                            value: 'signOut',
+                            child: ListTile(
+                              dense: true,
+                              leading: Icon(Icons.logout_rounded),
+                              title: Text('Sign out'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFFD8E0E5)),
+                      ),
+                      child: const Icon(Icons.more_vert, size: 20),
                     ),
-                    onPressed: widget.onLogout,
                   ),
                 ],
               ),
@@ -4434,7 +4487,7 @@ SELECT (
               sqlConnected: _selectedDatabase != null,
               syncIntervalMinutes: _syncState.autoSyncIntervalMinutes,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             Expanded(child: _buildSyncTab()),
           ],
         ),
