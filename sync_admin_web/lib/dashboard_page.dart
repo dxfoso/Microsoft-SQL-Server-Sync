@@ -656,7 +656,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           keyboardType: TextInputType.number,
                           decoration: InputDecoration(
                             labelText: 'Sync Interval (Minutes)',
-                            hintText: '30',
+                            hintText: '15',
                             errorText: autoSyncIntervalError,
                           ),
                         ),
