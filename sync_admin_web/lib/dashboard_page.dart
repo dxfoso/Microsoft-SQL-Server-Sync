@@ -2502,34 +2502,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildMergedDetailBody(_TableAggregateSummary summary) {
-    final selectedClient = _selectedClientEntry;
-
     return DefaultTabController(
       key: ValueKey(summary.table),
       length: 2,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              MetricPill(label: 'Clients', value: '${summary.clientCount}'),
-              MetricPill(
-                label: 'Client',
-                value: selectedClient?.agent.clientName ?? 'All',
-              ),
-              MetricPill(
-                label: 'Last Sync',
-                value: _formatTimestamp(summary.lastSync),
-              ),
-              MetricPill(
-                label: 'Backup',
-                value: _formatBytes(summary.latestSnapshotBytes),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
           const TabBar(
             isScrollable: true,
             tabs: [Tab(text: 'Client'), Tab(text: 'All History')],
@@ -3133,11 +3111,24 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildPinnedSummaryBar() {
     final summary = _selectedTableSummary;
+    final selectedClient = _selectedClientEntry;
+    final tableState = selectedClient?.tableState;
+    final lastSync =
+        tableState == null
+            ? _formatTimestamp(summary?.lastSync ?? '')
+            : _formatTimestamp(_tableTimestampToken(tableState));
+    final backupBytes =
+        tableState?.snapshotBytes ?? summary?.latestSnapshotBytes;
 
     final footerItems = <Widget>[
       InfoLine(label: 'Table', value: summary?.table ?? 'None'),
       InfoLine(label: 'Clients', value: '${summary?.clientCount ?? 0}'),
       InfoLine(label: 'Client', value: _selectedClientName ?? 'All'),
+      InfoLine(label: 'Last Sync', value: lastSync),
+      InfoLine(
+        label: 'Backup',
+        value: backupBytes == null ? '--' : _formatBytes(backupBytes),
+      ),
     ];
 
     return LayoutBuilder(
@@ -3215,7 +3206,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget build(BuildContext context) {
     final state = _state;
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final mobileLayout = screenWidth < 760;
     final compactAppBar = screenWidth < 760;
     final profileCompact = screenWidth < 560;
     final pagePadding =
@@ -3409,7 +3399,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ],
         ),
       ),
-      bottomNavigationBar: mobileLayout ? null : _buildPinnedSummaryBar(),
+      bottomNavigationBar: _buildPinnedSummaryBar(),
     );
   }
 }
