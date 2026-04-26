@@ -768,7 +768,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Color _roleColor(bool isMaster) =>
-      isMaster ? const Color(0xFF2563EB) : const Color(0xFF2F855A);
+      isMaster ? const Color(0xFF2563EB) : const Color(0xFF0F766E);
 
   IconData _roleIcon(bool isMaster) =>
       isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
@@ -780,15 +780,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       case 'Paused':
         return const Color(0xFF718096);
       case 'Failed':
-        return const Color(0xFFC53030);
+        return const Color(0xFFB42318);
       case 'Queued':
       case 'Snapshotting':
       case 'Uploading':
       case 'Downloading':
       case 'Applying':
-        return const Color(0xFFD69E2E);
+        return const Color(0xFFB7791F);
       default:
-        return const Color(0xFF2F855A);
+        return const Color(0xFF0F766E);
     }
   }
 
@@ -887,7 +887,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       ),
       decoration: BoxDecoration(
         color: _roleColor(isMaster).withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2700,9 +2700,9 @@ SELECT (
                           width: double.infinity,
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF5F7F4),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: const Color(0xFFD5DDD2)),
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFDDE3EA)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2711,7 +2711,7 @@ SELECT (
                                 'Client Account',
                                 style: TextStyle(
                                   fontWeight: FontWeight.w800,
-                                  color: Color(0xFF17313A),
+                                  color: Color(0xFF101828),
                                 ),
                               ),
                               const SizedBox(height: 6),
@@ -2734,7 +2734,7 @@ SELECT (
                                 Text(
                                   widget.authenticatedAccountEmail!.trim(),
                                   style: const TextStyle(
-                                    color: Color(0xFF7D878D),
+                                    color: Color(0xFF667085),
                                     fontSize: 12,
                                   ),
                                 ),
@@ -2743,7 +2743,7 @@ SELECT (
                               const Text(
                                 'Client identity is managed by the website and cannot be changed here.',
                                 style: TextStyle(
-                                  color: Color(0xFF58656B),
+                                  color: Color(0xFF667085),
                                   height: 1.35,
                                 ),
                               ),
@@ -2790,7 +2790,7 @@ SELECT (
                         Text(
                           startupError!,
                           style: const TextStyle(
-                            color: Color(0xFFC53030),
+                            color: Color(0xFFB42318),
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
@@ -3007,7 +3007,7 @@ SELECT (
     final statusColor = _statusColor(row.state.status);
 
     return InkWell(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(8),
       onTap: () {
         setState(() {
           _selectedSyncTable = row.table;
@@ -3015,12 +3015,12 @@ SELECT (
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFF0F7F8) : Colors.white,
-          borderRadius: BorderRadius.circular(18),
+          color: selected ? const Color(0xFFE6F4F1) : Colors.white,
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF8CB9BF) : const Color(0xFFD8E0E5),
+            color: selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
           ),
         ),
         child: LayoutBuilder(
@@ -3255,7 +3255,7 @@ SELECT (
       style: const TextStyle(
         fontSize: 13,
         fontWeight: FontWeight.w800,
-        color: Color(0xFF62717C),
+        color: Color(0xFF667085),
       ),
     );
   }
@@ -3268,8 +3268,8 @@ SELECT (
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFD9DDD8)),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3536,12 +3536,15 @@ SELECT (
                             padding: const EdgeInsets.all(10),
                             margin: const EdgeInsets.only(bottom: 12),
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              color: const Color(0xFFFFEEEE),
+                              borderRadius: BorderRadius.circular(8),
+                              color: const Color(0xFFFEF3F2),
+                              border: Border.all(
+                                color: const Color(0xFFF7C9C4),
+                              ),
                             ),
                             child: Text(
                               _errorMessage!,
-                              style: const TextStyle(color: Colors.red),
+                              style: const TextStyle(color: Color(0xFFB42318)),
                             ),
                           ),
                         Expanded(
@@ -3590,7 +3593,7 @@ SELECT (
         return Material(
           color: Colors.transparent,
           child: InkWell(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             onTap:
                 canOpenSnapshot
                     ? () => _openHistorySnapshotDialog(entry)
@@ -3599,8 +3602,8 @@ SELECT (
               width: double.infinity,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFD9DDD8)),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFDDE3EA)),
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -3624,8 +3627,8 @@ SELECT (
                                   label: entry.success ? 'Success' : 'Failed',
                                   color:
                                       entry.success
-                                          ? const Color(0xFF2F855A)
-                                          : const Color(0xFFC53030),
+                                          ? const Color(0xFF0F766E)
+                                          : const Color(0xFFB42318),
                                 ),
                                 Text(
                                   entry.status,
@@ -3645,7 +3648,7 @@ SELECT (
                                   const Icon(
                                     Icons.table_rows_outlined,
                                     size: 16,
-                                    color: Color(0xFF62717C),
+                                    color: Color(0xFF667085),
                                   ),
                               ],
                             ),
@@ -3697,8 +3700,8 @@ SELECT (
                               label: entry.success ? 'Success' : 'Failed',
                               color:
                                   entry.success
-                                      ? const Color(0xFF2F855A)
-                                      : const Color(0xFFC53030),
+                                      ? const Color(0xFF0F766E)
+                                      : const Color(0xFFB42318),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
@@ -3728,7 +3731,7 @@ SELECT (
                                         const Icon(
                                           Icons.table_rows_outlined,
                                           size: 16,
-                                          color: Color(0xFF62717C),
+                                          color: Color(0xFF667085),
                                         ),
                                       ],
                                     ],
@@ -3797,12 +3800,13 @@ SELECT (
             padding: const EdgeInsets.all(10),
             margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: const Color(0xFFFFEEEE),
+              borderRadius: BorderRadius.circular(8),
+              color: const Color(0xFFFEF3F2),
+              border: Border.all(color: const Color(0xFFF7C9C4)),
             ),
             child: Text(
               _errorMessage!,
-              style: const TextStyle(color: Colors.red),
+              style: const TextStyle(color: Color(0xFFB42318)),
             ),
           ),
         Expanded(
@@ -3820,18 +3824,18 @@ SELECT (
       labelText: label,
       isDense: true,
       filled: true,
-      fillColor: const Color(0xFFF6F7F5),
+      fillColor: Colors.white,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: Color(0xFFDDE3EA)),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFD9DDD8)),
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: Color(0xFFDDE3EA)),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF7C8A7A)),
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: Color(0xFF0F766E)),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
     );
@@ -3903,12 +3907,12 @@ SELECT (
 
         return Container(
           decoration: BoxDecoration(
-            color: const Color(0xFFF7F9F6),
-            border: Border.all(color: const Color(0xFFD9DDD8)),
-            borderRadius: BorderRadius.circular(14),
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: const Color(0xFFDDE3EA)),
+            borderRadius: BorderRadius.circular(8),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: SizedBox(
@@ -4057,7 +4061,8 @@ SELECT (
         return Container(
           width: double.infinity,
           decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Color(0xFFC9D2C7))),
+            border: Border(top: BorderSide(color: Color(0xFFDDE3EA))),
+            color: Color(0xFFF6F7F9),
           ),
           child: SafeArea(
             top: false,
@@ -4102,10 +4107,10 @@ SELECT (
   Widget _buildServerStatusIndicator() {
     final color =
         _checkingServerConnection
-            ? const Color(0xFFD69E2E)
+            ? const Color(0xFFB7791F)
             : _serverConnected
-            ? const Color(0xFF2F855A)
-            : const Color(0xFFC53030);
+            ? const Color(0xFF0F766E)
+            : const Color(0xFFB42318);
     final label =
         _checkingServerConnection
             ? 'Checking'
@@ -4152,9 +4157,9 @@ SELECT (
           child: Container(
             width: double.infinity,
             decoration: BoxDecoration(
-              color: const Color(0xFFF7F9F6),
-              border: Border.all(color: const Color(0xFFD9DDD8)),
-              borderRadius: BorderRadius.circular(14),
+              color: const Color(0xFFF8FAFC),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
+              borderRadius: BorderRadius.circular(8),
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -4172,7 +4177,7 @@ SELECT (
                         : MediaQuery.sizeOf(context).height * 0.7;
 
                 return ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(8),
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: SizedBox(
@@ -4318,10 +4323,10 @@ SELECT (
                 : const EdgeInsets.all(16));
     final controlPlaneColor =
         _checkingServerConnection
-            ? const Color(0xFFD69E2E)
+            ? const Color(0xFFB7791F)
             : _serverConnected
-            ? const Color(0xFF2F855A)
-            : const Color(0xFFC53030);
+            ? const Color(0xFF0F766E)
+            : const Color(0xFFB42318);
     final controlPlaneLabel =
         _checkingServerConnection
             ? 'checking'
@@ -4336,7 +4341,7 @@ SELECT (
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(52),
         child: Material(
-          color: const Color(0xFFF3F5F7),
+          color: const Color(0xFFF6F7F9),
           child: SafeArea(
             bottom: false,
             child: Container(
@@ -4433,8 +4438,8 @@ SELECT (
                       height: 36,
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: const Color(0xFFD8E0E5)),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFDDE3EA)),
                       ),
                       child: const Icon(Icons.more_vert, size: 20),
                     ),

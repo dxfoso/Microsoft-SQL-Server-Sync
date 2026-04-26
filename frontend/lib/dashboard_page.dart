@@ -676,7 +676,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         Text(
                           saveError!,
                           style: const TextStyle(
-                            color: Color(0xFFC53030),
+                            color: Color(0xFFB42318),
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
@@ -1067,7 +1067,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   Text(
                                     resetErrorText!,
                                     style: const TextStyle(
-                                      color: Color(0xFFC53030),
+                                      color: Color(0xFFB42318),
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -1253,7 +1253,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         Text(
                           errorText!,
                           style: const TextStyle(
-                            color: Color(0xFFC53030),
+                            color: Color(0xFFB42318),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1289,9 +1289,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                       padding: const EdgeInsets.all(14),
                                       decoration: BoxDecoration(
                                         color: Colors.white,
-                                        borderRadius: BorderRadius.circular(18),
+                                        borderRadius: BorderRadius.circular(8),
                                         border: Border.all(
-                                          color: const Color(0xFFD9DDD8),
+                                          color: const Color(0xFFDDE3EA),
                                         ),
                                       ),
                                       child: Row(
@@ -2203,18 +2203,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     switch (status.toLowerCase()) {
       case 'completed':
       case 'synced':
-        return const Color(0xFF2F855A);
+        return const Color(0xFF0F766E);
       case 'failed':
-        return const Color(0xFFC53030);
+        return const Color(0xFFB42318);
       case 'paused':
         return const Color(0xFF718096);
       default:
-        return const Color(0xFFD69E2E);
+        return const Color(0xFFB7791F);
     }
   }
 
   Color _roleColor(bool isMaster) =>
-      isMaster ? const Color(0xFF2563EB) : const Color(0xFF2F855A);
+      isMaster ? const Color(0xFF2563EB) : const Color(0xFF0F766E);
 
   IconData _roleIcon(bool isMaster) =>
       isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
@@ -2226,7 +2226,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8, vertical: 4),
       decoration: BoxDecoration(
         color: _roleColor(isMaster).withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2576,10 +2576,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFF0F7F8) : Colors.white,
+          color: selected ? const Color(0xFFE6F4F1) : Colors.white,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF8CB9BF) : const Color(0xFFD8E0E5),
+            color: selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
           ),
         ),
         child: LayoutBuilder(
@@ -2643,7 +2643,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           Text(
                             'Last sync ${_formatTimestamp(summary.lastSync)}',
                             style: const TextStyle(
-                              color: Color(0xFF62717C),
+                              color: Color(0xFF667085),
                               fontSize: 12.5,
                             ),
                           ),
@@ -2769,9 +2769,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFB),
+        color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8E0E5)),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Wrap(
         spacing: 8,
@@ -2810,7 +2810,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       style: const TextStyle(
         fontSize: 13,
         fontWeight: FontWeight.w800,
-        color: Color(0xFF62717C),
+        color: Color(0xFF667085),
       ),
     );
   }
@@ -2859,10 +2859,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         constraints: const BoxConstraints(minHeight: 44),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFF7FAFB) : Colors.white,
+          color: selected ? const Color(0xFFE6F4F1) : Colors.white,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF9FB6C2) : const Color(0xFFD8E0E5),
+            color: selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
           ),
         ),
         child: LayoutBuilder(
@@ -2999,8 +2999,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
         return Container(
           decoration: BoxDecoration(
-            color: const Color(0xFFF7F9F6),
-            border: Border.all(color: const Color(0xFFD9DDD8)),
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: const Color(0xFFDDE3EA)),
             borderRadius: BorderRadius.circular(8),
           ),
           child: ClipRRect(
@@ -3348,8 +3348,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return Container(
           width: double.infinity,
           decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Color(0xFFC9D2C7))),
-            color: Color(0xFFF6F7F3),
+            border: Border(top: BorderSide(color: Color(0xFFDDE3EA))),
+            color: Color(0xFFF6F7F9),
           ),
           child: SafeArea(
             top: false,
@@ -3393,7 +3393,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildBackendStatusIndicator() {
     final color =
-        _connected ? const Color(0xFF2F855A) : const Color(0xFFC53030);
+        _connected ? const Color(0xFF0F766E) : const Color(0xFFB42318);
     final label = _connected ? 'Online' : 'Offline';
 
     return Tooltip(
@@ -3448,8 +3448,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             margin: EdgeInsets.only(right: compactAppBar ? 4 : 8),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: const Color(0xFFD8E0E5)),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -3465,7 +3465,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.refresh_rounded, size: 18),
                 ),
-                Container(width: 1, height: 20, color: const Color(0xFFD8E0E5)),
+                Container(width: 1, height: 20, color: const Color(0xFFE4E7EC)),
                 PopupMenuButton<_ProfileMenuAction>(
                   tooltip: 'Profile',
                   position: PopupMenuPosition.under,
@@ -3536,11 +3536,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       children: [
                         const CircleAvatar(
                           radius: 12,
-                          backgroundColor: Color(0xFFEAF3F5),
+                          backgroundColor: Color(0xFFE6F4F1),
                           child: Icon(
                             Icons.person_outline,
                             size: 14,
-                            color: Color(0xFF1E6674),
+                            color: Color(0xFF0F766E),
                           ),
                         ),
                         if (!profileCompact) ...[
@@ -3553,7 +3553,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF17313A),
+                                color: Color(0xFF101828),
                               ),
                             ),
                           ),
@@ -3562,7 +3562,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         const Icon(
                           Icons.keyboard_arrow_down_rounded,
                           size: 16,
-                          color: Color(0xFF58656B),
+                          color: Color(0xFF667085),
                         ),
                       ],
                     ),
@@ -3596,9 +3596,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: const Color(0xFFFFEEEE),
+                  color: const Color(0xFFFEF3F2),
+                  border: Border.all(color: const Color(0xFFF7C9C4)),
                 ),
-                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(color: Color(0xFFB42318)),
+                ),
               ),
             Expanded(
               child:

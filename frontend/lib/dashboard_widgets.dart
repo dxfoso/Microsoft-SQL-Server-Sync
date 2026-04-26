@@ -25,20 +25,18 @@ class DashboardHeader extends StatelessWidget {
         final compact = constraints.maxWidth < 640;
         final statusLabel = isConnected ? 'Online' : 'Offline';
         final statusColor =
-            isConnected ? const Color(0xFF173D2A) : const Color(0xFF482222);
-        final statusTextColor =
-            isConnected ? const Color(0xFFB7F2CC) : const Color(0xFFFFD4CE);
+            isConnected ? const Color(0xFF0F766E) : const Color(0xFFB42318);
 
         return Container(
           width: double.infinity,
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 10,
-            vertical: compact ? 6 : 7,
+            horizontal: compact ? 8 : 12,
+            vertical: compact ? 7 : 9,
           ),
           decoration: BoxDecoration(
-            color: const Color(0xFF152630),
+            color: Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFF233A48)),
+            border: Border.all(color: const Color(0xFFDDE3EA)),
           ),
           child: Wrap(
             spacing: 6,
@@ -48,18 +46,18 @@ class DashboardHeader extends StatelessWidget {
               _HeaderBadge(
                 label: '$statusLabel / $lastUpdated',
                 color: statusColor,
-                textColor: statusTextColor,
+                textColor: statusColor,
               ),
               _HeaderBadge(
                 label: 'Agents $totalAgents / Jobs $totalJobs',
-                color: const Color(0xFF1E313D),
-                textColor: const Color(0xFFD7E2E8),
+                color: const Color(0xFF475467),
+                textColor: const Color(0xFF344054),
               ),
               if (selectedAgent != null && selectedAgent!.trim().isNotEmpty)
                 _HeaderBadge(
                   label: 'Client $selectedAgent',
-                  color: const Color(0xFF1E313D),
-                  textColor: const Color(0xFFD7E2E8),
+                  color: const Color(0xFF2563EB),
+                  textColor: const Color(0xFF1D4ED8),
                 ),
             ],
           ),
@@ -94,18 +92,11 @@ class SurfaceCard extends StatelessWidget {
 
         return Container(
           width: double.infinity,
-          padding: EdgeInsets.all(stackHeader ? 10 : 12),
+          padding: EdgeInsets.all(stackHeader ? 12 : 14),
           decoration: BoxDecoration(
-            color: const Color(0xFFFCFDFD),
+            color: Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFD8E0E5)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0B14212B),
-                blurRadius: 24,
-                offset: Offset(0, 10),
-              ),
-            ],
+            border: Border.all(color: const Color(0xFFDDE3EA)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,7 +155,7 @@ class StatusBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.11),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Text(
@@ -193,7 +184,7 @@ class ProgressStrip extends StatelessWidget {
       child: LinearProgressIndicator(
         value: value,
         minHeight: 5,
-        backgroundColor: const Color(0xFFE7ECE6),
+        backgroundColor: const Color(0xFFE4E7EC),
         valueColor: AlwaysStoppedAnimation<Color>(color),
       ),
     );
@@ -212,8 +203,8 @@ class MetricPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8E0E5)),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Text.rich(
         TextSpan(
@@ -221,14 +212,14 @@ class MetricPill extends StatelessWidget {
             TextSpan(
               text: '$label ',
               style: const TextStyle(
-                color: Color(0xFF74818A),
+                color: Color(0xFF667085),
                 fontWeight: FontWeight.w700,
               ),
             ),
             TextSpan(
               text: value,
               style: const TextStyle(
-                color: Color(0xFF14212B),
+                color: Color(0xFF101828),
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -264,7 +255,7 @@ class InfoLine extends StatelessWidget {
           TextSpan(
             text: value,
             style: const TextStyle(
-              color: Color(0xFF14212B),
+              color: Color(0xFF101828),
               fontWeight: FontWeight.w800,
               fontSize: 12,
             ),
@@ -286,13 +277,13 @@ class EmptyStateCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9FBFC),
+        color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8E0E5)),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Text(
         message,
-        style: const TextStyle(height: 1.45, color: Color(0xFF5B6872)),
+        style: const TextStyle(height: 1.45, color: Color(0xFF667085)),
       ),
     );
   }
@@ -316,14 +307,14 @@ class _SurfaceCardHeading extends StatelessWidget {
       children: [
         Text(
           title,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
         ),
         if (hasSubtitle) ...[
           const SizedBox(height: 2),
           Text(
             subtitle,
             style: const TextStyle(
-              color: Color(0xFF62717C),
+              color: Color(0xFF667085),
               fontSize: 12,
               height: 1.3,
             ),
@@ -350,8 +341,9 @@ class _HeaderBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(999),
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Text(
         label,
