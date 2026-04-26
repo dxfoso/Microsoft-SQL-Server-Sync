@@ -3,7 +3,7 @@ import 'dart:io';
 
 const int kDefaultHistoryLimit = 5;
 const int kMaxHistoryLimit = 100;
-const int kDefaultAutoSyncIntervalMinutes = 30;
+const int kDefaultAutoSyncIntervalMinutes = 15;
 const int kMinAutoSyncIntervalMinutes = 1;
 const int kMaxAutoSyncIntervalMinutes = 1440;
 

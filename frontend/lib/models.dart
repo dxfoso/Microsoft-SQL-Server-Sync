@@ -146,7 +146,7 @@ class AdminAgent {
       isMaster: json['isMaster'] as bool? ?? true,
       historyLimit: (json['historyLimit'] as num? ?? 5).round(),
       autoSyncIntervalMinutes:
-          (json['autoSyncIntervalMinutes'] as num? ?? 30).round(),
+          (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),
       serverConnected: json['serverConnected'] as bool? ?? false,
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',

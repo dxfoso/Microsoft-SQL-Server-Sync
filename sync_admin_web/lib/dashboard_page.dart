@@ -12,7 +12,7 @@ import 'models.dart';
 const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
 const int _defaultHistoryLimit = 5;
 const int _maxHistoryLimit = 100;
-const int _defaultAutoSyncIntervalMinutes = 30;
+const int _defaultAutoSyncIntervalMinutes = 15;
 const int _minAutoSyncIntervalMinutes = 1;
 const int _maxAutoSyncIntervalMinutes = 1440;
 const String _buildCommitHash = String.fromEnvironment(
