@@ -113,6 +113,8 @@ class AdminAgent {
     required this.database,
     required this.isOnline,
     required this.isMaster,
+    required this.historyLimit,
+    required this.autoSyncIntervalMinutes,
     required this.serverConnected,
     required this.sqlConnected,
     required this.lastHeartbeat,
@@ -126,6 +128,8 @@ class AdminAgent {
   final String database;
   final bool isOnline;
   final bool isMaster;
+  final int historyLimit;
+  final int autoSyncIntervalMinutes;
   final bool serverConnected;
   final bool sqlConnected;
   final String lastHeartbeat;
@@ -140,6 +144,9 @@ class AdminAgent {
       database: json['database'] as String? ?? '',
       isOnline: json['isOnline'] as bool? ?? false,
       isMaster: json['isMaster'] as bool? ?? true,
+      historyLimit: (json['historyLimit'] as num? ?? 5).round(),
+      autoSyncIntervalMinutes:
+          (json['autoSyncIntervalMinutes'] as num? ?? 30).round(),
       serverConnected: json['serverConnected'] as bool? ?? false,
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',

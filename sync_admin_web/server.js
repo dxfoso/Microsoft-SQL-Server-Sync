@@ -13,6 +13,11 @@ const MAX_BODY_SIZE = 100 * 1024 * 1024;
 const SNAPSHOT_TRANSFER_CHUNK_SIZE = 100 * 1024;
 const SNAPSHOT_TRANSFER_ENCODING = "gzip";
 const AGENT_ONLINE_WINDOW_MS = 60 * 1000;
+const DEFAULT_HISTORY_LIMIT = 5;
+const MAX_HISTORY_LIMIT = 100;
+const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 30;
+const MIN_AUTO_SYNC_INTERVAL_MINUTES = 1;
+const MAX_AUTO_SYNC_INTERVAL_MINUTES = 1440;
 const ADMIN_USERNAME = "dxfoso@gmail.com";
 const ADMIN_EMAIL = "dxfoso@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
@@ -59,6 +64,36 @@ function normalizeUsername(value) {
     .replace(/\s+/g, "-")
     .replace(/[^a-z0-9._@-]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function clampInteger(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.round(parsed)));
+}
+
+function normalizeAgentSyncSettings(raw, fallbackIsMaster = true) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  return {
+    isMaster:
+      source.isMaster === undefined
+        ? fallbackIsMaster !== false
+        : Boolean(source.isMaster),
+    historyLimit: clampInteger(
+      source.historyLimit,
+      DEFAULT_HISTORY_LIMIT,
+      1,
+      MAX_HISTORY_LIMIT,
+    ),
+    autoSyncIntervalMinutes: clampInteger(
+      source.autoSyncIntervalMinutes,
+      DEFAULT_AUTO_SYNC_INTERVAL_MINUTES,
+      MIN_AUTO_SYNC_INTERVAL_MINUTES,
+      MAX_AUTO_SYNC_INTERVAL_MINUTES,
+    ),
+  };
 }
 
 function usernameFromEmail(value) {
@@ -283,6 +318,18 @@ function normalizePersistedState(parsed) {
       rawClientIdentity,
       agent?.clientUserId,
     );
+    const rawSyncSettings =
+      agent?.syncSettings && typeof agent.syncSettings === "object"
+        ? agent.syncSettings
+        : {
+            isMaster: agent?.isMaster,
+            historyLimit: agent?.historyLimit,
+            autoSyncIntervalMinutes: agent?.autoSyncIntervalMinutes,
+          };
+    const syncSettings = normalizeAgentSyncSettings(
+      rawSyncSettings,
+      agent?.isMaster !== false,
+    );
     normalized.agents[clientName] = {
       clientName,
       clientUserId: clientUser?.id || (agent?.clientUserId ? String(agent.clientUserId) : null),
@@ -293,7 +340,12 @@ function normalizePersistedState(parsed) {
       server: String(agent?.server || ""),
       database: String(agent?.database || ""),
       isOnline: Boolean(agent?.isOnline),
-      isMaster: agent?.isMaster !== false,
+      isMaster: syncSettings.isMaster,
+      syncSettings,
+      syncSettingsUpdatedAt:
+        agent?.syncSettingsUpdatedAt && agent?.syncSettings
+          ? String(agent.syncSettingsUpdatedAt)
+          : null,
       serverConnected: Boolean(agent?.serverConnected),
       sqlConnected: Boolean(agent?.sqlConnected),
       lastHeartbeat: String(agent?.lastHeartbeat || ""),
@@ -520,6 +572,9 @@ function canAccessClientUser(viewer, clientUser) {
   if (!viewer || !clientUser || clientUser.role !== ROLE_CLIENT) {
     return false;
   }
+  if (viewer.role === ROLE_ADMIN) {
+    return true;
+  }
   return viewer.role === ROLE_OWNER && clientUser.ownerUserId === viewer.id;
 }
 
@@ -541,6 +596,9 @@ function visibleUsersFor(viewer) {
 function viewerCanAccessRecord(viewer, ownerUserId, clientUserId) {
   if (!viewer) {
     return false;
+  }
+  if (viewer.role === ROLE_ADMIN) {
+    return true;
   }
   if (viewer.role === ROLE_OWNER) {
     return ownerUserId === viewer.id;
@@ -707,6 +765,10 @@ function mergeHeartbeatTableState(existingTableState, incomingTableState) {
 
 function ensureAgent(clientName, metadata = {}) {
   if (!state.agents[clientName]) {
+    const syncSettings = normalizeAgentSyncSettings(
+      metadata.syncSettings,
+      metadata.isMaster !== false,
+    );
     state.agents[clientName] = {
       clientName,
       clientUserId: metadata.clientUserId || null,
@@ -715,7 +777,9 @@ function ensureAgent(clientName, metadata = {}) {
       server: "",
       database: "",
       isOnline: false,
-      isMaster: true,
+      isMaster: syncSettings.isMaster,
+      syncSettings,
+      syncSettingsUpdatedAt: null,
       serverConnected: false,
       sqlConnected: false,
       lastHeartbeat: "",
@@ -723,6 +787,15 @@ function ensureAgent(clientName, metadata = {}) {
       tables: {},
     };
   }
+  if (!state.agents[clientName].syncSettings) {
+    state.agents[clientName].syncSettings = normalizeAgentSyncSettings(
+      metadata.syncSettings,
+      state.agents[clientName].isMaster !== false,
+    );
+    state.agents[clientName].syncSettingsUpdatedAt = null;
+  }
+  state.agents[clientName].isMaster =
+    state.agents[clientName].syncSettings.isMaster;
   if (metadata.clientUserId) {
     state.agents[clientName].clientUserId = String(metadata.clientUserId);
   }
@@ -751,6 +824,10 @@ function buildLiveState(viewer) {
       viewerCanAccessRecord(viewer, agent.ownerUserId || null, agent.clientUserId || null),
     )
     .map((agent) => {
+      const syncSettings = normalizeAgentSyncSettings(
+        agent.syncSettings,
+        agent.isMaster !== false,
+      );
       const lastHeartbeat = agent.lastHeartbeat
         ? Date.parse(agent.lastHeartbeat)
         : 0;
@@ -764,7 +841,9 @@ function buildLiveState(viewer) {
         server: agent.server,
         database: agent.database,
         isOnline,
-        isMaster: agent.isMaster !== false,
+        isMaster: syncSettings.isMaster,
+        historyLimit: syncSettings.historyLimit,
+        autoSyncIntervalMinutes: syncSettings.autoSyncIntervalMinutes,
         serverConnected: Boolean(agent.serverConnected),
         sqlConnected: Boolean(agent.sqlConnected),
         lastHeartbeat: agent.lastHeartbeat,
@@ -1512,16 +1591,28 @@ async function handleRequest(req, res) {
     }
     const body = await parseJsonBody(req);
     const clientName = context.user.username;
+    const incomingSyncSettings = normalizeAgentSyncSettings(
+      {
+        isMaster: body.isMaster,
+        historyLimit: body.historyLimit,
+        autoSyncIntervalMinutes: body.autoSyncIntervalMinutes,
+      },
+      body.isMaster !== false,
+    );
 
     const agent = ensureAgent(clientName, {
       clientUserId: context.user.id,
       ownerUserId: context.user.ownerUserId,
+      syncSettings: incomingSyncSettings,
     });
+    if (!agent.syncSettingsUpdatedAt) {
+      agent.syncSettings = incomingSyncSettings;
+    }
+    agent.isMaster = agent.syncSettings.isMaster;
     agent.clientName = clientName;
     agent.machineName = String(body.machineName || userDisplayName(context.user));
     agent.server = String(body.server || "");
     agent.database = String(body.database || "");
-    agent.isMaster = body.isMaster !== undefined ? Boolean(body.isMaster) : true;
     agent.serverConnected = Boolean(body.serverConnected);
     agent.sqlConnected = Boolean(body.sqlConnected);
     agent.lastHeartbeat = nowIso();
@@ -1533,6 +1624,9 @@ async function handleRequest(req, res) {
         if (!normalizedTableState.table) {
           continue;
         }
+        normalizedTableState.direction = agent.syncSettings.isMaster
+          ? "upload"
+          : "download";
         nextTables[normalizedTableState.table] = mergeHeartbeatTableState(
           agent.tables[normalizedTableState.table],
           normalizedTableState,
@@ -1544,8 +1638,73 @@ async function handleRequest(req, res) {
     await queueSave();
     sendJson(res, 200, {
       ok: true,
+      syncSettings: agent.syncSettings,
       jobs: activeJobsForClient(clientName),
     });
+    return;
+  }
+
+  const syncSettingsMatch = pathname.match(/^\/api\/agents\/([^/]+)\/sync-settings$/);
+  if (
+    (req.method === "GET" || req.method === "POST") &&
+    syncSettingsMatch
+  ) {
+    const context = requireAuth(req, res, {
+      allowedRoles: [ROLE_ADMIN, ROLE_OWNER],
+      app: APP_WEB,
+    });
+    if (!context) {
+      return;
+    }
+    const clientIdentity = decodeURIComponent(syncSettingsMatch[1] || "");
+    const clientUser = findClientUserByName(clientIdentity);
+    if (!clientUser || !canAccessClientUser(context.user, clientUser)) {
+      sendJson(res, 403, { error: "permission denied for that client account" });
+      return;
+    }
+    const agent = ensureAgent(clientUser.username, {
+      clientUserId: clientUser.id,
+      ownerUserId: clientUser.ownerUserId,
+    });
+
+    if (req.method === "GET") {
+      sendJson(res, 200, {
+        syncSettings: normalizeAgentSyncSettings(
+          agent.syncSettings,
+          agent.isMaster !== false,
+        ),
+      });
+      return;
+    }
+
+    const body = await parseJsonBody(req);
+    const syncSettings = normalizeAgentSyncSettings(
+      body,
+      agent.syncSettings?.isMaster ?? agent.isMaster !== false,
+    );
+    agent.syncSettings = syncSettings;
+    agent.syncSettingsUpdatedAt = nowIso();
+    agent.isMaster = syncSettings.isMaster;
+
+    const direction = syncSettings.isMaster ? "upload" : "download";
+    agent.tables = Object.fromEntries(
+      Object.entries(agent.tables || {}).map(([table, tableState]) => {
+        const normalizedTableState = normalizeTableState({
+          ...tableState,
+          table,
+        });
+        return [
+          table,
+          {
+            ...normalizedTableState,
+            direction,
+          },
+        ];
+      }),
+    );
+
+    await queueSave();
+    sendJson(res, 200, { ok: true, syncSettings });
     return;
   }
 

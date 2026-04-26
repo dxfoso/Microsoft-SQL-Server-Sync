@@ -12,6 +12,9 @@ import 'models.dart';
 const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
 const int _defaultHistoryLimit = 5;
 const int _maxHistoryLimit = 100;
+const int _defaultAutoSyncIntervalMinutes = 30;
+const int _minAutoSyncIntervalMinutes = 1;
+const int _maxAutoSyncIntervalMinutes = 1440;
 const String _buildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
   defaultValue: 'd6ad13468380fff48127806b860e02c2b8cee659',
@@ -527,10 +530,55 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Future<void> _openSettingsDialog() async {
-    final controller = TextEditingController(text: _historyLimit.toString());
-    String? errorText;
+    final webHistoryController = TextEditingController(
+      text: _historyLimit.toString(),
+    );
+    final agents = List<AdminAgent>.from(_state?.agents ?? const [])
+      ..sort((left, right) => left.clientName.compareTo(right.clientName));
+    AdminAgent? findAgent(String? clientName) {
+      if (clientName == null) {
+        return null;
+      }
+      for (final agent in agents) {
+        if (agent.clientName == clientName) {
+          return agent;
+        }
+      }
+      return null;
+    }
 
-    final nextLimit = await showDialog<int>(
+    var selectedAgent = findAgent(_selectedClientName);
+    selectedAgent ??= agents.isEmpty ? null : agents.first;
+    var selectedClientName = selectedAgent?.clientName;
+    final agentHistoryController = TextEditingController(
+      text: (selectedAgent?.historyLimit ?? _defaultHistoryLimit).toString(),
+    );
+    final autoSyncIntervalController = TextEditingController(
+      text:
+          (selectedAgent?.autoSyncIntervalMinutes ??
+                  _defaultAutoSyncIntervalMinutes)
+              .toString(),
+    );
+    var isMaster = selectedAgent?.isMaster ?? true;
+    var saving = false;
+    String? webHistoryError;
+    String? agentHistoryError;
+    String? autoSyncIntervalError;
+    String? saveError;
+
+    void selectAgent(AdminAgent agent) {
+      selectedAgent = agent;
+      selectedClientName = agent.clientName;
+      agentHistoryController.text = agent.historyLimit.toString();
+      autoSyncIntervalController.text =
+          agent.autoSyncIntervalMinutes.toString();
+      isMaster = agent.isMaster;
+      agentHistoryError = null;
+      autoSyncIntervalError = null;
+      saveError = null;
+    }
+
+    await showDialog<void>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
@@ -538,46 +586,215 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             return AlertDialog(
               title: const Text('Settings'),
               content: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextField(
-                      controller: controller,
-                      autofocus: true,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: 'Keep Last History Items',
-                        hintText: '5',
-                        helperText:
-                            'Choose how many recent history items to keep visible in the history dialog.',
-                        errorText: errorText,
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: webHistoryController,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Web History Items',
+                          hintText: '5',
+                          errorText: webHistoryError,
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 18),
+                      const Text(
+                        'Sync Settings',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 10),
+                      if (agents.isEmpty)
+                        const Text('No client agents are available yet.')
+                      else ...[
+                        DropdownButtonFormField<String>(
+                          value: selectedClientName,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Sync Client',
+                          ),
+                          items: agents
+                              .map(
+                                (agent) => DropdownMenuItem<String>(
+                                  value: agent.clientName,
+                                  child: Text(agent.clientName),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            final agent = findAgent(value);
+                            if (agent == null) {
+                              return;
+                            }
+                            setDialogState(() {
+                              selectAgent(agent);
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        SwitchListTile(
+                          value: isMaster,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Master'),
+                          subtitle: Text(
+                            isMaster
+                                ? 'Uploads snapshots to the website.'
+                                : 'Downloads the latest master snapshots.',
+                          ),
+                          onChanged: (value) {
+                            setDialogState(() {
+                              isMaster = value;
+                            });
+                          },
+                        ),
+                        TextField(
+                          controller: autoSyncIntervalController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Sync Interval (Minutes)',
+                            hintText: '30',
+                            errorText: autoSyncIntervalError,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: agentHistoryController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Agent History Items',
+                            hintText: '5',
+                            errorText: agentHistoryError,
+                          ),
+                        ),
+                      ],
+                      if (saveError != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          saveError!,
+                          style: const TextStyle(
+                            color: Color(0xFFC53030),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: saving ? null : () => Navigator.of(context).pop(),
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () {
-                    final parsed = int.tryParse(controller.text.trim());
-                    if (parsed == null ||
-                        parsed < 1 ||
-                        parsed > _maxHistoryLimit) {
-                      setDialogState(() {
-                        errorText =
-                            'Enter a number between 1 and $_maxHistoryLimit.';
-                      });
-                      return;
-                    }
-                    Navigator.of(context).pop(parsed);
-                  },
-                  child: const Text('Save'),
+                  onPressed:
+                      saving
+                          ? null
+                          : () async {
+                            final nextWebHistoryLimit = int.tryParse(
+                              webHistoryController.text.trim(),
+                            );
+                            if (nextWebHistoryLimit == null ||
+                                nextWebHistoryLimit < 1 ||
+                                nextWebHistoryLimit > _maxHistoryLimit) {
+                              setDialogState(() {
+                                webHistoryError =
+                                    'Enter a number between 1 and $_maxHistoryLimit.';
+                                agentHistoryError = null;
+                                autoSyncIntervalError = null;
+                                saveError = null;
+                              });
+                              return;
+                            }
+
+                            int? nextAgentHistoryLimit;
+                            int? nextAutoSyncInterval;
+                            if (selectedClientName != null) {
+                              nextAgentHistoryLimit = int.tryParse(
+                                agentHistoryController.text.trim(),
+                              );
+                              if (nextAgentHistoryLimit == null ||
+                                  nextAgentHistoryLimit < 1 ||
+                                  nextAgentHistoryLimit > _maxHistoryLimit) {
+                                setDialogState(() {
+                                  webHistoryError = null;
+                                  agentHistoryError =
+                                      'Enter a number between 1 and $_maxHistoryLimit.';
+                                  autoSyncIntervalError = null;
+                                  saveError = null;
+                                });
+                                return;
+                              }
+
+                              nextAutoSyncInterval = int.tryParse(
+                                autoSyncIntervalController.text.trim(),
+                              );
+                              if (nextAutoSyncInterval == null ||
+                                  nextAutoSyncInterval <
+                                      _minAutoSyncIntervalMinutes ||
+                                  nextAutoSyncInterval >
+                                      _maxAutoSyncIntervalMinutes) {
+                                setDialogState(() {
+                                  webHistoryError = null;
+                                  agentHistoryError = null;
+                                  autoSyncIntervalError =
+                                      'Enter a number between $_minAutoSyncIntervalMinutes and $_maxAutoSyncIntervalMinutes.';
+                                  saveError = null;
+                                });
+                                return;
+                              }
+                            }
+
+                            setDialogState(() {
+                              saving = true;
+                              webHistoryError = null;
+                              agentHistoryError = null;
+                              autoSyncIntervalError = null;
+                              saveError = null;
+                            });
+
+                            try {
+                              if (selectedClientName != null &&
+                                  nextAgentHistoryLimit != null &&
+                                  nextAutoSyncInterval != null) {
+                                await _api.updateAgentSyncSettings(
+                                  clientName: selectedClientName!,
+                                  isMaster: isMaster,
+                                  historyLimit: nextAgentHistoryLimit,
+                                  autoSyncIntervalMinutes: nextAutoSyncInterval,
+                                );
+                              }
+                            } catch (error) {
+                              if (!context.mounted) {
+                                return;
+                              }
+                              setDialogState(() {
+                                saving = false;
+                                saveError = error.toString();
+                              });
+                              return;
+                            }
+
+                            if (!mounted || !context.mounted) {
+                              return;
+                            }
+
+                            writeBrowserStorage(
+                              _historyLimitStorageKey,
+                              nextWebHistoryLimit.toString(),
+                            );
+                            setState(() {
+                              _historyLimit = nextWebHistoryLimit;
+                            });
+                            Navigator.of(context).pop();
+                            await _refreshState();
+                          },
+                  child: Text(saving ? 'Saving...' : 'Save'),
                 ),
               ],
             );
@@ -586,16 +803,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       },
     );
 
-    controller.dispose();
-
-    if (!mounted || nextLimit == null || nextLimit == _historyLimit) {
-      return;
-    }
-
-    writeBrowserStorage(_historyLimitStorageKey, nextLimit.toString());
-    setState(() {
-      _historyLimit = nextLimit;
-    });
+    webHistoryController.dispose();
+    agentHistoryController.dispose();
+    autoSyncIntervalController.dispose();
   }
 
   Future<void> _openUserManagementDialog() async {

@@ -869,6 +869,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return enabledTables;
   }
 
+  Set<String> _applyRemoteSyncSettings(RemoteAgentSyncSettings settings) {
+    final enabledTables =
+        settings.isMaster == _isMasterClient
+            ? <String>{}
+            : _setClientRole(settings.isMaster);
+    _applyHistoryLimit(settings.historyLimit);
+    _applyAutoSyncInterval(settings.autoSyncIntervalMinutes);
+    return enabledTables;
+  }
+
   Widget _buildRoleIndicator(bool isMaster, {bool showLabel = true}) {
     return Container(
       padding: EdgeInsets.symmetric(
@@ -1511,10 +1521,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _syncLoopBusy = true;
     try {
-      final jobs = await _controlPlaneClient.heartbeat(
+      final heartbeat = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
         isMaster: _isMasterClient,
+        historyLimit: _syncState.historyLimit,
+        autoSyncIntervalMinutes: _syncState.autoSyncIntervalMinutes,
         server: _serverController.text.trim(),
         database: _selectedDatabase ?? '',
         serverConnected: _serverConnected,
@@ -1527,18 +1539,27 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return;
       }
 
+      final enabledTables = _applyRemoteSyncSettings(heartbeat.syncSettings);
+      if (!mounted) {
+        return;
+      }
+
       setState(() {
         _serverConnected = true;
         _checkingServerConnection = false;
         _lastServerCheck = DateTime.now();
-        _activeJobs = jobs;
+        _activeJobs = heartbeat.jobs;
       });
 
-      for (final job in jobs) {
+      for (final job in heartbeat.jobs) {
         _applyRemoteJobState(job);
       }
 
-      await _queueEnabledRoleJobs();
+      if (enabledTables.isEmpty) {
+        await _queueEnabledRoleJobs();
+      } else {
+        await _queueEnabledRoleJobs(forceTables: enabledTables);
+      }
       await _processPendingJobs();
     } catch (error) {
       if (!mounted) {
@@ -2645,18 +2666,9 @@ SELECT (
     final serverController = TextEditingController(
       text: _serverController.text,
     );
-    final historyLimitController = TextEditingController(
-      text: _syncState.historyLimit.toString(),
-    );
-    final autoSyncIntervalController = TextEditingController(
-      text: _syncState.autoSyncIntervalMinutes.toString(),
-    );
-    var isMaster = _isMasterClient;
     var startMinimized = widget.startMinimized;
     var startOnStartup = widget.startOnStartup;
     var saving = false;
-    String? historyLimitError;
-    String? autoSyncIntervalError;
     String? startupError;
 
     _SqlConnectionProfile readDialogProfile() => _SqlConnectionProfile(
@@ -2744,33 +2756,6 @@ SELECT (
                           decoration: _compactInputDecoration('Client Name'),
                         ),
                       const SizedBox(height: 12),
-                      TextField(
-                        controller: historyLimitController,
-                        keyboardType: TextInputType.number,
-                        decoration: _compactInputDecoration(
-                          'Keep Last History Items',
-                        ).copyWith(
-                          hintText: '$kDefaultHistoryLimit',
-                          helperText:
-                              'Choose how many recent history items to keep for each table.',
-                          errorText: historyLimitError,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: autoSyncIntervalController,
-                        keyboardType: TextInputType.number,
-                        onChanged: (_) => setDialogState(() {}),
-                        decoration: _compactInputDecoration(
-                          'Sync Interval (Minutes)',
-                        ).copyWith(
-                          hintText: '$kDefaultAutoSyncIntervalMinutes',
-                          helperText:
-                              'Queue enabled sync tables every xx minutes.',
-                          errorText: autoSyncIntervalError,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
                       SwitchListTile(
                         value: startMinimized,
                         contentPadding: EdgeInsets.zero,
@@ -2820,27 +2805,6 @@ SELECT (
                           label: const Text('Minimize Now'),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      CheckboxListTile(
-                        value: isMaster,
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        controlAffinity: ListTileControlAffinity.leading,
-                        title: const Text('Master'),
-                        subtitle: Text(
-                          isMaster
-                              ? 'This client uploads table snapshots to the website.'
-                              : 'This client downloads the latest master snapshot and applies it locally.',
-                        ),
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          setDialogState(() {
-                            isMaster = value;
-                          });
-                        },
-                      ),
                       const SizedBox(height: 4),
                       Wrap(
                         spacing: 10,
@@ -2850,15 +2814,9 @@ SELECT (
                             label: 'Auth',
                             value: _useWindowsAuth ? 'Windows' : 'SQL',
                           ),
-                          _InfoLine(label: 'Role', value: _roleLabel(isMaster)),
                           _InfoLine(
                             label: 'Startup',
                             value: startOnStartup ? 'On' : 'Off',
-                          ),
-                          _InfoLine(
-                            label: 'Interval',
-                            value:
-                                '${autoSyncIntervalController.text.trim().isEmpty ? kDefaultAutoSyncIntervalMinutes.toString() : autoSyncIntervalController.text.trim()} min',
                           ),
                           _InfoLine(
                             label: 'Server',
@@ -2885,38 +2843,6 @@ SELECT (
                       saving
                           ? null
                           : () async {
-                            final nextHistoryLimit = int.tryParse(
-                              historyLimitController.text.trim(),
-                            );
-                            if (nextHistoryLimit == null ||
-                                nextHistoryLimit < 1 ||
-                                nextHistoryLimit > kMaxHistoryLimit) {
-                              setDialogState(() {
-                                historyLimitError =
-                                    'Enter a number between 1 and $kMaxHistoryLimit.';
-                                autoSyncIntervalError = null;
-                                startupError = null;
-                              });
-                              return;
-                            }
-
-                            final nextAutoSyncInterval = int.tryParse(
-                              autoSyncIntervalController.text.trim(),
-                            );
-                            if (nextAutoSyncInterval == null ||
-                                nextAutoSyncInterval <
-                                    kMinAutoSyncIntervalMinutes ||
-                                nextAutoSyncInterval >
-                                    kMaxAutoSyncIntervalMinutes) {
-                              setDialogState(() {
-                                historyLimitError = null;
-                                autoSyncIntervalError =
-                                    'Enter a number between $kMinAutoSyncIntervalMinutes and $kMaxAutoSyncIntervalMinutes.';
-                                startupError = null;
-                              });
-                              return;
-                            }
-
                             final dialogProfile = readDialogProfile();
                             final clientName =
                                 widget.clientNameLocked
@@ -2927,8 +2853,6 @@ SELECT (
 
                             setDialogState(() {
                               saving = true;
-                              historyLimitError = null;
-                              autoSyncIntervalError = null;
                               startupError = null;
                             });
 
@@ -2963,21 +2887,13 @@ SELECT (
                               _errorMessage = null;
                             });
                             Navigator.of(context).pop();
-                            _applyHistoryLimit(nextHistoryLimit);
-                            _applyAutoSyncInterval(nextAutoSyncInterval);
                             widget.onClientNameChanged(clientName);
-                            final enabledTables = _setClientRole(isMaster);
 
                             await _loadDatabases(
                               profile: dialogProfile,
                               loadTables: true,
                               preserveSelection: false,
                             );
-                            if (enabledTables.isNotEmpty) {
-                              await _queueEnabledRoleJobs(
-                                forceTables: enabledTables,
-                              );
-                            }
                           },
                   child: Text(saving ? 'Saving...' : 'Save'),
                 ),
@@ -2990,8 +2906,6 @@ SELECT (
 
     clientNameController.dispose();
     serverController.dispose();
-    historyLimitController.dispose();
-    autoSyncIntervalController.dispose();
   }
 
   Widget _buildSyncPanel() {

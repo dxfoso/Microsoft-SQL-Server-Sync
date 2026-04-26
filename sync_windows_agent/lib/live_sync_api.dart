@@ -207,10 +207,12 @@ class AgentControlPlaneClient {
     );
   }
 
-  Future<List<RemoteSyncJob>> heartbeat({
+  Future<HeartbeatResult> heartbeat({
     required String clientName,
     required String machineName,
     required bool isMaster,
+    required int historyLimit,
+    required int autoSyncIntervalMinutes,
     required String server,
     required String database,
     required bool serverConnected,
@@ -225,6 +227,8 @@ class AgentControlPlaneClient {
         'clientName': clientName,
         'machineName': machineName,
         'isMaster': isMaster,
+        'historyLimit': historyLimit,
+        'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
         'server': server,
         'database': database,
         'serverConnected': serverConnected,
@@ -246,12 +250,25 @@ class AgentControlPlaneClient {
     }
 
     final jobs = decoded['jobs'] as List<dynamic>? ?? const [];
-    return jobs
-        .map(
-          (item) =>
-              RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList(growable: false);
+    final syncSettings =
+        decoded['syncSettings'] is Map
+            ? RemoteAgentSyncSettings.fromJson(
+              Map<String, dynamic>.from(decoded['syncSettings'] as Map),
+            )
+            : RemoteAgentSyncSettings(
+              isMaster: isMaster,
+              historyLimit: historyLimit,
+              autoSyncIntervalMinutes: autoSyncIntervalMinutes,
+            );
+    return HeartbeatResult(
+      syncSettings: syncSettings,
+      jobs: jobs
+          .map(
+            (item) =>
+                RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList(growable: false),
+    );
   }
 
   Future<List<RemoteSyncJob>> createJobs({
@@ -612,6 +629,42 @@ class AgentControlPlaneClient {
     return AgentControlPlaneException(
       _errorMessageFromResponse(response),
       statusCode: response.statusCode,
+    );
+  }
+}
+
+class HeartbeatResult {
+  const HeartbeatResult({required this.syncSettings, required this.jobs});
+
+  final RemoteAgentSyncSettings syncSettings;
+  final List<RemoteSyncJob> jobs;
+}
+
+class RemoteAgentSyncSettings {
+  const RemoteAgentSyncSettings({
+    required this.isMaster,
+    required this.historyLimit,
+    required this.autoSyncIntervalMinutes,
+  });
+
+  final bool isMaster;
+  final int historyLimit;
+  final int autoSyncIntervalMinutes;
+
+  factory RemoteAgentSyncSettings.fromJson(Map<String, dynamic> json) {
+    return RemoteAgentSyncSettings(
+      isMaster: json['isMaster'] as bool? ?? true,
+      historyLimit:
+          (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
+              .round()
+              .clamp(1, kMaxHistoryLimit)
+              .toInt(),
+      autoSyncIntervalMinutes:
+          (json['autoSyncIntervalMinutes'] as num? ??
+                  kDefaultAutoSyncIntervalMinutes)
+              .round()
+              .clamp(kMinAutoSyncIntervalMinutes, kMaxAutoSyncIntervalMinutes)
+              .toInt(),
     );
   }
 }

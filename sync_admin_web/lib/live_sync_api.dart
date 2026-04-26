@@ -219,6 +219,27 @@ class LiveSyncApiClient {
     }
   }
 
+  Future<void> updateAgentSyncSettings({
+    required String clientName,
+    required bool isMaster,
+    required int historyLimit,
+    required int autoSyncIntervalMinutes,
+  }) async {
+    final response = await _client.post(
+      _uri('/agents/${Uri.encodeComponent(clientName)}/sync-settings'),
+      headers: _headers(json: true),
+      body: jsonEncode({
+        'isMaster': isMaster,
+        'historyLimit': historyLimit,
+        'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw LiveSyncApiException(_errorMessageFromResponse(response));
+    }
+  }
+
   Future<AdminSnapshotDetail?> fetchLatestSnapshot({
     required String clientName,
     required String table,
