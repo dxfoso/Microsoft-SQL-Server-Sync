@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
+const zlib = require("node:zlib");
 
 const PORT = Number(process.env.PORT || "9001");
 const STATE_FILE =
@@ -9,6 +10,8 @@ const STATE_FILE =
   path.join(process.cwd(), "data", "state.json");
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), "public");
 const MAX_BODY_SIZE = 100 * 1024 * 1024;
+const SNAPSHOT_TRANSFER_CHUNK_SIZE = 100 * 1024;
+const SNAPSHOT_TRANSFER_ENCODING = "gzip";
 const AGENT_ONLINE_WINDOW_MS = 60 * 1000;
 const ADMIN_USERNAME = "dxfoso@gmail.com";
 const ADMIN_EMAIL = "dxfoso@gmail.com";
@@ -667,6 +670,11 @@ function sortJobsDescending(items) {
   );
 }
 
+function publicJobPayload(job) {
+  const { uploadSession, downloadSession, ...payload } = job;
+  return payload;
+}
+
 function normalizeTableState(tableState) {
   return {
     table: String(tableState.table || ""),
@@ -781,12 +789,11 @@ function buildLiveState(viewer) {
     })
     .sort((left, right) => left.clientName.localeCompare(right.clientName));
 
-  const jobs = sortJobsDescending([...state.jobs]).slice(0, 100);
   const visibleJobs = sortJobsDescending(
     state.jobs.filter((job) =>
       viewerCanAccessRecord(viewer, job.ownerUserId || null, job.clientUserId || null),
     ),
-  ).slice(0, 100);
+  ).slice(0, 100).map(publicJobPayload);
   const snapshots = Object.values(state.snapshots)
     .filter((snapshot) =>
       viewerCanAccessRecord(
@@ -1073,6 +1080,151 @@ function serializeSnapshot(snapshot) {
   };
 }
 
+function serializeSnapshotSummary(snapshot) {
+  const normalized = finalizeSnapshot(snapshot);
+  const { rows, ...summary } = normalized;
+  return summary;
+}
+
+function transferChunkCount(byteLength) {
+  return Math.max(1, Math.ceil(byteLength / SNAPSHOT_TRANSFER_CHUNK_SIZE));
+}
+
+function receivedUploadIndexes(session) {
+  return Object.keys(session?.chunks || {})
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item >= 0)
+    .sort((left, right) => left - right);
+}
+
+function receivedUploadBytes(session) {
+  return Object.values(session?.chunks || {}).reduce(
+    (total, chunk) => total + Number(chunk?.bytes || 0),
+    0,
+  );
+}
+
+function uploadSessionStatus(session) {
+  return {
+    uploadId: session.id,
+    chunkSizeBytes: session.chunkSizeBytes,
+    chunkCount: session.chunkCount,
+    compressedBytes: session.compressedBytes,
+    receivedBytes: receivedUploadBytes(session),
+    receivedIndexes: receivedUploadIndexes(session),
+  };
+}
+
+function createSnapshotTransfer(snapshot) {
+  const normalized = finalizeSnapshot(snapshot);
+  const serialized = serializeSnapshotFile(normalized);
+  const compressedBuffer = zlib.gzipSync(serialized.buffer);
+  return {
+    snapshot: {
+      ...normalized,
+      snapshotBytes: serialized.snapshotBytes,
+    },
+    payloadBytes: serialized.buffer.length,
+    compressedBuffer,
+    compressedBytes: compressedBuffer.length,
+    chunkSizeBytes: SNAPSHOT_TRANSFER_CHUNK_SIZE,
+    chunkCount: transferChunkCount(compressedBuffer.length),
+    encoding: SNAPSHOT_TRANSFER_ENCODING,
+  };
+}
+
+function snapshotFromUploadSession(job) {
+  const session = job.uploadSession;
+  if (!session) {
+    throw new Error("upload session not found");
+  }
+
+  const buffers = [];
+  for (let index = 0; index < session.chunkCount; index += 1) {
+    const chunk = session.chunks?.[String(index)];
+    if (!chunk?.data) {
+      throw new Error(`missing upload chunk ${index}`);
+    }
+    buffers.push(Buffer.from(chunk.data, "base64"));
+  }
+
+  const compressedBuffer = Buffer.concat(buffers);
+  if (
+    Number(session.compressedBytes || 0) > 0 &&
+    compressedBuffer.length !== Number(session.compressedBytes)
+  ) {
+    throw new Error("uploaded snapshot byte count does not match manifest");
+  }
+
+  const payloadBuffer = zlib.gunzipSync(compressedBuffer);
+  const payload = JSON.parse(payloadBuffer.toString("utf8"));
+  const columns = Array.isArray(payload.columns)
+    ? payload.columns.map((column) => String(column))
+    : [];
+  const rows = Array.isArray(payload.rows)
+    ? payload.rows.map((row) => normalizeSnapshotRow(row, columns))
+    : [];
+
+  return finalizeSnapshot({
+    id: payload.id || crypto.randomUUID(),
+    clientName: job.clientName,
+    clientUserId: job.clientUserId || null,
+    ownerUserId: job.ownerUserId || null,
+    table: String(payload.table || session.table || job.table),
+    createdAt: String(
+      payload.createdAt || payload.snapshotCreatedAt || session.snapshotCreatedAt || nowIso(),
+    ),
+    rowCount: Number(payload.rowCount || rows.length),
+    checksum: payload.checksum,
+    columns,
+    rows,
+    sourceJobId: job.id,
+  });
+}
+
+function downloadSessionForJob(job, snapshot) {
+  const transfer = createSnapshotTransfer(snapshot);
+  if (
+    job.downloadSession?.snapshotId === transfer.snapshot.id &&
+    job.downloadSession?.snapshotDataBase64
+  ) {
+    return job.downloadSession;
+  }
+
+  const session = {
+    id: crypto.randomUUID(),
+    snapshotId: transfer.snapshot.id,
+    snapshot: serializeSnapshotSummary(transfer.snapshot),
+    encoding: transfer.encoding,
+    chunkSizeBytes: transfer.chunkSizeBytes,
+    chunkCount: transfer.chunkCount,
+    compressedBytes: transfer.compressedBytes,
+    payloadBytes: transfer.payloadBytes,
+    snapshotDataBase64: transfer.compressedBuffer.toString("base64"),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  job.downloadSession = session;
+  return session;
+}
+
+function downloadSessionManifest(session) {
+  const { snapshotDataBase64, ...manifest } = session;
+  return manifest;
+}
+
+function downloadSessionChunk(session, chunkIndex) {
+  const index = Number(chunkIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= session.chunkCount) {
+    throw new Error("chunk index is out of range");
+  }
+
+  const compressedBuffer = Buffer.from(session.snapshotDataBase64, "base64");
+  const start = index * session.chunkSizeBytes;
+  const end = Math.min(start + session.chunkSizeBytes, compressedBuffer.length);
+  return compressedBuffer.subarray(start, end);
+}
+
 function buildSnapshotPreviewRows(snapshot) {
   if (!Array.isArray(snapshot.rows)) {
     return [];
@@ -1111,7 +1263,7 @@ function activeJobsForClient(clientName) {
     state.jobs.filter(
       (job) => job.clientName === clientName && isJobActive(job),
     ),
-  );
+  ).map(publicJobPayload);
 }
 
 async function tryServeStatic(pathname, res) {
@@ -1500,7 +1652,7 @@ async function handleRequest(req, res) {
       })];
     });
     await queueSave();
-    sendJson(res, 201, { jobs });
+    sendJson(res, 201, { jobs: jobs.map(publicJobPayload) });
     return;
   }
 
@@ -1680,9 +1832,19 @@ async function handleRequest(req, res) {
     }
 
     if (
-      ["start", "progress", "upload", "download-snapshot", "complete", "fail"].includes(
-        action,
-      ) &&
+      [
+        "start",
+        "progress",
+        "upload",
+        "upload-chunk-start",
+        "upload-chunk",
+        "upload-chunk-complete",
+        "download-snapshot",
+        "download-snapshot-manifest",
+        "download-snapshot-chunk",
+        "complete",
+        "fail",
+      ].includes(action) &&
       context.user.role !== ROLE_CLIENT
     ) {
       sendJson(res, 403, { error: "client session required" });
@@ -1698,7 +1860,7 @@ async function handleRequest(req, res) {
         message: String(body.message || "Started."),
       });
       await queueSave();
-      sendJson(res, 200, { job });
+      sendJson(res, 200, { job: publicJobPayload(job) });
       return;
     }
 
@@ -1715,7 +1877,158 @@ async function handleRequest(req, res) {
           body.direction !== undefined ? String(body.direction) : job.direction,
       });
       await queueSave();
-      sendJson(res, 200, { job });
+      sendJson(res, 200, { job: publicJobPayload(job) });
+      return;
+    }
+
+    if (req.method === "POST" && action === "upload-chunk-start") {
+      const body = await parseJsonBody(req);
+      const chunkCount = Number(body.chunkCount || 0);
+      const chunkSizeBytes = Number(
+        body.chunkSizeBytes || SNAPSHOT_TRANSFER_CHUNK_SIZE,
+      );
+      const compressedBytes = Number(body.compressedBytes || 0);
+
+      if (
+        !Number.isInteger(chunkCount) ||
+        chunkCount < 1 ||
+        !Number.isInteger(chunkSizeBytes) ||
+        chunkSizeBytes < 1 ||
+        chunkSizeBytes > SNAPSHOT_TRANSFER_CHUNK_SIZE ||
+        !Number.isFinite(compressedBytes) ||
+        compressedBytes < 1
+      ) {
+        sendJson(res, 400, { error: "invalid chunked upload manifest" });
+        return;
+      }
+
+      const requestedUploadId = String(body.uploadId || "").trim();
+      if (
+        !job.uploadSession ||
+        (requestedUploadId && job.uploadSession.id !== requestedUploadId) ||
+        job.uploadSession.chunkCount !== chunkCount ||
+        job.uploadSession.compressedBytes !== compressedBytes
+      ) {
+        job.uploadSession = {
+          id: requestedUploadId || crypto.randomUUID(),
+          table: String(body.table || job.table),
+          snapshotCreatedAt: String(body.snapshotCreatedAt || body.createdAt || nowIso()),
+          rowCount: Number(body.rowCount || 0),
+          snapshotBytes: Number(body.snapshotBytes || 0),
+          compressedBytes,
+          chunkSizeBytes,
+          chunkCount,
+          encoding: SNAPSHOT_TRANSFER_ENCODING,
+          chunks: {},
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        };
+      }
+
+      updateJob(job, {
+        status: "uploading",
+        progress: 70,
+        rowCount: Number(body.rowCount || job.rowCount || 0),
+        message: `Ready to receive ${chunkCount} compressed snapshot chunks.`,
+      });
+      await queueSave();
+      sendJson(res, 200, {
+        job: publicJobPayload(job),
+        ...uploadSessionStatus(job.uploadSession),
+      });
+      return;
+    }
+
+    if (req.method === "POST" && action === "upload-chunk") {
+      const body = await parseJsonBody(req);
+      const session = job.uploadSession;
+      const uploadId = String(body.uploadId || "").trim();
+      const chunkIndex = Number(body.chunkIndex);
+      const chunkData = String(body.chunkData || "");
+
+      if (!session || session.id !== uploadId) {
+        sendJson(res, 404, { error: "upload session not found" });
+        return;
+      }
+      if (
+        !Number.isInteger(chunkIndex) ||
+        chunkIndex < 0 ||
+        chunkIndex >= session.chunkCount
+      ) {
+        sendJson(res, 400, { error: "chunk index is out of range" });
+        return;
+      }
+      if (!chunkData) {
+        sendJson(res, 400, { error: "chunkData is required" });
+        return;
+      }
+
+      const buffer = Buffer.from(chunkData, "base64");
+      if (buffer.length > session.chunkSizeBytes) {
+        sendJson(res, 400, { error: "chunk is larger than the configured size" });
+        return;
+      }
+
+      session.chunks[String(chunkIndex)] = {
+        data: buffer.toString("base64"),
+        bytes: buffer.length,
+        receivedAt: nowIso(),
+      };
+      session.updatedAt = nowIso();
+      const receivedCount = receivedUploadIndexes(session).length;
+      const progress = Math.min(
+        95,
+        Math.max(70, Math.round(70 + (receivedCount / session.chunkCount) * 25)),
+      );
+      updateJob(job, {
+        status: "uploading",
+        progress,
+        rowCount: Number(session.rowCount || job.rowCount || 0),
+        message: `Received snapshot chunk ${receivedCount}/${session.chunkCount}.`,
+      });
+      await queueSave();
+      sendJson(res, 200, {
+        job: publicJobPayload(job),
+        ...uploadSessionStatus(session),
+      });
+      return;
+    }
+
+    if (req.method === "POST" && action === "upload-chunk-complete") {
+      const body = await parseJsonBody(req);
+      const session = job.uploadSession;
+      const uploadId = String(body.uploadId || "").trim();
+
+      if (!session || session.id !== uploadId) {
+        sendJson(res, 404, { error: "upload session not found" });
+        return;
+      }
+      if (receivedUploadIndexes(session).length !== session.chunkCount) {
+        sendJson(res, 409, {
+          error: "upload is missing chunks",
+          ...uploadSessionStatus(session),
+        });
+        return;
+      }
+
+      const snapshot = snapshotFromUploadSession(job);
+      state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
+      job.uploadSession = null;
+      updateJob(job, {
+        status: "completed",
+        progress: 100,
+        completedAt: nowIso(),
+        snapshotId: snapshot.id,
+        snapshotCreatedAt: snapshot.createdAt,
+        snapshotBytes: snapshot.snapshotBytes,
+        rowCount: snapshot.rowCount,
+        message: `Snapshot uploaded with ${snapshot.rowCount} rows in compressed chunks.`,
+      });
+      await queueSave();
+      sendJson(res, 200, {
+        job: publicJobPayload(job),
+        snapshot: serializeSnapshotSummary(snapshot),
+      });
       return;
     }
 
@@ -1753,7 +2066,10 @@ async function handleRequest(req, res) {
         message: `Snapshot uploaded with ${snapshot.rowCount} rows.`,
       });
       await queueSave();
-      sendJson(res, 200, { job, snapshot: serializeSnapshot(snapshot) });
+      sendJson(res, 200, {
+        job: publicJobPayload(job),
+        snapshot: serializeSnapshot(snapshot),
+      });
       return;
     }
 
@@ -1763,12 +2079,75 @@ async function handleRequest(req, res) {
         sendJson(res, 404, { error: "snapshot not found for job" });
         return;
       }
-      sendJson(res, 200, { job, snapshot: serializeSnapshot(snapshot) });
+      sendJson(res, 200, {
+        job: publicJobPayload(job),
+        snapshot: serializeSnapshot(snapshot),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && action === "download-snapshot-manifest") {
+      const snapshot = latestSnapshot(job.sourceClientName || job.clientName, job.table);
+      if (!snapshot) {
+        sendJson(res, 404, { error: "snapshot not found for job" });
+        return;
+      }
+      const session = downloadSessionForJob(job, snapshot);
+      updateJob(job, {
+        status: "downloading",
+        progress: Math.max(Number(job.progress || 0), 40),
+        rowCount: Number(session.snapshot?.rowCount || job.rowCount || 0),
+        message: `Prepared ${session.chunkCount} compressed snapshot chunks for download.`,
+      });
+      await queueSave();
+      sendJson(res, 200, {
+        job: publicJobPayload(job),
+        manifest: downloadSessionManifest(session),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && action === "download-snapshot-chunk") {
+      const session = job.downloadSession;
+      if (!session?.snapshotDataBase64) {
+        sendJson(res, 404, { error: "download session not found" });
+        return;
+      }
+
+      try {
+        const chunkIndex = Number(url.searchParams.get("index"));
+        const chunk = downloadSessionChunk(session, chunkIndex);
+        const progress = Math.min(
+          74,
+          Math.max(
+            40,
+            Math.round(40 + ((chunkIndex + 1) / session.chunkCount) * 34),
+          ),
+        );
+        updateJob(job, {
+          status: "downloading",
+          progress,
+          rowCount: Number(session.snapshot?.rowCount || job.rowCount || 0),
+          message: `Served snapshot chunk ${chunkIndex + 1}/${session.chunkCount}.`,
+        });
+        await queueSave();
+        sendJson(res, 200, {
+          transferId: session.id,
+          chunkIndex,
+          chunkCount: session.chunkCount,
+          chunkData: chunk.toString("base64"),
+        });
+      } catch (error) {
+        sendJson(res, 400, {
+          error: error instanceof Error ? error.message : "invalid chunk request",
+        });
+      }
       return;
     }
 
     if (req.method === "POST" && action === "complete") {
       const body = await parseJsonBody(req);
+      job.downloadSession = null;
       updateJob(job, {
         status: String(body.status || "completed"),
         progress: Number(body.progress || 100),
@@ -1788,12 +2167,14 @@ async function handleRequest(req, res) {
             : Number(job.snapshotBytes || 0),
       });
       await queueSave();
-      sendJson(res, 200, { job });
+      sendJson(res, 200, { job: publicJobPayload(job) });
       return;
     }
 
     if (req.method === "POST" && action === "fail") {
       const body = await parseJsonBody(req);
+      job.uploadSession = null;
+      job.downloadSession = null;
       updateJob(job, {
         status: "failed",
         progress: Number(body.progress || job.progress || 100),
@@ -1802,7 +2183,7 @@ async function handleRequest(req, res) {
         message: String(body.message || "Sync failed."),
       });
       await queueSave();
-      sendJson(res, 200, { job });
+      sendJson(res, 200, { job: publicJobPayload(job) });
       return;
     }
   }

@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -8,6 +11,20 @@ const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
   defaultValue: 'https://sync.velvet-leaf.com/api',
 );
+const int _snapshotTransferChunkSizeBytes = 100 * 1024;
+const int _snapshotTransferMaxAttempts = 10;
+const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
+const List<Duration> _snapshotTransferRetryDelays = <Duration>[
+  Duration(seconds: 1),
+  Duration(seconds: 2),
+  Duration(seconds: 4),
+  Duration(seconds: 8),
+  Duration(seconds: 15),
+  Duration(seconds: 30),
+  Duration(seconds: 60),
+  Duration(seconds: 60),
+  Duration(seconds: 60),
+];
 
 class AgentControlPlaneClient {
   AgentControlPlaneClient({http.Client? client, String? baseUrl})
@@ -133,6 +150,61 @@ class AgentControlPlaneClient {
     } catch (_) {
       return false;
     }
+  }
+
+  bool _isRetryableTransferStatus(int statusCode) {
+    return statusCode == 408 ||
+        statusCode == 429 ||
+        statusCode == 500 ||
+        statusCode == 502 ||
+        statusCode == 503 ||
+        statusCode == 504;
+  }
+
+  Duration _transferRetryDelay(int attempt) {
+    final index =
+        attempt.clamp(0, _snapshotTransferRetryDelays.length - 1).toInt();
+    return _snapshotTransferRetryDelays[index];
+  }
+
+  Future<http.Response> _transferRequestWithRetry(
+    Future<http.Response> Function() request,
+    String phase,
+  ) async {
+    Object? lastError;
+    for (
+      var attempt = 0;
+      attempt < _snapshotTransferMaxAttempts;
+      attempt += 1
+    ) {
+      try {
+        final response = await request().timeout(
+          _snapshotTransferRequestTimeout,
+        );
+        if (!_isRetryableTransferStatus(response.statusCode) ||
+            attempt == _snapshotTransferMaxAttempts - 1) {
+          return response;
+        }
+        lastError = AgentControlPlaneException(
+          _errorMessageFromResponse(response),
+          statusCode: response.statusCode,
+        );
+      } catch (error) {
+        lastError = error;
+        if (attempt == _snapshotTransferMaxAttempts - 1) {
+          throw AgentControlPlaneException(
+            'Control plane connection dropped during $phase. Retrying automatically.',
+            statusCode: 503,
+          );
+        }
+      }
+      await Future<void>.delayed(_transferRetryDelay(attempt));
+    }
+
+    throw AgentControlPlaneException(
+      'Control plane connection dropped during $phase. Retrying automatically. $lastError',
+      statusCode: 503,
+    );
   }
 
   Future<List<RemoteSyncJob>> heartbeat({
@@ -261,24 +333,90 @@ class AgentControlPlaneClient {
     String jobId, {
     required String clientName,
     required String table,
-    required List<String> columns,
-    required List<Map<String, String?>> rows,
     required int rowCount,
     required String snapshotCreatedAt,
     required int snapshotBytes,
+    required String snapshotJson,
   }) async {
-    final response = await _client.post(
-      _uri('/jobs/$jobId/upload'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'clientName': clientName,
-        'table': table,
-        'columns': columns,
-        'rows': rows,
-        'rowCount': rowCount,
-        'snapshotCreatedAt': snapshotCreatedAt,
-        'snapshotBytes': snapshotBytes,
-      }),
+    final payloadBytes = Uint8List.fromList(utf8.encode(snapshotJson));
+    final compressedBytes = Uint8List.fromList(gzip.encode(payloadBytes));
+    final chunkCount =
+        (compressedBytes.length / _snapshotTransferChunkSizeBytes).ceil();
+    final uploadId =
+        '$jobId-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+
+    final startResponse = await _transferRequestWithRetry(
+      () => _client.post(
+        _uri('/jobs/$jobId/upload-chunk-start'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'uploadId': uploadId,
+          'clientName': clientName,
+          'table': table,
+          'rowCount': rowCount,
+          'snapshotCreatedAt': snapshotCreatedAt,
+          'snapshotBytes': snapshotBytes,
+          'compressedBytes': compressedBytes.length,
+          'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
+          'chunkCount': chunkCount,
+          'encoding': 'gzip',
+        }),
+      ),
+      'starting snapshot upload',
+    );
+
+    if (startResponse.statusCode != 200) {
+      throw _exceptionFromResponse(startResponse);
+    }
+
+    final startDecoded = jsonDecode(startResponse.body);
+    if (startDecoded is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected chunked upload start payload.',
+      );
+    }
+    final receivedIndexes =
+        (startDecoded['receivedIndexes'] as List<dynamic>?)
+            ?.map((item) => (item as num).round())
+            .toSet() ??
+        <int>{};
+
+    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      if (receivedIndexes.contains(chunkIndex)) {
+        continue;
+      }
+
+      final start = chunkIndex * _snapshotTransferChunkSizeBytes;
+      final end = start + _snapshotTransferChunkSizeBytes;
+      final chunkBytes = compressedBytes.sublist(
+        start,
+        end > compressedBytes.length ? compressedBytes.length : end,
+      );
+      final chunkResponse = await _transferRequestWithRetry(
+        () => _client.post(
+          _uri('/jobs/$jobId/upload-chunk'),
+          headers: _headers(json: true),
+          body: jsonEncode({
+            'uploadId': uploadId,
+            'chunkIndex': chunkIndex,
+            'chunkData': base64Encode(chunkBytes),
+          }),
+        ),
+        'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
+      );
+
+      if (chunkResponse.statusCode != 200) {
+        throw _exceptionFromResponse(chunkResponse);
+      }
+    }
+
+    final response = await _transferRequestWithRetry(
+      () => _client.post(
+        _uri('/jobs/$jobId/upload-chunk-complete'),
+        headers: _headers(json: true),
+        body: jsonEncode({'uploadId': uploadId}),
+      ),
+      'completing snapshot upload',
     );
 
     if (response.statusCode != 200) {
@@ -301,6 +439,82 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
+    final manifestResponse = await _transferRequestWithRetry(
+      () => _client.get(
+        _uri('/jobs/$jobId/download-snapshot-manifest'),
+        headers: _headers(),
+      ),
+      'starting snapshot download',
+    );
+
+    if (manifestResponse.statusCode == 404) {
+      return _downloadSnapshotLegacy(jobId);
+    }
+    if (manifestResponse.statusCode != 200) {
+      throw _exceptionFromResponse(manifestResponse);
+    }
+
+    final manifestDecoded = jsonDecode(manifestResponse.body);
+    if (manifestDecoded is! Map || manifestDecoded['manifest'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected chunked download manifest payload.',
+      );
+    }
+    final manifest = Map<String, dynamic>.from(
+      manifestDecoded['manifest'] as Map,
+    );
+    final transferId = manifest['id'] as String? ?? '';
+    final chunkCount = (manifest['chunkCount'] as num? ?? 0).round();
+    final compressedBytes = (manifest['compressedBytes'] as num? ?? 0).round();
+
+    if (transferId.isEmpty || chunkCount < 1 || compressedBytes < 1) {
+      throw const AgentControlPlaneException(
+        'Chunked download manifest is incomplete.',
+      );
+    }
+
+    final buffer = BytesBuilder(copy: false);
+    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      final chunkResponse = await _transferRequestWithRetry(
+        () => _client.get(
+          _uri('/jobs/$jobId/download-snapshot-chunk?index=$chunkIndex'),
+          headers: _headers(),
+        ),
+        'downloading snapshot chunk ${chunkIndex + 1} of $chunkCount',
+      );
+
+      if (chunkResponse.statusCode != 200) {
+        throw _exceptionFromResponse(chunkResponse);
+      }
+
+      final chunkDecoded = jsonDecode(chunkResponse.body);
+      if (chunkDecoded is! Map || chunkDecoded['chunkData'] is! String) {
+        throw const AgentControlPlaneException(
+          'Unexpected snapshot chunk payload.',
+        );
+      }
+      buffer.add(base64Decode(chunkDecoded['chunkData'] as String));
+    }
+
+    final compressedPayload = buffer.takeBytes();
+    if (compressedPayload.length != compressedBytes) {
+      throw const AgentControlPlaneException(
+        'Downloaded snapshot byte count does not match the manifest.',
+      );
+    }
+
+    final snapshotJson = utf8.decode(gzip.decode(compressedPayload));
+    final decoded = jsonDecode(snapshotJson);
+    if (decoded is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected decompressed snapshot payload.',
+      );
+    }
+
+    return RemoteSnapshot.fromJson(Map<String, dynamic>.from(decoded));
+  }
+
+  Future<RemoteSnapshot> _downloadSnapshotLegacy(String jobId) async {
     final response = await _client.get(
       _uri('/jobs/$jobId/download-snapshot'),
       headers: _headers(),

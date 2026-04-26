@@ -1615,7 +1615,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job.id,
         status: 'uploading',
         progress: 70,
-        message: 'Uploading snapshot to the control plane.',
+        message: 'Uploading compressed snapshot in 100 KB chunks.',
         rowCount: snapshot.totalRows,
         direction: 'upload',
       );
@@ -1625,11 +1625,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job.id,
         clientName: widget.clientName,
         table: job.table,
-        columns: snapshot.columns,
-        rows: snapshot.rows,
         rowCount: snapshot.totalRows,
         snapshotCreatedAt: snapshot.snapshotCreatedAt,
         snapshotBytes: backupBytes,
+        snapshotJson: backupContent,
       );
 
       _applyRemoteJobState(
@@ -1703,7 +1702,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job.id,
         status: 'downloading',
         progress: 40,
-        message: 'Downloading the latest remote snapshot.',
+        message: 'Downloading compressed snapshot in 100 KB chunks.',
         rowCount: localSnapshot.totalRows,
         direction: 'download',
       );
