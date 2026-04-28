@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -9,6 +10,7 @@ import 'package:file_selector/file_selector.dart';
 import 'agent_widgets.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
+import 'startup_log.dart';
 
 class AgentDashboardPage extends StatefulWidget {
   const AgentDashboardPage({
@@ -29,6 +31,8 @@ class AgentDashboardPage extends StatefulWidget {
     required this.onStartMinimizedChanged,
     required this.onStartOnStartupChanged,
     required this.onMinimizeWindow,
+    required this.initialServer,
+    required this.onServerChanged,
   });
 
   final bool autoLoadOnStart;
@@ -47,6 +51,8 @@ class AgentDashboardPage extends StatefulWidget {
   final ValueChanged<bool> onStartMinimizedChanged;
   final Future<void> Function(bool value) onStartOnStartupChanged;
   final Future<void> Function() onMinimizeWindow;
+  final String initialServer;
+  final ValueChanged<String> onServerChanged;
 
   @override
   State<AgentDashboardPage> createState() => _AgentDashboardPageState();
@@ -56,9 +62,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
 
-  final TextEditingController _serverController = TextEditingController(
-    text: 'localhost',
-  );
+  late final TextEditingController _serverController;
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final AgentControlPlaneClient _controlPlaneClient = AgentControlPlaneClient();
@@ -97,7 +101,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   @override
   void initState() {
     super.initState();
+    logStartupEvent('AgentDashboardPage initState');
     _syncState = widget.initialSyncState;
+    _serverController = TextEditingController(
+      text:
+          widget.initialServer.trim().isEmpty
+              ? 'localhost'
+              : widget.initialServer.trim(),
+    );
     _controlPlaneClient.setAuthToken(widget.authToken);
     _connectionCheckTimer = Timer.periodic(
       const Duration(minutes: 1),
@@ -108,16 +119,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       (_) => unawaited(_syncWithControlPlane()),
     );
     if (widget.autoLoadOnStart) {
+      logStartupEvent('AgentDashboardPage autoLoadOnStart scheduled');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
         }
+        logStartupEvent('AgentDashboardPage autoLoadOnStart refresh');
         unawaited(_refreshConnection(loadTables: true));
       });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        logStartupEvent('AgentDashboardPage initial connection check');
         unawaited(_checkServerConnection());
+        logStartupEvent('AgentDashboardPage initial sync sync');
         unawaited(_syncWithControlPlane());
       }
     });
@@ -364,6 +379,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     bool loadTables = true,
     bool preserveSelection = true,
   }) async {
+    logStartupEvent(
+      'AgentDashboardPage loadDatabases start: ${profile.server}',
+    );
+    final resolvedProfile = await _resolveSqlConnectionProfile(profile);
+    if (!mounted) {
+      return;
+    }
+    logStartupEvent(
+      'AgentDashboardPage loadDatabases resolved: ${resolvedProfile.server}',
+    );
+
     final previousDatabase = _selectedDatabase;
 
     setState(() {
@@ -378,7 +404,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _totalTableRows = 0;
     });
 
-    final result = await _queryDatabases(profile: profile);
+    final result = await _queryDatabases(profile: resolvedProfile);
     if (!mounted) {
       return;
     }
@@ -408,7 +434,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     if (loadTables && selectedDatabase != null) {
       await _loadTables(
-        profile: profile,
+        profile: resolvedProfile,
         database: selectedDatabase,
         autoLoadRows: true,
       );
@@ -790,6 +816,143 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       default:
         return const Color(0xFF0F766E);
     }
+  }
+
+  bool _shouldAutoDetectLocalSqlServer(String server) {
+    final normalized = server.trim().toLowerCase();
+    return normalized.isEmpty ||
+        normalized == 'localhost' ||
+        normalized == '.' ||
+        normalized == '127.0.0.1' ||
+        normalized == '(localdb)\\mssqllocaldb';
+  }
+
+  Future<_SqlConnectionProfile> _resolveSqlConnectionProfile(
+    _SqlConnectionProfile profile,
+  ) async {
+    if (!_shouldAutoDetectLocalSqlServer(profile.server)) {
+      return profile;
+    }
+
+    final detectedServer = await _discoverLocalSqlServer(profile);
+    if (!mounted ||
+        detectedServer == null ||
+        detectedServer.trim().isEmpty ||
+        detectedServer == profile.server) {
+      return profile;
+    }
+
+    setState(() {
+      _serverController.text = detectedServer;
+    });
+    widget.onServerChanged(detectedServer);
+
+    return _SqlConnectionProfile(
+      server: detectedServer,
+      useWindowsAuth: profile.useWindowsAuth,
+      user: profile.user,
+      password: profile.password,
+    );
+  }
+
+  Future<String?> _discoverLocalSqlServer(_SqlConnectionProfile profile) async {
+    final candidates = LinkedHashSet<String>();
+    final installedInstances = await _readInstalledSqlServerInstanceNames();
+
+    for (final instance in installedInstances) {
+      final normalizedInstance = instance.trim();
+      if (normalizedInstance.isEmpty) {
+        continue;
+      }
+
+      if (normalizedInstance.toUpperCase() == 'MSSQLSERVER') {
+        candidates.add('localhost');
+        candidates.add('.');
+        candidates.add('127.0.0.1');
+        continue;
+      }
+
+      candidates.add('.\\$normalizedInstance');
+      candidates.add('localhost\\$normalizedInstance');
+    }
+
+    candidates.addAll(const <String>[
+      r'.\SQLEXPRESS',
+      r'localhost\SQLEXPRESS',
+      r'(localdb)\MSSQLLocalDB',
+      'localhost',
+      '.',
+      '127.0.0.1',
+    ]);
+
+    for (final server in candidates) {
+      final probeProfile = _SqlConnectionProfile(
+        server: server,
+        useWindowsAuth: profile.useWindowsAuth,
+        user: profile.user,
+        password: profile.password,
+      );
+      if (await _canOpenSqlServer(probeProfile)) {
+        return server;
+      }
+    }
+
+    return null;
+  }
+
+  Future<List<String>> _readInstalledSqlServerInstanceNames() async {
+    if (!Platform.isWindows) {
+      return const [];
+    }
+
+    final registryPaths = <String>[
+      r'HKLM\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL',
+      r'HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft SQL Server\Instance Names\SQL',
+    ];
+    final instances = LinkedHashSet<String>();
+
+    for (final registryPath in registryPaths) {
+      try {
+        final result = await Process.run(
+          'reg',
+          ['query', registryPath],
+          runInShell: false,
+          stdoutEncoding: SystemEncoding(),
+          stderrEncoding: SystemEncoding(),
+        );
+        if (result.exitCode != 0) {
+          continue;
+        }
+
+        for (final line in result.stdout.toString().split(RegExp(r'\r?\n'))) {
+          final trimmed = line.trim();
+          if (trimmed.isEmpty ||
+              trimmed.startsWith('HKEY_') ||
+              trimmed.startsWith(registryPath)) {
+            continue;
+          }
+
+          final parts = trimmed.split(RegExp(r'\s{2,}'));
+          final name = parts.isNotEmpty ? parts.first.trim() : '';
+          if (name.isNotEmpty) {
+            instances.add(name);
+          }
+        }
+      } catch (_) {
+        // Ignore registry probing failures and fall back to common local instances.
+      }
+    }
+
+    return instances.toList(growable: false);
+  }
+
+  Future<bool> _canOpenSqlServer(_SqlConnectionProfile profile) async {
+    final result = await _runSqlCmd(
+      profile: profile,
+      database: 'master',
+      query: 'SET NOCOUNT ON; SELECT 1;',
+    );
+    return result != null && result.exitCode == 0;
   }
 
   bool _isSyncBusyStatus(String status) {
@@ -2002,7 +2165,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return _StringQueryResult(
         success: false,
         values: const [],
-        errorText: 'Enter a SQL Server instance name.',
+        errorText:
+            'Enter a SQL Server instance name or leave it blank to auto-detect this PC.',
       );
     }
 
@@ -2796,6 +2960,23 @@ SELECT (
                           ),
                         ),
                       ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: serverController,
+                        textInputAction: TextInputAction.done,
+                        decoration: _compactInputDecoration(
+                          'SQL Server instance',
+                        ).copyWith(hintText: r'.\SQLEXPRESS'),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Leave blank to auto-detect this PC.',
+                        style: TextStyle(
+                          color: Color(0xFF667085),
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
                       const SizedBox(height: 4),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -2886,6 +3067,7 @@ SELECT (
                               _rowOffset = 0;
                               _errorMessage = null;
                             });
+                            widget.onServerChanged(dialogProfile.server);
                             Navigator.of(context).pop();
                             widget.onClientNameChanged(clientName);
 

@@ -14,6 +14,7 @@ const String _defaultControlPlaneUrl = String.fromEnvironment(
 const int _snapshotTransferChunkSizeBytes = 100 * 1024;
 const int _snapshotTransferMaxAttempts = 10;
 const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
+const Duration _controlPlaneRequestTimeout = Duration(seconds: 10);
 const List<Duration> _snapshotTransferRetryDelays = <Duration>[
   Duration(seconds: 1),
   Duration(seconds: 2),
@@ -63,18 +64,35 @@ class AgentControlPlaneClient {
     return headers;
   }
 
+  Future<http.Response> _sendRequest(
+    Future<http.Response> request,
+    String phase,
+  ) async {
+    try {
+      return await request.timeout(_controlPlaneRequestTimeout);
+    } on TimeoutException {
+      throw AgentControlPlaneException(
+        'Control plane request timed out during $phase. Check network connectivity.',
+        statusCode: 503,
+      );
+    }
+  }
+
   Future<AgentAuthenticatedUser> loginClient({
     required String name,
     required String password,
   }) async {
-    final response = await _client.post(
-      _uri('/auth/login'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'name': name.trim(),
-        'password': password,
-        'app': 'windows',
-      }),
+    final response = await _sendRequest(
+      _client.post(
+        _uri('/auth/login'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'name': name.trim(),
+          'password': password,
+          'app': 'windows',
+        }),
+      ),
+      'signing in',
     );
 
     if (response.statusCode != 200) {
@@ -103,7 +121,10 @@ class AgentControlPlaneClient {
   }
 
   Future<AgentAuthenticatedUser> fetchCurrentUser() async {
-    final response = await _client.get(_uri('/auth/me'), headers: _headers());
+    final response = await _sendRequest(
+      _client.get(_uri('/auth/me'), headers: _headers()),
+      'restoring session',
+    );
     if (response.statusCode != 200) {
       throw _exceptionFromResponse(response);
     }
@@ -133,9 +154,9 @@ class AgentControlPlaneClient {
     if (_authToken == null) {
       return;
     }
-    final response = await _client.post(
-      _uri('/auth/logout'),
-      headers: _headers(json: true),
+    final response = await _sendRequest(
+      _client.post(_uri('/auth/logout'), headers: _headers(json: true)),
+      'logging out',
     );
     if (response.statusCode != 200) {
       throw _exceptionFromResponse(response);
@@ -145,7 +166,10 @@ class AgentControlPlaneClient {
 
   Future<bool> checkHealth() async {
     try {
-      final response = await _client.get(_uri('/health'));
+      final response = await _sendRequest(
+        _client.get(_uri('/health')),
+        'checking backend health',
+      );
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -220,24 +244,27 @@ class AgentControlPlaneClient {
     required String? selectedTable,
     required Map<String, SyncTableState> tables,
   }) async {
-    final response = await _client.post(
-      _uri('/agents/heartbeat'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'clientName': clientName,
-        'machineName': machineName,
-        'isMaster': isMaster,
-        'historyLimit': historyLimit,
-        'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
-        'server': server,
-        'database': database,
-        'serverConnected': serverConnected,
-        'sqlConnected': sqlConnected,
-        'selectedTable': selectedTable,
-        'tables': tables.entries
-            .map((entry) => {'table': entry.key, ...entry.value.toJson()})
-            .toList(growable: false),
-      }),
+    final response = await _sendRequest(
+      _client.post(
+        _uri('/agents/heartbeat'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'clientName': clientName,
+          'machineName': machineName,
+          'isMaster': isMaster,
+          'historyLimit': historyLimit,
+          'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+          'server': server,
+          'database': database,
+          'serverConnected': serverConnected,
+          'sqlConnected': sqlConnected,
+          'selectedTable': selectedTable,
+          'tables': tables.entries
+              .map((entry) => {'table': entry.key, ...entry.value.toJson()})
+              .toList(growable: false),
+        }),
+      ),
+      'sending heartbeat',
     );
 
     if (response.statusCode != 200) {
@@ -277,16 +304,19 @@ class AgentControlPlaneClient {
     required String direction,
     String? sourceClientName,
   }) async {
-    final response = await _client.post(
-      _uri('/jobs'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'clientName': clientName,
-        if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
-          'sourceClientName': sourceClientName,
-        'direction': direction,
-        'tables': tables,
-      }),
+    final response = await _sendRequest(
+      _client.post(
+        _uri('/jobs'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'clientName': clientName,
+          if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
+            'sourceClientName': sourceClientName,
+          'direction': direction,
+          'tables': tables,
+        }),
+      ),
+      'creating jobs',
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -312,14 +342,17 @@ class AgentControlPlaneClient {
     required int progress,
     required String message,
   }) async {
-    final response = await _client.post(
-      _uri('/jobs/$jobId/start'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'status': status,
-        'progress': progress,
-        'message': message,
-      }),
+    final response = await _sendRequest(
+      _client.post(
+        _uri('/jobs/$jobId/start'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'status': status,
+          'progress': progress,
+          'message': message,
+        }),
+      ),
+      'starting job',
     );
     return _parseJobResponse(response, 'job start');
   }
@@ -332,16 +365,19 @@ class AgentControlPlaneClient {
     required int rowCount,
     required String direction,
   }) async {
-    final response = await _client.post(
-      _uri('/jobs/$jobId/progress'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'status': status,
-        'progress': progress,
-        'message': message,
-        'rowCount': rowCount,
-        'direction': direction,
-      }),
+    final response = await _sendRequest(
+      _client.post(
+        _uri('/jobs/$jobId/progress'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'status': status,
+          'progress': progress,
+          'message': message,
+          'rowCount': rowCount,
+          'direction': direction,
+        }),
+      ),
+      'updating job progress',
     );
     return _parseJobResponse(response, 'job progress');
   }
@@ -363,21 +399,24 @@ class AgentControlPlaneClient {
         '$jobId-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
 
     final startResponse = await _transferRequestWithRetry(
-      () => _client.post(
-        _uri('/jobs/$jobId/upload-chunk-start'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'uploadId': uploadId,
-          'clientName': clientName,
-          'table': table,
-          'rowCount': rowCount,
-          'snapshotCreatedAt': snapshotCreatedAt,
-          'snapshotBytes': snapshotBytes,
-          'compressedBytes': compressedBytes.length,
-          'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
-          'chunkCount': chunkCount,
-          'encoding': 'gzip',
-        }),
+      () => _sendRequest(
+        _client.post(
+          _uri('/jobs/$jobId/upload-chunk-start'),
+          headers: _headers(json: true),
+          body: jsonEncode({
+            'uploadId': uploadId,
+            'clientName': clientName,
+            'table': table,
+            'rowCount': rowCount,
+            'snapshotCreatedAt': snapshotCreatedAt,
+            'snapshotBytes': snapshotBytes,
+            'compressedBytes': compressedBytes.length,
+            'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
+            'chunkCount': chunkCount,
+            'encoding': 'gzip',
+          }),
+        ),
+        'starting snapshot upload',
       ),
       'starting snapshot upload',
     );
@@ -410,14 +449,17 @@ class AgentControlPlaneClient {
         end > compressedBytes.length ? compressedBytes.length : end,
       );
       final chunkResponse = await _transferRequestWithRetry(
-        () => _client.post(
-          _uri('/jobs/$jobId/upload-chunk'),
-          headers: _headers(json: true),
-          body: jsonEncode({
-            'uploadId': uploadId,
-            'chunkIndex': chunkIndex,
-            'chunkData': base64Encode(chunkBytes),
-          }),
+        () => _sendRequest(
+          _client.post(
+            _uri('/jobs/$jobId/upload-chunk'),
+            headers: _headers(json: true),
+            body: jsonEncode({
+              'uploadId': uploadId,
+              'chunkIndex': chunkIndex,
+              'chunkData': base64Encode(chunkBytes),
+            }),
+          ),
+          'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
         ),
         'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
       );
@@ -428,10 +470,13 @@ class AgentControlPlaneClient {
     }
 
     final response = await _transferRequestWithRetry(
-      () => _client.post(
-        _uri('/jobs/$jobId/upload-chunk-complete'),
-        headers: _headers(json: true),
-        body: jsonEncode({'uploadId': uploadId}),
+      () => _sendRequest(
+        _client.post(
+          _uri('/jobs/$jobId/upload-chunk-complete'),
+          headers: _headers(json: true),
+          body: jsonEncode({'uploadId': uploadId}),
+        ),
+        'completing snapshot upload',
       ),
       'completing snapshot upload',
     );
@@ -457,9 +502,12 @@ class AgentControlPlaneClient {
 
   Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
     final manifestResponse = await _transferRequestWithRetry(
-      () => _client.get(
-        _uri('/jobs/$jobId/download-snapshot-manifest'),
-        headers: _headers(),
+      () => _sendRequest(
+        _client.get(
+          _uri('/jobs/$jobId/download-snapshot-manifest'),
+          headers: _headers(),
+        ),
+        'starting snapshot download',
       ),
       'starting snapshot download',
     );
@@ -532,9 +580,9 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> _downloadSnapshotLegacy(String jobId) async {
-    final response = await _client.get(
-      _uri('/jobs/$jobId/download-snapshot'),
-      headers: _headers(),
+    final response = await _sendRequest(
+      _client.get(_uri('/jobs/$jobId/download-snapshot'), headers: _headers()),
+      'downloading snapshot',
     );
     if (response.statusCode != 200) {
       throw _exceptionFromResponse(response);
@@ -560,30 +608,36 @@ class AgentControlPlaneClient {
     String? snapshotCreatedAt,
     int? snapshotBytes,
   }) async {
-    final response = await _client.post(
-      _uri('/jobs/$jobId/complete'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'status': status,
-        'progress': progress,
-        'message': message,
-        'rowCount': rowCount,
-        'snapshotId': snapshotId,
-        'snapshotCreatedAt': snapshotCreatedAt,
-        'snapshotBytes': snapshotBytes,
-      }),
+    final response = await _sendRequest(
+      _client.post(
+        _uri('/jobs/$jobId/complete'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'status': status,
+          'progress': progress,
+          'message': message,
+          'rowCount': rowCount,
+          'snapshotId': snapshotId,
+          'snapshotCreatedAt': snapshotCreatedAt,
+          'snapshotBytes': snapshotBytes,
+        }),
+      ),
+      'completing job',
     );
     return _parseJobResponse(response, 'job completion');
   }
 
   Future<void> failJob(String jobId, String message, {int? progress}) async {
-    final response = await _client.post(
-      _uri('/jobs/$jobId/fail'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'message': message,
-        if (progress != null) 'progress': progress,
-      }),
+    final response = await _sendRequest(
+      _client.post(
+        _uri('/jobs/$jobId/fail'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'message': message,
+          if (progress != null) 'progress': progress,
+        }),
+      ),
+      'failing job',
     );
 
     if (response.statusCode != 200) {

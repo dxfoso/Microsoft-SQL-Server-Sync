@@ -5,6 +5,7 @@
 #include <flutter/flutter_view_controller.h>
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
+#include <shellapi.h>
 
 #include <memory>
 
@@ -25,6 +26,16 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  void AddTrayIcon();
+  void RemoveTrayIcon();
+  void MinimizeToTray();
+  void RestoreFromTray();
+
+  bool startup_ui_ready_ = false;
+  bool allow_tray_minimize_ = false;
+  bool tray_icon_visible_ = false;
+  NOTIFYICONDATA tray_icon_data_{};
+
   // The project to run.
   flutter::DartProject project_;
 

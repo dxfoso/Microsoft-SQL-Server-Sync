@@ -263,6 +263,8 @@ class SyncAppStateStore {
   const SyncAppStateStore({
     required this.lastClientName,
     required this.clients,
+    required this.server,
+    required this.hasOpenedOnce,
     this.startMinimized = false,
     this.startOnStartup = false,
     this.authToken,
@@ -273,8 +275,25 @@ class SyncAppStateStore {
     this.rememberedLoginPassword,
   });
 
+  static const SyncAppStateStore _defaultStore = SyncAppStateStore(
+    lastClientName: 'Local Agent',
+    clients: {},
+    server: 'localhost',
+    hasOpenedOnce: false,
+    startMinimized: false,
+    startOnStartup: false,
+    authToken: null,
+    accountUsername: null,
+    accountEmail: null,
+    accountName: null,
+    rememberedLoginName: null,
+    rememberedLoginPassword: null,
+  );
+
   final String lastClientName;
   final Map<String, SyncClientState> clients;
+  final String server;
+  final bool hasOpenedOnce;
   final bool startMinimized;
   final bool startOnStartup;
   final String? authToken;
@@ -299,38 +318,16 @@ class SyncAppStateStore {
   }
 
   static Future<SyncAppStateStore> load() async {
-    final file = _stateFile();
-    if (!await file.exists()) {
-      return const SyncAppStateStore(
-        lastClientName: 'Local Agent',
-        clients: {},
-        startMinimized: false,
-        startOnStartup: false,
-        authToken: null,
-        accountUsername: null,
-        accountEmail: null,
-        accountName: null,
-        rememberedLoginName: null,
-        rememberedLoginPassword: null,
-      );
-    }
-
     try {
+      final file = _stateFile();
+      if (!await file.exists()) {
+        return _defaultStore;
+      }
+
       final raw = await file.readAsString();
       final decoded = jsonDecode(raw);
       if (decoded is! Map) {
-        return const SyncAppStateStore(
-          lastClientName: 'Local Agent',
-          clients: {},
-          startMinimized: false,
-          startOnStartup: false,
-          authToken: null,
-          accountUsername: null,
-          accountEmail: null,
-          accountName: null,
-          rememberedLoginName: null,
-          rememberedLoginPassword: null,
-        );
+        return _defaultStore;
       }
 
       final json = Map<String, dynamic>.from(decoded);
@@ -339,8 +336,10 @@ class SyncAppStateStore {
       );
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        hasOpenedOnce: json['hasOpenedOnce'] as bool? ?? false,
         startMinimized: json['startMinimized'] as bool? ?? false,
         startOnStartup: json['startOnStartup'] as bool? ?? false,
+        server: json['server'] as String? ?? 'localhost',
         authToken: json['authToken'] as String?,
         accountUsername:
             json['accountUsername'] as String? ??
@@ -360,54 +359,21 @@ class SyncAppStateStore {
         ),
       );
     } catch (_) {
-      return const SyncAppStateStore(
-        lastClientName: 'Local Agent',
-        clients: {},
-        startMinimized: false,
-        startOnStartup: false,
-        authToken: null,
-        accountUsername: null,
-        accountEmail: null,
-        accountName: null,
-        rememberedLoginName: null,
-        rememberedLoginPassword: null,
-      );
+      return _defaultStore;
     }
   }
 
   static SyncAppStateStore loadSync() {
-    final file = _stateFile();
-    if (!file.existsSync()) {
-      return const SyncAppStateStore(
-        lastClientName: 'Local Agent',
-        clients: {},
-        startMinimized: false,
-        startOnStartup: false,
-        authToken: null,
-        accountUsername: null,
-        accountEmail: null,
-        accountName: null,
-        rememberedLoginName: null,
-        rememberedLoginPassword: null,
-      );
-    }
-
     try {
+      final file = _stateFile();
+      if (!file.existsSync()) {
+        return _defaultStore;
+      }
+
       final raw = file.readAsStringSync();
       final decoded = jsonDecode(raw);
       if (decoded is! Map) {
-        return const SyncAppStateStore(
-          lastClientName: 'Local Agent',
-          clients: {},
-          startMinimized: false,
-          startOnStartup: false,
-          authToken: null,
-          accountUsername: null,
-          accountEmail: null,
-          accountName: null,
-          rememberedLoginName: null,
-          rememberedLoginPassword: null,
-        );
+        return _defaultStore;
       }
 
       final json = Map<String, dynamic>.from(decoded);
@@ -416,8 +382,10 @@ class SyncAppStateStore {
       );
       return SyncAppStateStore(
         lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+        hasOpenedOnce: json['hasOpenedOnce'] as bool? ?? false,
         startMinimized: json['startMinimized'] as bool? ?? false,
         startOnStartup: json['startOnStartup'] as bool? ?? false,
+        server: json['server'] as String? ?? 'localhost',
         authToken: json['authToken'] as String?,
         accountUsername:
             json['accountUsername'] as String? ??
@@ -437,18 +405,7 @@ class SyncAppStateStore {
         ),
       );
     } catch (_) {
-      return const SyncAppStateStore(
-        lastClientName: 'Local Agent',
-        clients: {},
-        startMinimized: false,
-        startOnStartup: false,
-        authToken: null,
-        accountUsername: null,
-        accountEmail: null,
-        accountName: null,
-        rememberedLoginName: null,
-        rememberedLoginPassword: null,
-      );
+      return _defaultStore;
     }
   }
 
@@ -461,8 +418,10 @@ class SyncAppStateStore {
     final file = _stateFile();
     final payload = jsonEncode({
       'lastClientName': lastClientName,
+      'hasOpenedOnce': hasOpenedOnce,
       'startMinimized': startMinimized,
       'startOnStartup': startOnStartup,
+      'server': server,
       'authToken': authToken,
       'accountUsername': accountUsername,
       'accountEmail': accountEmail,

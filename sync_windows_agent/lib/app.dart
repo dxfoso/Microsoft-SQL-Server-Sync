@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'agent_page.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
+import 'startup_log.dart';
 import 'window_settings.dart';
 
 class SyncWindowsAgentApp extends StatefulWidget {
@@ -29,12 +30,15 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String? _accountName;
   String? _rememberedLoginName;
   String? _rememberedLoginPassword;
+  String _serverName = 'localhost';
   String? _loginError;
   bool _restoringSession = true;
   bool _submittingLogin = false;
   bool _showPassword = false;
+  bool _hasOpenedOnce = false;
   bool _startMinimized = false;
   bool _startOnStartup = false;
+  bool _didLogFirstBuild = false;
 
   static const SyncClientState _defaultClientState = SyncClientState(
     isMaster: true,
@@ -50,49 +54,86 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   @override
   void initState() {
     super.initState();
+    logStartupEvent('SyncWindowsAgentApp initState');
     _loadState();
   }
 
   void _loadState() {
-    final store = SyncAppStateStore.loadSync();
-    _authToken = store.authToken?.trim();
-    _accountUsername = store.accountUsername?.trim();
-    _accountEmail = store.accountEmail?.trim();
-    _accountName = store.accountName?.trim();
-    _rememberedLoginName =
-        store.rememberedLoginName?.trim().isNotEmpty == true
-            ? store.rememberedLoginName!.trim()
-            : null;
-    _rememberedLoginPassword = store.rememberedLoginPassword ?? '';
-    _startMinimized = store.startMinimized;
-    _startOnStartup =
-        store.startOnStartup ||
-        WindowsAgentWindowSettings.isStartOnStartupEnabledSync();
-    _usernameController.text = _rememberedLoginName ?? '';
-    _passwordController.text = _rememberedLoginPassword ?? '';
-    _clientName =
-        (_accountName != null && _accountName!.isNotEmpty)
-            ? _accountName!
-            : (_accountUsername != null && _accountUsername!.isNotEmpty)
-            ? _accountUsername!
-            : (store.lastClientName.trim().isEmpty
-                ? 'Local Agent'
-                : store.lastClientName.trim());
-    _syncStatesByClient = store.clients.isEmpty ? {} : store.clients;
-    if (_authToken != null && _authToken!.isNotEmpty) {
-      _authClient.setAuthToken(_authToken);
-      unawaited(_restoreSession());
-    } else {
-      _restoringSession = false;
-    }
-    if (_startMinimized) {
-      _minimizeAfterFirstFrame();
-    }
-    if (_startOnStartup &&
-        !WindowsAgentWindowSettings.isStartOnStartupEnabledSync()) {
-      unawaited(
-        WindowsAgentWindowSettings.setStartOnStartup(true).catchError((_) {}),
+    try {
+      logStartupEvent('SyncWindowsAgentApp loading state');
+      final store = SyncAppStateStore.loadSync();
+      logStartupEvent('SyncWindowsAgentApp state loaded');
+      _authToken = store.authToken?.trim();
+      _accountUsername = store.accountUsername?.trim();
+      _accountEmail = store.accountEmail?.trim();
+      _accountName = store.accountName?.trim();
+      _rememberedLoginName =
+          store.rememberedLoginName?.trim().isNotEmpty == true
+              ? store.rememberedLoginName!.trim()
+              : null;
+      _rememberedLoginPassword = store.rememberedLoginPassword ?? '';
+      _serverName =
+          store.server.trim().isNotEmpty ? store.server.trim() : 'localhost';
+      _hasOpenedOnce = store.hasOpenedOnce;
+      _startMinimized = store.startMinimized;
+      _startOnStartup =
+          store.startOnStartup ||
+          WindowsAgentWindowSettings.isStartOnStartupEnabledSync();
+      _usernameController.text = _rememberedLoginName ?? '';
+      _passwordController.text = _rememberedLoginPassword ?? '';
+      _clientName =
+          (_accountName != null && _accountName!.isNotEmpty)
+              ? _accountName!
+              : (_accountUsername != null && _accountUsername!.isNotEmpty)
+              ? _accountUsername!
+              : (store.lastClientName.trim().isEmpty
+                  ? 'Local Agent'
+                  : store.lastClientName.trim());
+      _syncStatesByClient = store.clients.isEmpty ? {} : store.clients;
+      if (_authToken != null && _authToken!.isNotEmpty) {
+        _authClient.setAuthToken(_authToken);
+        logStartupEvent('SyncWindowsAgentApp restoring session');
+        unawaited(_restoreSession());
+      } else {
+        if (_startMinimized) {
+          logStartupEvent(
+            'SyncWindowsAgentApp ignoring saved startMinimized on launch to keep the window visible',
+          );
+        }
+        _restoringSession = false;
+      }
+      if (!_hasOpenedOnce) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _markFirstLaunchComplete();
+          }
+        });
+      }
+      if (_startOnStartup &&
+          !WindowsAgentWindowSettings.isStartOnStartupEnabledSync()) {
+        unawaited(
+          WindowsAgentWindowSettings.setStartOnStartup(true).catchError((_) {}),
+        );
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to load Windows agent state: $error');
+      _authToken = null;
+      _accountUsername = null;
+      _accountEmail = null;
+      _accountName = null;
+      _rememberedLoginName = null;
+      _rememberedLoginPassword = '';
+      _hasOpenedOnce = false;
+      _startMinimized = false;
+      _startOnStartup = false;
+      _usernameController.text = '';
+      _passwordController.text = '';
+      _clientName = 'Local Agent';
+      _syncStatesByClient = {};
+      logStartupEvent(
+        'SyncWindowsAgentApp load state failed: $error\n$stackTrace',
       );
+      _restoringSession = false;
     }
   }
 
@@ -100,6 +141,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(
         Future<void>.delayed(const Duration(milliseconds: 500), () async {
+          logStartupEvent('SyncWindowsAgentApp minimizing window');
           await WindowsAgentWindowSettings.minimizeWindow();
         }).catchError((_) {}),
       );
@@ -108,7 +150,13 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   void _scheduleSave() {
     _saveDebounce?.cancel();
-    _saveDebounce = Timer(const Duration(milliseconds: 300), _saveState);
+    _saveDebounce = Timer(const Duration(milliseconds: 300), () {
+      unawaited(
+        _saveState().catchError((error, stackTrace) {
+          debugPrint('Failed to save Windows agent state: $error');
+        }),
+      );
+    });
   }
 
   Future<void> _saveState() async {
@@ -117,6 +165,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       clients: _syncStatesByClient,
       startMinimized: _startMinimized,
       startOnStartup: _startOnStartup,
+      server: _serverName,
+      hasOpenedOnce: _hasOpenedOnce,
       authToken: _authToken,
       accountUsername: _accountUsername,
       accountEmail: _accountEmail,
@@ -125,6 +175,18 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       rememberedLoginPassword: _rememberedLoginPassword,
     );
     await store.save();
+  }
+
+  void _markFirstLaunchComplete() {
+    if (_hasOpenedOnce) {
+      return;
+    }
+
+    logStartupEvent('SyncWindowsAgentApp first launch complete');
+    setState(() {
+      _hasOpenedOnce = true;
+    });
+    _scheduleSave();
   }
 
   void _updateClientName(String value) {
@@ -162,6 +224,17 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     }
     setState(() {
       _startOnStartup = value;
+    });
+    _scheduleSave();
+  }
+
+  void _updateServerName(String value) {
+    final normalized = value.trim().isEmpty ? 'localhost' : value.trim();
+    if (normalized == _serverName) {
+      return;
+    }
+    setState(() {
+      _serverName = normalized;
     });
     _scheduleSave();
   }
@@ -207,10 +280,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   Future<void> _restoreSession() async {
     try {
-      final user = await _authClient.fetchCurrentUser();
+      logStartupEvent('SyncWindowsAgentApp fetchCurrentUser start');
+      final user = await _authClient.fetchCurrentUser().timeout(
+        const Duration(seconds: 8),
+      );
       if (!mounted) {
         return;
       }
+      logStartupEvent('SyncWindowsAgentApp fetchCurrentUser success');
       setState(() {
         _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
@@ -222,7 +299,23 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _loginError = null;
       });
       _scheduleSave();
+    } on TimeoutException catch (_) {
+      logStartupEvent('SyncWindowsAgentApp fetchCurrentUser timeout');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authToken = null;
+        _accountUsername = null;
+        _accountEmail = null;
+        _accountName = null;
+        _clientName = 'Local Agent';
+        _restoringSession = false;
+      });
+      _authClient.setAuthToken(null);
+      _scheduleSave();
     } catch (_) {
+      logStartupEvent('SyncWindowsAgentApp fetchCurrentUser failed');
       if (!mounted) {
         return;
       }
@@ -493,6 +586,13 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_didLogFirstBuild) {
+      _didLogFirstBuild = true;
+      logStartupEvent(
+        'SyncWindowsAgentApp build: restoringSession=$_restoringSession auth=${_authToken != null && _authToken!.isNotEmpty} hasOpenedOnce=$_hasOpenedOnce startMinimized=$_startMinimized',
+      );
+    }
+
     const shell = Color(0xFFF6F7F9);
     const ink = Color(0xFF101828);
     const primary = Color(0xFF0F766E);
@@ -599,6 +699,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 onStartMinimizedChanged: _updateStartMinimized,
                 onStartOnStartupChanged: _updateStartOnStartup,
                 onMinimizeWindow: _minimizeWindow,
+                initialServer: _serverName,
+                onServerChanged: _updateServerName,
               ),
     );
   }

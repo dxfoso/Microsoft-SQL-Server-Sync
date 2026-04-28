@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import 'startup_log.dart';
+
 class WindowsAgentWindowSettings {
   const WindowsAgentWindowSettings._();
 
@@ -14,12 +16,17 @@ class WindowsAgentWindowSettings {
     if (!Platform.isWindows) {
       return;
     }
+    logStartupEvent('WindowsAgentWindowSettings.minimizeWindow');
     await _channel.invokeMethod<void>('minimizeWindow');
   }
 
   static bool isStartOnStartupEnabledSync() {
-    final shortcut = _startupShortcutFile();
-    return shortcut != null && shortcut.existsSync();
+    try {
+      final shortcut = _startupShortcutFile();
+      return shortcut != null && shortcut.existsSync();
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<void> setStartOnStartup(bool enabled) async {
@@ -33,8 +40,12 @@ class WindowsAgentWindowSettings {
     }
 
     final shortcut = _startupShortcutFile();
-    if (shortcut != null && await shortcut.exists()) {
-      await shortcut.delete();
+    try {
+      if (shortcut != null && await shortcut.exists()) {
+        await shortcut.delete();
+      }
+    } catch (_) {
+      // If the startup folder is on an unavailable path, keep the app usable.
     }
   }
 
@@ -55,18 +66,19 @@ class WindowsAgentWindowSettings {
   }
 
   static Future<void> _createStartupShortcut() async {
-    final shortcut = _startupShortcutFile();
-    if (shortcut == null) {
-      throw StateError('Windows startup folder is not available.');
-    }
+    try {
+      final shortcut = _startupShortcutFile();
+      if (shortcut == null) {
+        throw StateError('Windows startup folder is not available.');
+      }
 
-    final startupDirectory = shortcut.parent;
-    if (!await startupDirectory.exists()) {
-      await startupDirectory.create(recursive: true);
-    }
+      final startupDirectory = shortcut.parent;
+      if (!await startupDirectory.exists()) {
+        await startupDirectory.create(recursive: true);
+      }
 
-    final targetPath = Platform.resolvedExecutable;
-    final script = '''
+      final targetPath = Platform.resolvedExecutable;
+      final script = '''
 \$ErrorActionPreference = 'Stop'
 \$shortcutPath = ${_quotePowerShellString(shortcut.path)}
 \$targetPath = ${_quotePowerShellString(targetPath)}
@@ -79,20 +91,27 @@ class WindowsAgentWindowSettings {
 \$shortcut.Save()
 ''';
 
-    final result = await Process.run('powershell.exe', [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      script,
-    ]);
+      final result = await Process.run('powershell.exe', [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        script,
+      ]);
 
-    if (result.exitCode != 0) {
-      final stderrText = result.stderr.toString().trim();
+      if (result.exitCode != 0) {
+        final stderrText = result.stderr.toString().trim();
+        throw StateError(
+          stderrText.isEmpty
+              ? 'Could not create the Windows startup shortcut.'
+              : stderrText,
+        );
+      }
+    } on FileSystemException catch (error) {
       throw StateError(
-        stderrText.isEmpty
-            ? 'Could not create the Windows startup shortcut.'
-            : stderrText,
+        'Could not access the Windows Startup folder. '
+        'Check whether your profile path is redirected or unavailable. '
+        '$error',
       );
     }
   }
