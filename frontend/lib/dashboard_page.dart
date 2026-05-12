@@ -63,6 +63,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String? _snapshotError;
   String? _selectedClientName;
   String? _selectedTableName;
+  String? _selectedDatabaseName;
   String? _snapshotKey;
   String? _snapshotVersionToken;
   int _snapshotRequestToken = 0;
@@ -138,7 +139,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return;
       }
 
-      final nextTableName = _resolveSelectedTable(nextState);
+      final nextDatabaseName = _resolveSelectedDatabase(nextState);
+      final nextTableName = _resolveSelectedTable(
+        nextState,
+        databaseName: nextDatabaseName,
+      );
       final nextClientName = _resolveSelectedClientForTable(
         nextState,
         nextTableName,
@@ -146,6 +151,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
       setState(() {
         _state = nextState;
+        _selectedDatabaseName = nextDatabaseName;
         _selectedTableName = nextTableName;
         _selectedClientName = nextClientName;
         _connected = true;
@@ -214,8 +220,52 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   _TableSnapshotSource? get _selectedSnapshotSource =>
       _snapshotSourceForTable(_state, _selectedTableName);
 
-  String? _resolveSelectedTable(AdminLiveState state) {
-    final summaries = _tableSummariesFromState(state);
+  List<String> _databaseNamesFromState(AdminLiveState? state) {
+    if (state == null) {
+      return const <String>[];
+    }
+
+    final databaseNames = _tableSummariesFromState(state)
+      .map((summary) => summary.database.trim())
+      .where((database) => database.isNotEmpty)
+      .toSet()
+      .toList(growable: false)..sort();
+    return databaseNames;
+  }
+
+  List<_TableAggregateSummary> _tableSummariesForDatabase(
+    List<_TableAggregateSummary> summaries,
+  ) {
+    final databaseName = _selectedDatabaseName?.trim();
+    if (databaseName == null || databaseName.isEmpty) {
+      return summaries;
+    }
+    return summaries
+        .where((summary) => summary.database == databaseName)
+        .toList(growable: false);
+  }
+
+  String? _resolveSelectedDatabase(AdminLiveState state) {
+    final databases = _databaseNamesFromState(state);
+    if (databases.isEmpty) {
+      return null;
+    }
+    if (_selectedDatabaseName != null &&
+        databases.contains(_selectedDatabaseName)) {
+      return _selectedDatabaseName;
+    }
+    return databases.first;
+  }
+
+  String? _resolveSelectedTable(AdminLiveState state, {String? databaseName}) {
+    final summaries = _tableSummariesFromState(state)
+        .where(
+          (summary) =>
+              databaseName == null ||
+              databaseName.isEmpty ||
+              summary.database == databaseName,
+        )
+        .toList(growable: false);
     if (summaries.isEmpty) {
       return null;
     }
@@ -224,6 +274,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return _selectedTableName;
     }
     return summaries.first.table;
+  }
+
+  void _selectDatabase(String? databaseName) {
+    if (databaseName == _selectedDatabaseName) {
+      return;
+    }
+    final nextTableName =
+        _state == null
+            ? null
+            : _resolveSelectedTable(_state!, databaseName: databaseName);
+    final nextClientName =
+        _state == null
+            ? null
+            : _resolveSelectedClientForTable(_state!, nextTableName);
+    setState(() {
+      _selectedDatabaseName = databaseName;
+      _selectedTableName = nextTableName;
+      _selectedClientName = nextClientName;
+      _snapshot = null;
+      _snapshotError = null;
+      _snapshotKey = null;
+      _snapshotVersionToken = null;
+    });
+    unawaited(_loadSelectedSnapshot(force: true));
   }
 
   String? _resolveSelectedClientForTable(
@@ -2528,10 +2602,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget _buildDatabaseSelector() {
+    final databases = _databaseNamesFromState(_state);
+    final selectedValue =
+        _selectedDatabaseName != null &&
+                databases.contains(_selectedDatabaseName)
+            ? _selectedDatabaseName
+            : null;
+
+    return DropdownButtonFormField<String>(
+      value: selectedValue,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Database',
+        prefixIcon: Icon(Icons.storage_rounded),
+      ),
+      hint: const Text('Select database'),
+      items: databases
+          .map(
+            (database) => DropdownMenuItem<String>(
+              value: database,
+              child: Text(database, overflow: TextOverflow.ellipsis),
+            ),
+          )
+          .toList(growable: false),
+      onChanged: databases.isEmpty ? null : _selectDatabase,
+    );
+  }
+
   Widget _buildTableListCard() {
-    final summaries = _filteredTableSummaries(_tableSummaries);
-    final totalTables = _tableSummaries.length;
-    final totalClients = _state?.agents.length ?? 0;
+    final summaries = _filteredTableSummaries(
+      _tableSummariesForDatabase(_tableSummaries),
+    );
 
     return SurfaceCard(
       title: 'Tables',
@@ -2540,26 +2642,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSearchField(
-            controller: _syncSearchController,
-            label: 'Search Tables',
-            hint: 'Search table names and clients.',
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              MetricPill(label: 'Tables', value: totalTables.toString()),
-              MetricPill(label: 'Clients', value: totalClients.toString()),
-              MetricPill(
-                label: 'Selected',
-                value:
-                    _selectedTableSummary?.displayTitle ??
-                    _selectedTableName ??
-                    'None',
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stack = constraints.maxWidth < 620;
+              final search = _buildSearchField(
+                controller: _syncSearchController,
+                label: 'Search Tables',
+                hint: 'Search table names, databases, and clients.',
+              );
+              final database = _buildDatabaseSelector();
+              if (stack) {
+                return Column(
+                  children: [database, const SizedBox(height: 10), search],
+                );
+              }
+              return Row(
+                children: [
+                  SizedBox(width: 260, child: database),
+                  const SizedBox(width: 10),
+                  Expanded(child: search),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 10),
           Expanded(
@@ -2623,25 +2727,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         fontSize: 12.5,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: [
-                        MetricPill(
-                          label: 'Clients',
-                          value: '${summary.clientCount}',
-                        ),
-                        MetricPill(
-                          label: 'Master',
-                          value: '${summary.masterCount}',
-                        ),
-                        MetricPill(
-                          label: 'Slave',
-                          value: '${summary.slaveCount}',
-                        ),
-                      ],
-                    ),
                   ],
                 )
                 : Row(
@@ -2667,26 +2752,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      alignment: WrapAlignment.end,
-                      children: [
-                        MetricPill(
-                          label: 'Clients',
-                          value: '${summary.clientCount}',
-                        ),
-                        MetricPill(
-                          label: 'Master',
-                          value: '${summary.masterCount}',
-                        ),
-                        MetricPill(
-                          label: 'Slave',
-                          value: '${summary.slaveCount}',
-                        ),
-                      ],
                     ),
                   ],
                 );
@@ -3341,18 +3406,34 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final summary = _selectedTableSummary;
     final selectedClient = _selectedClientEntry;
     final tableState = selectedClient?.tableState;
+    final state = _state;
     final lastSync =
         tableState == null
             ? _formatTimestamp(summary?.lastSync ?? '')
             : _formatTimestamp(_tableTimestampToken(tableState));
     final backupBytes =
         tableState?.snapshotBytes ?? summary?.latestSnapshotBytes;
+    final status = _connected ? 'Online' : 'Offline';
+    final visibleTables = _tableSummariesForDatabase(_tableSummaries).length;
+    final totalTables = _tableSummaries.length;
+    final totalClients = state?.agents.length ?? 0;
+    final totalJobs = _jobs.length;
 
     final footerItems = <Widget>[
+      InfoLine(label: 'Status', value: status),
+      InfoLine(
+        label: 'Updated',
+        value: state == null ? 'Waiting' : _formatTimestamp(state.generatedAt),
+      ),
       InfoLine(label: 'Table', value: summary?.displayTable ?? 'None'),
-      InfoLine(label: 'Database', value: summary?.database ?? 'None'),
+      InfoLine(label: 'Database', value: _selectedDatabaseName ?? 'None'),
+      InfoLine(label: 'Shown', value: '$visibleTables / $totalTables'),
       InfoLine(label: 'Clients', value: '${summary?.clientCount ?? 0}'),
+      InfoLine(label: 'Master', value: '${summary?.masterCount ?? 0}'),
+      InfoLine(label: 'Slave', value: '${summary?.slaveCount ?? 0}'),
       InfoLine(label: 'Client', value: _selectedClientName ?? 'All'),
+      InfoLine(label: 'Agents', value: '$totalClients'),
+      InfoLine(label: 'Jobs', value: '$totalJobs'),
       InfoLine(label: 'Last Sync', value: lastSync),
       InfoLine(
         label: 'Backup',
@@ -3597,17 +3678,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DashboardHeader(
-              isConnected: _connected,
-              lastUpdated:
-                  state == null
-                      ? 'Waiting'
-                      : _formatTimestamp(state.generatedAt),
-              totalAgents: state?.agents.length ?? 0,
-              totalJobs: _jobs.length,
-              selectedAgent: _selectedClientName,
-            ),
-            const SizedBox(height: 8),
             if (_error != null)
               Container(
                 width: double.infinity,
