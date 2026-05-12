@@ -20,6 +20,14 @@ class WindowsAgentWindowSettings {
     await _channel.invokeMethod<void>('minimizeWindow');
   }
 
+  static Future<void> setWindowTitle(String title) async {
+    if (!Platform.isWindows) {
+      return;
+    }
+    final normalized = title.trim().isEmpty ? 'SQL Sync Agent' : title.trim();
+    await _channel.invokeMethod<void>('setWindowTitle', normalized);
+  }
+
   static bool isStartOnStartupEnabledSync() {
     try {
       final shortcut = _startupShortcutFile();

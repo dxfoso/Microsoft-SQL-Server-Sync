@@ -39,6 +39,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   bool _startMinimized = false;
   bool _startOnStartup = false;
   bool _didLogFirstBuild = false;
+  String? _lastWindowTitle;
 
   static const SyncClientState _defaultClientState = SyncClientState(
     isMaster: true,
@@ -49,6 +50,23 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   SyncClientState _stateForClient(String clientName) {
     return _syncStatesByClient[clientName] ?? _defaultClientState;
+  }
+
+  String get _windowTitle {
+    final name =
+        _clientName.trim().isEmpty ? 'Local Agent' : _clientName.trim();
+    return 'SQL Sync Agent - $name';
+  }
+
+  void _applyWindowTitle() {
+    final title = _windowTitle;
+    if (_lastWindowTitle == title) {
+      return;
+    }
+    _lastWindowTitle = title;
+    unawaited(
+      WindowsAgentWindowSettings.setWindowTitle(title).catchError((_) {}),
+    );
   }
 
   @override
@@ -135,17 +153,6 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       );
       _restoringSession = false;
     }
-  }
-
-  void _minimizeAfterFirstFrame() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(
-        Future<void>.delayed(const Duration(milliseconds: 500), () async {
-          logStartupEvent('SyncWindowsAgentApp minimizing window');
-          await WindowsAgentWindowSettings.minimizeWindow();
-        }).catchError((_) {}),
-      );
-    });
   }
 
   void _scheduleSave() {
@@ -592,14 +599,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         'SyncWindowsAgentApp build: restoringSession=$_restoringSession auth=${_authToken != null && _authToken!.isNotEmpty} hasOpenedOnce=$_hasOpenedOnce startMinimized=$_startMinimized',
       );
     }
+    _applyWindowTitle();
 
     const shell = Color(0xFFF6F7F9);
     const ink = Color(0xFF101828);
     const primary = Color(0xFF0F766E);
     const accent = Color(0xFFE0A32A);
     const border = Color(0xFFDDE3EA);
-    final appTitle =
-        _clientName == 'Local Agent' ? 'SQL Sync Agent' : _clientName;
+    final appTitle = _windowTitle;
 
     return MaterialApp(
       title: appTitle,

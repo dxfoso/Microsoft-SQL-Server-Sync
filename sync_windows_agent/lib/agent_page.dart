@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -88,6 +87,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final Set<String> _busyFileTables = <String>{};
 
   String? _selectedDatabase;
+  List<String> _databases = const [];
   List<String> _tables = const [];
   String? _selectedTable;
   List<String> _tableColumns = const [];
@@ -270,8 +270,45 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  static const String _syncTableKeySeparator = '::';
+
+  String _syncTableKey(String table, {String? database}) {
+    final databaseName = (database ?? _selectedDatabase ?? '').trim();
+    if (databaseName.isEmpty) {
+      return table;
+    }
+    return '$databaseName$_syncTableKeySeparator$table';
+  }
+
+  String _localTableName(String syncTableKey) {
+    final separatorIndex = syncTableKey.indexOf(_syncTableKeySeparator);
+    if (separatorIndex < 0) {
+      return syncTableKey;
+    }
+    return syncTableKey.substring(
+      separatorIndex + _syncTableKeySeparator.length,
+    );
+  }
+
+  bool _syncKeyMatchesSelectedDatabase(String syncTableKey) {
+    final databaseName = _selectedDatabase?.trim() ?? '';
+    if (databaseName.isEmpty ||
+        !syncTableKey.contains(_syncTableKeySeparator)) {
+      return true;
+    }
+    return syncTableKey.startsWith('$databaseName$_syncTableKeySeparator');
+  }
+
+  SyncTableState _syncTableState(String table, {String? syncKey}) {
+    final key = syncKey ?? _syncTableKey(table);
+    return _syncState.tables[key] ??
+        _syncState.tables[table] ??
+        _defaultSyncTableState(key);
+  }
+
   void _updateSyncEnabledTable(String table, bool enabled) {
-    final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+    final syncKey = _syncTableKey(table);
+    final current = _syncTableState(table, syncKey: syncKey);
     final now = DateTime.now().toIso8601String();
     final nextStatus = enabled ? 'Queued' : 'Paused';
     final syncDirection = _isMasterClient ? 'upload' : 'download';
@@ -279,7 +316,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       current.history,
       SyncHistoryEntry(
         timestamp: now,
-        table: table,
+        table: syncKey,
         status: nextStatus,
         success: enabled,
         message:
@@ -296,7 +333,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       ),
     );
     _updateSyncTableState(
-      table,
+      syncKey,
       current.copyWith(
         enabled: enabled,
         status: nextStatus,
@@ -313,7 +350,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       ),
     );
     if (enabled) {
-      unawaited(_queueEnabledRoleJobs(forceTables: {table}));
+      unawaited(_queueEnabledRoleJobs(forceTables: {syncKey}));
     }
   }
 
@@ -337,8 +374,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
     var changed = false;
     for (final table in tableNames) {
-      if (!nextTables.containsKey(table)) {
-        nextTables[table] = _defaultSyncTableState(table);
+      final syncKey = _syncTableKey(table);
+      if (!nextTables.containsKey(syncKey)) {
+        nextTables[syncKey] =
+            nextTables[table] ?? _defaultSyncTableState(syncKey);
         changed = true;
       }
     }
@@ -364,8 +403,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (_selectedSyncTable != null && tableNames.contains(_selectedSyncTable)) {
       return _selectedSyncTable;
     }
-    if (_selectedTable != null && tableNames.contains(_selectedTable)) {
-      return _selectedTable;
+    if (_selectedTable != null) {
+      final selectedKey = _syncTableKey(_selectedTable!);
+      if (tableNames.contains(selectedKey)) {
+        return selectedKey;
+      }
     }
     return tableNames.isNotEmpty ? tableNames.first : null;
   }
@@ -395,6 +437,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     setState(() {
       _errorMessage = null;
       _selectedDatabase = preserveSelection ? _selectedDatabase : null;
+      _databases = const [];
       _tables = const [];
       _selectedTable = null;
       _tableColumns = const [];
@@ -413,6 +456,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       setState(() {
         _errorMessage = result.errorText;
         _selectedDatabase = null;
+        _databases = const [];
       });
       return;
     }
@@ -425,6 +469,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     setState(() {
+      _databases = result.values;
       _selectedDatabase = selectedDatabase;
       if (selectedDatabase != previousDatabase) {
         _selectedTable = null;
@@ -495,6 +540,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     unawaited(_syncWithControlPlane());
+  }
+
+  Future<void> _selectDatabase(String database) async {
+    if (database == _selectedDatabase) {
+      return;
+    }
+
+    setState(() {
+      _selectedDatabase = database;
+      _tables = const [];
+      _selectedTable = null;
+      _tableColumns = const [];
+      _tableRows = const [];
+      _hasMoreRows = false;
+      _rowOffset = 0;
+      _totalTableRows = 0;
+      _sortColumnIndex = null;
+      _errorMessage = null;
+    });
+
+    await _loadTables(
+      profile: _activeProfile(),
+      database: database,
+      autoLoadRows: true,
+    );
   }
 
   String? _preferredDatabase(List<String> databases) {
@@ -632,10 +702,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     // out of the request body so the control-plane payload stays bounded.
     return Map<String, SyncTableState>.fromEntries(
       tableNames.map((table) {
-        final current =
-            _syncState.tables[table] ?? _defaultSyncTableState(table);
+        final syncKey =
+            table.contains(_syncTableKeySeparator)
+                ? table
+                : _syncTableKey(table);
+        final current = _syncTableState(table, syncKey: syncKey);
         return MapEntry(
-          table,
+          syncKey,
           current.copyWith(history: const <SyncHistoryEntry>[]),
         );
       }),
@@ -856,7 +929,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<String?> _discoverLocalSqlServer(_SqlConnectionProfile profile) async {
-    final candidates = LinkedHashSet<String>();
+    final candidates = <String>{};
     final installedInstances = await _readInstalledSqlServerInstanceNames();
 
     for (final instance in installedInstances) {
@@ -909,7 +982,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       r'HKLM\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL',
       r'HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft SQL Server\Instance Names\SQL',
     ];
-    final instances = LinkedHashSet<String>();
+    final instances = <String>{};
 
     for (final registryPath in registryPaths) {
       try {
@@ -969,23 +1042,25 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   List<_SyncTableRowData> _syncRows() => _tables
-      .map(
-        (table) => _SyncTableRowData(
+      .map((table) {
+        final syncKey = _syncTableKey(table);
+        return _SyncTableRowData(
           table: table,
-          state: _syncState.tables[table] ?? _defaultSyncTableState(table),
-        ),
-      )
+          syncKey: syncKey,
+          state: _syncTableState(table, syncKey: syncKey),
+        );
+      })
       .toList(growable: false);
 
   _SyncTableRowData? _selectedSyncRow(List<_SyncTableRowData> syncRows) {
     final selectedTableName = _selectedSyncTableName(
-      syncRows.map((row) => row.table).toList(growable: false),
+      syncRows.map((row) => row.syncKey).toList(growable: false),
     );
     if (selectedTableName == null) {
       return null;
     }
     for (final row in syncRows) {
-      if (row.table == selectedTableName) {
+      if (row.syncKey == selectedTableName) {
         return row;
       }
     }
@@ -1083,6 +1158,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         visualDensity: VisualDensity.compact,
         icon: Icon(icon),
       ),
+    );
+  }
+
+  Widget _buildAgentActionButtons() {
+    return Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 2,
+      runSpacing: 2,
+      children: [
+        _buildSyncActionIconButton(
+          tooltip: 'Settings',
+          icon: Icons.settings_outlined,
+          onPressed: _openSettingsDialog,
+        ),
+        _buildSyncActionIconButton(
+          tooltip: 'Minimize',
+          icon: Icons.minimize_rounded,
+          onPressed: () => unawaited(widget.onMinimizeWindow()),
+        ),
+        _buildSyncActionIconButton(
+          tooltip: 'Sign out',
+          icon: Icons.logout_rounded,
+          onPressed: widget.onLogout,
+        ),
+      ],
     );
   }
 
@@ -1387,6 +1487,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
+    final syncKey = _syncTableKey(table);
     _setFileBusy(table, true);
     try {
       final snapshot = await _createTableSnapshot(
@@ -1400,7 +1501,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       final document = _createSnapshotFileDocument(
         clientName: widget.clientName,
-        table: table,
+        table: syncKey,
         createdAt: snapshot.snapshotCreatedAt,
         rowCount: snapshot.totalRows,
         columns: snapshot.columns,
@@ -1410,7 +1511,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final bytes = utf8.encode(content).length;
 
       final location = await getSaveLocation(
-        suggestedName: _backupFileName(table, snapshot.snapshotCreatedAt),
+        suggestedName: _backupFileName(syncKey, snapshot.snapshotCreatedAt),
         acceptedTypeGroups: <XTypeGroup>[
           const XTypeGroup(label: 'JSON backup', extensions: <String>['json']),
         ],
@@ -1421,12 +1522,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       await File(location.path).writeAsString(content);
 
-      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      final current = _syncTableState(table, syncKey: syncKey);
       final history = _appendHistory(
         current.history,
         SyncHistoryEntry(
           timestamp: DateTime.now().toIso8601String(),
-          table: table,
+          table: syncKey,
           status: 'Backup saved',
           success: true,
           message: 'Saved a backup file with ${snapshot.totalRows} rows.',
@@ -1443,7 +1544,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         ),
       );
       _updateSyncTableState(
-        table,
+        syncKey,
         current.copyWith(
           rowCount: snapshot.totalRows,
           snapshotCreatedAt: snapshot.snapshotCreatedAt,
@@ -1460,9 +1561,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Saved backup file for $table.')));
     } catch (error) {
-      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      final syncKey = _syncTableKey(table);
+      final current = _syncTableState(table, syncKey: syncKey);
       _updateSyncTableState(
-        table,
+        syncKey,
         current.copyWith(
           status: 'Failed',
           message: error.toString(),
@@ -1470,7 +1572,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             current.history,
             SyncHistoryEntry(
               timestamp: DateTime.now().toIso8601String(),
-              table: table,
+              table: syncKey,
               status: 'Backup save failed',
               success: false,
               message: error.toString(),
@@ -1500,6 +1602,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
+    final syncKey = _syncTableKey(table);
     _setFileBusy(table, true);
     try {
       final pickedFile = await openFile(
@@ -1520,7 +1623,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final snapshot = RemoteSnapshot(
         id: document.id,
         clientName: widget.clientName,
-        table: table,
+        table: syncKey,
         createdAt: document.createdAt,
         rowCount: document.rowCount,
         checksum: document.checksum,
@@ -1537,12 +1640,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         snapshot: snapshot,
       );
 
-      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      final current = _syncTableState(table, syncKey: syncKey);
       final history = _appendHistory(
         current.history,
         SyncHistoryEntry(
           timestamp: DateTime.now().toIso8601String(),
-          table: table,
+          table: syncKey,
           status: 'Backup applied',
           success: true,
           message: 'Applied a backup file with ${document.rowCount} rows.',
@@ -1559,7 +1662,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         ),
       );
       _updateSyncTableState(
-        table,
+        syncKey,
         current.copyWith(
           rowCount: document.rowCount,
           snapshotId: document.id,
@@ -1581,9 +1684,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Applied backup file to $table.')));
     } catch (error) {
-      final current = _syncState.tables[table] ?? _defaultSyncTableState(table);
+      final syncKey = _syncTableKey(table);
+      final current = _syncTableState(table, syncKey: syncKey);
       _updateSyncTableState(
-        table,
+        syncKey,
         current.copyWith(
           status: 'Failed',
           message: error.toString(),
@@ -1591,7 +1695,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             current.history,
             SyncHistoryEntry(
               timestamp: DateTime.now().toIso8601String(),
-              table: table,
+              table: syncKey,
               status: 'Backup apply failed',
               success: false,
               message: error.toString(),
@@ -1625,13 +1729,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final syncDirection = _isMasterClient ? 'upload' : 'download';
     final dueTables = _tables
         .where((table) {
-          final state =
-              _syncState.tables[table] ?? _defaultSyncTableState(table);
-          if (!state.enabled || activeTables.contains(table)) {
+          final syncKey = _syncTableKey(table);
+          final state = _syncTableState(table, syncKey: syncKey);
+          if (!state.enabled || activeTables.contains(syncKey)) {
             return false;
           }
-          return forceTables?.contains(table) ?? _isTableDueForRoleSync(state);
+          return forceTables?.contains(syncKey) ??
+              _isTableDueForRoleSync(state);
         })
+        .map(_syncTableKey)
         .toList(growable: false);
 
     if (dueTables.isEmpty) {
@@ -1694,7 +1800,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         database: _selectedDatabase ?? '',
         serverConnected: _serverConnected,
         sqlConnected: _selectedDatabase != null,
-        selectedTable: _selectedTable,
+        selectedTable:
+            _selectedTable == null ? null : _syncTableKey(_selectedTable!),
         tables: _heartbeatTablesPayload(),
       );
 
@@ -1744,7 +1851,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processPendingJobs() async {
     final pendingJobs = _activeJobs
-        .where((job) => job.isActive)
+        .where(
+          (job) => job.isActive && _syncKeyMatchesSelectedDatabase(job.table),
+        )
         .toList(growable: false);
 
     for (final job in pendingJobs) {
@@ -1766,6 +1875,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processUploadJob(RemoteSyncJob job) async {
     try {
+      final localTable = _localTableName(job.table);
       var activeJob = await _controlPlaneClient.startJob(
         job.id,
         status: 'snapshotting',
@@ -1777,7 +1887,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final snapshot = await _createTableSnapshot(
         profile: _activeProfile(),
         database: _selectedDatabase ?? '',
-        table: job.table,
+        table: localTable,
       );
 
       if (!snapshot.success) {
@@ -1865,6 +1975,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processDownloadJob(RemoteSyncJob job) async {
     try {
+      final localTable = _localTableName(job.table);
       var activeJob = await _controlPlaneClient.startJob(
         job.id,
         status: 'snapshotting',
@@ -1876,7 +1987,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final localSnapshot = await _createTableSnapshot(
         profile: _activeProfile(),
         database: _selectedDatabase ?? '',
-        table: job.table,
+        table: localTable,
       );
       if (!localSnapshot.success) {
         throw Exception(localSnapshot.errorText);
@@ -1907,7 +2018,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       await _applySnapshotToTable(
         profile: _activeProfile(),
         database: _selectedDatabase ?? '',
-        table: job.table,
+        table: localTable,
         snapshot: snapshot,
       );
 
@@ -2048,7 +2159,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     statements.add('END TRY');
     statements.add('BEGIN CATCH');
     statements.add('IF @@TRANCOUNT > 0 ROLLBACK TRAN;');
-    statements.add('THROW;');
+    statements.add(
+      "DECLARE @errorMessage NVARCHAR(4000) = ERROR_MESSAGE(); "
+      'RAISERROR(@errorMessage, 16, 1);',
+    );
     statements.add('END CATCH;');
 
     final processResult = await _runSqlCmd(
@@ -2315,12 +2429,22 @@ ORDER BY table_name;
             )
             : _quoteIdentifier(orderByColumn);
     final direction = orderAscending ? 'ASC' : 'DESC';
+    final columnList = columnsResult.values.map(_quoteIdentifier).join(', ');
+    final firstRowNumber = offset + 1;
+    final lastRowNumber = offset + fetchSize;
 
     final query = '''
 SET NOCOUNT ON;
-SELECT * FROM ${_quoteQualifiedIdentifier(table)}
-ORDER BY $orderClause $direction
-OFFSET $offset ROWS FETCH NEXT $fetchSize ROWS ONLY;
+WITH page_source AS (
+  SELECT
+    $columnList,
+    ROW_NUMBER() OVER (ORDER BY $orderClause $direction) AS [__sync_agent_row_number]
+  FROM ${_quoteQualifiedIdentifier(table)}
+)
+SELECT $columnList
+FROM page_source
+WHERE [__sync_agent_row_number] BETWEEN $firstRowNumber AND $lastRowNumber
+ORDER BY [__sync_agent_row_number];
 ''';
     final processResult = await _runSqlCmd(
       profile: profile,
@@ -2515,18 +2639,24 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     required int offset,
     required int pageSize,
   }) async {
+    final columnList = columns.map(_quoteIdentifier).join(', ');
+    final firstRowNumber = offset + 1;
+    final lastRowNumber = offset + pageSize;
+
     final query = '''
 SET NOCOUNT ON;
 WITH page_source AS (
-  SELECT * FROM ${_quoteQualifiedIdentifier(table)}
-  ORDER BY $orderByColumn ASC
-  OFFSET $offset ROWS FETCH NEXT $pageSize ROWS ONLY
+  SELECT
+    $columnList,
+    ROW_NUMBER() OVER (ORDER BY $orderByColumn ASC) AS [__sync_agent_row_number]
+  FROM ${_quoteQualifiedIdentifier(table)}
 )
-SELECT (
-  SELECT * FROM page_source FOR JSON PATH, INCLUDE_NULL_VALUES
-) AS snapshot_json;
+SELECT $columnList
+FROM page_source
+WHERE [__sync_agent_row_number] BETWEEN $firstRowNumber AND $lastRowNumber
+ORDER BY [__sync_agent_row_number];
 ''';
-    final processResult = await _runSqlCmdJson(
+    final processResult = await _runSqlCmd(
       profile: profile,
       database: database,
       query: query,
@@ -2548,32 +2678,10 @@ SELECT (
       );
     }
 
-    final jsonText = _parseJsonScalarOutput(processResult.stdout.toString());
-    if (jsonText.isEmpty || jsonText == 'null') {
-      return const _SnapshotPageResult(
-        success: true,
-        rows: [],
-        errorText: null,
-      );
-    }
-
-    final decoded = jsonDecode(jsonText);
-    if (decoded is! List) {
-      return const _SnapshotPageResult(
-        success: false,
-        rows: [],
-        errorText: 'Snapshot page did not return a JSON array.',
-      );
-    }
-
-    final rows = decoded
-        .map(
-          (row) => _normalizeSnapshotRowMap(
-            Map<String, dynamic>.from(row as Map),
-            columns,
-          ),
-        )
-        .toList(growable: false);
+    final rows = _parseSnapshotPageOutput(
+      output: processResult.stdout.toString(),
+      columns: columns,
+    );
     return _SnapshotPageResult(success: true, rows: rows, errorText: null);
   }
 
@@ -2643,51 +2751,6 @@ SELECT (
     }
   }
 
-  Future<ProcessResult?> _runSqlCmdJson({
-    required _SqlConnectionProfile profile,
-    String? database,
-    required String query,
-  }) async {
-    final normalizedQuery = query
-        .trim()
-        .replaceAll('\r\n', ' ')
-        .replaceAll('\n', ' ');
-    final arguments = <String>[
-      '-S',
-      profile.server,
-      if (database != null && database.isNotEmpty) ...['-d', database],
-      '-C',
-      '-b',
-      '-w',
-      '65535',
-      '-y',
-      '0',
-      '-Q',
-      normalizedQuery,
-    ];
-
-    if (profile.useWindowsAuth) {
-      arguments.insert(0, '-E');
-    } else {
-      if (profile.user.isEmpty || profile.password.isEmpty) {
-        return null;
-      }
-      arguments.insertAll(0, ['-U', profile.user, '-P', profile.password]);
-    }
-
-    try {
-      return await Process.run(
-        'sqlcmd',
-        arguments,
-        runInShell: false,
-        stdoutEncoding: SystemEncoding(),
-        stderrEncoding: SystemEncoding(),
-      );
-    } on ProcessException {
-      return null;
-    }
-  }
-
   String _quoteIdentifier(String value) => '[${value.replaceAll(']', ']]')}]';
 
   String _escapeSqlLiteral(String value) => value.replaceAll("'", "''");
@@ -2721,40 +2784,6 @@ SELECT (
         normalized.contains('changed database context') ||
         normalized.contains('row') && normalized.contains('affected') ||
         normalized.contains('command') && normalized.contains('completed');
-  }
-
-  String _parseJsonScalarOutput(String output) {
-    final buffer = StringBuffer();
-    final lines = output.split(RegExp(r'\r?\n'));
-    for (final line in lines) {
-      final trimmedLine = line.trim();
-      if (_isSkippableOutputLine(trimmedLine)) {
-        continue;
-      }
-      buffer.write(trimmedLine);
-    }
-    return buffer.toString().trim();
-  }
-
-  Map<String, String?> _normalizeSnapshotRowMap(
-    Map<String, dynamic> row,
-    List<String> columns,
-  ) {
-    return Map<String, String?>.fromEntries(
-      columns.map(
-        (column) => MapEntry(column, _normalizeSnapshotValue(row[column])),
-      ),
-    );
-  }
-
-  String? _normalizeSnapshotValue(dynamic value) {
-    if (value == null) {
-      return null;
-    }
-    if (value is bool) {
-      return value ? '1' : '0';
-    }
-    return value.toString();
   }
 
   List<String> _parseSingleColumnOutput(String output) {
@@ -2816,6 +2845,31 @@ SELECT (
       hasMoreRows: hasMoreRows,
       errorText: null,
     );
+  }
+
+  List<Map<String, String?>> _parseSnapshotPageOutput({
+    required String output,
+    required List<String> columns,
+  }) {
+    final lines = output.split(RegExp(r'\r?\n'));
+    final rows = <Map<String, String?>>[];
+
+    for (final line in lines) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+
+      final split = _splitRowValues(trimmedLine);
+      final row = <String, String?>{};
+      for (var index = 0; index < columns.length; index += 1) {
+        final value = index < split.length ? split[index] : '';
+        row[columns[index]] = value.isEmpty ? null : value;
+      }
+      rows.add(row);
+    }
+
+    return rows;
   }
 
   _SqlConnectionProfile _activeProfile() => _SqlConnectionProfile(
@@ -3059,6 +3113,7 @@ SELECT (
                             setState(() {
                               _serverController.text = dialogProfile.server;
                               _selectedDatabase = null;
+                              _databases = const [];
                               _tables = const [];
                               _selectedTable = null;
                               _tableColumns = const [];
@@ -3090,46 +3145,148 @@ SELECT (
     serverController.dispose();
   }
 
-  Widget _buildSyncPanel() {
-    final syncRows = _syncRows();
+  Widget _buildDatabaseDropdown() {
+    final selectedValue =
+        _selectedDatabase != null && _databases.contains(_selectedDatabase)
+            ? _selectedDatabase
+            : null;
 
-    if (syncRows.isEmpty) {
-      return AgentSurfaceCard(
-        title: 'Sync Tables',
-        subtitle: 'Load local SQL tables first.',
-        child: const AgentEmptyStateCard(
-          message:
-              'Open settings, confirm SQL access, and load the table list.',
-        ),
-      );
-    }
+    return DropdownButtonFormField<String>(
+      initialValue: selectedValue,
+      isExpanded: true,
+      decoration: _compactInputDecoration(
+        '',
+      ).copyWith(labelText: null, hintText: 'Database'),
+      hint: const Text('Select a local database'),
+      items: _databases
+          .map(
+            (database) => DropdownMenuItem<String>(
+              value: database,
+              child: Text(database, overflow: TextOverflow.ellipsis),
+            ),
+          )
+          .toList(growable: false),
+      onChanged:
+          _databases.isEmpty
+              ? null
+              : (database) {
+                if (database == null) {
+                  return;
+                }
+                unawaited(_selectDatabase(database));
+              },
+    );
+  }
 
-    final selectedRow = _selectedSyncRow(syncRows);
+  Widget _buildSyncTablesHeader() {
+    final title = Text(
+      'Sync Tables',
+      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+    );
+    final actions = _buildAgentActionButtons();
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        final stackPanels = constraints.maxWidth < 1100;
-        final tableListCard = _buildSyncTableListCard(syncRows, selectedRow);
-        final detailCard = _buildSyncDetailCard(selectedRow);
-
-        if (stackPanels) {
-          return Column(
+        final compact = constraints.maxWidth < 560;
+        if (compact) {
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Expanded(flex: 7, child: tableListCard),
-              const SizedBox(height: 16),
-              Expanded(flex: 6, child: detailCard),
+              title,
+              if (_databases.isNotEmpty)
+                SizedBox(
+                  width: constraints.maxWidth.clamp(0, 360).toDouble(),
+                  child: _buildDatabaseDropdown(),
+                ),
+              actions,
             ],
           );
         }
 
         return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(flex: 7, child: tableListCard),
-            const SizedBox(width: 16),
-            Expanded(flex: 5, child: detailCard),
+            title,
+            if (_databases.isNotEmpty) ...[
+              const SizedBox(width: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: _buildDatabaseDropdown(),
+              ),
+            ] else
+              const Spacer(),
+            const SizedBox(width: 8),
+            actions,
           ],
         );
       },
+    );
+  }
+
+  Widget _buildSyncPanel() {
+    final syncRows = _syncRows();
+
+    if (syncRows.isEmpty) {
+      return Column(
+        children: [
+          _buildSyncTablesHeader(),
+          const SizedBox(height: 8),
+          AgentSurfaceCard(
+            title: 'Sync Tables',
+            subtitle: 'Load local SQL tables first.',
+            showHeader: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const AgentEmptyStateCard(
+                  message:
+                      'Open settings, confirm SQL access, and load the table list.',
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    final selectedRow = _selectedSyncRow(syncRows);
+    return Column(
+      children: [
+        _buildSyncTablesHeader(),
+        const SizedBox(height: 8),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final stackPanels = constraints.maxWidth < 1100;
+              final tableListCard = _buildSyncTableListCard(
+                syncRows,
+                selectedRow,
+              );
+              final detailCard = _buildSyncDetailCard(selectedRow);
+
+              if (stackPanels) {
+                return Column(
+                  children: [
+                    Expanded(flex: 7, child: tableListCard),
+                    const SizedBox(height: 16),
+                    Expanded(flex: 6, child: detailCard),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 7, child: tableListCard),
+                  const SizedBox(width: 16),
+                  Expanded(flex: 5, child: detailCard),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -3144,12 +3301,13 @@ SELECT (
       title: 'Sync Tables',
       subtitle: '',
       expandChild: true,
+      showHeader: false,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               AgentMetricPill(
                 label: 'Role',
@@ -3165,15 +3323,15 @@ SELECT (
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Expanded(
             child: ListView.separated(
               itemCount: syncRows.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              separatorBuilder: (_, _) => const SizedBox(height: 6),
               itemBuilder:
                   (context, index) => _buildSyncTableTile(
                     row: syncRows[index],
-                    selected: syncRows[index].table == selectedRow?.table,
+                    selected: syncRows[index].syncKey == selectedRow?.syncKey,
                   ),
             ),
           ),
@@ -3192,12 +3350,12 @@ SELECT (
       borderRadius: BorderRadius.circular(8),
       onTap: () {
         setState(() {
-          _selectedSyncTable = row.table;
+          _selectedSyncTable = row.syncKey;
         });
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFE6F4F1) : Colors.white,
           borderRadius: BorderRadius.circular(8),
@@ -3218,6 +3376,7 @@ SELECT (
                       Checkbox(
                         value: row.state.enabled,
                         visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         onChanged: (value) {
                           if (value == null) {
                             return;
@@ -3230,7 +3389,7 @@ SELECT (
                           row.table,
                           style: const TextStyle(
                             fontWeight: FontWeight.w800,
-                            fontSize: 14,
+                            fontSize: 13,
                           ),
                         ),
                       ),
@@ -3238,7 +3397,7 @@ SELECT (
                   ),
                   Wrap(
                     spacing: 8,
-                    runSpacing: 8,
+                    runSpacing: 6,
                     children: [
                       _buildRoleIndicator(_isMasterClient, showLabel: false),
                       AgentStatusPill(
@@ -3253,6 +3412,7 @@ SELECT (
                       Checkbox(
                         value: row.state.enabled,
                         visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         onChanged: (value) {
                           if (value == null) {
                             return;
@@ -3265,47 +3425,50 @@ SELECT (
                           row.table,
                           style: const TextStyle(
                             fontWeight: FontWeight.w800,
-                            fontSize: 14,
+                            fontSize: 13,
                           ),
                         ),
                       ),
                       _buildRoleIndicator(_isMasterClient, showLabel: false),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       AgentStatusPill(
                         label: row.state.status,
                         color: statusColor,
                       ),
                     ],
                   ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 6),
                 Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
-                    AgentMetricPill(
+                    _buildCompactMetricPill(
                       label: 'Rows',
                       value: '${row.state.rowCount}',
                     ),
-                    AgentMetricPill(
+                    _buildCompactMetricPill(
                       label: 'Last Sync',
                       value: _formatTimestamp(row.state.lastSync),
                     ),
-                    AgentMetricPill(
+                    _buildCompactMetricPill(
                       label: 'Backup',
                       value: _formatBytes(row.state.snapshotBytes),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 if (stack) ...[
                   AgentProgressStrip(
                     progress: row.state.progress,
                     color: statusColor,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 5),
                   Text(
                     '${row.state.progress}%',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ] else
                   Row(
@@ -3316,10 +3479,13 @@ SELECT (
                           color: statusColor,
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Text(
                         '${row.state.progress}%',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ],
                   ),
@@ -3327,6 +3493,43 @@ SELECT (
             );
           },
         ),
+      ),
+    );
+  }
+
+  Widget _buildCompactMetricPill({
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label ',
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(
+                color: Color(0xFF18212B),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -3506,7 +3709,7 @@ SELECT (
     try {
       final queuedJobs = await _controlPlaneClient.createJobs(
         clientName: widget.clientName,
-        tables: [table],
+        tables: [_syncTableKey(table)],
         direction: direction,
       );
 
@@ -3991,12 +4194,7 @@ SELECT (
               style: const TextStyle(color: Color(0xFFB42318)),
             ),
           ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: _buildSyncPanel(),
-          ),
-        ),
+        Expanded(child: _buildSyncPanel()),
       ],
     );
   }
@@ -4193,20 +4391,20 @@ SELECT (
   Widget _buildPinnedSummaryBar() {
     final syncRows = _tables
         .map((table) {
-          final state =
-              _syncState.tables[table] ?? _defaultSyncTableState(table);
-          return (table: table, state: state);
+          final syncKey = _syncTableKey(table);
+          final state = _syncTableState(table, syncKey: syncKey);
+          return (table: table, syncKey: syncKey, state: state);
         })
         .toList(growable: false);
 
     final selectedSyncTableName = _selectedSyncTableName(
-      syncRows.map((row) => row.table).toList(growable: false),
+      syncRows.map((row) => row.syncKey).toList(growable: false),
     );
     final selectedSyncRow =
         syncRows.isEmpty
             ? null
             : syncRows.firstWhere(
-              (row) => row.table == selectedSyncTableName,
+              (row) => row.syncKey == selectedSyncTableName,
               orElse: () => syncRows.first,
             );
     final activeSyncCount =
@@ -4220,8 +4418,18 @@ SELECT (
                   row.state.status == 'Applying',
             )
             .length;
+    final agentStatus =
+        _checkingServerConnection
+            ? 'Checking'
+            : _serverConnected
+            ? 'Online'
+            : 'Offline';
+    final sqlStatus = _selectedDatabase == null ? 'SQL pending' : 'SQL ready';
 
     final footerItems = <Widget>[
+      _InfoLine(label: 'Client', value: widget.clientName),
+      _InfoLine(label: 'Agent', value: agentStatus),
+      _InfoLine(label: 'SQL', value: sqlStatus),
       _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
       _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
       _InfoLine(
@@ -4496,142 +4704,13 @@ SELECT (
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final compactAppBar = screenWidth < 760;
     final pagePadding =
         screenWidth < 480
-            ? const EdgeInsets.all(12)
+            ? const EdgeInsets.fromLTRB(12, 0, 12, 12)
             : (screenWidth < 760
-                ? const EdgeInsets.all(14)
-                : const EdgeInsets.all(16));
-    final controlPlaneColor =
-        _checkingServerConnection
-            ? const Color(0xFFB7791F)
-            : _serverConnected
-            ? const Color(0xFF0F766E)
-            : const Color(0xFFB42318);
-    final controlPlaneLabel =
-        _checkingServerConnection
-            ? 'checking'
-            : _serverConnected
-            ? 'online'
-            : 'offline';
-    final sqlLabel = _selectedDatabase == null ? 'SQL pending' : 'SQL ready';
-    final headerStatus =
-        'Agent $controlPlaneLabel / $sqlLabel / Every ${_syncState.autoSyncIntervalMinutes} min';
-
+                ? const EdgeInsets.fromLTRB(14, 0, 14, 14)
+                : const EdgeInsets.fromLTRB(16, 0, 16, 16));
     return Scaffold(
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(52),
-        child: Material(
-          color: const Color(0xFFF6F7F9),
-          child: SafeArea(
-            bottom: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.clientName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.circle,
-                              color: controlPlaneColor,
-                              size: 7,
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                headerStatus,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF64727A),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(width: compactAppBar ? 4 : 8),
-                  PopupMenuButton<String>(
-                    tooltip: 'Agent actions',
-                    position: PopupMenuPosition.under,
-                    offset: const Offset(0, 8),
-                    onSelected: (value) {
-                      switch (value) {
-                        case 'settings':
-                          _openSettingsDialog();
-                          break;
-                        case 'minimize':
-                          unawaited(widget.onMinimizeWindow());
-                          break;
-                        case 'signOut':
-                          widget.onLogout();
-                          break;
-                      }
-                    },
-                    itemBuilder:
-                        (context) => const [
-                          PopupMenuItem<String>(
-                            value: 'settings',
-                            child: ListTile(
-                              dense: true,
-                              leading: Icon(Icons.settings_outlined),
-                              title: Text('Settings'),
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                          PopupMenuItem<String>(
-                            value: 'minimize',
-                            child: ListTile(
-                              dense: true,
-                              leading: Icon(Icons.minimize_rounded),
-                              title: Text('Minimize'),
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                          PopupMenuItem<String>(
-                            value: 'signOut',
-                            child: ListTile(
-                              dense: true,
-                              leading: Icon(Icons.logout_rounded),
-                              title: Text('Sign out'),
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                        ],
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFDDE3EA)),
-                      ),
-                      child: const Icon(Icons.more_vert, size: 20),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
       body: Padding(padding: pagePadding, child: _buildSyncTab()),
       bottomNavigationBar: _buildPinnedSummaryBar(),
     );
@@ -4639,9 +4718,14 @@ SELECT (
 }
 
 class _SyncTableRowData {
-  const _SyncTableRowData({required this.table, required this.state});
+  const _SyncTableRowData({
+    required this.table,
+    required this.syncKey,
+    required this.state,
+  });
 
   final String table;
+  final String syncKey;
   final SyncTableState state;
 }
 

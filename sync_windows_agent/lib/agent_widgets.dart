@@ -133,6 +133,7 @@ class AgentSurfaceCard extends StatelessWidget {
     this.expandChild = false,
     this.titleWidget,
     this.headerTrailing,
+    this.showHeader = true,
   });
 
   final String title;
@@ -141,6 +142,7 @@ class AgentSurfaceCard extends StatelessWidget {
   final bool expandChild;
   final Widget? titleWidget;
   final Widget? headerTrailing;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -160,49 +162,54 @@ class AgentSurfaceCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (stackHeader) ...[
-                titleWidget ??
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
+              if (showHeader) ...[
+                if (stackHeader) ...[
+                  titleWidget ??
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                if (headerTrailing != null) ...[
-                  const SizedBox(height: 12),
-                  headerTrailing!,
-                ],
-              ] else
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child:
-                          titleWidget ??
-                          Text(
-                            title,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                    ),
-                    if (headerTrailing != null) ...[
-                      const SizedBox(width: 12),
-                      Flexible(child: headerTrailing!),
-                    ],
+                  if (headerTrailing != null) ...[
+                    const SizedBox(height: 12),
+                    headerTrailing!,
                   ],
-                ),
-              if (hasSubtitle) ...[
-                const SizedBox(height: 6),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Color(0xFF667085), height: 1.4),
-                ),
-                const SizedBox(height: 14),
-              ] else
-                const SizedBox(height: 12),
+                ] else
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child:
+                            titleWidget ??
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                      ),
+                      if (headerTrailing != null) ...[
+                        const SizedBox(width: 12),
+                        Flexible(child: headerTrailing!),
+                      ],
+                    ],
+                  ),
+                if (hasSubtitle) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                ] else
+                  const SizedBox(height: 12),
+              ],
               if (expandChild) Expanded(child: child) else child,
             ],
           ),

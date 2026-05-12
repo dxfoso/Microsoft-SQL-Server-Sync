@@ -1,6 +1,7 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <string>
 
 #include "flutter/generated_plugin_registrant.h"
 #include "resource.h"
@@ -10,6 +11,23 @@ namespace {
 
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayIconId = 1;
+
+std::wstring Utf8ToWide(const std::string& value) {
+  if (value.empty()) {
+    return L"";
+  }
+
+  const int size = MultiByteToWideChar(
+      CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+  if (size <= 0) {
+    return L"";
+  }
+
+  std::wstring wide(size, L'\0');
+  MultiByteToWideChar(
+      CP_UTF8, 0, value.data(), static_cast<int>(value.size()), wide.data(), size);
+  return wide;
+}
 
 }  // namespace
 
@@ -58,20 +76,40 @@ bool FlutterWindow::OnCreate() {
           result->Success();
           return;
         }
+        if (call.method_name() == "setWindowTitle") {
+          const auto window_handle = GetHandle();
+          if (window_handle == nullptr) {
+            result->Error("window_not_found", "Window handle is not available.");
+            return;
+          }
+
+          const auto* arguments =
+              std::get_if<std::string>(call.arguments());
+          if (arguments == nullptr) {
+            result->Error("invalid_title", "Window title must be a string.");
+            return;
+          }
+
+          const auto title = Utf8ToWide(*arguments);
+          SetWindowText(window_handle, title.empty() ? L"SQL Sync Agent" : title.c_str());
+          result->Success();
+          return;
+        }
         result->NotImplemented();
       });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
-
   LogStartupEvent(L"FlutterWindow::OnCreate show window immediately");
-  Show();
-  SetForegroundWindow(GetHandle());
+  this->Show();
 
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     LogStartupEvent(L"FlutterWindow first frame callback");
     startup_ui_ready_ = true;
-    this->Show();
     allow_tray_minimize_ = true;
-    SetForegroundWindow(GetHandle());
+    const auto window_handle = GetHandle();
+    if (window_handle != nullptr) {
+      this->Show();
+      SetForegroundWindow(window_handle);
+    }
   });
 
   // Flutter can complete the first frame before the "show window" callback is
@@ -229,7 +267,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
       break;
     case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
+      if (flutter_controller_ && flutter_controller_->engine()) {
+        flutter_controller_->engine()->ReloadSystemFonts();
+      }
       break;
   }
 
