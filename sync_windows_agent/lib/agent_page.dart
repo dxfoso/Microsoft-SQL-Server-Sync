@@ -3152,7 +3152,7 @@ ORDER BY [__sync_agent_row_number];
             : null;
 
     return DropdownButtonFormField<String>(
-      initialValue: selectedValue,
+      value: selectedValue,
       isExpanded: true,
       decoration: _compactInputDecoration(
         '',
