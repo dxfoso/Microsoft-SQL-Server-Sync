@@ -259,8 +259,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         if (!_hasSyncedTableState(tableState)) {
           continue;
         }
+        final tableKey = _tableKeyForAgent(agent, tableState);
         final entries = buckets.putIfAbsent(
-          tableState.table,
+          tableKey,
           () => <_TableClientEntry>[],
         );
         entries.add(_TableClientEntry(agent: agent, tableState: tableState));
@@ -304,6 +305,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return summaries;
   }
 
+  String _tableKeyForAgent(AdminAgent agent, AdminTableState tableState) {
+    final table = tableState.table.trim();
+    if (table.isEmpty || table.contains(_TableAggregateSummary.separator)) {
+      return table;
+    }
+    final database = agent.database.trim();
+    return database.isEmpty
+        ? table
+        : '$database${_TableAggregateSummary.separator}$table';
+  }
+
   List<_TableClientEntry> _clientsForTableFromState(
     AdminLiveState? state,
     String? tableName,
@@ -325,7 +337,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   AdminTableState? _tableStateForAgent(AdminAgent agent, String tableName) {
     for (final table in agent.tables) {
-      if (table.table == tableName) {
+      if (_tableKeyForAgent(agent, table) == tableName) {
         return table;
       }
     }
@@ -2333,6 +2345,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           query,
           [
             summary.table,
+            summary.database,
+            summary.displayTable,
             summary.sourceClientName,
             _formatTimestamp(summary.lastSync),
             '${summary.clientCount}',
@@ -2343,6 +2357,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 entry.agent.clientName,
                 entry.agent.machineName,
                 _roleLabel(entry.agent.isMaster),
+                _tableKeyForAgent(entry.agent, entry.tableState),
                 entry.tableState.status,
                 entry.tableState.message,
               ].join(' ');
@@ -2539,7 +2554,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               MetricPill(label: 'Clients', value: totalClients.toString()),
               MetricPill(
                 label: 'Selected',
-                value: _selectedTableName ?? 'None',
+                value:
+                    _selectedTableSummary?.displayTitle ??
+                    _selectedTableName ??
+                    'None',
               ),
             ],
           ),
@@ -2591,7 +2609,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      summary.table,
+                      summary.displayTitle,
                       style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 15,
@@ -2633,7 +2651,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            summary.table,
+                            summary.displayTitle,
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                               fontSize: 15,
@@ -2692,7 +2710,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
 
     return SurfaceCard(
-      title: summary.table,
+      title: summary.displayTitle,
       subtitle: '',
       expandChild: true,
       child: Column(
@@ -3331,7 +3349,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         tableState?.snapshotBytes ?? summary?.latestSnapshotBytes;
 
     final footerItems = <Widget>[
-      InfoLine(label: 'Table', value: summary?.table ?? 'None'),
+      InfoLine(label: 'Table', value: summary?.displayTable ?? 'None'),
+      InfoLine(label: 'Database', value: summary?.database ?? 'None'),
       InfoLine(label: 'Clients', value: '${summary?.clientCount ?? 0}'),
       InfoLine(label: 'Client', value: _selectedClientName ?? 'All'),
       InfoLine(label: 'Last Sync', value: lastSync),
@@ -3427,7 +3446,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final title =
         _selectedTableName == null
             ? 'SQL Sync'
-            : 'SQL Sync - $_selectedTableName';
+            : 'SQL Sync - ${_selectedTableSummary?.displayTitle ?? _selectedTableName}';
     final profileLabel =
         widget.authenticatedUser.name.trim().isEmpty
             ? widget.authenticatedUser.username
@@ -3640,6 +3659,23 @@ class _TableAggregateSummary {
   final int latestSnapshotBytes;
   final String sourceClientName;
   final List<_TableClientEntry> clients;
+
+  static const String separator = '::';
+
+  String get database {
+    final separatorIndex = table.indexOf(separator);
+    return separatorIndex < 0 ? '' : table.substring(0, separatorIndex);
+  }
+
+  String get displayTable {
+    final separatorIndex = table.indexOf(separator);
+    return separatorIndex < 0
+        ? table
+        : table.substring(separatorIndex + separator.length);
+  }
+
+  String get displayTitle =>
+      database.isEmpty ? displayTable : '$displayTable - $database';
 }
 
 class _TableClientEntry {

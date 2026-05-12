@@ -290,6 +290,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  String _databaseNameFromSyncKey(String syncTableKey) {
+    final separatorIndex = syncTableKey.indexOf(_syncTableKeySeparator);
+    if (separatorIndex < 0) {
+      return _selectedDatabase ?? '';
+    }
+    return syncTableKey.substring(0, separatorIndex);
+  }
+
   bool _syncKeyMatchesSelectedDatabase(String syncTableKey) {
     final databaseName = _selectedDatabase?.trim() ?? '';
     if (databaseName.isEmpty ||
@@ -1875,6 +1883,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processUploadJob(RemoteSyncJob job) async {
     try {
+      final localDatabase = _databaseNameFromSyncKey(job.table);
       final localTable = _localTableName(job.table);
       var activeJob = await _controlPlaneClient.startJob(
         job.id,
@@ -1886,7 +1895,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       final snapshot = await _createTableSnapshot(
         profile: _activeProfile(),
-        database: _selectedDatabase ?? '',
+        database: localDatabase,
         table: localTable,
       );
 
@@ -1975,6 +1984,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processDownloadJob(RemoteSyncJob job) async {
     try {
+      final localDatabase = _databaseNameFromSyncKey(job.table);
       final localTable = _localTableName(job.table);
       var activeJob = await _controlPlaneClient.startJob(
         job.id,
@@ -1986,7 +1996,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       final localSnapshot = await _createTableSnapshot(
         profile: _activeProfile(),
-        database: _selectedDatabase ?? '',
+        database: localDatabase,
         table: localTable,
       );
       if (!localSnapshot.success) {
@@ -2017,7 +2027,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       await _applySnapshotToTable(
         profile: _activeProfile(),
-        database: _selectedDatabase ?? '',
+        database: localDatabase,
         table: localTable,
         snapshot: snapshot,
       );
@@ -3189,36 +3199,43 @@ ORDER BY [__sync_agent_row_number];
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 560;
         if (compact) {
-          return Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              title,
-              if (_databases.isNotEmpty)
-                SizedBox(
-                  width: constraints.maxWidth.clamp(0, 360).toDouble(),
-                  child: _buildDatabaseDropdown(),
-                ),
-              actions,
-            ],
+          return Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 12),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                title,
+                if (_databases.isNotEmpty)
+                  SizedBox(
+                    width: constraints.maxWidth.clamp(0, 360).toDouble(),
+                    child: _buildDatabaseDropdown(),
+                  ),
+                actions,
+              ],
+            ),
           );
         }
 
-        return Row(
-          children: [
-            title,
-            if (_databases.isNotEmpty) ...[
-              const SizedBox(width: 12),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: _buildDatabaseDropdown(),
-              ),
-            ] else
+        return Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              title,
+              if (_databases.isNotEmpty) ...[
+                const SizedBox(width: 14),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  child: _buildDatabaseDropdown(),
+                ),
+              ],
               const Spacer(),
-            const SizedBox(width: 8),
-            actions,
-          ],
+              const SizedBox(width: 12),
+              actions,
+            ],
+          ),
         );
       },
     );
@@ -3294,9 +3311,6 @@ ORDER BY [__sync_agent_row_number];
     List<_SyncTableRowData> syncRows,
     _SyncTableRowData? selectedRow,
   ) {
-    final activeSyncCount =
-        syncRows.where((row) => _isSyncBusyStatus(row.state.status)).length;
-
     return AgentSurfaceCard(
       title: 'Sync Tables',
       subtitle: '',
@@ -3305,25 +3319,6 @@ ORDER BY [__sync_agent_row_number];
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              AgentMetricPill(
-                label: 'Role',
-                value: _roleLabel(_isMasterClient),
-              ),
-              AgentMetricPill(
-                label: 'Tables',
-                value: syncRows.length.toString(),
-              ),
-              AgentMetricPill(
-                label: 'Active',
-                value: activeSyncCount.toString(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
           Expanded(
             child: ListView.separated(
               itemCount: syncRows.length,
@@ -4408,16 +4403,7 @@ ORDER BY [__sync_agent_row_number];
               orElse: () => syncRows.first,
             );
     final activeSyncCount =
-        syncRows
-            .where(
-              (row) =>
-                  row.state.status == 'Queued' ||
-                  row.state.status == 'Snapshotting' ||
-                  row.state.status == 'Uploading' ||
-                  row.state.status == 'Downloading' ||
-                  row.state.status == 'Applying',
-            )
-            .length;
+        syncRows.where((row) => _isSyncBusyStatus(row.state.status)).length;
     final agentStatus =
         _checkingServerConnection
             ? 'Checking'
@@ -4432,6 +4418,7 @@ ORDER BY [__sync_agent_row_number];
       _InfoLine(label: 'SQL', value: sqlStatus),
       _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
       _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
+      _InfoLine(label: 'Tables', value: syncRows.length.toString()),
       _InfoLine(
         label: 'Interval',
         value: '${_syncState.autoSyncIntervalMinutes} min',

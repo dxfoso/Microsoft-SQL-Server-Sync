@@ -651,6 +651,27 @@ function snapshotKey(clientName, table) {
   return `${clientName}::${table}`;
 }
 
+const TABLE_DATABASE_SEPARATOR = "::";
+
+function tableHasDatabase(table) {
+  return String(table || "").includes(TABLE_DATABASE_SEPARATOR);
+}
+
+function databaseFromTableKey(table) {
+  const value = String(table || "");
+  const separatorIndex = value.indexOf(TABLE_DATABASE_SEPARATOR);
+  return separatorIndex < 0 ? "" : value.slice(0, separatorIndex).trim();
+}
+
+function qualifyTableWithDatabase(table, database) {
+  const tableName = String(table || "").trim();
+  const databaseName = String(database || "").trim();
+  if (!tableName || !databaseName || tableHasDatabase(tableName)) {
+    return tableName;
+  }
+  return `${databaseName}${TABLE_DATABASE_SEPARATOR}${tableName}`;
+}
+
 function withCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -1616,11 +1637,17 @@ async function handleRequest(req, res) {
     agent.serverConnected = Boolean(body.serverConnected);
     agent.sqlConnected = Boolean(body.sqlConnected);
     agent.lastHeartbeat = nowIso();
-    agent.selectedTable = body.selectedTable ? String(body.selectedTable) : null;
+    agent.selectedTable = body.selectedTable
+      ? qualifyTableWithDatabase(body.selectedTable, agent.database)
+      : null;
     if (Array.isArray(body.tables)) {
       const nextTables = {};
       for (const tableState of body.tables) {
         const normalizedTableState = normalizeTableState(tableState);
+        normalizedTableState.table = qualifyTableWithDatabase(
+          normalizedTableState.table,
+          agent.database,
+        );
         if (!normalizedTableState.table) {
           continue;
         }
@@ -1737,8 +1764,11 @@ async function handleRequest(req, res) {
     const body = await parseJsonBody(req);
     const direction = String(body.direction || "upload").trim().toLowerCase();
     const sourceClientName = String(body.sourceClientName || "").trim();
+    const database = String(body.database || "").trim();
     const tables = Array.isArray(body.tables)
-      ? body.tables.map(String).map((item) => item.trim()).filter(Boolean)
+      ? body.tables
+        .map((item) => qualifyTableWithDatabase(item, database))
+        .filter(Boolean)
       : [];
 
     if (tables.length == 0) {
@@ -1912,12 +1942,21 @@ async function handleRequest(req, res) {
     }
     const rawSnapshot =
       body.snapshot && typeof body.snapshot === "object" ? body.snapshot : body;
+    const importDatabase =
+      body.database ||
+      databaseFromTableKey(rawSnapshot.table) ||
+      databaseFromTableKey(body.table) ||
+      state.agents[clientUser.username]?.database ||
+      "";
     const snapshot = finalizeSnapshot({
       ...rawSnapshot,
       clientName: clientUser.username,
       clientUserId: clientUser.id,
       ownerUserId: clientUser.ownerUserId || null,
-      table: body.table || rawSnapshot.table,
+      table: qualifyTableWithDatabase(
+        body.table || rawSnapshot.table,
+        importDatabase,
+      ),
       createdAt:
         body.createdAt ||
         rawSnapshot.createdAt ||
@@ -2070,7 +2109,10 @@ async function handleRequest(req, res) {
       ) {
         job.uploadSession = {
           id: requestedUploadId || crypto.randomUUID(),
-          table: String(body.table || job.table),
+          table: qualifyTableWithDatabase(
+            body.table || job.table,
+            databaseFromTableKey(job.table),
+          ),
           snapshotCreatedAt: String(body.snapshotCreatedAt || body.createdAt || nowIso()),
           rowCount: Number(body.rowCount || 0),
           snapshotBytes: Number(body.snapshotBytes || 0),
@@ -2205,7 +2247,10 @@ async function handleRequest(req, res) {
         clientName: job.clientName,
         clientUserId: job.clientUserId || null,
         ownerUserId: job.ownerUserId || null,
-        table: String(body.table || job.table),
+        table: qualifyTableWithDatabase(
+          body.table || job.table,
+          databaseFromTableKey(job.table),
+        ),
         createdAt,
         rowCount: Number(body.rowCount || rows.length),
         checksum: body.checksum,
