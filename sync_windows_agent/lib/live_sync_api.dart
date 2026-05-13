@@ -303,6 +303,7 @@ class AgentControlPlaneClient {
     required List<String> tables,
     required String direction,
     String? sourceClientName,
+    String? syncMode,
   }) async {
     final response = await _sendRequest(
       _client.post(
@@ -312,6 +313,8 @@ class AgentControlPlaneClient {
           'clientName': clientName,
           if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
             'sourceClientName': sourceClientName,
+          if (syncMode != null && syncMode.trim().isNotEmpty)
+            'syncMode': syncMode,
           'direction': direction,
           'tables': tables,
         }),

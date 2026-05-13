@@ -170,6 +170,7 @@ class AdminTableState {
     required this.lastSync,
     required this.progress,
     required this.direction,
+    required this.syncMode,
     required this.rowCount,
     required this.snapshotId,
     required this.snapshotCreatedAt,
@@ -183,6 +184,7 @@ class AdminTableState {
   final String lastSync;
   final int progress;
   final String direction;
+  final String syncMode;
   final int rowCount;
   final String? snapshotId;
   final String? snapshotCreatedAt;
@@ -197,6 +199,7 @@ class AdminTableState {
       lastSync: json['lastSync'] as String? ?? '',
       progress: (json['progress'] as num? ?? 0).round(),
       direction: json['direction'] as String? ?? 'upload',
+      syncMode: json['syncMode'] as String? ?? 'master',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       snapshotId: json['snapshotId'] as String?,
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,

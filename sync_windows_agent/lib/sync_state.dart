@@ -6,6 +6,29 @@ const int kMaxHistoryLimit = 100;
 const int kDefaultAutoSyncIntervalMinutes = 15;
 const int kMinAutoSyncIntervalMinutes = 1;
 const int kMaxAutoSyncIntervalMinutes = 1440;
+const String kSyncModeMaster = 'master';
+const String kSyncModeClient = 'client';
+const String kSyncModeMasterMix = 'masterMix';
+
+String normalizeSyncMode(String? value, {bool fallbackIsMaster = true}) {
+  switch ((value ?? '').trim()) {
+    case kSyncModeMaster:
+    case 'upload':
+      return kSyncModeMaster;
+    case kSyncModeClient:
+    case 'download':
+      return kSyncModeClient;
+    case kSyncModeMasterMix:
+    case 'mix':
+      return kSyncModeMasterMix;
+    default:
+      return fallbackIsMaster ? kSyncModeMaster : kSyncModeClient;
+  }
+}
+
+String syncDirectionForMode(String syncMode) {
+  return normalizeSyncMode(syncMode) == kSyncModeClient ? 'download' : 'upload';
+}
 
 class SyncHistorySnapshotData {
   const SyncHistorySnapshotData({required this.columns, required this.rows});
@@ -112,6 +135,7 @@ class SyncTableState {
     required this.lastSync,
     required this.progress,
     required this.direction,
+    required this.syncMode,
     required this.rowCount,
     required this.snapshotId,
     required this.snapshotCreatedAt,
@@ -125,6 +149,7 @@ class SyncTableState {
   final String lastSync;
   final int progress;
   final String direction;
+  final String syncMode;
   final int rowCount;
   final String? snapshotId;
   final String? snapshotCreatedAt;
@@ -139,12 +164,17 @@ class SyncTableState {
               SyncHistoryEntry.fromJson(Map<String, dynamic>.from(item as Map)),
         )
         .toList(growable: false);
+    final direction = json['direction'] as String? ?? 'upload';
     return SyncTableState(
       enabled: json['enabled'] as bool? ?? false,
       status: json['status'] as String? ?? 'Paused',
       lastSync: json['lastSync'] as String? ?? '--',
       progress: (json['progress'] as num? ?? 0).round(),
-      direction: json['direction'] as String? ?? 'upload',
+      direction: direction,
+      syncMode: normalizeSyncMode(
+        json['syncMode'] as String?,
+        fallbackIsMaster: direction != 'download',
+      ),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       snapshotId: json['snapshotId'] as String?,
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
@@ -160,6 +190,7 @@ class SyncTableState {
     'lastSync': lastSync,
     'progress': progress,
     'direction': direction,
+    'syncMode': syncMode,
     'rowCount': rowCount,
     'snapshotId': snapshotId,
     'snapshotCreatedAt': snapshotCreatedAt,
@@ -174,6 +205,7 @@ class SyncTableState {
     String? lastSync,
     int? progress,
     String? direction,
+    String? syncMode,
     int? rowCount,
     String? snapshotId,
     String? snapshotCreatedAt,
@@ -187,6 +219,7 @@ class SyncTableState {
       lastSync: lastSync ?? this.lastSync,
       progress: progress ?? this.progress,
       direction: direction ?? this.direction,
+      syncMode: syncMode ?? this.syncMode,
       rowCount: rowCount ?? this.rowCount,
       snapshotId: snapshotId ?? this.snapshotId,
       snapshotCreatedAt: snapshotCreatedAt ?? this.snapshotCreatedAt,

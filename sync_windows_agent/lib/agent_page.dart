@@ -98,6 +98,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool get _isMasterClient => _syncState.isMaster;
   Duration get _autoSyncInterval =>
       Duration(minutes: _syncState.autoSyncIntervalMinutes);
+  String get _defaultTableSyncMode =>
+      _isMasterClient ? kSyncModeMaster : kSyncModeClient;
 
   @override
   void initState() {
@@ -332,7 +334,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final current = _syncTableState(table, syncKey: syncKey);
     final now = DateTime.now().toIso8601String();
     final nextStatus = enabled ? 'Queued' : 'Paused';
-    final syncDirection = _isMasterClient ? 'upload' : 'download';
+    final syncMode = normalizeSyncMode(
+      current.syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    final syncDirection = syncDirectionForMode(syncMode);
     final nextHistory = _appendHistory(
       current.history,
       SyncHistoryEntry(
@@ -344,7 +350,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             enabled
                 ? _isMasterClient
                     ? 'Master sync enabled for ${widget.clientName}.'
-                    : 'Slave sync enabled for ${widget.clientName}.'
+                    : syncMode == kSyncModeMasterMix
+                    ? 'Master mix sync enabled for ${widget.clientName}.'
+                    : 'Client sync enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
         direction: syncDirection,
         rowCount: current.rowCount,
@@ -365,6 +373,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             enabled
                 ? _isMasterClient
                     ? 'Waiting for the next master upload.'
+                    : syncMode == kSyncModeMasterMix
+                    ? 'Waiting for upload and master merge.'
                     : 'Waiting for the next master snapshot download.'
                 : 'Sync disabled.',
         history: nextHistory,
@@ -381,7 +391,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       status: 'Paused',
       lastSync: '',
       progress: 0,
-      direction: _isMasterClient ? 'upload' : 'download',
+      direction: syncDirectionForMode(_defaultTableSyncMode),
+      syncMode: _defaultTableSyncMode,
       rowCount: 0,
       snapshotId: null,
       snapshotCreatedAt: null,
@@ -910,10 +921,69 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Color _roleColor(bool isMaster) =>
       isMaster ? const Color(0xFF2563EB) : const Color(0xFF0F766E);
 
-  IconData _roleIcon(bool isMaster) =>
-      isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
-
   String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
+
+  String _syncModeLabel(String syncMode) {
+    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
+      case kSyncModeMaster:
+        return 'Master';
+      case kSyncModeMasterMix:
+        return 'Master Mix';
+      case kSyncModeClient:
+      default:
+        return 'Client';
+    }
+  }
+
+  IconData _syncModeIcon(String syncMode) {
+    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
+      case kSyncModeMaster:
+        return Icons.cloud_upload_rounded;
+      case kSyncModeMasterMix:
+        return Icons.sync_alt_rounded;
+      case kSyncModeClient:
+      default:
+        return Icons.cloud_download_rounded;
+    }
+  }
+
+  String _syncModeDescription(String syncMode) {
+    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
+      case kSyncModeMaster:
+        return 'Upload this table for clients.';
+      case kSyncModeMasterMix:
+        return 'Upload this table and merge rows from other masters.';
+      case kSyncModeClient:
+      default:
+        return 'Download this table from masters.';
+    }
+  }
+
+  void _updateTableSyncMode(String table, String syncMode) {
+    final normalizedMode = normalizeSyncMode(
+      syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    final syncKey = _syncTableKey(table);
+    final current = _syncTableState(table, syncKey: syncKey);
+    final direction = syncDirectionForMode(normalizedMode);
+    _updateSyncTableState(
+      syncKey,
+      current.copyWith(
+        syncMode: normalizedMode,
+        direction: direction,
+        status: current.enabled ? 'Queued' : current.status,
+        progress: current.enabled ? 0 : current.progress,
+        message:
+            current.enabled
+                ? _syncModeDescription(normalizedMode)
+                : current.message,
+      ),
+    );
+    if (current.enabled) {
+      unawaited(_queueEnabledRoleJobs(forceTables: {syncKey}));
+    }
+  }
 
   Color _statusColor(String status) {
     switch (status) {
@@ -1110,7 +1180,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Set<String> _setClientRole(bool isMaster) {
     final enabledTables = <String>{};
-    final direction = isMaster ? 'upload' : 'download';
+    final syncMode = isMaster ? kSyncModeMaster : kSyncModeClient;
+    final direction = syncDirectionForMode(syncMode);
     final nextTables = Map<String, SyncTableState>.fromEntries(
       _syncState.tables.entries.map((entry) {
         final tableState = entry.value;
@@ -1132,6 +1203,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           entry.key,
           tableState.copyWith(
             direction: direction,
+            syncMode: syncMode,
             status: nextStatus,
             progress:
                 tableState.enabled && nextStatus == 'Queued'
@@ -1158,32 +1230,68 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return enabledTables;
   }
 
-  Widget _buildRoleIndicator(bool isMaster, {bool showLabel = true}) {
+  Widget _buildSyncModeBadge(String syncMode, {bool showLabel = true}) {
+    final normalizedMode = normalizeSyncMode(
+      syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    final isMasterish = normalizedMode != kSyncModeClient;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: showLabel ? 10 : 6,
         vertical: 6,
       ),
       decoration: BoxDecoration(
-        color: _roleColor(isMaster).withValues(alpha: 0.12),
+        color: _roleColor(isMasterish).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(_roleIcon(isMaster), size: 16, color: _roleColor(isMaster)),
+          Icon(
+            _syncModeIcon(normalizedMode),
+            size: 16,
+            color: _roleColor(isMasterish),
+          ),
           if (showLabel) ...[
             const SizedBox(width: 6),
             Text(
-              _roleLabel(isMaster),
+              _syncModeLabel(normalizedMode),
               style: TextStyle(
-                color: _roleColor(isMaster),
+                color: _roleColor(isMasterish),
                 fontWeight: FontWeight.w700,
               ),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildSyncModeSelector(_SyncTableRowData row) {
+    final value = normalizeSyncMode(
+      row.state.syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    return DropdownButtonFormField<String>(
+      value: value,
+      isDense: true,
+      decoration: _compactInputDecoration('').copyWith(
+        labelText: null,
+        hintText: 'Mode',
+        prefixIcon: const Icon(Icons.sync_alt_rounded),
+      ),
+      items: const [
+        DropdownMenuItem(value: kSyncModeMaster, child: Text('Master')),
+        DropdownMenuItem(value: kSyncModeClient, child: Text('Client')),
+        DropdownMenuItem(value: kSyncModeMasterMix, child: Text('Master Mix')),
+      ],
+      onChanged: (mode) {
+        if (mode == null) {
+          return;
+        }
+        _updateTableSyncMode(row.table, mode);
+      },
     );
   }
 
@@ -1766,30 +1874,65 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
-    final activeTables = _activeJobs.map((job) => job.table).toSet();
-    final syncDirection = _isMasterClient ? 'upload' : 'download';
-    final dueTables = _tables
-        .where((table) {
-          final syncKey = _syncTableKey(table);
-          final state = _syncTableState(table, syncKey: syncKey);
-          if (!state.enabled || activeTables.contains(syncKey)) {
-            return false;
-          }
-          return forceTables?.contains(syncKey) ??
-              _isTableDueForRoleSync(state);
-        })
-        .map(_syncTableKey)
-        .toList(growable: false);
+    final activeTablesByDirection = {
+      for (final job in _activeJobs) '${job.direction}:${job.table}',
+    };
+    final dueTablesByDirection = <String, List<String>>{};
+    for (final table in _tables) {
+      final syncKey = _syncTableKey(table);
+      final state = _syncTableState(table, syncKey: syncKey);
+      if (!state.enabled) {
+        continue;
+      }
+      final isDue =
+          forceTables?.contains(syncKey) ?? _isTableDueForRoleSync(state);
+      if (!isDue) {
+        continue;
+      }
+      final syncMode = normalizeSyncMode(
+        state.syncMode,
+        fallbackIsMaster: _isMasterClient,
+      );
+      final directions =
+          syncMode == kSyncModeMasterMix
+              ? const <String>['upload', 'download']
+              : <String>[syncDirectionForMode(syncMode)];
+      for (final direction in directions) {
+        if (activeTablesByDirection.contains('$direction:$syncKey')) {
+          continue;
+        }
+        dueTablesByDirection
+            .putIfAbsent(direction, () => <String>[])
+            .add(syncKey);
+      }
+    }
 
-    if (dueTables.isEmpty) {
+    if (dueTablesByDirection.isEmpty) {
       return;
     }
 
-    final queuedJobs = await _controlPlaneClient.createJobs(
-      clientName: widget.clientName,
-      tables: dueTables,
-      direction: syncDirection,
-    );
+    final queuedJobs = <RemoteSyncJob>[];
+    for (final entry in dueTablesByDirection.entries) {
+      queuedJobs.addAll(
+        await _controlPlaneClient.createJobs(
+          clientName: widget.clientName,
+          tables: entry.value,
+          direction: entry.key,
+          syncMode:
+              entry.key == 'download' &&
+                      entry.value.any(
+                        (syncKey) =>
+                            normalizeSyncMode(
+                              _syncState.tables[syncKey]?.syncMode,
+                              fallbackIsMaster: _isMasterClient,
+                            ) ==
+                            kSyncModeMasterMix,
+                      )
+                  ? kSyncModeMasterMix
+                  : null,
+        ),
+      );
+    }
 
     if (!mounted) {
       return;
@@ -2063,6 +2206,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         database: localDatabase,
         table: localTable,
         snapshot: snapshot,
+        mergeRows:
+            normalizeSyncMode(
+              _syncState.tables[job.table]?.syncMode,
+              fallbackIsMaster: _isMasterClient,
+            ) ==
+            kSyncModeMasterMix,
       );
 
       activeJob = await _controlPlaneClient.completeJob(
@@ -2132,6 +2281,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required String database,
     required String table,
     required RemoteSnapshot snapshot,
+    bool mergeRows = false,
   }) async {
     if (database.isEmpty) {
       throw Exception(
@@ -2171,11 +2321,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     final qualifiedTable = _quoteQualifiedIdentifier(table);
     final columnList = snapshot.columns.map(_quoteIdentifier).join(', ');
+    final keyColumns = _mergeKeyColumns(schemas, snapshot.columns);
     final statements = <String>[
       'SET NOCOUNT ON;',
       'BEGIN TRY',
       'BEGIN TRAN;',
-      'DELETE FROM $qualifiedTable;',
+      if (!mergeRows) 'DELETE FROM $qualifiedTable;',
       if (hasIdentity) 'SET IDENTITY_INSERT $qualifiedTable ON;',
     ];
 
@@ -2189,9 +2340,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           )
           .join(', ');
       if (values.isNotEmpty) {
-        statements.add(
-          'INSERT INTO $qualifiedTable ($columnList) VALUES $values;',
-        );
+        if (mergeRows) {
+          statements.add(
+            _mergeSnapshotRowsStatement(
+              qualifiedTable: qualifiedTable,
+              columns: snapshot.columns,
+              keyColumns: keyColumns,
+              schemasByName: schemasByName,
+              values: values,
+            ),
+          );
+        } else {
+          statements.add(
+            'INSERT INTO $qualifiedTable ($columnList) VALUES $values;',
+          );
+        }
       }
     }
 
@@ -2604,10 +2767,22 @@ ORDER BY ORDINAL_POSITION;
   }) async {
     final query = '''
 SET NOCOUNT ON;
-SELECT c.name, TYPE_NAME(c.user_type_id), c.is_nullable, c.is_identity
+SELECT
+  c.name,
+  TYPE_NAME(c.user_type_id),
+  c.is_nullable,
+  c.is_identity,
+  CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS is_primary_key
 FROM ${_quoteIdentifier(database)}.sys.columns AS c
 INNER JOIN ${_quoteIdentifier(database)}.sys.tables AS t ON t.object_id = c.object_id
 INNER JOIN ${_quoteIdentifier(database)}.sys.schemas AS s ON s.schema_id = t.schema_id
+LEFT JOIN (
+  SELECT ic.object_id, ic.column_id
+  FROM ${_quoteIdentifier(database)}.sys.indexes AS i
+  INNER JOIN ${_quoteIdentifier(database)}.sys.index_columns AS ic
+    ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+  WHERE i.is_primary_key = 1
+) AS pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
 WHERE s.name = '${_escapeSqlLiteral(schema)}'
   AND t.name = '${_escapeSqlLiteral(table)}'
 ORDER BY c.column_id;
@@ -2651,6 +2826,9 @@ ORDER BY c.column_id;
           sqlType: parts[1],
           isNullable: parts[2] == '1' || parts[2].toLowerCase() == 'true',
           isIdentity: parts[3] == '1' || parts[3].toLowerCase() == 'true',
+          isPrimaryKey:
+              parts.length >= 5 &&
+              (parts[4] == '1' || parts[4].toLowerCase() == 'true'),
         ),
       );
     }
@@ -2834,6 +3012,68 @@ ORDER BY [__sync_agent_row_number];
       return 'NULL';
     }
     return "N'${_escapeSqlLiteral(value)}'";
+  }
+
+  List<String> _mergeKeyColumns(
+    List<_TableColumnSchema> schemas,
+    List<String> snapshotColumns,
+  ) {
+    final snapshotColumnSet = snapshotColumns.toSet();
+    final primaryKeys = schemas
+        .where(
+          (schema) =>
+              schema.isPrimaryKey && snapshotColumnSet.contains(schema.name),
+        )
+        .map((schema) => schema.name)
+        .toList(growable: false);
+    if (primaryKeys.isNotEmpty) {
+      return primaryKeys;
+    }
+    return snapshotColumns.isEmpty
+        ? const <String>[]
+        : <String>[snapshotColumns.first];
+  }
+
+  String _mergeSnapshotRowsStatement({
+    required String qualifiedTable,
+    required List<String> columns,
+    required List<String> keyColumns,
+    required Map<String, _TableColumnSchema> schemasByName,
+    required String values,
+  }) {
+    if (columns.isEmpty || keyColumns.isEmpty) {
+      return '';
+    }
+    final sourceColumns = columns.map(_quoteIdentifier).join(', ');
+    final matchClause = keyColumns
+        .map(
+          (column) =>
+              'target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}',
+        )
+        .join(' AND ');
+    final updateColumns = columns
+        .where(
+          (column) =>
+              !keyColumns.contains(column) &&
+              !(schemasByName[column]?.isIdentity ?? false),
+        )
+        .toList(growable: false);
+    final updateClause =
+        updateColumns.isEmpty
+            ? ''
+            : 'WHEN MATCHED THEN UPDATE SET ${updateColumns.map((column) => 'target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}').join(', ')}';
+    final insertColumns = columns.map(_quoteIdentifier).join(', ');
+    final insertValues = columns
+        .map((column) => 'source.${_quoteIdentifier(column)}')
+        .join(', ');
+    return '''
+MERGE $qualifiedTable AS target
+USING (VALUES $values) AS source ($sourceColumns)
+ON $matchClause
+$updateClause
+WHEN NOT MATCHED BY TARGET THEN
+  INSERT ($insertColumns) VALUES ($insertValues);
+''';
   }
 
   _QualifiedTableName _splitQualifiedName(String qualifiedName) {
@@ -3465,7 +3705,7 @@ ORDER BY [__sync_agent_row_number];
                     spacing: 8,
                     runSpacing: 6,
                     children: [
-                      _buildRoleIndicator(_isMasterClient, showLabel: false),
+                      _buildSyncModeBadge(row.state.syncMode),
                       AgentStatusPill(
                         label: row.state.status,
                         color: statusColor,
@@ -3495,7 +3735,7 @@ ORDER BY [__sync_agent_row_number];
                           ),
                         ),
                       ),
-                      _buildRoleIndicator(_isMasterClient, showLabel: false),
+                      SizedBox(width: 170, child: _buildSyncModeSelector(row)),
                       const SizedBox(width: 6),
                       AgentStatusPill(
                         label: row.state.status,
@@ -3626,7 +3866,7 @@ ORDER BY [__sync_agent_row_number];
             selectedRow.table,
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           ),
-          _buildRoleIndicator(_isMasterClient, showLabel: false),
+          _buildSyncModeBadge(selectedRow.state.syncMode),
         ],
       ),
       headerTrailing: Wrap(
@@ -3725,6 +3965,11 @@ ORDER BY [__sync_agent_row_number];
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: _buildSyncModeSelector(row),
+          ),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -3733,10 +3978,11 @@ ORDER BY [__sync_agent_row_number];
               AgentStatusPill(label: row.state.status, color: statusColor),
               AgentMetricPill(
                 label: 'Mode',
-                value:
-                    _isMasterClient
-                        ? 'Upload to website'
-                        : 'Download from website',
+                value: _syncModeLabel(row.state.syncMode),
+              ),
+              AgentMetricPill(
+                label: 'Behavior',
+                value: _syncModeDescription(row.state.syncMode),
               ),
               AgentMetricPill(
                 label: 'Enabled',
@@ -3777,6 +4023,15 @@ ORDER BY [__sync_agent_row_number];
         clientName: widget.clientName,
         tables: [_syncTableKey(table)],
         direction: direction,
+        syncMode:
+            direction == 'download' &&
+                    normalizeSyncMode(
+                          _syncTableState(table).syncMode,
+                          fallbackIsMaster: _isMasterClient,
+                        ) ==
+                        kSyncModeMasterMix
+                ? kSyncModeMasterMix
+                : null,
       );
 
       if (!mounted) {
@@ -5013,12 +5268,14 @@ class _TableColumnSchema {
     required this.sqlType,
     required this.isNullable,
     required this.isIdentity,
+    required this.isPrimaryKey,
   });
 
   final String name;
   final String sqlType;
   final bool isNullable;
   final bool isIdentity;
+  final bool isPrimaryKey;
 }
 
 class _IntQueryResult {

@@ -74,6 +74,24 @@ function clampInteger(value, fallback, min, max) {
   return Math.max(min, Math.min(max, Math.round(parsed)));
 }
 
+function normalizeSyncMode(value, fallbackIsMaster = true) {
+  const normalized = String(value || "").trim();
+  if (normalized === "master" || normalized === "upload") {
+    return "master";
+  }
+  if (normalized === "client" || normalized === "download") {
+    return "client";
+  }
+  if (normalized === "masterMix" || normalized === "mix") {
+    return "masterMix";
+  }
+  return fallbackIsMaster ? "master" : "client";
+}
+
+function directionForSyncMode(syncMode) {
+  return normalizeSyncMode(syncMode) === "client" ? "download" : "upload";
+}
+
 function normalizeAgentSyncSettings(raw, fallbackIsMaster = true) {
   const source = raw && typeof raw === "object" ? raw : {};
   return {
@@ -794,13 +812,19 @@ function publicJobPayload(job) {
 }
 
 function normalizeTableState(tableState) {
+  const direction = String(tableState.direction || "upload");
+  const syncMode = normalizeSyncMode(
+    tableState.syncMode,
+    direction !== "download",
+  );
   return {
     table: normalizeTableKey(tableState.table),
     enabled: Boolean(tableState.enabled),
     status: String(tableState.status || "Idle"),
     lastSync: String(tableState.lastSync || ""),
     progress: Number(tableState.progress || 0),
-    direction: String(tableState.direction || "upload"),
+    direction,
+    syncMode,
     rowCount: Number(tableState.rowCount || 0),
     snapshotId: tableState.snapshotId ? String(tableState.snapshotId) : null,
     snapshotCreatedAt: tableState.snapshotCreatedAt
@@ -808,6 +832,16 @@ function normalizeTableState(tableState) {
       : null,
     snapshotBytes: Number(tableState.snapshotBytes || 0),
     message: String(tableState.message || ""),
+    mergedSnapshotSources:
+      tableState.mergedSnapshotSources &&
+      typeof tableState.mergedSnapshotSources === "object"
+        ? Object.fromEntries(
+            Object.entries(tableState.mergedSnapshotSources).map(([key, value]) => [
+              String(key),
+              String(value || ""),
+            ]),
+          )
+        : {},
   };
 }
 
@@ -888,10 +922,25 @@ function updateAgentTableFromJob(job, patch) {
   const currentTable = normalizeTableState(
     agent.tables[job.table] || { table: job.table, enabled: true },
   );
+  const mergedSnapshotSources = {
+    ...(currentTable.mergedSnapshotSources || {}),
+  };
+  const snapshotCreatedAt =
+    patch.snapshotCreatedAt !== undefined
+      ? String(patch.snapshotCreatedAt || "")
+      : String(job.snapshotCreatedAt || "");
+  if (
+    job.direction === "download" &&
+    job.sourceClientName &&
+    snapshotCreatedAt
+  ) {
+    mergedSnapshotSources[String(job.sourceClientName)] = snapshotCreatedAt;
+  }
   agent.tables[job.table] = {
     ...currentTable,
     ...patch,
     table: job.table,
+    mergedSnapshotSources,
   };
 }
 
@@ -993,6 +1042,7 @@ function createJob(payload) {
       : null,
     table: normalizeTableKey(payload.table),
     direction: String(payload.direction || "upload"),
+    syncMode: normalizeSyncMode(payload.syncMode, payload.direction !== "download"),
     status: "queued",
     progress: 0,
     rowCount: 0,
@@ -1012,6 +1062,7 @@ function createJob(payload) {
     status: "Queued",
     progress: 0,
     direction: job.direction,
+    syncMode: job.syncMode,
     message: job.message,
   });
   return job;
@@ -1061,6 +1112,10 @@ function agentTableState(clientName, table) {
 }
 
 function latestMasterSnapshotForTable(ownerUserId, table) {
+  return masterSnapshotsForTable(ownerUserId, table)[0] || null;
+}
+
+function masterSnapshotsForTable(ownerUserId, table) {
   return Object.values(state.snapshots)
     .map((snapshot) => finalizeSnapshot(snapshot))
     .filter((snapshot) => {
@@ -1070,10 +1125,12 @@ function latestMasterSnapshotForTable(ownerUserId, table) {
       if ((snapshot.ownerUserId || null) !== (ownerUserId || null)) {
         return false;
       }
-      const agent = state.agents[snapshot.clientName];
-      return agent ? agent.isMaster !== false : false;
+      const tableState = agentTableState(snapshot.clientName, table);
+      return tableState
+        ? normalizeSyncMode(tableState.syncMode, true) !== "client"
+        : false;
     })
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] || null;
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function resolveDownloadSource(
@@ -1113,6 +1170,19 @@ function shouldQueueDownloadJob(clientName, table, sourceSnapshot) {
   }
 
   const targetTableState = agentTableState(clientName, table);
+  const sourceClientName = String(sourceSnapshot.clientName || "").trim();
+  const mergedSources = targetTableState?.mergedSnapshotSources || {};
+  if (sourceClientName && mergedSources[sourceClientName]) {
+    const mergedTimestamp = Date.parse(mergedSources[sourceClientName]);
+    const sourceTimestamp = Date.parse(sourceSnapshot.createdAt);
+    if (
+      Number.isFinite(mergedTimestamp) &&
+      Number.isFinite(sourceTimestamp)
+    ) {
+      return sourceTimestamp > mergedTimestamp;
+    }
+    return String(mergedSources[sourceClientName]) !== sourceSnapshot.createdAt;
+  }
   const targetCreatedAt = String(targetTableState?.snapshotCreatedAt || "").trim();
   if (!targetCreatedAt) {
     return true;
@@ -1713,9 +1783,13 @@ async function handleRequest(req, res) {
         if (!normalizedTableState.table) {
           continue;
         }
-        normalizedTableState.direction = agent.syncSettings.isMaster
-          ? "upload"
-          : "download";
+        normalizedTableState.syncMode = normalizeSyncMode(
+          normalizedTableState.syncMode,
+          agent.syncSettings.isMaster,
+        );
+        normalizedTableState.direction = directionForSyncMode(
+          normalizedTableState.syncMode,
+        );
         nextTables[normalizedTableState.table] = mergeHeartbeatTableState(
           agent.tables[normalizedTableState.table],
           normalizedTableState,
@@ -1825,6 +1899,10 @@ async function handleRequest(req, res) {
     }
     const body = await parseJsonBody(req);
     const direction = String(body.direction || "upload").trim().toLowerCase();
+    const syncMode = normalizeSyncMode(
+      body.syncMode,
+      direction !== "download",
+    );
     const sourceClientName = String(body.sourceClientName || "").trim();
     const database = String(body.database || "").trim();
     const tables = Array.isArray(body.tables)
@@ -1853,11 +1931,50 @@ async function handleRequest(req, res) {
     }
 
     const jobs = tables.flatMap((table) => {
+      const downloadSources =
+        direction === "download" && syncMode === "masterMix" && !sourceClientName
+          ? masterSnapshotsForTable(clientUser.ownerUserId || null, table).filter(
+              (snapshot) => snapshot.clientName !== clientName,
+            )
+          : [];
+      if (downloadSources.length > 0) {
+        return downloadSources.flatMap((sourceSnapshot) => {
+          const existingJob = state.jobs.find(
+            (job) =>
+              job.clientName === clientName &&
+              job.table === table &&
+              job.direction === direction &&
+              job.sourceClientName === sourceSnapshot.clientName &&
+              isJobActive(job),
+          );
+          if (existingJob) {
+            return [existingJob];
+          }
+          if (!shouldQueueDownloadJob(clientName, table, sourceSnapshot)) {
+            return [];
+          }
+          return [
+            createJob({
+              clientName,
+              clientUserId: clientUser.id,
+              ownerUserId: clientUser.ownerUserId || null,
+              sourceClientName: sourceSnapshot.clientName,
+              sourceClientUserId: sourceSnapshot.clientUserId || null,
+              table,
+              direction,
+              syncMode,
+              message: `Queued master mix merge for ${table} from ${sourceSnapshot.clientName}.`,
+            }),
+          ];
+        });
+      }
+
       const existingJob = state.jobs.find(
         (job) =>
           job.clientName === clientName &&
           job.table === table &&
           job.direction === direction &&
+          (!sourceClientName || job.sourceClientName === sourceClientName) &&
           isJobActive(job),
       );
       if (existingJob) {
@@ -1884,6 +2001,7 @@ async function handleRequest(req, res) {
             sourceClientUserId: sourceSnapshot.clientUserId || null,
             table,
             direction,
+            syncMode,
             message: `Queued snapshot download for ${table} from ${sourceSnapshot.clientName}.`,
           }),
         ];
@@ -1896,6 +2014,7 @@ async function handleRequest(req, res) {
         sourceClientName: sourceClientName || clientName,
         table,
         direction,
+        syncMode,
         message:
           direction === "download"
             ? `Queued snapshot download for ${table}.`
