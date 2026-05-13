@@ -349,9 +349,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         message:
             enabled
                 ? _isMasterClient
-                    ? 'Master sync enabled for ${widget.clientName}.'
+                    ? 'Master override sync enabled for ${widget.clientName}.'
                     : syncMode == kSyncModeMasterMix
-                    ? 'Master mix sync enabled for ${widget.clientName}.'
+                    ? 'Master merge sync enabled for ${widget.clientName}.'
                     : 'Client sync enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
         direction: syncDirection,
@@ -372,9 +372,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         message:
             enabled
                 ? _isMasterClient
-                    ? 'Waiting for the next master upload.'
+                    ? 'Waiting for the next master override upload.'
                     : syncMode == kSyncModeMasterMix
-                    ? 'Waiting for upload and master merge.'
+                    ? 'Waiting for upload and merge.'
                     : 'Waiting for the next master snapshot download.'
                 : 'Sync disabled.',
         history: nextHistory,
@@ -923,9 +923,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String _syncModeLabel(String syncMode) {
     switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
       case kSyncModeMaster:
-        return 'Master';
+        return 'Master (Override)';
       case kSyncModeMasterMix:
-        return 'Master Mix';
+        return 'Master (Merge)';
       case kSyncModeClient:
       default:
         return 'Client';
@@ -935,9 +935,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   IconData _syncModeIcon(String syncMode) {
     switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
       case kSyncModeMaster:
-        return Icons.cloud_upload_rounded;
+        return Icons.upload_file_rounded;
       case kSyncModeMasterMix:
-        return Icons.sync_alt_rounded;
+        return Icons.merge_type_rounded;
       case kSyncModeClient:
       default:
         return Icons.cloud_download_rounded;
@@ -959,9 +959,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String _syncModeDescription(String syncMode) {
     switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
       case kSyncModeMaster:
-        return 'Upload this table for clients.';
+        return 'Upload and replace client rows.';
       case kSyncModeMasterMix:
-        return 'Upload this table and merge rows from other masters.';
+        return 'Upload and merge rows from other masters.';
       case kSyncModeClient:
       default:
         return 'Download this table from masters.';
@@ -1205,7 +1205,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         final nextMessage =
             tableState.enabled
                 ? isMaster
-                    ? 'Waiting for the next master upload.'
+                    ? 'Waiting for the next master override upload.'
                     : 'Waiting for the next master snapshot download.'
                 : tableState.message;
         return MapEntry(
@@ -1276,8 +1276,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       fallbackIsMaster: _isMasterClient,
     );
     final color = _syncModeColor(normalizedMode);
+    final label = _syncModeLabel(normalizedMode);
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: selected ? MainAxisSize.max : MainAxisSize.min,
       children: [
         Container(
           width: selected ? 26 : 30,
@@ -1291,37 +1292,49 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           child: Icon(_syncModeIcon(normalizedMode), size: 17, color: color),
         ),
         SizedBox(width: selected ? 8 : 10),
-        SizedBox(
-          width: selected ? 82 : 116,
-          child:
-              selected
-                  ? Text(
-                    _syncModeLabel(normalizedMode),
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  )
-                  : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _syncModeLabel(normalizedMode),
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _syncModeDescription(normalizedMode),
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF667085),
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+        if (selected)
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
                   ),
-        ),
+                ),
+              ),
+            ),
+          )
+        else
+          SizedBox(
+            width: 132,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _syncModeDescription(normalizedMode),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -1334,6 +1347,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return DropdownButtonFormField<String>(
       value: value,
       isDense: true,
+      isExpanded: true,
       decoration: _compactInputDecoration(
         '',
       ).copyWith(labelText: null, hintText: 'Mode'),
@@ -3741,7 +3755,7 @@ WHEN NOT MATCHED BY TARGET THEN
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final stack = constraints.maxWidth < 620;
+            final stack = constraints.maxWidth < 680;
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3805,7 +3819,7 @@ WHEN NOT MATCHED BY TARGET THEN
                           ),
                         ),
                       ),
-                      SizedBox(width: 170, child: _buildSyncModeSelector(row)),
+                      SizedBox(width: 196, child: _buildSyncModeSelector(row)),
                       const SizedBox(width: 6),
                       AgentStatusPill(
                         label: row.state.status,

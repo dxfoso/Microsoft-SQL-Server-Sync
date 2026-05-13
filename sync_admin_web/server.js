@@ -1963,7 +1963,7 @@ async function handleRequest(req, res) {
               table,
               direction,
               syncMode,
-              message: `Queued master mix merge for ${table} from ${sourceSnapshot.clientName}.`,
+              message: `Queued master (merge) sync for ${table} from ${sourceSnapshot.clientName}.`,
             }),
           ];
         });
