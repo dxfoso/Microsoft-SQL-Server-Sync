@@ -233,6 +233,23 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return databaseNames;
   }
 
+  Map<String, int> _databaseTableCountsFromState(AdminLiveState? state) {
+    final counts = <String, Set<String>>{};
+    for (final summary in _tableSummariesFromState(state)) {
+      final database = summary.database.trim();
+      if (database.isEmpty) {
+        continue;
+      }
+      counts.putIfAbsent(database, () => <String>{}).add(summary.displayTable);
+    }
+    return counts.map((database, tables) => MapEntry(database, tables.length));
+  }
+
+  String _databaseDropdownLabel(String database) {
+    final count = _databaseTableCountsFromState(_state)[database] ?? 0;
+    return '$database ($count)';
+  }
+
   List<_TableAggregateSummary> _tableSummariesForDatabase(
     List<_TableAggregateSummary> summaries,
   ) {
@@ -330,9 +347,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final buckets = <String, List<_TableClientEntry>>{};
     for (final agent in state.agents) {
       for (final tableState in agent.tables) {
-        if (!_hasSyncedTableState(tableState)) {
-          continue;
-        }
         final tableKey = _tableKeyForAgent(agent, tableState);
         final entries = buckets.putIfAbsent(
           tableKey,
@@ -381,14 +395,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   String _tableKeyForAgent(AdminAgent agent, AdminTableState tableState) {
     final table = tableState.table.trim();
-    if (table.isEmpty || table.contains(_TableAggregateSummary.separator)) {
+    if (table.isEmpty) {
       return table;
     }
+    if (table.contains(_TableAggregateSummary.separator)) {
+      final separatorIndex = table.indexOf(_TableAggregateSummary.separator);
+      final database = table.substring(0, separatorIndex);
+      final localTable = _stripDefaultSchema(
+        table.substring(
+          separatorIndex + _TableAggregateSummary.separator.length,
+        ),
+      );
+      return '$database${_TableAggregateSummary.separator}$localTable';
+    }
     final database = agent.database.trim();
+    final localTable = _stripDefaultSchema(table);
     return database.isEmpty
-        ? table
-        : '$database${_TableAggregateSummary.separator}$table';
+        ? localTable
+        : '$database${_TableAggregateSummary.separator}$localTable';
   }
+
+  String _stripDefaultSchema(String table) =>
+      table.trim().replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
 
   List<_TableClientEntry> _clientsForTableFromState(
     AdminLiveState? state,
@@ -401,7 +429,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final entries = <_TableClientEntry>[];
     for (final agent in state.agents) {
       final tableState = _tableStateForAgent(agent, tableName);
-      if (tableState != null && _hasSyncedTableState(tableState)) {
+      if (tableState != null) {
         entries.add(_TableClientEntry(agent: agent, tableState: tableState));
       }
     }
@@ -416,13 +444,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
     }
     return null;
-  }
-
-  bool _hasSyncedTableState(AdminTableState tableState) {
-    return tableState.lastSync.trim().isNotEmpty ||
-        (tableState.snapshotId?.trim().isNotEmpty ?? false) ||
-        (tableState.snapshotCreatedAt?.trim().isNotEmpty ?? false) ||
-        tableState.snapshotBytes > 0;
   }
 
   int _compareClientEntries(_TableClientEntry left, _TableClientEntry right) {
@@ -2622,7 +2643,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           .map(
             (database) => DropdownMenuItem<String>(
               value: database,
-              child: Text(database, overflow: TextOverflow.ellipsis),
+              child: Text(
+                _databaseDropdownLabel(database),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           )
           .toList(growable: false),
@@ -3739,9 +3763,11 @@ class _TableAggregateSummary {
 
   String get displayTable {
     final separatorIndex = table.indexOf(separator);
-    return separatorIndex < 0
-        ? table
-        : table.substring(separatorIndex + separator.length);
+    final localTable =
+        separatorIndex < 0
+            ? table
+            : table.substring(separatorIndex + separator.length);
+    return localTable.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
   }
 
   String get displayTitle =>

@@ -349,8 +349,10 @@ function normalizePersistedState(parsed) {
       serverConnected: Boolean(agent?.serverConnected),
       sqlConnected: Boolean(agent?.sqlConnected),
       lastHeartbeat: String(agent?.lastHeartbeat || ""),
-      selectedTable: agent?.selectedTable ? String(agent.selectedTable) : null,
-      tables: agent?.tables || {},
+      selectedTable: agent?.selectedTable
+        ? normalizeTableKey(agent.selectedTable)
+        : null,
+      tables: normalizedAgentTables(agent),
     };
   }
 
@@ -381,12 +383,15 @@ function normalizePersistedState(parsed) {
         sourceClientUserId:
           sourceClientUser?.id ||
           (job?.sourceClientUserId ? String(job.sourceClientUserId) : null),
+        table: normalizeTableKey(job?.table),
       };
     })
     .filter((job) => String(job.clientName || "").trim() && String(job.table || "").trim());
 
   for (const [legacyKey, snapshot] of Object.entries(parsed?.snapshots || {})) {
-    const [legacyClientName = "", legacyTable = ""] = String(legacyKey).split("::");
+    const legacySnapshotKeyParts = String(legacyKey).split("::");
+    const legacyClientName = legacySnapshotKeyParts.shift() || "";
+    const legacyTable = legacySnapshotKeyParts.join("::");
     const rawClientIdentity = String(snapshot?.clientName || legacyClientName || "");
     const clientUser = findNormalizedClientUser(
       rawClientIdentity,
@@ -404,7 +409,7 @@ function normalizePersistedState(parsed) {
       ownerUserId:
         clientUser?.ownerUserId ||
         (snapshot?.ownerUserId ? String(snapshot.ownerUserId) : null),
-      table: snapshot?.table || legacyTable,
+      table: normalizeTableKey(snapshot?.table || legacyTable),
     });
     if (!normalizedSnapshot.clientName || !normalizedSnapshot.table) {
       continue;
@@ -663,8 +668,42 @@ function databaseFromTableKey(table) {
   return separatorIndex < 0 ? "" : value.slice(0, separatorIndex).trim();
 }
 
+function localTableFromTableKey(table) {
+  const value = String(table || "").trim();
+  const separatorIndex = value.indexOf(TABLE_DATABASE_SEPARATOR);
+  return separatorIndex < 0
+    ? value
+    : value.slice(separatorIndex + TABLE_DATABASE_SEPARATOR.length).trim();
+}
+
+function normalizeLocalTableName(table) {
+  return String(table || "")
+    .trim()
+    .replace(/^dbo\./i, "");
+}
+
+function normalizeTableKey(table) {
+  const databaseName = databaseFromTableKey(table);
+  const tableName = normalizeLocalTableName(localTableFromTableKey(table));
+  if (!tableName) {
+    return "";
+  }
+  return databaseName
+    ? `${databaseName}${TABLE_DATABASE_SEPARATOR}${tableName}`
+    : tableName;
+}
+
+function tableBelongsToDatabase(table, database) {
+  const databaseName = String(database || "").trim();
+  if (!databaseName) {
+    return false;
+  }
+  const tableDatabase = databaseFromTableKey(table);
+  return tableDatabase ? tableDatabase === databaseName : true;
+}
+
 function qualifyTableWithDatabase(table, database) {
-  const tableName = String(table || "").trim();
+  const tableName = normalizeTableKey(table);
   const databaseName = String(database || "").trim();
   if (!tableName || !databaseName || tableHasDatabase(tableName)) {
     return tableName;
@@ -756,7 +795,7 @@ function publicJobPayload(job) {
 
 function normalizeTableState(tableState) {
   return {
-    table: String(tableState.table || ""),
+    table: normalizeTableKey(tableState.table),
     enabled: Boolean(tableState.enabled),
     status: String(tableState.status || "Idle"),
     lastSync: String(tableState.lastSync || ""),
@@ -782,6 +821,24 @@ function mergeHeartbeatTableState(existingTableState, incomingTableState) {
     ...normalizedIncoming,
     history: existingHistory,
   };
+}
+
+function normalizedAgentTables(agent) {
+  const tables = {};
+  for (const [key, value] of Object.entries(agent?.tables || {})) {
+    const normalizedTableState = normalizeTableState({
+      ...value,
+      table: value?.table || key,
+    });
+    if (!normalizedTableState.table) {
+      continue;
+    }
+    tables[normalizedTableState.table] = mergeHeartbeatTableState(
+      tables[normalizedTableState.table],
+      normalizedTableState,
+    );
+  }
+  return tables;
 }
 
 function ensureAgent(clientName, metadata = {}) {
@@ -934,7 +991,7 @@ function createJob(payload) {
     sourceClientUserId: payload.sourceClientUserId
       ? String(payload.sourceClientUserId)
       : null,
-    table: String(payload.table || ""),
+    table: normalizeTableKey(payload.table),
     direction: String(payload.direction || "upload"),
     status: "queued",
     progress: 0,
@@ -1104,7 +1161,7 @@ function normalizeSnapshot(snapshot) {
     clientName: String(snapshot.clientName || "").trim(),
     clientUserId: snapshot.clientUserId ? String(snapshot.clientUserId) : null,
     ownerUserId: snapshot.ownerUserId ? String(snapshot.ownerUserId) : null,
-    table: String(snapshot.table || "").trim(),
+    table: normalizeTableKey(snapshot.table),
     createdAt: String(snapshot.createdAt || nowIso()),
     rowCount,
     checksum:
@@ -1270,7 +1327,7 @@ function snapshotFromUploadSession(job) {
     clientName: job.clientName,
     clientUserId: job.clientUserId || null,
     ownerUserId: job.ownerUserId || null,
-    table: String(payload.table || session.table || job.table),
+    table: normalizeTableKey(payload.table || session.table || job.table),
     createdAt: String(
       payload.createdAt || payload.snapshotCreatedAt || session.snapshotCreatedAt || nowIso(),
     ),
@@ -1641,7 +1698,12 @@ async function handleRequest(req, res) {
       ? qualifyTableWithDatabase(body.selectedTable, agent.database)
       : null;
     if (Array.isArray(body.tables)) {
-      const nextTables = {};
+      const existingTables = normalizedAgentTables(agent);
+      const nextTables = Object.fromEntries(
+        Object.entries(existingTables).filter(
+          ([table]) => !tableBelongsToDatabase(table, agent.database),
+        ),
+      );
       for (const tableState of body.tables) {
         const normalizedTableState = normalizeTableState(tableState);
         normalizedTableState.table = qualifyTableWithDatabase(

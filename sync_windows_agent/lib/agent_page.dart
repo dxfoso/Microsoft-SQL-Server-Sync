@@ -88,6 +88,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   String? _selectedDatabase;
   List<String> _databases = const [];
+  Map<String, int> _databaseTableCounts = const {};
   List<String> _tables = const [];
   String? _selectedTable;
   List<String> _tableColumns = const [];
@@ -274,21 +275,25 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   String _syncTableKey(String table, {String? database}) {
     final databaseName = (database ?? _selectedDatabase ?? '').trim();
+    final tableName = _stripDefaultSchema(table);
     if (databaseName.isEmpty) {
-      return table;
+      return tableName;
     }
-    return '$databaseName$_syncTableKeySeparator$table';
+    return '$databaseName$_syncTableKeySeparator$tableName';
   }
 
   String _localTableName(String syncTableKey) {
     final separatorIndex = syncTableKey.indexOf(_syncTableKeySeparator);
     if (separatorIndex < 0) {
-      return syncTableKey;
+      return _stripDefaultSchema(syncTableKey);
     }
-    return syncTableKey.substring(
-      separatorIndex + _syncTableKeySeparator.length,
+    return _stripDefaultSchema(
+      syncTableKey.substring(separatorIndex + _syncTableKeySeparator.length),
     );
   }
+
+  String _stripDefaultSchema(String table) =>
+      table.trim().replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
 
   String _databaseNameFromSyncKey(String syncTableKey) {
     final separatorIndex = syncTableKey.indexOf(_syncTableKeySeparator);
@@ -309,8 +314,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   SyncTableState _syncTableState(String table, {String? syncKey}) {
     final key = syncKey ?? _syncTableKey(table);
+    final databaseName = _databaseNameFromSyncKey(key);
+    final localTable = _localTableName(key);
+    final legacyKey =
+        databaseName.isEmpty
+            ? 'dbo.$localTable'
+            : '$databaseName$_syncTableKeySeparator'
+                'dbo.$localTable';
     return _syncState.tables[key] ??
         _syncState.tables[table] ??
+        _syncState.tables[legacyKey] ??
         _defaultSyncTableState(key);
   }
 
@@ -384,8 +397,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     for (final table in tableNames) {
       final syncKey = _syncTableKey(table);
       if (!nextTables.containsKey(syncKey)) {
+        final databaseName = _databaseNameFromSyncKey(syncKey);
+        final localTable = _localTableName(syncKey);
+        final legacyKey =
+            databaseName.isEmpty
+                ? 'dbo.$localTable'
+                : '$databaseName$_syncTableKeySeparator'
+                    'dbo.$localTable';
         nextTables[syncKey] =
-            nextTables[table] ?? _defaultSyncTableState(syncKey);
+            nextTables[table] ??
+            nextTables[legacyKey] ??
+            _defaultSyncTableState(syncKey);
         changed = true;
       }
     }
@@ -446,6 +468,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _errorMessage = null;
       _selectedDatabase = preserveSelection ? _selectedDatabase : null;
       _databases = const [];
+      _databaseTableCounts = const {};
       _tables = const [];
       _selectedTable = null;
       _tableColumns = const [];
@@ -465,6 +488,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _errorMessage = result.errorText;
         _selectedDatabase = null;
         _databases = const [];
+        _databaseTableCounts = const {};
       });
       return;
     }
@@ -476,8 +500,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       selectedDatabase = _preferredDatabase(result.values);
     }
 
+    final tableCounts = await _queryDatabaseTableCounts(
+      profile: resolvedProfile,
+      databases: result.values,
+    );
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _databases = result.values;
+      _databaseTableCounts = tableCounts;
       _selectedDatabase = selectedDatabase;
       if (selectedDatabase != previousDatabase) {
         _selectedTable = null;
@@ -2344,7 +2377,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final query = '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
-SELECT SCHEMA_NAME(schema_id) + '.' + name AS table_name
+SELECT
+  CASE
+    WHEN SCHEMA_NAME(schema_id) = 'dbo' THEN name
+    ELSE SCHEMA_NAME(schema_id) + '.' + name
+  END AS table_name
 FROM sys.tables
 ORDER BY table_name;
 ''';
@@ -2372,6 +2409,33 @@ ORDER BY table_name;
 
     final values = _parseSingleColumnOutput(processResult.stdout.toString());
     return _StringQueryResult(success: true, values: values, errorText: null);
+  }
+
+  Future<Map<String, int>> _queryDatabaseTableCounts({
+    required _SqlConnectionProfile profile,
+    required List<String> databases,
+  }) async {
+    final counts = <String, int>{};
+    for (final database in databases) {
+      final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT COUNT(1)
+FROM sys.tables;
+''';
+      final processResult = await _runSqlCmd(
+        profile: profile,
+        database: database,
+        query: query,
+      );
+      if (processResult == null || processResult.exitCode != 0) {
+        counts[database] = 0;
+        continue;
+      }
+      final values = _parseSingleColumnOutput(processResult.stdout.toString());
+      counts[database] = int.tryParse(values.isEmpty ? '' : values.first) ?? 0;
+    }
+    return counts;
   }
 
   Future<_TableRowsResult> _queryTableRows({
@@ -3124,6 +3188,7 @@ ORDER BY [__sync_agent_row_number];
                               _serverController.text = dialogProfile.server;
                               _selectedDatabase = null;
                               _databases = const [];
+                              _databaseTableCounts = const {};
                               _tables = const [];
                               _selectedTable = null;
                               _tableColumns = const [];
@@ -3172,7 +3237,10 @@ ORDER BY [__sync_agent_row_number];
           .map(
             (database) => DropdownMenuItem<String>(
               value: database,
-              child: Text(database, overflow: TextOverflow.ellipsis),
+              child: Text(
+                _databaseDropdownLabel(database),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           )
           .toList(growable: false),
@@ -3187,6 +3255,9 @@ ORDER BY [__sync_agent_row_number];
               },
     );
   }
+
+  String _databaseDropdownLabel(String database) =>
+      '$database (${_databaseTableCounts[database] ?? 0})';
 
   Widget _buildSyncTablesHeader() {
     final title = Text(
