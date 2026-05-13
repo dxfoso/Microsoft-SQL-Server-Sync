@@ -1,0 +1,11 @@
+name: Windows Portable Agent
+"on":
+  push:
+    branches:
+      - master
+  workflow_dispatch: {}
+jobs:
+  windows-portable-agent:
+    name: Build Windows Portable Sync Agent
+    run: .action-server/tasks/windows-portable-agent.sh
+    timeoutMinutes: 120
