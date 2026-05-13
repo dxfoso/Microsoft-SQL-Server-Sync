@@ -918,9 +918,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return '$day.$month.$year $hour:$minute:$second';
   }
 
-  Color _roleColor(bool isMaster) =>
-      isMaster ? const Color(0xFF2563EB) : const Color(0xFF0F766E);
-
   String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
 
   String _syncModeLabel(String syncMode) {
@@ -944,6 +941,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       case kSyncModeClient:
       default:
         return Icons.cloud_download_rounded;
+    }
+  }
+
+  Color _syncModeColor(String syncMode) {
+    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
+      case kSyncModeMaster:
+        return const Color(0xFF2563EB);
+      case kSyncModeMasterMix:
+        return const Color(0xFF7C3AED);
+      case kSyncModeClient:
+      default:
+        return const Color(0xFF0F766E);
     }
   }
 
@@ -1235,36 +1244,84 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       syncMode,
       fallbackIsMaster: _isMasterClient,
     );
-    final isMasterish = normalizedMode != kSyncModeClient;
+    final color = _syncModeColor(normalizedMode);
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: showLabel ? 10 : 6,
         vertical: 6,
       ),
       decoration: BoxDecoration(
-        color: _roleColor(isMasterish).withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            _syncModeIcon(normalizedMode),
-            size: 16,
-            color: _roleColor(isMasterish),
-          ),
+          Icon(_syncModeIcon(normalizedMode), size: 16, color: color),
           if (showLabel) ...[
             const SizedBox(width: 6),
             Text(
               _syncModeLabel(normalizedMode),
-              style: TextStyle(
-                color: _roleColor(isMasterish),
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(color: color, fontWeight: FontWeight.w700),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildSyncModeOption(String syncMode, {bool selected = false}) {
+    final normalizedMode = normalizeSyncMode(
+      syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    final color = _syncModeColor(normalizedMode);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: color.withValues(alpha: 0.18)),
+          ),
+          child: Icon(_syncModeIcon(normalizedMode), size: 17, color: color),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child:
+              selected
+                  ? Text(
+                    _syncModeLabel(normalizedMode),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  )
+                  : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _syncModeLabel(normalizedMode),
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _syncModeDescription(normalizedMode),
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF667085),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+        ),
+      ],
     );
   }
 
@@ -1281,10 +1338,24 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         hintText: 'Mode',
         prefixIcon: const Icon(Icons.sync_alt_rounded),
       ),
-      items: const [
-        DropdownMenuItem(value: kSyncModeMaster, child: Text('Master')),
-        DropdownMenuItem(value: kSyncModeClient, child: Text('Client')),
-        DropdownMenuItem(value: kSyncModeMasterMix, child: Text('Master Mix')),
+      selectedItemBuilder:
+          (context) =>
+              const [kSyncModeMaster, kSyncModeClient, kSyncModeMasterMix]
+                  .map((mode) => _buildSyncModeOption(mode, selected: true))
+                  .toList(),
+      items: [
+        DropdownMenuItem(
+          value: kSyncModeMaster,
+          child: _buildSyncModeOption(kSyncModeMaster),
+        ),
+        DropdownMenuItem(
+          value: kSyncModeClient,
+          child: _buildSyncModeOption(kSyncModeClient),
+        ),
+        DropdownMenuItem(
+          value: kSyncModeMasterMix,
+          child: _buildSyncModeOption(kSyncModeMasterMix),
+        ),
       ],
       onChanged: (mode) {
         if (mode == null) {

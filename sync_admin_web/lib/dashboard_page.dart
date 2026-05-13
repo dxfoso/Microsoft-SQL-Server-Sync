@@ -723,12 +723,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Sync Client',
+                            prefixIcon: Icon(Icons.desktop_windows_rounded),
                           ),
+                          selectedItemBuilder:
+                              (context) => agents
+                                  .map(
+                                    (agent) => _buildAgentDropdownOption(
+                                      agent,
+                                      selected: true,
+                                    ),
+                                  )
+                                  .toList(growable: false),
                           items: agents
                               .map(
                                 (agent) => DropdownMenuItem<String>(
                                   value: agent.clientName,
-                                  child: Text(agent.clientName),
+                                  child: _buildAgentDropdownOption(agent),
                                 ),
                               )
                               .toList(growable: false),
@@ -743,21 +753,42 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           },
                         ),
                         const SizedBox(height: 8),
-                        SwitchListTile(
+                        DropdownButtonFormField<bool>(
                           value: isMaster,
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Master'),
-                          subtitle: Text(
-                            isMaster
-                                ? 'Uploads snapshots to the website.'
-                                : 'Downloads the latest master snapshots.',
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Client Type',
+                            prefixIcon: Icon(Icons.sync_alt_rounded),
                           ),
+                          selectedItemBuilder:
+                              (context) => const [true, false]
+                                  .map(
+                                    (value) => _buildSyncRoleDropdownOption(
+                                      value,
+                                      selected: true,
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                          items: [
+                            DropdownMenuItem<bool>(
+                              value: true,
+                              child: _buildSyncRoleDropdownOption(true),
+                            ),
+                            DropdownMenuItem<bool>(
+                              value: false,
+                              child: _buildSyncRoleDropdownOption(false),
+                            ),
+                          ],
                           onChanged: (value) {
+                            if (value == null) {
+                              return;
+                            }
                             setDialogState(() {
                               isMaster = value;
                             });
                           },
                         ),
+                        const SizedBox(height: 12),
                         TextField(
                           controller: autoSyncIntervalController,
                           keyboardType: TextInputType.number,
@@ -1295,21 +1326,39 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             ),
                           ),
                           SizedBox(
-                            width: 180,
+                            width: 220,
                             child: DropdownButtonFormField<String>(
                               value: selectedRole,
                               decoration: const InputDecoration(
                                 labelText: 'Role',
+                                prefixIcon: Icon(
+                                  Icons.admin_panel_settings_rounded,
+                                ),
                               ),
+                              selectedItemBuilder:
+                                  (context) => [
+                                        if (widget.authenticatedUser.isAdmin)
+                                          'owner',
+                                        'client',
+                                      ]
+                                      .map(
+                                        (role) => _buildUserRoleDropdownOption(
+                                          role,
+                                          selected: true,
+                                        ),
+                                      )
+                                      .toList(growable: false),
                               items: [
                                 if (widget.authenticatedUser.isAdmin)
-                                  const DropdownMenuItem(
+                                  DropdownMenuItem(
                                     value: 'owner',
-                                    child: Text('Owner'),
+                                    child: _buildUserRoleDropdownOption(
+                                      'owner',
+                                    ),
                                   ),
-                                const DropdownMenuItem(
+                                DropdownMenuItem(
                                   value: 'client',
-                                  child: Text('Client'),
+                                  child: _buildUserRoleDropdownOption('client'),
                                 ),
                               ],
                               onChanged: (value) {
@@ -2327,6 +2376,147 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
 
   String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
+
+  String _roleDescription(bool isMaster) =>
+      isMaster ? 'Uploads table snapshots.' : 'Downloads from masters.';
+
+  Color _userRoleColor(String role) {
+    switch (role) {
+      case 'owner':
+        return const Color(0xFF7C3AED);
+      case 'admin':
+        return const Color(0xFFB7791F);
+      case 'client':
+      default:
+        return const Color(0xFF0F766E);
+    }
+  }
+
+  IconData _userRoleIcon(String role) {
+    switch (role) {
+      case 'owner':
+        return Icons.workspace_premium_rounded;
+      case 'admin':
+        return Icons.admin_panel_settings_rounded;
+      case 'client':
+      default:
+        return Icons.desktop_windows_rounded;
+    }
+  }
+
+  String _userRoleLabel(String role) {
+    switch (role) {
+      case 'owner':
+        return 'Owner';
+      case 'admin':
+        return 'Admin';
+      case 'client':
+      default:
+        return 'Client';
+    }
+  }
+
+  String _userRoleDescription(String role) {
+    switch (role) {
+      case 'owner':
+        return 'Manages client accounts.';
+      case 'admin':
+        return 'Full control plane access.';
+      case 'client':
+      default:
+        return 'Signs in from Windows.';
+    }
+  }
+
+  Widget _buildIconDropdownOption({
+    required IconData icon,
+    required String label,
+    required String description,
+    required Color color,
+    bool selected = false,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: color.withValues(alpha: 0.18)),
+          ),
+          child: Icon(icon, size: 17, color: color),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child:
+              selected
+                  ? Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  )
+                  : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        description,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF667085),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSyncRoleDropdownOption(bool isMaster, {bool selected = false}) {
+    return _buildIconDropdownOption(
+      icon: _roleIcon(isMaster),
+      label: _roleLabel(isMaster),
+      description: _roleDescription(isMaster),
+      color: _roleColor(isMaster),
+      selected: selected,
+    );
+  }
+
+  Widget _buildUserRoleDropdownOption(String role, {bool selected = false}) {
+    return _buildIconDropdownOption(
+      icon: _userRoleIcon(role),
+      label: _userRoleLabel(role),
+      description: _userRoleDescription(role),
+      color: _userRoleColor(role),
+      selected: selected,
+    );
+  }
+
+  Widget _buildAgentDropdownOption(AdminAgent agent, {bool selected = false}) {
+    return _buildIconDropdownOption(
+      icon:
+          agent.isMaster
+              ? Icons.cloud_upload_rounded
+              : Icons.cloud_done_rounded,
+      label: agent.clientName,
+      description:
+          '${_roleLabel(agent.isMaster)} - ${agent.isOnline ? 'Online' : 'Offline'}',
+      color: _roleColor(agent.isMaster),
+      selected: selected,
+    );
+  }
 
   Widget _buildRoleBadge(bool isMaster, {bool compact = false}) {
     return Container(
