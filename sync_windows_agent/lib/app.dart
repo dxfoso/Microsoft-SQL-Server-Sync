@@ -58,6 +58,11 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     return 'SQL Sync Agent - $name';
   }
 
+  bool get _hasRememberedLoginCredentials {
+    return (_rememberedLoginName?.trim().isNotEmpty ?? false) &&
+        (_rememberedLoginPassword?.isNotEmpty ?? false);
+  }
+
   void _applyWindowTitle() {
     final title = _windowTitle;
     if (_lastWindowTitle == title) {
@@ -112,6 +117,9 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _authClient.setAuthToken(_authToken);
         logStartupEvent('SyncWindowsAgentApp restoring session');
         unawaited(_restoreSession());
+      } else if (_hasRememberedLoginCredentials) {
+        logStartupEvent('SyncWindowsAgentApp auto login with remembered user');
+        unawaited(_loginWithRememberedCredentials());
       } else {
         if (_startMinimized) {
           logStartupEvent(
@@ -182,6 +190,15 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       rememberedLoginPassword: _rememberedLoginPassword,
     );
     await store.save();
+  }
+
+  Future<void> _saveStateNow() async {
+    _saveDebounce?.cancel();
+    try {
+      await _saveState();
+    } catch (error) {
+      debugPrint('Failed to save Windows agent state: $error');
+    }
   }
 
   void _markFirstLaunchComplete() {
@@ -311,6 +328,21 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       if (!mounted) {
         return;
       }
+      if (_hasRememberedLoginCredentials) {
+        setState(() {
+          _authToken = null;
+          _accountUsername = null;
+          _accountEmail = null;
+          _accountName = null;
+          _clientName = _rememberedLoginName!.trim();
+          _restoringSession = true;
+          _submittingLogin = true;
+          _loginError = null;
+        });
+        _authClient.setAuthToken(null);
+        unawaited(_loginWithRememberedCredentials());
+        return;
+      }
       setState(() {
         _authToken = null;
         _accountUsername = null;
@@ -326,6 +358,21 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       if (!mounted) {
         return;
       }
+      if (_hasRememberedLoginCredentials) {
+        setState(() {
+          _authToken = null;
+          _accountUsername = null;
+          _accountEmail = null;
+          _accountName = null;
+          _clientName = _rememberedLoginName!.trim();
+          _restoringSession = true;
+          _submittingLogin = true;
+          _loginError = null;
+        });
+        _authClient.setAuthToken(null);
+        unawaited(_loginWithRememberedCredentials());
+        return;
+      }
       setState(() {
         _authToken = null;
         _accountUsername = null;
@@ -335,6 +382,75 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _restoringSession = false;
       });
       _authClient.setAuthToken(null);
+      _scheduleSave();
+    }
+  }
+
+  Future<void> _loginWithRememberedCredentials() async {
+    final name = _rememberedLoginName?.trim();
+    final password = _rememberedLoginPassword ?? '';
+    if (name == null || name.isEmpty || password.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _restoringSession = false;
+        _submittingLogin = false;
+      });
+      return;
+    }
+
+    _usernameController.text = name;
+    _passwordController.text = password;
+    if (mounted && !_submittingLogin) {
+      setState(() {
+        _submittingLogin = true;
+        _loginError = null;
+      });
+    }
+
+    try {
+      logStartupEvent('SyncWindowsAgentApp remembered login start');
+      final user = await _authClient.loginClient(
+        name: name,
+        password: password,
+      );
+      if (!mounted) {
+        return;
+      }
+      logStartupEvent('SyncWindowsAgentApp remembered login success');
+      setState(() {
+        _migrateStoredClientState(_clientName, user.name);
+        _authToken = user.token;
+        _accountUsername = user.name;
+        _accountEmail = user.email;
+        _accountName = user.name;
+        _rememberedLoginName = name;
+        _rememberedLoginPassword = password;
+        _clientName = user.name;
+        _restoringSession = false;
+        _submittingLogin = false;
+        _loginError = null;
+      });
+      await _saveStateNow();
+    } catch (error) {
+      logStartupEvent('SyncWindowsAgentApp remembered login failed: $error');
+      if (!mounted) {
+        return;
+      }
+      _authClient.setAuthToken(null);
+      setState(() {
+        _authToken = null;
+        _accountUsername = null;
+        _accountEmail = null;
+        _accountName = null;
+        _clientName = 'Local Agent';
+        _restoringSession = false;
+        _submittingLogin = false;
+        _loginError = 'Automatic login failed. Please sign in again.';
+        _usernameController.text = name;
+        _passwordController.text = password;
+      });
       _scheduleSave();
     }
   }
@@ -374,7 +490,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _submittingLogin = false;
         _loginError = null;
       });
-      _scheduleSave();
+      await _saveStateNow();
     } catch (error) {
       if (!mounted) {
         return;
