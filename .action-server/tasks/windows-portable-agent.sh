@@ -129,6 +129,8 @@ printf '[0/1] running - building portable Windows sync agent zip\n' > "$SUMMARY_
 if ! command -v flutter >/dev/null 2>&1; then
   if [[ -f "$ZIP_PATH" ]]; then
     echo "Flutter is not available; publishing the committed portable zip."
+    cp "$ZIP_PATH" "$BUILD_ZIP_PATH"
+    cp "$BUILD_ZIP_PATH" "$ZIP_PATH"
     publish_success "Portable Windows sync agent zip is ready from the committed portable artifact."
     exit 0
   fi
