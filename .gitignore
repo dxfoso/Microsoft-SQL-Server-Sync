@@ -1,9 +1,5 @@
 .cp-images/
 artifacts/
-task-results.json
-task-status.json
-task-step-results.json
-workspace/
 sync_windows_agent/debug/
 sync_windows_agent/portable_release/
 sync_windows_agent/release/
