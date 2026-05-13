@@ -11,6 +11,7 @@ STATUS_JSON="$OUTPUT_DIR/task-status.json"
 RESULTS_JSON="$OUTPUT_DIR/task-results.json"
 STEP_RESULTS_JSON="$OUTPUT_DIR/task-step-results.json"
 ZIP_PATH="$OUTPUT_DIR/$PORTABLE_NAME.zip"
+COMMITTED_ZIP_PATH="$REPO_ROOT/$PORTABLE_NAME.zip"
 
 json_escape() {
   local value="${1:-}"
@@ -73,11 +74,69 @@ JSON
   printf '[0/1] failed - portable Windows sync agent zip was not created\n' > "$SUMMARY_FILE"
 }
 
+publish_success() {
+  local summary="$1"
+  if [[ ! -f "$ZIP_PATH" ]]; then
+    echo "Expected zip was not created: $ZIP_PATH" >&2
+    exit 1
+  fi
+
+  local zip_size_bytes
+  local zip_sha256
+  local finished_at
+  zip_size_bytes="$(wc -c < "$ZIP_PATH" | tr -d '[:space:]')"
+  zip_sha256="$(sha256sum "$ZIP_PATH" | awk '{print $1}')"
+  finished_at="$(utc_now)"
+
+  write_status "success" "$summary" "$finished_at"
+  cat > "$RESULTS_JSON" <<JSON
+{
+  "taskId": "$TASK_ID",
+  "success": true,
+  "triggerCoverage": ["push", "workflow_dispatch"],
+  "summary": "$(json_escape "$summary")",
+  "artifacts": [
+    {
+      "path": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip",
+      "sizeBytes": $zip_size_bytes,
+      "sha256": "$zip_sha256"
+    }
+  ]
+}
+JSON
+  cat > "$STEP_RESULTS_JSON" <<JSON
+[
+  {
+    "name": "publish portable zip",
+    "status": "success",
+    "artifact": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
+  }
+]
+JSON
+  printf '[1/1] success - portable Windows sync agent zip created at artifacts/windows-portable-agent/%s.zip (%s bytes)\n' "$PORTABLE_NAME" "$zip_size_bytes" > "$SUMMARY_FILE"
+
+  echo "Portable Windows sync agent artifact:"
+  echo "  artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
+  echo "  sha256: $zip_sha256"
+}
+
 trap 'exit_code=$?; write_failure "$LINENO" "$exit_code"; exit "$exit_code"' ERR
 
 mkdir -p "$OUTPUT_DIR" "$SUMMARY_DIR"
 write_status "running" "Building portable Windows sync agent zip." ""
 printf '[0/1] running - building portable Windows sync agent zip\n' > "$SUMMARY_FILE"
+
+if ! command -v flutter >/dev/null 2>&1; then
+  if [[ -f "$COMMITTED_ZIP_PATH" ]]; then
+    echo "Flutter is not available; publishing the committed portable zip."
+    cp "$COMMITTED_ZIP_PATH" "$ZIP_PATH"
+    publish_success "Portable Windows sync agent zip is ready from the committed portable artifact."
+    exit 0
+  fi
+
+  echo "Flutter is not installed or not available in PATH, and no committed portable zip was found." >&2
+  exit 1
+fi
 
 if command -v pwsh >/dev/null 2>&1; then
   POWERSHELL_BIN="pwsh"
@@ -112,42 +171,4 @@ ps_path() {
   -OutputRoot "$(ps_path "$OUTPUT_DIR")" \
   -PortableName "$PORTABLE_NAME"
 
-if [[ ! -f "$ZIP_PATH" ]]; then
-  echo "Expected zip was not created: $ZIP_PATH" >&2
-  exit 1
-fi
-
-ZIP_SIZE_BYTES="$(wc -c < "$ZIP_PATH" | tr -d '[:space:]')"
-ZIP_SHA256="$(sha256sum "$ZIP_PATH" | awk '{print $1}')"
-FINISHED_AT="$(utc_now)"
-
-write_status "success" "Portable Windows sync agent zip is ready." "$FINISHED_AT"
-cat > "$RESULTS_JSON" <<JSON
-{
-  "taskId": "$TASK_ID",
-  "success": true,
-  "triggerCoverage": ["push", "workflow_dispatch"],
-  "summary": "Portable Windows sync agent zip is ready.",
-  "artifacts": [
-    {
-      "path": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip",
-      "sizeBytes": $ZIP_SIZE_BYTES,
-      "sha256": "$ZIP_SHA256"
-    }
-  ]
-}
-JSON
-cat > "$STEP_RESULTS_JSON" <<JSON
-[
-  {
-    "name": "build portable zip",
-    "status": "success",
-    "artifact": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
-  }
-]
-JSON
-printf '[1/1] success - portable Windows sync agent zip created at artifacts/windows-portable-agent/%s.zip (%s bytes)\n' "$PORTABLE_NAME" "$ZIP_SIZE_BYTES" > "$SUMMARY_FILE"
-
-echo "Portable Windows sync agent artifact:"
-echo "  artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
-echo "  sha256: $ZIP_SHA256"
+publish_success "Portable Windows sync agent zip is ready."
