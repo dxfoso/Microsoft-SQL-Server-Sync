@@ -1280,8 +1280,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 30,
-          height: 30,
+          width: selected ? 26 : 30,
+          height: selected ? 26 : 30,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.12),
@@ -1290,8 +1290,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           ),
           child: Icon(_syncModeIcon(normalizedMode), size: 17, color: color),
         ),
-        const SizedBox(width: 10),
-        Flexible(
+        SizedBox(width: selected ? 8 : 10),
+        SizedBox(
+          width: selected ? 82 : 220,
           child:
               selected
                   ? Text(
@@ -1333,11 +1334,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return DropdownButtonFormField<String>(
       value: value,
       isDense: true,
-      decoration: _compactInputDecoration('').copyWith(
-        labelText: null,
-        hintText: 'Mode',
-        prefixIcon: const Icon(Icons.sync_alt_rounded),
-      ),
+      decoration: _compactInputDecoration(
+        '',
+      ).copyWith(labelText: null, hintText: 'Mode'),
       selectedItemBuilder:
           (context) =>
               const [kSyncModeMaster, kSyncModeClient, kSyncModeMasterMix]
