@@ -4,10 +4,10 @@ ignorePushPaths:
   - README.md
 favoriteArtifacts:
   windows-portable-agent:
-    - sync_windows_agent-windows-portable-latest.zip
+    - tests/artifacts/windows_portable_agent/sync_windows_agent-windows-portable.zip
     - task-status.json
     - task-results.json
     - task-step-results.json
 favoriteTextOutputs:
   windows-portable-agent:
-    - workspace/tests/windows-portable-agent-summary.txt
+    - tests/artifacts/windows_portable_agent/windows-portable-agent-summary.txt
