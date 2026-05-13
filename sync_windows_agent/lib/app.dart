@@ -526,11 +526,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
               constraints.maxWidth.isFinite
                   ? constraints.maxWidth
                   : MediaQuery.sizeOf(context).width;
-          final compact = width < 760;
           final tight = width < 480;
-          final heroFontSize = tight ? 24.0 : (compact ? 28.0 : 34.0);
           final outerPadding = tight ? 16.0 : 24.0;
-          final heroPadding = tight ? 22.0 : 32.0;
           final formPadding = tight ? 20.0 : 26.0;
 
           return Container(
@@ -541,161 +538,107 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 padding: EdgeInsets.all(outerPadding),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: compact ? 560 : 1080),
-                    child: Wrap(
-                      spacing: 24,
-                      runSpacing: 24,
-                      alignment:
-                          compact ? WrapAlignment.start : WrapAlignment.center,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 560),
-                          child: Container(
-                            padding: EdgeInsets.all(heroPadding),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: const Color(0xFFDDE3EA),
+                    constraints: BoxConstraints(maxWidth: tight ? width : 408),
+                    child: Container(
+                      padding: EdgeInsets.all(formPadding),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFDDE3EA)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Client Login',
+                            style: TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Client accounts only.',
+                            style: TextStyle(
+                              color: Color(0xFF667085),
+                              fontSize: 14,
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          TextField(
+                            controller: _usernameController,
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Name',
+                              hintText: 'client-name',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: !_showPassword,
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            onSubmitted: (_) => unawaited(_handleLogin()),
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              suffixIcon: IconButton(
+                                tooltip:
+                                    _showPassword
+                                        ? 'Hide password'
+                                        : 'Show password',
+                                onPressed: () {
+                                  setState(() {
+                                    _showPassword = !_showPassword;
+                                  });
+                                },
+                                icon: Icon(
+                                  _showPassword
+                                      ? Icons.visibility_off_outlined
+                                      : Icons.visibility_outlined,
+                                ),
                               ),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const _AgentHeroTag(label: 'Windows SQL Agent'),
-                                const SizedBox(height: 22),
-                                Text(
-                                  'Run the local sync agent and open data only when needed.',
-                                  style: TextStyle(
-                                    color: const Color(0xFF101828),
-                                    fontSize: heroFontSize,
-                                    fontWeight: FontWeight.w800,
-                                    height: 1.06,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                const Text(
-                                  'Client accounts only. Owner and admin accounts stay on the website.',
-                                  style: TextStyle(
-                                    color: Color(0xFF667085),
-                                    fontSize: 14.5,
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ],
-                            ),
                           ),
-                        ),
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: compact ? 560 : 408,
-                          ),
-                          child: Container(
-                            padding: EdgeInsets.all(formPadding),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: const Color(0xFFDDE3EA),
+                          if (_loginError != null) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF0EE),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: const Color(0xFFF7C9C4),
+                                ),
+                              ),
+                              child: Text(
+                                _loginError!,
+                                style: const TextStyle(
+                                  color: Color(0xFFB5422A),
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Client Login',
-                                  style: TextStyle(
-                                    fontSize: 26,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Client accounts only.',
-                                  style: TextStyle(
-                                    color: Color(0xFF667085),
-                                    fontSize: 14,
-                                    height: 1.35,
-                                  ),
-                                ),
-                                const SizedBox(height: 22),
-                                TextField(
-                                  controller: _usernameController,
-                                  textInputAction: TextInputAction.next,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Name',
-                                    hintText: 'client-name',
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                TextField(
-                                  controller: _passwordController,
-                                  obscureText: !_showPassword,
-                                  enableSuggestions: false,
-                                  autocorrect: false,
-                                  onSubmitted: (_) => unawaited(_handleLogin()),
-                                  decoration: InputDecoration(
-                                    labelText: 'Password',
-                                    suffixIcon: IconButton(
-                                      tooltip:
-                                          _showPassword
-                                              ? 'Hide password'
-                                              : 'Show password',
-                                      onPressed: () {
-                                        setState(() {
-                                          _showPassword = !_showPassword;
-                                        });
-                                      },
-                                      icon: Icon(
-                                        _showPassword
-                                            ? Icons.visibility_off_outlined
-                                            : Icons.visibility_outlined,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_loginError != null) ...[
-                                  const SizedBox(height: 12),
-                                  Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFFFF0EE),
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(
-                                        color: const Color(0xFFF7C9C4),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _loginError!,
-                                      style: const TextStyle(
-                                        color: Color(0xFFB5422A),
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 18),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: FilledButton(
-                                    onPressed:
-                                        _submittingLogin
-                                            ? null
-                                            : () => unawaited(_handleLogin()),
-                                    child: Text(
-                                      _submittingLogin
-                                          ? 'Signing In...'
-                                          : 'Open Agent',
-                                    ),
-                                  ),
-                                ),
-                              ],
+                          ],
+                          const SizedBox(height: 18),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton(
+                              onPressed:
+                                  _submittingLogin
+                                      ? null
+                                      : () => unawaited(_handleLogin()),
+                              child: Text(
+                                _submittingLogin
+                                    ? 'Signing In...'
+                                    : 'Open Agent',
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -825,31 +768,6 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 initialServer: _serverName,
                 onServerChanged: _updateServerName,
               ),
-    );
-  }
-}
-
-class _AgentHeroTag extends StatelessWidget {
-  const _AgentHeroTag({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE6F4F1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFB7DDD7)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFF0F766E),
-          fontWeight: FontWeight.w700,
-        ),
-      ),
     );
   }
 }
