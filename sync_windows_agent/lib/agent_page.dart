@@ -1292,7 +1292,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         ),
         SizedBox(width: selected ? 8 : 10),
         SizedBox(
-          width: selected ? 82 : 220,
+          width: selected ? 82 : 116,
           child:
               selected
                   ? Text(
