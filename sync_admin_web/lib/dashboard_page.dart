@@ -50,7 +50,6 @@ class AdminDashboardPage extends StatefulWidget {
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final LiveSyncApiClient _api = LiveSyncApiClient();
   final TextEditingController _syncSearchController = TextEditingController();
-  final TextEditingController _dataSearchController = TextEditingController();
   Timer? _refreshTimer;
 
   AdminLiveState? _state;
@@ -75,7 +74,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _api.setAuthToken(widget.authToken);
     _historyLimit = _readStoredHistoryLimit();
     _syncSearchController.addListener(_handleSearchChange);
-    _dataSearchController.addListener(_handleSearchChange);
     unawaited(_refreshState());
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 5),
@@ -87,9 +85,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _syncSearchController.removeListener(_handleSearchChange);
-    _dataSearchController.removeListener(_handleSearchChange);
     _syncSearchController.dispose();
-    _dataSearchController.dispose();
     _api.dispose();
     super.dispose();
   }
@@ -2666,38 +2662,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   List<_TableClientEntry> _filteredTableClients(
     List<_TableClientEntry> entries,
   ) {
-    final query = _dataSearchController.text.trim();
-    if (query.isEmpty) {
-      return entries;
-    }
-
-    final matches = entries
-      .map((entry) {
-        final score = _bestMatchScore(
-          query,
-          [
-            entry.agent.clientName,
-            entry.agent.machineName,
-            _roleLabel(entry.agent.isMaster),
-            entry.tableState.status,
-            entry.tableState.message,
-            _formatTimestamp(entry.tableState.lastSync),
-            '${entry.tableState.rowCount}',
-            _formatBytes(entry.tableState.snapshotBytes),
-          ].join(' '),
-        );
-        return _ScoredTableClient(entry: entry, score: score);
-      })
-      .where((match) => match.score > 0)
-      .toList(growable: false)..sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return _compareClientEntries(left.entry, right.entry);
-    });
-
-    return matches.map((match) => match.entry).toList(growable: false);
+    return entries;
   }
 
   List<_ScoredSnapshotRow> _filteredSnapshotRowsForQuery(
@@ -2753,40 +2718,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     String? clientName,
     bool limit = true,
   }) {
-    final query = _dataSearchController.text.trim();
-    final matches = _jobs
+    final jobs = _jobs
         .where((job) => job.table == table)
         .where((job) => clientName == null || job.clientName == clientName)
-        .map((job) {
-          final score =
-              query.isEmpty
-                  ? 1.0
-                  : _bestMatchScore(
-                    query,
-                    [
-                      job.clientName,
-                      job.table,
-                      job.status,
-                      job.direction,
-                      job.message,
-                      job.updatedAt,
-                      job.completedAt ?? '',
-                    ].join(' '),
-                  );
-          return (job: job, score: score);
-        })
-        .where((item) => item.score > 0)
         .toList(growable: false);
 
-    matches.sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return _compareTimestamps(right.job.updatedAt, left.job.updatedAt);
+    jobs.sort((left, right) {
+      return _compareTimestamps(right.updatedAt, left.updatedAt);
     });
 
-    final jobs = matches.map((item) => item.job);
     return (limit ? jobs.take(_historyLimit) : jobs).toList(growable: false);
   }
 
@@ -2992,19 +2932,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       title: summary.displayTitle,
       subtitle: '',
       expandChild: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSearchField(
-            controller: _dataSearchController,
-            label: 'Search Clients / History',
-            hint:
-                'Search client names, roles, statuses, directions, messages, and sync time.',
-          ),
-          const SizedBox(height: 10),
-          Expanded(child: _buildMergedDetailBody(summary)),
-        ],
-      ),
+      child: _buildMergedDetailBody(summary),
     );
   }
 
@@ -3122,10 +3050,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           child:
               clients.isEmpty
                   ? EmptyStateCard(
-                    message:
-                        _dataSearchController.text.trim().isEmpty
-                            ? 'No clients are exposing ${summary.table} yet.'
-                            : 'No clients matched your search.',
+                    message: 'No clients are exposing ${summary.table} yet.',
                   )
                   : ListView.separated(
                     itemCount: clients.length,
@@ -3257,10 +3182,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           child:
               jobs.isEmpty
                   ? EmptyStateCard(
-                    message:
-                        _dataSearchController.text.trim().isEmpty
-                            ? 'No history is available yet for this table.'
-                            : 'No history entries matched your search.',
+                    message: 'No history is available yet for this table.',
                   )
                   : ListView.separated(
                     itemCount: jobs.length,
@@ -3960,8 +3882,7 @@ class _TableAggregateSummary {
     return localTable.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
   }
 
-  String get displayTitle =>
-      database.isEmpty ? displayTable : '$displayTable - $database';
+  String get displayTitle => displayTable;
 }
 
 class _TableClientEntry {
@@ -3991,13 +3912,6 @@ class _ScoredTableSummary {
   const _ScoredTableSummary({required this.summary, required this.score});
 
   final _TableAggregateSummary summary;
-  final double score;
-}
-
-class _ScoredTableClient {
-  const _ScoredTableClient({required this.entry, required this.score});
-
-  final _TableClientEntry entry;
   final double score;
 }
 
