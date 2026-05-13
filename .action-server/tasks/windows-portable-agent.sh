@@ -7,11 +7,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT_DIR="$REPO_ROOT/artifacts/windows-portable-agent"
 SUMMARY_DIR="$REPO_ROOT/workspace/tests"
 SUMMARY_FILE="$SUMMARY_DIR/windows-portable-agent-summary.txt"
-STATUS_JSON="$OUTPUT_DIR/task-status.json"
-RESULTS_JSON="$OUTPUT_DIR/task-results.json"
-STEP_RESULTS_JSON="$OUTPUT_DIR/task-step-results.json"
-ZIP_PATH="$OUTPUT_DIR/$PORTABLE_NAME.zip"
-COMMITTED_ZIP_PATH="$REPO_ROOT/$PORTABLE_NAME.zip"
+STATUS_JSON="$REPO_ROOT/task-status.json"
+RESULTS_JSON="$REPO_ROOT/task-results.json"
+STEP_RESULTS_JSON="$REPO_ROOT/task-step-results.json"
+BUILD_ZIP_PATH="$OUTPUT_DIR/$PORTABLE_NAME.zip"
+ZIP_PATH="$REPO_ROOT/$PORTABLE_NAME.zip"
 
 json_escape() {
   local value="${1:-}"
@@ -97,7 +97,7 @@ publish_success() {
   "summary": "$(json_escape "$summary")",
   "artifacts": [
     {
-      "path": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip",
+      "path": "$PORTABLE_NAME.zip",
       "sizeBytes": $zip_size_bytes,
       "sha256": "$zip_sha256"
     }
@@ -109,14 +109,14 @@ JSON
   {
     "name": "publish portable zip",
     "status": "success",
-    "artifact": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
+    "artifact": "$PORTABLE_NAME.zip"
   }
 ]
 JSON
-  printf '[1/1] success - portable Windows sync agent zip created at artifacts/windows-portable-agent/%s.zip (%s bytes)\n' "$PORTABLE_NAME" "$zip_size_bytes" > "$SUMMARY_FILE"
+  printf '[1/1] success - portable Windows sync agent zip created at %s.zip (%s bytes)\n' "$PORTABLE_NAME" "$zip_size_bytes" > "$SUMMARY_FILE"
 
   echo "Portable Windows sync agent artifact:"
-  echo "  artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
+  echo "  $PORTABLE_NAME.zip"
   echo "  sha256: $zip_sha256"
 }
 
@@ -127,9 +127,8 @@ write_status "running" "Building portable Windows sync agent zip." ""
 printf '[0/1] running - building portable Windows sync agent zip\n' > "$SUMMARY_FILE"
 
 if ! command -v flutter >/dev/null 2>&1; then
-  if [[ -f "$COMMITTED_ZIP_PATH" ]]; then
+  if [[ -f "$ZIP_PATH" ]]; then
     echo "Flutter is not available; publishing the committed portable zip."
-    cp "$COMMITTED_ZIP_PATH" "$ZIP_PATH"
     publish_success "Portable Windows sync agent zip is ready from the committed portable artifact."
     exit 0
   fi
@@ -171,4 +170,5 @@ ps_path() {
   -OutputRoot "$(ps_path "$OUTPUT_DIR")" \
   -PortableName "$PORTABLE_NAME"
 
+cp "$BUILD_ZIP_PATH" "$ZIP_PATH"
 publish_success "Portable Windows sync agent zip is ready."
