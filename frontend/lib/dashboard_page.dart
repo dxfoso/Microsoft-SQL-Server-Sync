@@ -53,19 +53,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Timer? _refreshTimer;
 
   AdminLiveState? _state;
+  AdminLiveState? _derivedStateSource;
+  List<_TableAggregateSummary> _derivedTableSummaries =
+      const <_TableAggregateSummary>[];
+  Map<String, _TableAggregateSummary> _derivedSummaryByTable =
+      const <String, _TableAggregateSummary>{};
+  Map<String, List<_TableClientEntry>> _derivedClientsByTable =
+      const <String, List<_TableClientEntry>>{};
+  List<String> _derivedDatabaseNames = const <String>[];
+  Map<String, int> _derivedDatabaseTableCounts = const <String, int>{};
+  Map<String, _TableSnapshotSource> _derivedSnapshotSourcesByTable =
+      const <String, _TableSnapshotSource>{};
+  Map<String, List<AdminJob>> _derivedJobsByTable =
+      const <String, List<AdminJob>>{};
+  Map<String, List<AdminJob>> _derivedJobsByTableClient =
+      const <String, List<AdminJob>>{};
   AdminSnapshotDetail? _snapshot;
   bool _loading = true;
   bool _connected = false;
-  // ignore: unused_field
-  bool _snapshotLoading = false;
   String? _error;
-  String? _snapshotError;
   String? _selectedClientName;
   String? _selectedTableName;
   String? _selectedDatabaseName;
-  String? _snapshotKey;
-  String? _snapshotVersionToken;
-  int _snapshotRequestToken = 0;
+  bool _sortLastSyncAscending = false;
+  int _detailTabIndex = 0;
   int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyBackupKeys = <String>{};
   @override
@@ -135,6 +146,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return;
       }
 
+      _ensureDerivedState(nextState);
       final nextDatabaseName = _resolveSelectedDatabase(nextState);
       final nextTableName = _resolveSelectedTable(
         nextState,
@@ -154,8 +166,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _loading = false;
         _error = null;
       });
-
-      unawaited(_loadSelectedSnapshot());
     } catch (error) {
       if (!mounted) {
         return;
@@ -181,24 +191,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
 
-  List<_TableAggregateSummary> get _tableSummaries =>
-      _tableSummariesFromState(_state);
+  List<_TableAggregateSummary> get _tableSummaries {
+    _ensureDerivedState(_state);
+    return _derivedTableSummaries;
+  }
 
   _TableAggregateSummary? get _selectedTableSummary {
     final tableName = _selectedTableName;
     if (tableName == null) {
       return null;
     }
-    for (final summary in _tableSummaries) {
-      if (summary.table == tableName) {
-        return summary;
-      }
-    }
-    return null;
+    _ensureDerivedState(_state);
+    return _derivedSummaryByTable[tableName];
   }
 
-  List<_TableClientEntry> get _selectedTableClients =>
-      _clientsForTableFromState(_state, _selectedTableName);
+  List<_TableClientEntry> get _selectedTableClients {
+    _ensureDerivedState(_state);
+    return _derivedClientsByTable[_selectedTableName] ??
+        const <_TableClientEntry>[];
+  }
 
   _TableClientEntry? get _selectedClientEntry {
     final clientName = _selectedClientName;
@@ -213,32 +224,171 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return null;
   }
 
-  _TableSnapshotSource? get _selectedSnapshotSource =>
-      _snapshotSourceForTable(_state, _selectedTableName);
-
-  List<String> _databaseNamesFromState(AdminLiveState? state) {
-    if (state == null) {
-      return const <String>[];
+  void _ensureDerivedState(AdminLiveState? state) {
+    if (identical(_derivedStateSource, state)) {
+      return;
     }
 
-    final databaseNames = _tableSummariesFromState(state)
-      .map((summary) => summary.database.trim())
-      .where((database) => database.isNotEmpty)
-      .toSet()
-      .toList(growable: false)..sort();
-    return databaseNames;
-  }
+    _derivedStateSource = state;
+    if (state == null) {
+      _derivedTableSummaries = const <_TableAggregateSummary>[];
+      _derivedSummaryByTable = const <String, _TableAggregateSummary>{};
+      _derivedClientsByTable = const <String, List<_TableClientEntry>>{};
+      _derivedDatabaseNames = const <String>[];
+      _derivedDatabaseTableCounts = const <String, int>{};
+      _derivedSnapshotSourcesByTable = const <String, _TableSnapshotSource>{};
+      _derivedJobsByTable = const <String, List<AdminJob>>{};
+      _derivedJobsByTableClient = const <String, List<AdminJob>>{};
+      return;
+    }
 
-  Map<String, int> _databaseTableCountsFromState(AdminLiveState? state) {
-    final counts = <String, Set<String>>{};
-    for (final summary in _tableSummariesFromState(state)) {
+    final buckets = <String, List<_TableClientEntry>>{};
+    for (final agent in state.agents) {
+      for (final tableState in agent.tables) {
+        final tableKey = _tableKeyForAgent(agent, tableState);
+        buckets
+            .putIfAbsent(tableKey, () => <_TableClientEntry>[])
+            .add(_TableClientEntry(agent: agent, tableState: tableState));
+      }
+    }
+
+    final clientsByTable = <String, List<_TableClientEntry>>{};
+    final summaries = <_TableAggregateSummary>[];
+    for (final entry in buckets.entries) {
+      final clients = List<_TableClientEntry>.from(entry.value)
+        ..sort(_compareClientEntries);
+      clientsByTable[entry.key] = clients;
+
+      var latestClient = clients.first;
+      for (final client in clients.skip(1)) {
+        if (_compareTimestamps(
+              _tableTimestampToken(client.tableState),
+              _tableTimestampToken(latestClient.tableState),
+            ) >
+            0) {
+          latestClient = client;
+        }
+      }
+
+      summaries.add(
+        _TableAggregateSummary(
+          table: entry.key,
+          lastSync: _tableTimestampToken(latestClient.tableState),
+          clientCount: clients.length,
+          masterCount: clients.where((item) => item.agent.isMaster).length,
+          slaveCount: clients.where((item) => !item.agent.isMaster).length,
+          latestRowCount: latestClient.tableState.rowCount,
+          latestSnapshotBytes: latestClient.tableState.snapshotBytes,
+          sourceClientName: latestClient.agent.clientName,
+          clients: clients,
+        ),
+      );
+    }
+
+    summaries.sort(_compareSummariesByLastSyncDesc);
+    _derivedTableSummaries = summaries;
+    _derivedSummaryByTable = {
+      for (final summary in summaries) summary.table: summary,
+    };
+    _derivedClientsByTable = clientsByTable;
+
+    final databaseTableSets = <String, Set<String>>{};
+    for (final summary in summaries) {
       final database = summary.database.trim();
       if (database.isEmpty) {
         continue;
       }
-      counts.putIfAbsent(database, () => <String>{}).add(summary.displayTable);
+      databaseTableSets
+          .putIfAbsent(database, () => <String>{})
+          .add(summary.displayTable);
     }
-    return counts.map((database, tables) => MapEntry(database, tables.length));
+    final databaseNames = databaseTableSets.keys.toList(growable: false)
+      ..sort();
+    _derivedDatabaseNames = databaseNames;
+    _derivedDatabaseTableCounts = {
+      for (final entry in databaseTableSets.entries)
+        entry.key: entry.value.length,
+    };
+
+    final snapshotSources = <String, _TableSnapshotSource>{};
+    for (final snapshot in state.snapshots) {
+      final existing = snapshotSources[snapshot.table];
+      if (existing == null ||
+          _compareTimestamps(snapshot.createdAt, existing.createdAt) > 0) {
+        snapshotSources[snapshot.table] = _TableSnapshotSource(
+          clientName: snapshot.clientName,
+          table: snapshot.table,
+          createdAt: snapshot.createdAt,
+          rowCount: snapshot.rowCount,
+          snapshotBytes: snapshot.snapshotBytes,
+        );
+      }
+    }
+    for (final summary in summaries) {
+      snapshotSources.putIfAbsent(summary.table, () {
+        final clients = clientsByTable[summary.table]!;
+        _TableClientEntry? latestEntry;
+        for (final entry in clients) {
+          final token = _tableTimestampToken(entry.tableState);
+          if (token.isEmpty) {
+            continue;
+          }
+          if (latestEntry == null ||
+              _compareTimestamps(
+                    token,
+                    _tableTimestampToken(latestEntry.tableState),
+                  ) >
+                  0) {
+            latestEntry = entry;
+          }
+        }
+        final fallback = latestEntry ?? clients.first;
+        return _TableSnapshotSource(
+          clientName: fallback.agent.clientName,
+          table: summary.table,
+          createdAt: _tableTimestampToken(fallback.tableState),
+          rowCount: fallback.tableState.rowCount,
+          snapshotBytes: fallback.tableState.snapshotBytes,
+        );
+      });
+    }
+    _derivedSnapshotSourcesByTable = snapshotSources;
+
+    final jobsByTable = <String, List<AdminJob>>{};
+    final jobsByTableClient = <String, List<AdminJob>>{};
+    for (final job in state.jobs) {
+      jobsByTable.putIfAbsent(job.table, () => <AdminJob>[]).add(job);
+      jobsByTableClient
+          .putIfAbsent(
+            _historyClientKey(table: job.table, clientName: job.clientName),
+            () => <AdminJob>[],
+          )
+          .add(job);
+    }
+    for (final jobs in jobsByTable.values) {
+      jobs.sort(_compareJobsByUpdatedAtDesc);
+    }
+    for (final jobs in jobsByTableClient.values) {
+      jobs.sort(_compareJobsByUpdatedAtDesc);
+    }
+    _derivedJobsByTable = {
+      for (final entry in jobsByTable.entries)
+        entry.key: List<AdminJob>.unmodifiable(entry.value),
+    };
+    _derivedJobsByTableClient = {
+      for (final entry in jobsByTableClient.entries)
+        entry.key: List<AdminJob>.unmodifiable(entry.value),
+    };
+  }
+
+  List<String> _databaseNamesFromState(AdminLiveState? state) {
+    _ensureDerivedState(state);
+    return _derivedDatabaseNames;
+  }
+
+  Map<String, int> _databaseTableCountsFromState(AdminLiveState? state) {
+    _ensureDerivedState(state);
+    return _derivedDatabaseTableCounts;
   }
 
   String _databaseDropdownLabel(String database) {
@@ -306,11 +456,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedTableName = nextTableName;
       _selectedClientName = nextClientName;
       _snapshot = null;
-      _snapshotError = null;
-      _snapshotKey = null;
-      _snapshotVersionToken = null;
+      _detailTabIndex = 0;
     });
-    unawaited(_loadSelectedSnapshot(force: true));
   }
 
   String? _resolveSelectedClientForTable(
@@ -336,57 +483,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   List<_TableAggregateSummary> _tableSummariesFromState(AdminLiveState? state) {
-    if (state == null) {
-      return const <_TableAggregateSummary>[];
-    }
-
-    final buckets = <String, List<_TableClientEntry>>{};
-    for (final agent in state.agents) {
-      for (final tableState in agent.tables) {
-        final tableKey = _tableKeyForAgent(agent, tableState);
-        final entries = buckets.putIfAbsent(
-          tableKey,
-          () => <_TableClientEntry>[],
-        );
-        entries.add(_TableClientEntry(agent: agent, tableState: tableState));
-      }
-    }
-
-    final summaries = buckets.entries
-      .map((entry) {
-        final clients = List<_TableClientEntry>.from(entry.value)
-          ..sort(_compareClientEntries);
-        var latestClient = clients.first;
-        for (final client in clients.skip(1)) {
-          if (_compareTimestamps(
-                _tableTimestampToken(client.tableState),
-                _tableTimestampToken(latestClient.tableState),
-              ) >
-              0) {
-            latestClient = client;
-          }
-        }
-        return _TableAggregateSummary(
-          table: entry.key,
-          lastSync: _tableTimestampToken(latestClient.tableState),
-          clientCount: clients.length,
-          masterCount: clients.where((item) => item.agent.isMaster).length,
-          slaveCount: clients.where((item) => !item.agent.isMaster).length,
-          latestRowCount: latestClient.tableState.rowCount,
-          latestSnapshotBytes: latestClient.tableState.snapshotBytes,
-          sourceClientName: latestClient.agent.clientName,
-          clients: clients,
-        );
-      })
-      .toList(growable: false)..sort((left, right) {
-      final byTimestamp = _compareTimestamps(right.lastSync, left.lastSync);
-      if (byTimestamp != 0) {
-        return byTimestamp;
-      }
-      return left.table.compareTo(right.table);
-    });
-
-    return summaries;
+    _ensureDerivedState(state);
+    return _derivedTableSummaries;
   }
 
   String _tableKeyForAgent(AdminAgent agent, AdminTableState tableState) {
@@ -418,28 +516,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     AdminLiveState? state,
     String? tableName,
   ) {
-    if (state == null || tableName == null) {
+    if (tableName == null) {
       return const <_TableClientEntry>[];
     }
-
-    final entries = <_TableClientEntry>[];
-    for (final agent in state.agents) {
-      final tableState = _tableStateForAgent(agent, tableName);
-      if (tableState != null) {
-        entries.add(_TableClientEntry(agent: agent, tableState: tableState));
-      }
-    }
-    entries.sort(_compareClientEntries);
-    return entries;
-  }
-
-  AdminTableState? _tableStateForAgent(AdminAgent agent, String tableName) {
-    for (final table in agent.tables) {
-      if (_tableKeyForAgent(agent, table) == tableName) {
-        return table;
-      }
-    }
-    return null;
+    _ensureDerivedState(state);
+    return _derivedClientsByTable[tableName] ?? const <_TableClientEntry>[];
   }
 
   int _compareClientEntries(_TableClientEntry left, _TableClientEntry right) {
@@ -464,59 +545,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     AdminLiveState? state,
     String? tableName,
   ) {
-    if (state == null || tableName == null) {
+    if (tableName == null) {
       return null;
     }
-
-    final snapshots = state.snapshots
-      .where((snapshot) => snapshot.table == tableName)
-      .toList(growable: false)..sort(
-      (left, right) => _compareTimestamps(right.createdAt, left.createdAt),
-    );
-
-    if (snapshots.isNotEmpty) {
-      final snapshot = snapshots.first;
-      return _TableSnapshotSource(
-        clientName: snapshot.clientName,
-        table: snapshot.table,
-        createdAt: snapshot.createdAt,
-        rowCount: snapshot.rowCount,
-        snapshotBytes: snapshot.snapshotBytes,
-      );
-    }
-
-    final clients = _clientsForTableFromState(state, tableName);
-    if (clients.isEmpty) {
-      return null;
-    }
-
-    _TableClientEntry? latestEntry;
-    for (final entry in clients) {
-      final token = _tableTimestampToken(entry.tableState);
-      if (token.isEmpty) {
-        continue;
-      }
-      if (latestEntry == null ||
-          _compareTimestamps(
-                token,
-                _tableTimestampToken(latestEntry.tableState),
-              ) >
-              0) {
-        latestEntry = entry;
-      }
-    }
-
-    if (latestEntry == null) {
-      return null;
-    }
-
-    return _TableSnapshotSource(
-      clientName: latestEntry.agent.clientName,
-      table: tableName,
-      createdAt: _tableTimestampToken(latestEntry.tableState),
-      rowCount: latestEntry.tableState.rowCount,
-      snapshotBytes: latestEntry.tableState.snapshotBytes,
-    );
+    _ensureDerivedState(state);
+    return _derivedSnapshotSourcesByTable[tableName];
   }
 
   String _tableTimestampToken(AdminTableState tableState) {
@@ -531,79 +564,55 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _timestampSortValue(left).compareTo(_timestampSortValue(right));
   }
 
+  int _compareSummariesByLastSyncDesc(
+    _TableAggregateSummary left,
+    _TableAggregateSummary right,
+  ) {
+    final byTimestamp = _compareTimestamps(right.lastSync, left.lastSync);
+    if (byTimestamp != 0) {
+      return byTimestamp;
+    }
+    return left.table.compareTo(right.table);
+  }
+
+  int _compareSummariesByActiveSort(
+    _TableAggregateSummary left,
+    _TableAggregateSummary right,
+  ) {
+    final byTimestamp =
+        _sortLastSyncAscending
+            ? _compareTimestamps(left.lastSync, right.lastSync)
+            : _compareTimestamps(right.lastSync, left.lastSync);
+    if (byTimestamp != 0) {
+      return byTimestamp;
+    }
+    return left.table.compareTo(right.table);
+  }
+
+  int _compareJobsByUpdatedAtDesc(AdminJob left, AdminJob right) {
+    return _compareTimestamps(right.updatedAt, left.updatedAt);
+  }
+
+  String _historyClientKey({
+    required String table,
+    required String clientName,
+  }) {
+    return '$table\x1F$clientName';
+  }
+
+  List<_TableAggregateSummary> _sortSummariesByActiveSort(
+    List<_TableAggregateSummary> summaries,
+  ) {
+    return List<_TableAggregateSummary>.from(summaries)
+      ..sort(_compareSummariesByActiveSort);
+  }
+
   int _timestampSortValue(String raw) {
     final parsed = DateTime.tryParse(raw);
     if (parsed != null) {
       return parsed.toUtc().microsecondsSinceEpoch;
     }
     return raw.trim().isEmpty ? -1 : 0;
-  }
-
-  Future<void> _loadSelectedSnapshot({bool force = false}) async {
-    final tableName = _selectedTableName;
-    final source = _selectedSnapshotSource;
-
-    if (tableName == null || source == null) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _snapshot = null;
-        _snapshotLoading = false;
-        _snapshotError = null;
-        _snapshotKey = null;
-        _snapshotVersionToken = null;
-      });
-      return;
-    }
-
-    final nextKey = '${source.clientName}::$tableName';
-    final nextVersion = source.createdAt.trim();
-
-    if (!force &&
-        nextKey == _snapshotKey &&
-        nextVersion == _snapshotVersionToken &&
-        (_snapshot != null || _snapshotError != null)) {
-      return;
-    }
-
-    final requestToken = ++_snapshotRequestToken;
-    if (mounted) {
-      setState(() {
-        _snapshotLoading = true;
-        _snapshotError = null;
-        _snapshotKey = nextKey;
-        _snapshotVersionToken = nextVersion;
-        _snapshot = null;
-      });
-    }
-
-    try {
-      final snapshot = await _api.fetchLatestSnapshot(
-        clientName: source.clientName,
-        table: tableName,
-      );
-      if (!mounted || requestToken != _snapshotRequestToken) {
-        return;
-      }
-      setState(() {
-        _snapshot = snapshot;
-        _snapshotLoading = false;
-        _snapshotError =
-            snapshot == null
-                ? 'No snapshot is available yet for $tableName.'
-                : null;
-      });
-    } catch (error) {
-      if (!mounted || requestToken != _snapshotRequestToken) {
-        return;
-      }
-      setState(() {
-        _snapshotLoading = false;
-        _snapshot = null;
-        _snapshotError = error.toString();
-      });
-    }
   }
 
   void _selectClient(String? clientName) {
@@ -627,9 +636,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedTableName = tableName;
       _selectedClientName = nextClientName;
       _snapshot = null;
-      _snapshotError = null;
+      _detailTabIndex = 0;
     });
-    unawaited(_loadSelectedSnapshot(force: true));
+  }
+
+  void _toggleTableLastSyncSort() {
+    setState(() {
+      _sortLastSyncAscending = !_sortLastSyncAscending;
+    });
   }
 
   Future<void> _openSettingsDialog() async {
@@ -1925,6 +1939,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     entry,
                     tableName: summary.displayTitle,
                     busy: busy,
+                    recentHistoryCount: recentJobs.length,
+                    totalHistoryCount: jobs.length,
                     onDownload:
                         () => _downloadSnapshotFile(
                           clientName: entry.agent.clientName,
@@ -1958,21 +1974,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         ),
                   ),
                   const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      _buildSectionLabel('Recent History'),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${recentJobs.length} of ${jobs.length}',
-                        style: const TextStyle(
-                          color: Color(0xFF62717C),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
                   Expanded(
                     child:
                         recentJobs.isEmpty
@@ -2275,7 +2276,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       );
       await _refreshState(silent: true);
       if (_selectedClientName == clientName && _selectedTableName == table) {
-        await _loadSelectedSnapshot(force: true);
+        setState(() {
+          _snapshot = null;
+        });
       }
       if (!mounted) {
         return;
@@ -2594,46 +2597,41 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   ) {
     final query = _syncSearchController.text.trim();
     if (query.isEmpty) {
-      return summaries;
+      return _sortSummariesByActiveSort(summaries);
     }
 
     final matches = summaries
-      .map((summary) {
-        final score = _bestMatchScore(
-          query,
-          [
-            summary.table,
-            summary.database,
-            summary.displayTable,
-            summary.sourceClientName,
-            _formatTimestamp(summary.lastSync),
-            '${summary.clientCount}',
-            '${summary.masterCount}',
-            '${summary.slaveCount}',
-            ...summary.clients.map((entry) {
-              return [
-                entry.agent.clientName,
-                entry.agent.machineName,
-                _roleLabel(entry.agent.isMaster),
-                _tableKeyForAgent(entry.agent, entry.tableState),
-                entry.tableState.status,
-                entry.tableState.message,
-              ].join(' ');
-            }),
-          ].join(' '),
-        );
-        return _ScoredTableSummary(summary: summary, score: score);
-      })
-      .where((match) => match.score > 0)
-      .toList(growable: false)..sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return left.summary.table.compareTo(right.summary.table);
-    });
+        .map((summary) {
+          final score = _bestMatchScore(
+            query,
+            [
+              summary.table,
+              summary.database,
+              summary.displayTable,
+              summary.sourceClientName,
+              _formatTimestamp(summary.lastSync),
+              '${summary.clientCount}',
+              '${summary.masterCount}',
+              '${summary.slaveCount}',
+              ...summary.clients.map((entry) {
+                return [
+                  entry.agent.clientName,
+                  entry.agent.machineName,
+                  _roleLabel(entry.agent.isMaster),
+                  _tableKeyForAgent(entry.agent, entry.tableState),
+                  entry.tableState.status,
+                  entry.tableState.message,
+                ].join(' ');
+              }),
+            ].join(' '),
+          );
+          return _ScoredTableSummary(summary: summary, score: score);
+        })
+        .where((match) => match.score > 0)
+        .map((match) => match.summary)
+        .toList(growable: false);
 
-    return matches.map((match) => match.summary).toList(growable: false);
+    return _sortSummariesByActiveSort(matches);
   }
 
   List<_TableClientEntry> _filteredTableClients(
@@ -2684,8 +2682,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required String clientName,
     required String table,
   }) {
-    return _jobs
-        .where((job) => job.clientName == clientName && job.table == table)
+    _ensureDerivedState(_state);
+    return (_derivedJobsByTableClient[_historyClientKey(
+              table: table,
+              clientName: clientName,
+            )] ??
+            const <AdminJob>[])
         .take(_historyLimit)
         .toList(growable: false);
   }
@@ -2695,16 +2697,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     String? clientName,
     bool limit = true,
   }) {
-    final jobs = _jobs
-        .where((job) => job.table == table)
-        .where((job) => clientName == null || job.clientName == clientName)
-        .toList(growable: false);
+    _ensureDerivedState(_state);
+    final jobs =
+        clientName == null
+            ? _derivedJobsByTable[table] ?? const <AdminJob>[]
+            : _derivedJobsByTableClient[_historyClientKey(
+                  table: table,
+                  clientName: clientName,
+                )] ??
+                const <AdminJob>[];
 
-    jobs.sort((left, right) {
-      return _compareTimestamps(right.updatedAt, left.updatedAt);
-    });
-
-    return (limit ? jobs.take(_historyLimit) : jobs).toList(growable: false);
+    return limit ? jobs.take(_historyLimit).toList(growable: false) : jobs;
   }
 
   Widget _buildSearchField({
@@ -2726,6 +2729,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   onPressed: controller.clear,
                   icon: const Icon(Icons.close),
                 ),
+      ),
+    );
+  }
+
+  Widget _buildLastSyncSortButton() {
+    final tooltip =
+        _sortLastSyncAscending
+            ? 'Last sync: oldest first'
+            : 'Last sync: newest first';
+    return Tooltip(
+      message: tooltip,
+      child: IconButton.filledTonal(
+        onPressed: _toggleTableLastSyncSort,
+        icon: Icon(
+          _sortLastSyncAscending
+              ? Icons.arrow_upward_rounded
+              : Icons.arrow_downward_rounded,
+        ),
+        style: IconButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
       ),
     );
   }
@@ -2782,9 +2807,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 hint: 'Search table names, databases, and clients.',
               );
               final database = _buildDatabaseSelector();
+              final sort = _buildLastSyncSortButton();
               if (stack) {
                 return Column(
-                  children: [database, const SizedBox(height: 10), search],
+                  children: [
+                    database,
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(child: search),
+                        const SizedBox(width: 8),
+                        sort,
+                      ],
+                    ),
+                  ],
                 );
               }
               return Row(
@@ -2792,6 +2828,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   SizedBox(width: 260, child: database),
                   const SizedBox(width: 10),
                   Expanded(child: search),
+                  const SizedBox(width: 8),
+                  sort,
                 ],
               );
             },
@@ -2821,12 +2859,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildTableSummaryTile(_TableAggregateSummary summary) {
     final selected = summary.table == _selectedTableName;
+    final sourceEntry = _sourceEntryForSummary(summary);
+    final statusColor = _statusColor(sourceEntry.tableState.status);
+    final roleColor = _roleColor(sourceEntry.agent.isMaster);
+    final lastSync = _formatTimestamp(summary.lastSync);
+    final progress = sourceEntry.tableState.progress.clamp(0, 100);
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: () => _selectTable(summary.table),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
+        constraints: const BoxConstraints(minHeight: 58),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFE6F4F1) : Colors.white,
@@ -2838,55 +2882,147 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final stack = constraints.maxWidth < 560;
+            final metrics = Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _buildRoleBadge(sourceEntry.agent.isMaster, compact: true),
+                StatusBadge(
+                  label: sourceEntry.tableState.status,
+                  color: statusColor,
+                ),
+                _buildTableListMetric(
+                  tooltip: 'Rows',
+                  icon: Icons.format_list_numbered_rounded,
+                  value: '${summary.latestRowCount}',
+                ),
+                _buildTableListMetric(
+                  tooltip: 'Agents',
+                  icon: Icons.devices_rounded,
+                  value: '${summary.clientCount}',
+                ),
+                StatusBadge(label: '$progress%', color: statusColor),
+              ],
+            );
 
-            return stack
-                ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      summary.displayTitle,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Last sync ${_formatTimestamp(summary.lastSync)}',
-                      style: const TextStyle(
-                        color: Color(0xFF62717C),
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ],
-                )
-                : Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            summary.displayTitle,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: roleColor.withValues(alpha: 0.11),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: roleColor.withValues(alpha: 0.2)),
+                  ),
+                  child: Icon(
+                    _roleIcon(sourceEntry.agent.isMaster),
+                    size: 18,
+                    color: roleColor,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child:
+                      stack
+                          ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildTableListTitle(summary.displayTitle),
+                              const SizedBox(height: 4),
+                              _buildTableListSubline(lastSync),
+                              const SizedBox(height: 8),
+                              metrics,
+                            ],
+                          )
+                          : Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildTableListTitle(summary.displayTitle),
+                                    const SizedBox(height: 4),
+                                    _buildTableListSubline(lastSync),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              metrics,
+                            ],
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Last sync ${_formatTimestamp(summary.lastSync)}',
-                            style: const TextStyle(
-                              color: Color(0xFF667085),
-                              fontSize: 12.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
+                ),
+              ],
+            );
           },
+        ),
+      ),
+    );
+  }
+
+  _TableClientEntry _sourceEntryForSummary(_TableAggregateSummary summary) {
+    for (final entry in summary.clients) {
+      if (entry.agent.clientName == summary.sourceClientName) {
+        return entry;
+      }
+    }
+    return summary.clients.first;
+  }
+
+  Widget _buildTableListTitle(String table) {
+    return Text(
+      table,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+    );
+  }
+
+  Widget _buildTableListSubline(String lastSync) {
+    return Text(
+      'Last update $lastSync',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: Color(0xFF667085),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+
+  Widget _buildTableListMetric({
+    required String tooltip,
+    required IconData icon,
+    required String value,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 26),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFDDE3EA)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: const Color(0xFF667085)),
+            const SizedBox(width: 5),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Color(0xFF101828),
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2914,28 +3050,82 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildMergedDetailBody(_TableAggregateSummary summary) {
-    return DefaultTabController(
-      key: ValueKey(summary.table),
-      length: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final tabIndex = _detailTabIndex.clamp(0, 1);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildDetailTabBar(tabIndex),
+        const SizedBox(height: 8),
+        Expanded(
+          child:
+              tabIndex == 0
+                  ? _buildClientDetailTab(summary)
+                  : _buildAllHistoryTab(summary),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailTabBar(int selectedIndex) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF2F4F7),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const TabBar(
-            isScrollable: true,
-            tabs: [Tab(text: 'Client'), Tab(text: 'All History')],
+          _buildDetailTabButton(
+            label: 'Client',
+            selected: selectedIndex == 0,
+            onTap: () => _selectDetailTab(0),
           ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _buildClientDetailTab(summary),
-                _buildAllHistoryTab(summary),
-              ],
-            ),
+          _buildDetailTabButton(
+            label: 'All History',
+            selected: selectedIndex == 1,
+            onTap: () => _selectDetailTab(1),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildDetailTabButton({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: selected ? Colors.white : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: selected ? null : onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          child: Text(
+            label,
+            style: TextStyle(
+              color:
+                  selected ? const Color(0xFF101828) : const Color(0xFF667085),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _selectDetailTab(int index) {
+    if (_detailTabIndex == index) {
+      return;
+    }
+    setState(() {
+      _detailTabIndex = index;
+    });
   }
 
   Widget _buildClientDetailTab(_TableAggregateSummary summary) {
@@ -2961,6 +3151,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _TableClientEntry? selectedClient, {
     required String tableName,
     required bool busy,
+    required int recentHistoryCount,
+    required int totalHistoryCount,
     required VoidCallback onDownload,
     required VoidCallback onUpload,
     required VoidCallback? onPush,
@@ -2975,6 +3167,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     final agent = selectedClient.agent;
     final tableState = selectedClient.tableState;
+    final normalizedProgress = tableState.progress.clamp(0, 100);
+    final progressColor = _statusColor(tableState.status);
+    final progressLabel =
+        tableState.inProgress
+            ? 'Sync in progress'
+            : tableState.enabled
+            ? 'Sync ready'
+            : 'Sync paused';
+    final activityMessage =
+        tableState.message.trim().isEmpty
+            ? 'No sync note is available for this table yet.'
+            : tableState.message.trim();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -2982,216 +3186,270 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             constraints.maxWidth.isFinite
                 ? constraints.maxWidth
                 : MediaQuery.sizeOf(context).width;
-        final columns =
-            width >= 860
-                ? 4
-                : width >= 620
-                ? 3
-                : width >= 420
-                ? 2
-                : 1;
-        final gap = 10.0;
-        final tileWidth = ((width - (gap * (columns - 1))) / columns).clamp(
-          160.0,
-          260.0,
-        );
-
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFD9E2EC)),
+        final stackIdentity = width < 760;
+        final metaItems = <MapEntry<String, String>>[
+          MapEntry('Client', agent.clientName),
+          MapEntry('Role', _roleLabel(agent.isMaster)),
+          MapEntry('Client Status', agent.isOnline ? 'Online' : 'Offline'),
+          MapEntry('Database', agent.database),
+          MapEntry(
+            'Last Sync',
+            _formatTimestamp(_tableTimestampToken(tableState)),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                crossAxisAlignment: WrapCrossAlignment.center,
+          MapEntry('Rows', '${tableState.rowCount}'),
+          MapEntry('Backup Size', _formatBytes(tableState.snapshotBytes)),
+          MapEntry('Direction', tableState.direction.toUpperCase()),
+          MapEntry('Mode', tableState.syncMode.toUpperCase()),
+          MapEntry(
+            'Flow',
+            tableState.enabled
+                ? (agent.isMaster ? 'Push source' : 'Pull target')
+                : 'Disabled',
+          ),
+        ];
+        final actions = <Widget>[
+          _buildDetailActionButton(
+            label: 'Download Snapshot',
+            icon: Icons.download_rounded,
+            onPressed: busy ? null : onDownload,
+          ),
+          _buildDetailActionButton(
+            label: 'Upload Snapshot',
+            icon: Icons.upload_file_rounded,
+            onPressed: busy ? null : onUpload,
+          ),
+          _buildDetailActionButton(
+            label: 'Push Now',
+            icon: Icons.north_rounded,
+            onPressed: onPush,
+          ),
+          _buildDetailActionButton(
+            label: 'Pull Now',
+            icon: Icons.south_rounded,
+            onPressed: onPull,
+          ),
+          _buildDetailActionButton(
+            label: 'Open Full History',
+            icon: Icons.history_rounded,
+            onPressed: onOpenHistory,
+          ),
+        ];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (stackIdentity)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minWidth: math.min(width, 260),
-                      maxWidth: math.max(280, width - 220),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          tableName,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.titleMedium?.copyWith(
-                            color: const Color(0xFF0F172A),
+                  _buildDetailIdentityBlock(context, tableName, agent),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _buildRoleBadge(agent.isMaster),
+                      StatusBadge(
+                        label: tableState.status,
+                        color: _statusColor(tableState.status),
+                      ),
+                      _buildCompactTag(
+                        label: 'SQL',
+                        value:
+                            agent.sqlConnected ? 'Connected' : 'Disconnected',
+                      ),
+                      _buildCompactTag(
+                        label: 'History',
+                        value: '$recentHistoryCount of $totalHistoryCount',
+                      ),
+                    ],
+                  ),
+                ],
+              )
+            else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _buildDetailIdentityBlock(context, tableName, agent),
+                  ),
+                  const SizedBox(width: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _buildRoleBadge(agent.isMaster),
+                      StatusBadge(
+                        label: tableState.status,
+                        color: _statusColor(tableState.status),
+                      ),
+                      _buildCompactTag(
+                        label: 'SQL',
+                        value:
+                            agent.sqlConnected ? 'Connected' : 'Disconnected',
+                      ),
+                      _buildCompactTag(
+                        label: 'History',
+                        value: '$recentHistoryCount of $totalHistoryCount',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          progressLabel,
+                          style: const TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontSize: 13,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${agent.machineName} - ${agent.server}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF667085),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
+                      ),
+                      Text(
+                        '$normalizedProgress%',
+                        style: const TextStyle(
+                          color: Color(0xFF475467),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
                         ),
-                      ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ProgressStrip(
+                    progress: normalizedProgress,
+                    color: progressColor,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    activityMessage,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 12,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  _buildRoleBadge(agent.isMaster),
-                  StatusBadge(
-                    label: tableState.status,
-                    color: _statusColor(tableState.status),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: metaItems
+                        .map(
+                          (item) => _buildCompactTag(
+                            label: item.key,
+                            value: item.value,
+                          ),
+                        )
+                        .toList(growable: false),
                   ),
-                  MetricPill(
-                    label: 'SQL',
-                    value: agent.sqlConnected ? 'Connected' : 'Disconnected',
-                  ),
+                  const SizedBox(height: 14),
+                  Wrap(spacing: 10, runSpacing: 10, children: actions),
                 ],
               ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: gap,
-                runSpacing: gap,
-                children: [
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Client',
-                    value: agent.clientName,
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Role',
-                    value: _roleLabel(agent.isMaster),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Status',
-                    value: agent.isOnline ? 'Online' : 'Offline',
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Database',
-                    value: agent.database,
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Last Sync',
-                    value: _formatTimestamp(_tableTimestampToken(tableState)),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Rows',
-                    value: '${tableState.rowCount}',
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Backup Size',
-                    value: _formatBytes(tableState.snapshotBytes),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Sync Direction',
-                    value:
-                        tableState.enabled
-                            ? (agent.isMaster ? 'Push source' : 'Pull target')
-                            : 'Disabled',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Divider(height: 1, color: Color(0xFFD9E2EC)),
-              const SizedBox(height: 14),
-              Text(
-                'Actions',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: const Color(0xFF475467),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: busy ? null : onDownload,
-                    icon: const Icon(Icons.download_rounded, size: 16),
-                    label: const Text('Download Snapshot'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: busy ? null : onUpload,
-                    icon: const Icon(Icons.upload_file_rounded, size: 16),
-                    label: const Text('Upload Snapshot'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: onPush,
-                    icon: const Icon(Icons.north_rounded, size: 16),
-                    label: const Text('Push Now'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: onPull,
-                    icon: const Icon(Icons.south_rounded, size: 16),
-                    label: const Text('Pull Now'),
-                  ),
-                  TextButton.icon(
-                    onPressed: onOpenHistory,
-                    icon: const Icon(Icons.history_rounded, size: 16),
-                    label: const Text('Open Full History'),
-                  ),
-                ],
-              ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
   }
 
-  Widget _buildDetailFactTile({
-    required double width,
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      width: width,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
+  Widget _buildDetailIdentityBlock(
+    BuildContext context,
+    String tableName,
+    AdminAgent agent,
+  ) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 220),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF667085),
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
+            tableName,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: const Color(0xFF0F172A),
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 4),
           Text(
-            value,
-            maxLines: 2,
+            '${agent.machineName} - ${agent.server}',
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: Color(0xFF101828),
+              color: Color(0xFF667085),
               fontSize: 13,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDetailActionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return FilledButton.tonalIcon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 16),
+      label: Text(label),
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Widget _buildCompactTag({required String label, required String value}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label ',
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(
+                color: Color(0xFF101828),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        style: const TextStyle(fontSize: 12),
       ),
     );
   }
