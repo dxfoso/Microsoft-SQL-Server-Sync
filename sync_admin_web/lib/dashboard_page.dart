@@ -2983,23 +2983,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             constraints.maxWidth.isFinite
                 ? constraints.maxWidth
                 : MediaQuery.sizeOf(context).width;
-        final columns =
-            width >= 860
-                ? 4
-                : width >= 620
-                ? 3
-                : width >= 420
-                ? 2
-                : 1;
-        final gap = 10.0;
-        final tileWidth = ((width - (gap * (columns - 1))) / columns).clamp(
-          160.0,
-          260.0,
-        );
+        final metaItems = <MapEntry<String, String>>[
+          MapEntry('Client', agent.clientName),
+          MapEntry('Role', _roleLabel(agent.isMaster)),
+          MapEntry('Client Status', agent.isOnline ? 'Online' : 'Offline'),
+          MapEntry('Database', agent.database),
+          MapEntry(
+            'Last Sync',
+            _formatTimestamp(_tableTimestampToken(tableState)),
+          ),
+          MapEntry('Rows', '${tableState.rowCount}'),
+          MapEntry('Backup Size', _formatBytes(tableState.snapshotBytes)),
+          MapEntry('Direction', tableState.direction.toUpperCase()),
+          MapEntry('Mode', tableState.syncMode.toUpperCase()),
+          MapEntry(
+            'Flow',
+            tableState.enabled
+                ? (agent.isMaster ? 'Push source' : 'Pull target')
+                : 'Disabled',
+          ),
+        ];
 
         return Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
           decoration: BoxDecoration(
             color: const Color(0xFFF8FAFC),
             borderRadius: BorderRadius.circular(12),
@@ -3059,134 +3066,57 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFDDE3EA)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            progressLabel,
-                            style: const TextStyle(
-                              color: Color(0xFF0F172A),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '$normalizedProgress%',
-                          style: const TextStyle(
-                            color: Color(0xFF475467),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    ProgressStrip(
-                      progress: normalizedProgress,
-                      color: progressColor,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      activityMessage,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      progressLabel,
                       style: const TextStyle(
-                        color: Color(0xFF667085),
-                        fontSize: 12,
-                        height: 1.3,
-                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF0F172A),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                  ],
+                  ),
+                  Text(
+                    '$normalizedProgress%',
+                    style: const TextStyle(
+                      color: Color(0xFF475467),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ProgressStrip(progress: normalizedProgress, color: progressColor),
+              const SizedBox(height: 8),
+              Text(
+                activityMessage,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 12,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 14),
               Wrap(
-                spacing: gap,
-                runSpacing: gap,
-                children: [
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Client',
-                    value: agent.clientName,
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Role',
-                    value: _roleLabel(agent.isMaster),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Status',
-                    value: agent.isOnline ? 'Online' : 'Offline',
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Database',
-                    value: agent.database,
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Last Sync',
-                    value: _formatTimestamp(_tableTimestampToken(tableState)),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Rows',
-                    value: '${tableState.rowCount}',
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Backup Size',
-                    value: _formatBytes(tableState.snapshotBytes),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Direction',
-                    value: tableState.direction.toUpperCase(),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Mode',
-                    value: tableState.syncMode.toUpperCase(),
-                  ),
-                  _buildDetailFactTile(
-                    width: tileWidth,
-                    label: 'Sync Direction',
-                    value:
-                        tableState.enabled
-                            ? (agent.isMaster ? 'Push source' : 'Pull target')
-                            : 'Disabled',
-                  ),
-                ],
+                spacing: 8,
+                runSpacing: 8,
+                children: metaItems
+                    .map(
+                      (item) =>
+                          _buildCompactTag(label: item.key, value: item.value),
+                    )
+                    .toList(growable: false),
               ),
               const SizedBox(height: 16),
               const Divider(height: 1, color: Color(0xFFD9E2EC)),
               const SizedBox(height: 14),
-              Text(
-                'Actions',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: const Color(0xFF475467),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
@@ -3253,49 +3183,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ],
         ),
         style: const TextStyle(fontSize: 12),
-      ),
-    );
-  }
-
-  Widget _buildDetailFactTile({
-    required double width,
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      width: width,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF667085),
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF101828),
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
       ),
     );
   }
