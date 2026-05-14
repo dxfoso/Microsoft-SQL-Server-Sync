@@ -2406,6 +2406,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final qualifiedTable = _quoteQualifiedIdentifier(table);
     final columnList = snapshot.columns.map(_quoteIdentifier).join(', ');
     final keyColumns = _mergeKeyColumns(schemas, snapshot.columns);
+    if (mergeRows && keyColumns.isEmpty) {
+      throw Exception(
+        'Merge sync requires a primary key on $table. No primary key columns were found in the local table schema and downloaded snapshot.',
+      );
+    }
+    final rowsToApply =
+        mergeRows
+            ? _deduplicateMergeRows(
+              table: table,
+              rows: snapshot.rows,
+              columns: snapshot.columns,
+              keyColumns: keyColumns,
+            )
+            : snapshot.rows;
     final statements = <String>[
       'SET NOCOUNT ON;',
       'BEGIN TRY',
@@ -2415,8 +2429,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     ];
 
     const rowsPerBatch = 100;
-    for (var index = 0; index < snapshot.rows.length; index += rowsPerBatch) {
-      final chunk = snapshot.rows.skip(index).take(rowsPerBatch);
+    for (var index = 0; index < rowsToApply.length; index += rowsPerBatch) {
+      final chunk = rowsToApply.skip(index).take(rowsPerBatch);
       final values = chunk
           .map(
             (row) =>
@@ -3110,12 +3124,68 @@ ORDER BY [__sync_agent_row_number];
         )
         .map((schema) => schema.name)
         .toList(growable: false);
-    if (primaryKeys.isNotEmpty) {
-      return primaryKeys;
+    return primaryKeys;
+  }
+
+  String _mergeRowKey(Map<String, String?> row, List<String> keyColumns) =>
+      keyColumns.map((column) => row[column] ?? '').join('\u001f');
+
+  String _mergeRowSignature(Map<String, String?> row, List<String> columns) =>
+      columns.map((column) => row[column] ?? '').join('\u001f');
+
+  List<Map<String, String?>> _deduplicateMergeRows({
+    required String table,
+    required List<Map<String, String?>> rows,
+    required List<String> columns,
+    required List<String> keyColumns,
+  }) {
+    final rowsByKey = <String, Map<String, String?>>{};
+    final signatureByKey = <String, String>{};
+
+    for (final row in rows) {
+      final rowKey = _mergeRowKey(row, keyColumns);
+      final rowSignature = _mergeRowSignature(row, columns);
+      final existingSignature = signatureByKey[rowKey];
+      if (existingSignature == null) {
+        signatureByKey[rowKey] = rowSignature;
+        rowsByKey[rowKey] = row;
+        continue;
+      }
+      if (existingSignature != rowSignature) {
+        throw Exception(
+          'Merge conflict detected in downloaded snapshot for $table. Multiple rows share the same primary key but contain different values.',
+        );
+      }
     }
-    return snapshotColumns.isEmpty
-        ? const <String>[]
-        : <String>[snapshotColumns.first];
+
+    return rowsByKey.values.toList(growable: false);
+  }
+
+  String _sqlColumnEqualityClause({
+    required String leftAlias,
+    required String rightAlias,
+    required List<String> columns,
+  }) {
+    return columns
+        .map(
+          (column) =>
+              '$leftAlias.${_quoteIdentifier(column)} = $rightAlias.${_quoteIdentifier(column)}',
+        )
+        .join(' AND ');
+  }
+
+  String _sqlColumnDifferenceClause({
+    required String leftAlias,
+    required String rightAlias,
+    required List<String> columns,
+  }) {
+    return columns
+        .map((column) {
+          final left = '$leftAlias.${_quoteIdentifier(column)}';
+          final right = '$rightAlias.${_quoteIdentifier(column)}';
+          return '($left <> $right OR ($left IS NULL AND $right IS NOT NULL) OR ($left IS NOT NULL AND $right IS NULL))';
+        })
+        .join(' OR ');
   }
 
   String _mergeSnapshotRowsStatement({
@@ -3129,32 +3199,58 @@ ORDER BY [__sync_agent_row_number];
       return '';
     }
     final sourceColumns = columns.map(_quoteIdentifier).join(', ');
-    final matchClause = keyColumns
-        .map(
-          (column) =>
-              'target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}',
-        )
-        .join(' AND ');
-    final updateColumns = columns
+    final matchClause = _sqlColumnEqualityClause(
+      leftAlias: 'target',
+      rightAlias: 'source',
+      columns: keyColumns,
+    );
+    final compareColumns = columns
         .where(
           (column) =>
               !keyColumns.contains(column) &&
               !(schemasByName[column]?.isIdentity ?? false),
         )
         .toList(growable: false);
-    final updateClause =
-        updateColumns.isEmpty
-            ? ''
-            : 'WHEN MATCHED THEN UPDATE SET ${updateColumns.map((column) => 'target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}').join(', ')}';
     final insertColumns = columns.map(_quoteIdentifier).join(', ');
     final insertValues = columns
         .map((column) => 'source.${_quoteIdentifier(column)}')
         .join(', ');
+    final duplicateSourceKeysClause = keyColumns
+        .map((column) => 'source.${_quoteIdentifier(column)}')
+        .join(', ');
+    final differenceClause =
+        compareColumns.isEmpty
+            ? ''
+            : _sqlColumnDifferenceClause(
+              leftAlias: 'target',
+              rightAlias: 'source',
+              columns: compareColumns,
+            );
     return '''
+IF EXISTS (
+  SELECT 1
+  FROM (VALUES $values) AS source ($sourceColumns)
+  GROUP BY $duplicateSourceKeysClause
+  HAVING COUNT(*) > 1
+)
+BEGIN
+  THROW 51001, N'Downloaded snapshot contains duplicate primary keys for $qualifiedTable.', 1;
+END;
+${differenceClause.isEmpty ? '' : '''
+IF EXISTS (
+  SELECT 1
+  FROM (VALUES $values) AS source ($sourceColumns)
+  INNER JOIN $qualifiedTable AS target
+    ON $matchClause
+  WHERE $differenceClause
+)
+BEGIN
+  THROW 51000, N'Merge conflict detected for $qualifiedTable. A row with the same primary key already exists with different values.', 1;
+END;
+'''}
 MERGE $qualifiedTable AS target
 USING (VALUES $values) AS source ($sourceColumns)
 ON $matchClause
-$updateClause
 WHEN NOT MATCHED BY TARGET THEN
   INSERT ($insertColumns) VALUES ($insertValues);
 ''';
