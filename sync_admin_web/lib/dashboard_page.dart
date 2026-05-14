@@ -1921,68 +1921,41 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  _buildSelectedClientInfo(entry),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed:
-                            busy
-                                ? null
-                                : () => _downloadSnapshotFile(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                ),
-                        icon: const Icon(Icons.download_rounded, size: 16),
-                        label: const Text('Download'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed:
-                            busy
-                                ? null
-                                : () => _uploadSnapshotFile(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                ),
-                        icon: const Icon(Icons.upload_file_rounded, size: 16),
-                        label: const Text('Upload'),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed:
-                            entry.tableState.enabled
-                                ? () => _triggerJob(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                  direction: 'upload',
-                                )
-                                : null,
-                        icon: const Icon(Icons.north_rounded, size: 16),
-                        label: const Text('Push'),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed:
-                            entry.tableState.enabled
-                                ? () => _triggerJob(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                  direction: 'download',
-                                )
-                                : null,
-                        icon: const Icon(Icons.south_rounded, size: 16),
-                        label: const Text('Pull'),
-                      ),
-                      TextButton.icon(
-                        onPressed:
-                            () => _openHistoryDialog(
+                  _buildSelectedClientInfo(
+                    entry,
+                    tableName: summary.displayTitle,
+                    busy: busy,
+                    onDownload:
+                        () => _downloadSnapshotFile(
+                          clientName: entry.agent.clientName,
+                          table: summary.table,
+                        ),
+                    onUpload:
+                        () => _uploadSnapshotFile(
+                          clientName: entry.agent.clientName,
+                          table: summary.table,
+                        ),
+                    onPush:
+                        entry.tableState.enabled
+                            ? () => _triggerJob(
                               clientName: entry.agent.clientName,
                               table: summary.table,
-                            ),
-                        icon: const Icon(Icons.history_rounded, size: 16),
-                        label: const Text('Full History'),
-                      ),
-                    ],
+                              direction: 'upload',
+                            )
+                            : null,
+                    onPull:
+                        entry.tableState.enabled
+                            ? () => _triggerJob(
+                              clientName: entry.agent.clientName,
+                              table: summary.table,
+                              direction: 'download',
+                            )
+                            : null,
+                    onOpenHistory:
+                        () => _openHistoryDialog(
+                          clientName: entry.agent.clientName,
+                          table: summary.table,
+                        ),
                   ),
                   const SizedBox(height: 14),
                   Row(
@@ -2984,7 +2957,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _buildHistoryTableSide(summary, limit: false);
   }
 
-  Widget _buildSelectedClientInfo(_TableClientEntry? selectedClient) {
+  Widget _buildSelectedClientInfo(
+    _TableClientEntry? selectedClient, {
+    required String tableName,
+    required bool busy,
+    required VoidCallback onDownload,
+    required VoidCallback onUpload,
+    required VoidCallback? onPush,
+    required VoidCallback? onPull,
+    required VoidCallback onOpenHistory,
+  }) {
     if (selectedClient == null) {
       return const EmptyStateCard(
         message: 'Select a client to view its table info and history.',
@@ -2994,39 +2976,220 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final agent = selectedClient.agent;
     final tableState = selectedClient.tableState;
 
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width =
+            constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width;
+        final columns =
+            width >= 860
+                ? 4
+                : width >= 620
+                ? 3
+                : width >= 420
+                ? 2
+                : 1;
+        final gap = 10.0;
+        final tileWidth = ((width - (gap * (columns - 1))) / columns).clamp(
+          160.0,
+          260.0,
+        );
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFD9E2EC)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minWidth: math.min(width, 260),
+                      maxWidth: math.max(280, width - 220),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          tableName,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.titleMedium?.copyWith(
+                            color: const Color(0xFF0F172A),
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${agent.machineName} - ${agent.server}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF667085),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _buildRoleBadge(agent.isMaster),
+                  StatusBadge(
+                    label: tableState.status,
+                    color: _statusColor(tableState.status),
+                  ),
+                  MetricPill(
+                    label: 'SQL',
+                    value: agent.sqlConnected ? 'Connected' : 'Disconnected',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Client',
+                    value: agent.clientName,
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Role',
+                    value: _roleLabel(agent.isMaster),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Status',
+                    value: agent.isOnline ? 'Online' : 'Offline',
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Database',
+                    value: agent.database,
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Last Sync',
+                    value: _formatTimestamp(_tableTimestampToken(tableState)),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Rows',
+                    value: '${tableState.rowCount}',
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Backup Size',
+                    value: _formatBytes(tableState.snapshotBytes),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Sync Direction',
+                    value:
+                        tableState.enabled
+                            ? (agent.isMaster ? 'Push source' : 'Pull target')
+                            : 'Disabled',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Divider(height: 1, color: Color(0xFFD9E2EC)),
+              const SizedBox(height: 14),
+              Text(
+                'Actions',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFF475467),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : onDownload,
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    label: const Text('Download Snapshot'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : onUpload,
+                    icon: const Icon(Icons.upload_file_rounded, size: 16),
+                    label: const Text('Upload Snapshot'),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: onPush,
+                    icon: const Icon(Icons.north_rounded, size: 16),
+                    label: const Text('Push Now'),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: onPull,
+                    icon: const Icon(Icons.south_rounded, size: 16),
+                    label: const Text('Pull Now'),
+                  ),
+                  TextButton.icon(
+                    onPressed: onOpenHistory,
+                    icon: const Icon(Icons.history_rounded, size: 16),
+                    label: const Text('Open Full History'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDetailFactTile({
+    required double width,
+    required String label,
+    required String value,
+  }) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(8),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          MetricPill(label: 'Client', value: agent.clientName),
-          MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
-          MetricPill(
-            label: 'Status',
-            value: agent.isOnline ? 'Online' : 'Offline',
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          MetricPill(
-            label: 'SQL',
-            value: agent.sqlConnected ? 'Connected' : 'Disconnected',
-          ),
-          MetricPill(label: 'Machine', value: agent.machineName),
-          MetricPill(label: 'Server', value: agent.server),
-          MetricPill(label: 'Database', value: agent.database),
-          MetricPill(
-            label: 'Last Sync',
-            value: _formatTimestamp(_tableTimestampToken(tableState)),
-          ),
-          MetricPill(label: 'Rows', value: '${tableState.rowCount}'),
-          MetricPill(
-            label: 'Backup',
-            value: _formatBytes(tableState.snapshotBytes),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF101828),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ],
       ),
