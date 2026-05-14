@@ -64,6 +64,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Map<String, int> _derivedDatabaseTableCounts = const <String, int>{};
   Map<String, _TableSnapshotSource> _derivedSnapshotSourcesByTable =
       const <String, _TableSnapshotSource>{};
+  Map<String, List<AdminJob>> _derivedJobsByTable =
+      const <String, List<AdminJob>>{};
+  Map<String, List<AdminJob>> _derivedJobsByTableClient =
+      const <String, List<AdminJob>>{};
   AdminSnapshotDetail? _snapshot;
   bool _loading = true;
   bool _connected = false;
@@ -72,6 +76,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String? _selectedTableName;
   String? _selectedDatabaseName;
   bool _sortLastSyncAscending = false;
+  int _detailTabIndex = 0;
   int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyBackupKeys = <String>{};
   @override
@@ -232,6 +237,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _derivedDatabaseNames = const <String>[];
       _derivedDatabaseTableCounts = const <String, int>{};
       _derivedSnapshotSourcesByTable = const <String, _TableSnapshotSource>{};
+      _derivedJobsByTable = const <String, List<AdminJob>>{};
+      _derivedJobsByTableClient = const <String, List<AdminJob>>{};
       return;
     }
 
@@ -346,6 +353,32 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       });
     }
     _derivedSnapshotSourcesByTable = snapshotSources;
+
+    final jobsByTable = <String, List<AdminJob>>{};
+    final jobsByTableClient = <String, List<AdminJob>>{};
+    for (final job in state.jobs) {
+      jobsByTable.putIfAbsent(job.table, () => <AdminJob>[]).add(job);
+      jobsByTableClient
+          .putIfAbsent(
+            _historyClientKey(table: job.table, clientName: job.clientName),
+            () => <AdminJob>[],
+          )
+          .add(job);
+    }
+    for (final jobs in jobsByTable.values) {
+      jobs.sort(_compareJobsByUpdatedAtDesc);
+    }
+    for (final jobs in jobsByTableClient.values) {
+      jobs.sort(_compareJobsByUpdatedAtDesc);
+    }
+    _derivedJobsByTable = {
+      for (final entry in jobsByTable.entries)
+        entry.key: List<AdminJob>.unmodifiable(entry.value),
+    };
+    _derivedJobsByTableClient = {
+      for (final entry in jobsByTableClient.entries)
+        entry.key: List<AdminJob>.unmodifiable(entry.value),
+    };
   }
 
   List<String> _databaseNamesFromState(AdminLiveState? state) {
@@ -423,6 +456,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedTableName = nextTableName;
       _selectedClientName = nextClientName;
       _snapshot = null;
+      _detailTabIndex = 0;
     });
   }
 
@@ -555,6 +589,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return left.table.compareTo(right.table);
   }
 
+  int _compareJobsByUpdatedAtDesc(AdminJob left, AdminJob right) {
+    return _compareTimestamps(right.updatedAt, left.updatedAt);
+  }
+
+  String _historyClientKey({
+    required String table,
+    required String clientName,
+  }) {
+    return '$table\x1F$clientName';
+  }
+
   List<_TableAggregateSummary> _sortSummariesByActiveSort(
     List<_TableAggregateSummary> summaries,
   ) {
@@ -591,6 +636,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedTableName = tableName;
       _selectedClientName = nextClientName;
       _snapshot = null;
+      _detailTabIndex = 0;
     });
   }
 
@@ -2636,8 +2682,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required String clientName,
     required String table,
   }) {
-    return _jobs
-        .where((job) => job.clientName == clientName && job.table == table)
+    _ensureDerivedState(_state);
+    return (_derivedJobsByTableClient[_historyClientKey(
+              table: table,
+              clientName: clientName,
+            )] ??
+            const <AdminJob>[])
         .take(_historyLimit)
         .toList(growable: false);
   }
@@ -2647,16 +2697,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     String? clientName,
     bool limit = true,
   }) {
-    final jobs = _jobs
-        .where((job) => job.table == table)
-        .where((job) => clientName == null || job.clientName == clientName)
-        .toList(growable: false);
+    _ensureDerivedState(_state);
+    final jobs =
+        clientName == null
+            ? _derivedJobsByTable[table] ?? const <AdminJob>[]
+            : _derivedJobsByTableClient[_historyClientKey(
+                  table: table,
+                  clientName: clientName,
+                )] ??
+                const <AdminJob>[];
 
-    jobs.sort((left, right) {
-      return _compareTimestamps(right.updatedAt, left.updatedAt);
-    });
-
-    return (limit ? jobs.take(_historyLimit) : jobs).toList(growable: false);
+    return limit ? jobs.take(_historyLimit).toList(growable: false) : jobs;
   }
 
   Widget _buildSearchField({
@@ -2999,28 +3050,82 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildMergedDetailBody(_TableAggregateSummary summary) {
-    return DefaultTabController(
-      key: ValueKey(summary.table),
-      length: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final tabIndex = _detailTabIndex.clamp(0, 1);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildDetailTabBar(tabIndex),
+        const SizedBox(height: 8),
+        Expanded(
+          child:
+              tabIndex == 0
+                  ? _buildClientDetailTab(summary)
+                  : _buildAllHistoryTab(summary),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailTabBar(int selectedIndex) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF2F4F7),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const TabBar(
-            isScrollable: true,
-            tabs: [Tab(text: 'Client'), Tab(text: 'All History')],
+          _buildDetailTabButton(
+            label: 'Client',
+            selected: selectedIndex == 0,
+            onTap: () => _selectDetailTab(0),
           ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _buildClientDetailTab(summary),
-                _buildAllHistoryTab(summary),
-              ],
-            ),
+          _buildDetailTabButton(
+            label: 'All History',
+            selected: selectedIndex == 1,
+            onTap: () => _selectDetailTab(1),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildDetailTabButton({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: selected ? Colors.white : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: selected ? null : onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          child: Text(
+            label,
+            style: TextStyle(
+              color:
+                  selected ? const Color(0xFF101828) : const Color(0xFF667085),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _selectDetailTab(int index) {
+    if (_detailTabIndex == index) {
+      return;
+    }
+    setState(() {
+      _detailTabIndex = index;
+    });
   }
 
   Widget _buildClientDetailTab(_TableAggregateSummary summary) {
