@@ -2901,6 +2901,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             constraints.maxWidth.isFinite
                 ? constraints.maxWidth
                 : MediaQuery.sizeOf(context).width;
+        final stackIdentity = width < 760;
         final metaItems = <MapEntry<String, String>>[
           MapEntry('Client', agent.clientName),
           MapEntry('Role', _roleLabel(agent.isMaster)),
@@ -2921,155 +2922,218 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 : 'Disabled',
           ),
         ];
-
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFD9E2EC)),
+        final actions = <Widget>[
+          _buildDetailActionButton(
+            label: 'Download Snapshot',
+            icon: Icons.download_rounded,
+            onPressed: busy ? null : onDownload,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                crossAxisAlignment: WrapCrossAlignment.center,
+          _buildDetailActionButton(
+            label: 'Upload Snapshot',
+            icon: Icons.upload_file_rounded,
+            onPressed: busy ? null : onUpload,
+          ),
+          _buildDetailActionButton(
+            label: 'Push Now',
+            icon: Icons.north_rounded,
+            onPressed: onPush,
+          ),
+          _buildDetailActionButton(
+            label: 'Pull Now',
+            icon: Icons.south_rounded,
+            onPressed: onPull,
+          ),
+          _buildDetailActionButton(
+            label: 'Open Full History',
+            icon: Icons.history_rounded,
+            onPressed: onOpenHistory,
+          ),
+        ];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (stackIdentity)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minWidth: math.min(width, 260),
-                      maxWidth: math.max(280, width - 220),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          tableName,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.titleMedium?.copyWith(
-                            color: const Color(0xFF0F172A),
+                  _buildDetailIdentityBlock(context, tableName, agent),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _buildRoleBadge(agent.isMaster),
+                      StatusBadge(
+                        label: tableState.status,
+                        color: _statusColor(tableState.status),
+                      ),
+                      _buildCompactTag(
+                        label: 'SQL',
+                        value:
+                            agent.sqlConnected ? 'Connected' : 'Disconnected',
+                      ),
+                      _buildCompactTag(
+                        label: 'History',
+                        value: '$recentHistoryCount of $totalHistoryCount',
+                      ),
+                    ],
+                  ),
+                ],
+              )
+            else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _buildDetailIdentityBlock(context, tableName, agent),
+                  ),
+                  const SizedBox(width: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _buildRoleBadge(agent.isMaster),
+                      StatusBadge(
+                        label: tableState.status,
+                        color: _statusColor(tableState.status),
+                      ),
+                      _buildCompactTag(
+                        label: 'SQL',
+                        value:
+                            agent.sqlConnected ? 'Connected' : 'Disconnected',
+                      ),
+                      _buildCompactTag(
+                        label: 'History',
+                        value: '$recentHistoryCount of $totalHistoryCount',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          progressLabel,
+                          style: const TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontSize: 13,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${agent.machineName} - ${agent.server}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF667085),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  _buildRoleBadge(agent.isMaster),
-                  StatusBadge(
-                    label: tableState.status,
-                    color: _statusColor(tableState.status),
-                  ),
-                  _buildCompactTag(
-                    label: 'SQL',
-                    value: agent.sqlConnected ? 'Connected' : 'Disconnected',
-                  ),
-                  _buildCompactTag(
-                    label: 'History',
-                    value: '$recentHistoryCount of $totalHistoryCount',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      progressLabel,
-                      style: const TextStyle(
-                        color: Color(0xFF0F172A),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
                       ),
-                    ),
+                      Text(
+                        '$normalizedProgress%',
+                        style: const TextStyle(
+                          color: Color(0xFF475467),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 8),
+                  ProgressStrip(
+                    progress: normalizedProgress,
+                    color: progressColor,
+                  ),
+                  const SizedBox(height: 10),
                   Text(
-                    '$normalizedProgress%',
+                    activityMessage,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Color(0xFF475467),
+                      color: Color(0xFF667085),
                       fontSize: 12,
-                      fontWeight: FontWeight.w800,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: metaItems
+                        .map(
+                          (item) => _buildCompactTag(
+                            label: item.key,
+                            value: item.value,
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(spacing: 10, runSpacing: 10, children: actions),
                 ],
               ),
-              const SizedBox(height: 8),
-              ProgressStrip(progress: normalizedProgress, color: progressColor),
-              const SizedBox(height: 8),
-              Text(
-                activityMessage,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF667085),
-                  fontSize: 12,
-                  height: 1.3,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: metaItems
-                    .map(
-                      (item) =>
-                          _buildCompactTag(label: item.key, value: item.value),
-                    )
-                    .toList(growable: false),
-              ),
-              const SizedBox(height: 16),
-              const Divider(height: 1, color: Color(0xFFD9E2EC)),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: busy ? null : onDownload,
-                    icon: const Icon(Icons.download_rounded, size: 16),
-                    label: const Text('Download Snapshot'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: busy ? null : onUpload,
-                    icon: const Icon(Icons.upload_file_rounded, size: 16),
-                    label: const Text('Upload Snapshot'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: onPush,
-                    icon: const Icon(Icons.north_rounded, size: 16),
-                    label: const Text('Push Now'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: onPull,
-                    icon: const Icon(Icons.south_rounded, size: 16),
-                    label: const Text('Pull Now'),
-                  ),
-                  TextButton.icon(
-                    onPressed: onOpenHistory,
-                    icon: const Icon(Icons.history_rounded, size: 16),
-                    label: const Text('Open Full History'),
-                  ),
-                ],
-              ),
-            ],
-          ),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildDetailIdentityBlock(
+    BuildContext context,
+    String tableName,
+    AdminAgent agent,
+  ) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 220),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            tableName,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: const Color(0xFF0F172A),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${agent.machineName} - ${agent.server}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailActionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return FilledButton.tonalIcon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 16),
+      label: Text(label),
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
     );
   }
 
