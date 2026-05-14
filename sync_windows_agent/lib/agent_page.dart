@@ -75,6 +75,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _errorMessage;
   int? _sortColumnIndex;
   bool _sortAscending = true;
+  _SyncTableSortField _syncTableSortField = _SyncTableSortField.name;
+  bool _syncTableSortAscending = true;
   String? _selectedSyncTable;
   int _totalTableRows = 0;
   bool _serverConnected = false;
@@ -1228,16 +1230,49 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
-  List<_SyncTableRowData> _syncRows() => _tables
-      .map((table) {
-        final syncKey = _syncTableKey(table);
-        return _SyncTableRowData(
-          table: table,
-          syncKey: syncKey,
-          state: _syncTableState(table, syncKey: syncKey),
-        );
-      })
-      .toList(growable: false);
+  List<_SyncTableRowData> _syncRows() {
+    final rows = _tables
+        .map((table) {
+          final syncKey = _syncTableKey(table);
+          return _SyncTableRowData(
+            table: table,
+            syncKey: syncKey,
+            state: _syncTableState(table, syncKey: syncKey),
+          );
+        })
+        .toList(growable: false);
+    rows.sort(_compareSyncRowsByActiveSort);
+    return rows;
+  }
+
+  int _compareSyncRowsByActiveSort(
+    _SyncTableRowData left,
+    _SyncTableRowData right,
+  ) {
+    final comparison = switch (_syncTableSortField) {
+      _SyncTableSortField.name => left.table.toLowerCase().compareTo(
+        right.table.toLowerCase(),
+      ),
+      _SyncTableSortField.lastSync => _timestampSortValue(
+        left.state.lastSync,
+      ).compareTo(_timestampSortValue(right.state.lastSync)),
+      _SyncTableSortField.rows => left.state.rowCount.compareTo(
+        right.state.rowCount,
+      ),
+    };
+    if (comparison != 0) {
+      return _syncTableSortAscending ? comparison : -comparison;
+    }
+    return left.table.toLowerCase().compareTo(right.table.toLowerCase());
+  }
+
+  int _timestampSortValue(String raw) {
+    final parsed = DateTime.tryParse(raw.trim());
+    if (parsed != null) {
+      return parsed.toUtc().microsecondsSinceEpoch;
+    }
+    return raw.trim().isEmpty ? -1 : 0;
+  }
 
   _SyncTableRowData? _selectedSyncRow(List<_SyncTableRowData> syncRows) {
     final selectedTableName = _selectedSyncTableName(
@@ -1334,202 +1369,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           ],
         ],
       ),
-    );
-  }
-
-  Widget _buildSyncModeOption(String syncMode, {bool selected = false}) {
-    final normalizedMode = normalizeSyncMode(
-      syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
-    final color = _syncModeColor(normalizedMode);
-    final label = _syncModeLabel(normalizedMode);
-    return Row(
-      mainAxisSize: selected ? MainAxisSize.max : MainAxisSize.min,
-      children: [
-        Container(
-          width: selected ? 26 : 30,
-          height: selected ? 26 : 30,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: color.withValues(alpha: 0.18)),
-          ),
-          child: Icon(_syncModeIcon(normalizedMode), size: 17, color: color),
-        ),
-        SizedBox(width: selected ? 8 : 10),
-        if (selected)
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
-          )
-        else
-          SizedBox(
-            width: 132,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _syncModeDescription(normalizedMode),
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSyncModeSelector(_SyncTableRowData row) {
-    final value = normalizeSyncMode(
-      row.state.syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
-    return DropdownButtonFormField<String>(
-      value: value,
-      isDense: true,
-      isExpanded: true,
-      decoration: _compactInputDecoration(
-        '',
-      ).copyWith(labelText: null, hintText: 'Mode'),
-      selectedItemBuilder:
-          (context) =>
-              const [kSyncModeMaster, kSyncModeClient, kSyncModeMasterMix]
-                  .map((mode) => _buildSyncModeOption(mode, selected: true))
-                  .toList(),
-      items: [
-        DropdownMenuItem(
-          value: kSyncModeMaster,
-          child: _buildSyncModeOption(kSyncModeMaster),
-        ),
-        DropdownMenuItem(
-          value: kSyncModeClient,
-          child: _buildSyncModeOption(kSyncModeClient),
-        ),
-        DropdownMenuItem(
-          value: kSyncModeMasterMix,
-          child: _buildSyncModeOption(kSyncModeMasterMix),
-        ),
-      ],
-      onChanged: (mode) {
-        if (mode == null) {
-          return;
-        }
-        _updateTableSyncMode(row.table, mode);
-      },
-    );
-  }
-
-  Future<void> _openSyncModeDialog(_SyncTableRowData row) async {
-    var selectedMode = normalizeSyncMode(
-      row.state.syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
-    var saving = false;
-
-    await showDialog<void>(
-      context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder: (context, setDialogState) {
-              return AlertDialog(
-                title: Text('Change Sync Mode: ${row.table}'),
-                content: SizedBox(
-                  width: 360,
-                  child: DropdownButtonFormField<String>(
-                    value: selectedMode,
-                    isDense: true,
-                    isExpanded: true,
-                    decoration: _compactInputDecoration(
-                      'Sync Mode',
-                    ).copyWith(hintText: 'Select mode'),
-                    selectedItemBuilder:
-                        (context) => const [
-                              kSyncModeMaster,
-                              kSyncModeClient,
-                              kSyncModeMasterMix,
-                            ]
-                            .map(
-                              (mode) =>
-                                  _buildSyncModeOption(mode, selected: true),
-                            )
-                            .toList(growable: false),
-                    items: [
-                      DropdownMenuItem(
-                        value: kSyncModeMaster,
-                        child: _buildSyncModeOption(kSyncModeMaster),
-                      ),
-                      DropdownMenuItem(
-                        value: kSyncModeClient,
-                        child: _buildSyncModeOption(kSyncModeClient),
-                      ),
-                      DropdownMenuItem(
-                        value: kSyncModeMasterMix,
-                        child: _buildSyncModeOption(kSyncModeMasterMix),
-                      ),
-                    ],
-                    onChanged:
-                        saving
-                            ? null
-                            : (mode) {
-                              if (mode == null) {
-                                return;
-                              }
-                              setDialogState(() {
-                                selectedMode = mode;
-                              });
-                            },
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed:
-                        saving ? null : () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  FilledButton(
-                    onPressed:
-                        saving
-                            ? null
-                            : () {
-                              setDialogState(() {
-                                saving = true;
-                              });
-                              Navigator.of(context).pop();
-                              _updateTableSyncMode(row.table, selectedMode);
-                            },
-                    child: Text(saving ? 'Saving...' : 'Save'),
-                  ),
-                ],
-              );
-            },
-          ),
     );
   }
 
@@ -3964,6 +3803,8 @@ WHEN NOT MATCHED BY TARGET THEN
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildSyncTableSortBar(syncRows.length),
+          const SizedBox(height: 10),
           Expanded(
             child: ListView.separated(
               itemCount: syncRows.length,
@@ -3980,12 +3821,148 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
+  Widget _buildSyncTableSortBar(int tableCount) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '$tableCount tables',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          _buildSyncTableSortMenu(),
+          const SizedBox(width: 6),
+          _buildSyncTableSortDirectionButton(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSyncTableSortMenu() {
+    return Tooltip(
+      message: 'Sort by ${_syncTableSortLabel(_syncTableSortField)}',
+      child: PopupMenuButton<_SyncTableSortField>(
+        tooltip: '',
+        initialValue: _syncTableSortField,
+        onSelected: (field) {
+          setState(() {
+            if (_syncTableSortField == field) {
+              _syncTableSortAscending = !_syncTableSortAscending;
+            } else {
+              _syncTableSortField = field;
+              _syncTableSortAscending = field == _SyncTableSortField.name;
+            }
+          });
+        },
+        itemBuilder:
+            (context) => _SyncTableSortField.values
+                .map(
+                  (field) => PopupMenuItem<_SyncTableSortField>(
+                    value: field,
+                    child: Row(
+                      children: [
+                        Icon(
+                          _syncTableSortIcon(field),
+                          size: 18,
+                          color:
+                              field == _syncTableSortField
+                                  ? const Color(0xFF2563EB)
+                                  : const Color(0xFF667085),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(_syncTableSortLabel(field)),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+        child: _buildSortToolbarBox(
+          icon: _syncTableSortIcon(_syncTableSortField),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSyncTableSortDirectionButton() {
+    return Tooltip(
+      message: _syncTableSortAscending ? 'Ascending' : 'Descending',
+      child: Material(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            setState(() {
+              _syncTableSortAscending = !_syncTableSortAscending;
+            });
+          },
+          child: SizedBox(
+            width: 42,
+            height: 42,
+            child: Icon(
+              _syncTableSortAscending
+                  ? Icons.arrow_upward_rounded
+                  : Icons.arrow_downward_rounded,
+              size: 18,
+              color: const Color(0xFF2563EB),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSortToolbarBox({required IconData icon}) {
+    return Container(
+      height: 42,
+      width: 42,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD7E4FF)),
+      ),
+      child: Icon(icon, size: 18, color: const Color(0xFF2563EB)),
+    );
+  }
+
+  IconData _syncTableSortIcon(_SyncTableSortField field) {
+    return switch (field) {
+      _SyncTableSortField.name => Icons.sort_by_alpha_rounded,
+      _SyncTableSortField.lastSync => Icons.schedule_rounded,
+      _SyncTableSortField.rows => Icons.format_list_numbered_rounded,
+    };
+  }
+
+  String _syncTableSortLabel(_SyncTableSortField field) {
+    return switch (field) {
+      _SyncTableSortField.name => 'Name',
+      _SyncTableSortField.lastSync => 'Last update',
+      _SyncTableSortField.rows => 'Row count',
+    };
+  }
+
   Widget _buildSyncTableTile({
     required _SyncTableRowData row,
     required bool selected,
   }) {
     final statusColor = _statusColor(row.state.status);
     final lastSync = _formatTimestamp(row.state.lastSync);
+    final progress = row.state.progress.clamp(0, 100);
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
@@ -4007,91 +3984,57 @@ WHEN NOT MATCHED BY TARGET THEN
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final showRowCount = constraints.maxWidth >= 560;
-            final showLastSync = constraints.maxWidth >= 960;
+            final stack = constraints.maxWidth < 560;
+            final metrics = Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _buildSyncModeBadge(row.state.syncMode, showLabel: false),
+                _buildSyncStatusSymbol(row.state.status, size: 26),
+                _buildSyncTableMetric(
+                  tooltip: 'Rows',
+                  icon: Icons.format_list_numbered_rounded,
+                  value: '${row.state.rowCount}',
+                ),
+                AgentStatusPill(label: '$progress%', color: statusColor),
+              ],
+            );
 
             return Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Checkbox(
-                  value: row.state.enabled,
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    _updateSyncEnabledTable(row.table, value);
-                  },
-                ),
+                _buildSyncTableCheckbox(row),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    row.table,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 30,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildSyncModeBadge(
-                      row.state.syncMode,
-                      showLabel: false,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                SizedBox(
-                  width: 30,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildSyncStatusSymbol(row.state.status, size: 26),
-                  ),
-                ),
-                if (showRowCount) ...[
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 72,
-                    child: Text(
-                      '${row.state.rowCount} rows',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-                if (showLastSync) ...[
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      lastSync,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(width: 8),
-                AgentCircularProgressBadge(
-                  progress: row.state.progress,
-                  color: statusColor,
-                  size: 32,
-                  strokeWidth: 3,
+                  child:
+                      stack
+                          ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildSyncTableTitle(row.table),
+                              const SizedBox(height: 4),
+                              _buildSyncTableSubline(lastSync),
+                              const SizedBox(height: 8),
+                              metrics,
+                            ],
+                          )
+                          : Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildSyncTableTitle(row.table),
+                                    const SizedBox(height: 4),
+                                    _buildSyncTableSubline(lastSync),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              metrics,
+                            ],
+                          ),
                 ),
               ],
             );
@@ -4101,39 +4044,90 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
-  Widget _buildCompactMetricPill({
-    required String label,
+  Widget _buildSyncTableCheckbox(_SyncTableRowData row) {
+    return Container(
+      width: 34,
+      height: 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: row.state.enabled ? const Color(0xFFE6F4F1) : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color:
+              row.state.enabled
+                  ? const Color(0xFF85C7BC)
+                  : const Color(0xFFDDE3EA),
+        ),
+      ),
+      child: Transform.scale(
+        scale: 1.05,
+        child: Checkbox(
+          value: row.state.enabled,
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          onChanged: (value) {
+            if (value == null) {
+              return;
+            }
+            _updateSyncEnabledTable(row.table, value);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSyncTableTitle(String table) {
+    return Text(
+      table,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+    );
+  }
+
+  Widget _buildSyncTableSubline(String lastSync) {
+    return Text(
+      'Last update $lastSync',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: Color(0xFF667085),
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+
+  Widget _buildSyncTableMetric({
+    required String tooltip,
+    required IconData icon,
     required String value,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
-      child: Text.rich(
-        TextSpan(
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 26),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFDDE3EA)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            TextSpan(
-              text: '$label ',
-              style: const TextStyle(
-                color: Color(0xFF667085),
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            TextSpan(
-              text: value,
+            Icon(icon, size: 14, color: const Color(0xFF667085)),
+            const SizedBox(width: 5),
+            Text(
+              value,
               style: const TextStyle(
                 color: Color(0xFF18212B),
-                fontSize: 11.5,
+                fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),
             ),
           ],
         ),
-        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -4201,93 +4195,23 @@ WHEN NOT MATCHED BY TARGET THEN
     final normalizedProgress = row.state.progress.clamp(0, 100);
     final canRunSync = row.state.enabled;
     final canTransferBackup = _selectedDatabase != null && !busy;
-    final message =
-        row.state.message.isEmpty ? 'No sync message yet.' : row.state.message;
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final stack = constraints.maxWidth < 720;
-        final actions = Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton.icon(
-              onPressed: () => _openSyncModeDialog(row),
-              icon: const Icon(Icons.tune_rounded, size: 18),
-              label: const Text('Edit Mode'),
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Open current table data',
-              onPressed: () => _openTableDataDialog(row.table),
-              icon: Icons.table_rows_outlined,
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Download backup',
-              onPressed:
-                  canTransferBackup
-                      ? () => _exportTableBackup(row.table)
-                      : null,
-              icon: Icons.download_rounded,
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Upload backup',
-              onPressed:
-                  canTransferBackup
-                      ? () => _importTableBackup(row.table)
-                      : null,
-              icon: Icons.upload_file_rounded,
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Push now',
-              onPressed:
-                  canRunSync
-                      ? () => _triggerSyncNow(row.table, direction: 'upload')
-                      : null,
-              icon: Icons.cloud_upload_rounded,
-            ),
-            _buildSyncActionIconButton(
-              tooltip: 'Pull now',
-              onPressed:
-                  canRunSync
-                      ? () => _triggerSyncNow(row.table, direction: 'download')
-                      : null,
-              icon: Icons.cloud_download_rounded,
-            ),
-          ],
+        final compact = constraints.maxWidth < 720;
+        final toolbar = _buildDetailToolbar(
+          row: row,
+          compact: compact,
+          canRunSync: canRunSync,
+          canTransferBackup: canTransferBackup,
         );
 
-        final metrics = Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            _buildSyncStatusSymbol(row.state.status, size: 26),
-            _buildSyncModeBadge(row.state.syncMode),
-            _buildCompactMetricPill(
-              label: 'Rows',
-              value: '${row.state.rowCount}',
-            ),
-            _buildCompactMetricPill(
-              label: 'Last Sync',
-              value: _formatTimestamp(row.state.lastSync),
-            ),
-            _buildCompactMetricPill(
-              label: 'Backup',
-              value: _formatBytes(row.state.snapshotBytes),
-            ),
-            _buildCompactMetricPill(
-              label: 'Enabled',
-              value: row.state.enabled ? 'Yes' : 'No',
-            ),
-          ],
-        );
-
-        final progressBlock = Container(
+        return Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFFDDE3EA)),
           ),
           child: Column(
@@ -4305,89 +4229,286 @@ WHEN NOT MATCHED BY TARGET THEN
                     ),
                   ),
                   AgentStatusPill(
-                    label: '$normalizedProgress% complete',
+                    label: '$normalizedProgress%',
                     color: statusColor,
                   ),
                 ],
               ),
-              const SizedBox(height: 2),
-              metrics,
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: AgentProgressStrip(
-                      progress: normalizedProgress,
-                      color: statusColor,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    row.state.status,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
               const SizedBox(height: 10),
-              Text(
-                message,
-                maxLines: stack ? 4 : 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(height: 1.35, color: Color(0xFF475467)),
-              ),
+              toolbar,
             ],
           ),
         );
+      },
+    );
+  }
 
-        final selector = _buildSyncModeSelector(row);
-        final actionPanel = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildDetailToolbar({
+    required _SyncTableRowData row,
+    required bool compact,
+    required bool canRunSync,
+    required bool canTransferBackup,
+  }) {
+    final toolbarChildren = <Widget>[
+      _buildSyncEnabledToolbarControl(row),
+      _buildToolbarIconControl(
+        tooltip: 'Push now',
+        icon: Icons.cloud_upload_rounded,
+        onTap:
+            canRunSync
+                ? () => _triggerSyncNow(row.table, direction: 'upload')
+                : null,
+      ),
+      _buildToolbarIconControl(
+        tooltip: 'Pull now',
+        icon: Icons.cloud_download_rounded,
+        onTap:
+            canRunSync
+                ? () => _triggerSyncNow(row.table, direction: 'download')
+                : null,
+      ),
+      _buildModeDropdownControl(row),
+      _buildToolbarStat(
+        tooltip: 'Rows',
+        icon: Icons.format_list_numbered_rounded,
+        value: '${row.state.rowCount}',
+      ),
+      _buildToolbarStat(
+        tooltip: 'Backup size',
+        icon: Icons.inventory_2_outlined,
+        value: _formatBytes(row.state.snapshotBytes),
+      ),
+      _buildToolbarIconControl(
+        tooltip: 'View table',
+        icon: Icons.table_rows_outlined,
+        onTap: () => _openTableDataDialog(row.table),
+      ),
+      _buildToolbarIconControl(
+        tooltip: 'Download backup',
+        icon: Icons.download_rounded,
+        onTap: canTransferBackup ? () => _exportTableBackup(row.table) : null,
+      ),
+      _buildToolbarIconControl(
+        tooltip: 'Upload backup',
+        icon: Icons.upload_file_rounded,
+        onTap: canTransferBackup ? () => _importTableBackup(row.table) : null,
+      ),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Wrap(
+        spacing: compact ? 6 : 8,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: toolbarChildren,
+      ),
+    );
+  }
+
+  Widget _buildSyncEnabledToolbarControl(_SyncTableRowData row) {
+    return Tooltip(
+      message: row.state.enabled ? 'Disable sync' : 'Enable sync',
+      child: Container(
+        width: 42,
+        height: 42,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color:
+              row.state.enabled
+                  ? const Color(0xFFE6F4F1)
+                  : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color:
+                row.state.enabled
+                    ? const Color(0xFF85C7BC)
+                    : const Color(0xFFDDE3EA),
+          ),
+        ),
+        child: Transform.scale(
+          scale: 1.18,
+          child: Checkbox(
+            value: row.state.enabled,
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            onChanged: (value) {
+              if (value == null) {
+                return;
+              }
+              _updateSyncEnabledTable(row.table, value);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeDropdownControl(_SyncTableRowData row) {
+    final value = normalizeSyncMode(
+      row.state.syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    const modes = [kSyncModeMaster, kSyncModeClient, kSyncModeMasterMix];
+    final color = _syncModeColor(value);
+
+    return Tooltip(
+      message: _syncModeDescription(value),
+      child: PopupMenuButton<String>(
+        tooltip: '',
+        initialValue: value,
+        onSelected: (mode) => _updateTableSyncMode(row.table, mode),
+        itemBuilder:
+            (context) => modes
+                .map(
+                  (mode) => PopupMenuItem<String>(
+                    value: mode,
+                    child: _buildModeMenuItem(mode),
+                  ),
+                )
+                .toList(growable: false),
+        child: Container(
+          height: 42,
+          constraints: const BoxConstraints(minWidth: 196),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.18)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(_syncModeIcon(value), size: 17, color: color),
+              const SizedBox(width: 8),
+              Text(
+                _syncModeLabel(value),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: color),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeMenuItem(String mode) {
+    final color = _syncModeColor(mode);
+    return Row(
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(_syncModeIcon(mode), size: 17, color: color),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 190,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _syncModeLabel(mode),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _syncModeDescription(mode),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildToolbarStat({
+    required String tooltip,
+    required IconData icon,
+    required String value,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        height: 42,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Actions',
-              style: TextStyle(
-                color: Color(0xFF667085),
+            Icon(icon, size: 17, color: const Color(0xFF667085)),
+            const SizedBox(width: 6),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Color(0xFF18212B),
                 fontSize: 12,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 8),
-            actions,
           ],
-        );
+        ),
+      ),
+    );
+  }
 
-        if (stack) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              progressBlock,
-              const SizedBox(height: 12),
-              selector,
-              const SizedBox(height: 12),
-              actionPanel,
-            ],
-          );
-        }
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            progressBlock,
-            const SizedBox(height: 14),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: selector),
-                const SizedBox(width: 16),
-                Expanded(flex: 2, child: actionPanel),
-              ],
+  Widget _buildToolbarIconControl({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onTap,
+  }) {
+    final enabled = onTap != null;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: enabled ? const Color(0xFFEFF6FF) : const Color(0xFFF2F4F7),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: SizedBox(
+            width: 42,
+            height: 42,
+            child: Icon(
+              icon,
+              size: 18,
+              color:
+                  enabled ? const Color(0xFF1D4ED8) : const Color(0xFF98A2B3),
             ),
-          ],
-        );
-      },
+          ),
+        ),
+      ),
     );
   }
 
@@ -5510,6 +5631,8 @@ class _ScoredHistorySnapshotRow {
   final Map<String, String?> row;
   final double score;
 }
+
+enum _SyncTableSortField { name, lastSync, rows }
 
 class _SnapshotFileDocument {
   const _SnapshotFileDocument({

@@ -2808,12 +2808,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildTableSummaryTile(_TableAggregateSummary summary) {
     final selected = summary.table == _selectedTableName;
+    final sourceEntry = _sourceEntryForSummary(summary);
+    final statusColor = _statusColor(sourceEntry.tableState.status);
+    final roleColor = _roleColor(sourceEntry.agent.isMaster);
+    final lastSync = _formatTimestamp(summary.lastSync);
+    final progress = sourceEntry.tableState.progress.clamp(0, 100);
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: () => _selectTable(summary.table),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
+        constraints: const BoxConstraints(minHeight: 58),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFE6F4F1) : Colors.white,
@@ -2825,55 +2831,147 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final stack = constraints.maxWidth < 560;
+            final metrics = Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _buildRoleBadge(sourceEntry.agent.isMaster, compact: true),
+                StatusBadge(
+                  label: sourceEntry.tableState.status,
+                  color: statusColor,
+                ),
+                _buildTableListMetric(
+                  tooltip: 'Rows',
+                  icon: Icons.format_list_numbered_rounded,
+                  value: '${summary.latestRowCount}',
+                ),
+                _buildTableListMetric(
+                  tooltip: 'Agents',
+                  icon: Icons.devices_rounded,
+                  value: '${summary.clientCount}',
+                ),
+                StatusBadge(label: '$progress%', color: statusColor),
+              ],
+            );
 
-            return stack
-                ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      summary.displayTitle,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Last sync ${_formatTimestamp(summary.lastSync)}',
-                      style: const TextStyle(
-                        color: Color(0xFF62717C),
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ],
-                )
-                : Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            summary.displayTitle,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: roleColor.withValues(alpha: 0.11),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: roleColor.withValues(alpha: 0.2)),
+                  ),
+                  child: Icon(
+                    _roleIcon(sourceEntry.agent.isMaster),
+                    size: 18,
+                    color: roleColor,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child:
+                      stack
+                          ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildTableListTitle(summary.displayTitle),
+                              const SizedBox(height: 4),
+                              _buildTableListSubline(lastSync),
+                              const SizedBox(height: 8),
+                              metrics,
+                            ],
+                          )
+                          : Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildTableListTitle(summary.displayTitle),
+                                    const SizedBox(height: 4),
+                                    _buildTableListSubline(lastSync),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              metrics,
+                            ],
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Last sync ${_formatTimestamp(summary.lastSync)}',
-                            style: const TextStyle(
-                              color: Color(0xFF667085),
-                              fontSize: 12.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
+                ),
+              ],
+            );
           },
+        ),
+      ),
+    );
+  }
+
+  _TableClientEntry _sourceEntryForSummary(_TableAggregateSummary summary) {
+    for (final entry in summary.clients) {
+      if (entry.agent.clientName == summary.sourceClientName) {
+        return entry;
+      }
+    }
+    return summary.clients.first;
+  }
+
+  Widget _buildTableListTitle(String table) {
+    return Text(
+      table,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+    );
+  }
+
+  Widget _buildTableListSubline(String lastSync) {
+    return Text(
+      'Last update $lastSync',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: Color(0xFF667085),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+
+  Widget _buildTableListMetric({
+    required String tooltip,
+    required IconData icon,
+    required String value,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 26),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFDDE3EA)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: const Color(0xFF667085)),
+            const SizedBox(width: 5),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Color(0xFF101828),
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
         ),
       ),
     );
