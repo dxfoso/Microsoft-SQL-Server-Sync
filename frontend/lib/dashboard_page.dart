@@ -50,7 +50,6 @@ class AdminDashboardPage extends StatefulWidget {
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final LiveSyncApiClient _api = LiveSyncApiClient();
   final TextEditingController _syncSearchController = TextEditingController();
-  final TextEditingController _dataSearchController = TextEditingController();
   Timer? _refreshTimer;
 
   AdminLiveState? _state;
@@ -75,7 +74,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _api.setAuthToken(widget.authToken);
     _historyLimit = _readStoredHistoryLimit();
     _syncSearchController.addListener(_handleSearchChange);
-    _dataSearchController.addListener(_handleSearchChange);
     unawaited(_refreshState());
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 5),
@@ -87,9 +85,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _syncSearchController.removeListener(_handleSearchChange);
-    _dataSearchController.removeListener(_handleSearchChange);
     _syncSearchController.dispose();
-    _dataSearchController.dispose();
     _api.dispose();
     super.dispose();
   }
@@ -1925,68 +1921,41 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  _buildSelectedClientInfo(entry),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed:
-                            busy
-                                ? null
-                                : () => _downloadSnapshotFile(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                ),
-                        icon: const Icon(Icons.download_rounded, size: 16),
-                        label: const Text('Download'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed:
-                            busy
-                                ? null
-                                : () => _uploadSnapshotFile(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                ),
-                        icon: const Icon(Icons.upload_file_rounded, size: 16),
-                        label: const Text('Upload'),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed:
-                            entry.tableState.enabled
-                                ? () => _triggerJob(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                  direction: 'upload',
-                                )
-                                : null,
-                        icon: const Icon(Icons.north_rounded, size: 16),
-                        label: const Text('Push'),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed:
-                            entry.tableState.enabled
-                                ? () => _triggerJob(
-                                  clientName: entry.agent.clientName,
-                                  table: summary.table,
-                                  direction: 'download',
-                                )
-                                : null,
-                        icon: const Icon(Icons.south_rounded, size: 16),
-                        label: const Text('Pull'),
-                      ),
-                      TextButton.icon(
-                        onPressed:
-                            () => _openHistoryDialog(
+                  _buildSelectedClientInfo(
+                    entry,
+                    tableName: summary.displayTitle,
+                    busy: busy,
+                    onDownload:
+                        () => _downloadSnapshotFile(
+                          clientName: entry.agent.clientName,
+                          table: summary.table,
+                        ),
+                    onUpload:
+                        () => _uploadSnapshotFile(
+                          clientName: entry.agent.clientName,
+                          table: summary.table,
+                        ),
+                    onPush:
+                        entry.tableState.enabled
+                            ? () => _triggerJob(
                               clientName: entry.agent.clientName,
                               table: summary.table,
-                            ),
-                        icon: const Icon(Icons.history_rounded, size: 16),
-                        label: const Text('Full History'),
-                      ),
-                    ],
+                              direction: 'upload',
+                            )
+                            : null,
+                    onPull:
+                        entry.tableState.enabled
+                            ? () => _triggerJob(
+                              clientName: entry.agent.clientName,
+                              table: summary.table,
+                              direction: 'download',
+                            )
+                            : null,
+                    onOpenHistory:
+                        () => _openHistoryDialog(
+                          clientName: entry.agent.clientName,
+                          table: summary.table,
+                        ),
                   ),
                   const SizedBox(height: 14),
                   Row(
@@ -2519,27 +2488,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildRoleBadge(bool isMaster, {bool compact = false}) {
+    final color = _roleColor(isMaster);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8, vertical: 4),
+      constraints: BoxConstraints(minHeight: compact ? 24 : 26),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 8, vertical: 4),
+      alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: _roleColor(isMaster).withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(_roleIcon(isMaster), size: 16, color: _roleColor(isMaster)),
-          if (!compact) ...[
-            const SizedBox(width: 5),
-            Text(
-              _roleLabel(isMaster),
-              style: TextStyle(
-                color: _roleColor(isMaster),
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
+          Icon(_roleIcon(isMaster), size: compact ? 14 : 16, color: color),
+          const SizedBox(width: 5),
+          Text(
+            _roleLabel(isMaster),
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+              fontSize: compact ? 11 : 12,
+              height: 1,
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -2666,38 +2639,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   List<_TableClientEntry> _filteredTableClients(
     List<_TableClientEntry> entries,
   ) {
-    final query = _dataSearchController.text.trim();
-    if (query.isEmpty) {
-      return entries;
-    }
-
-    final matches = entries
-      .map((entry) {
-        final score = _bestMatchScore(
-          query,
-          [
-            entry.agent.clientName,
-            entry.agent.machineName,
-            _roleLabel(entry.agent.isMaster),
-            entry.tableState.status,
-            entry.tableState.message,
-            _formatTimestamp(entry.tableState.lastSync),
-            '${entry.tableState.rowCount}',
-            _formatBytes(entry.tableState.snapshotBytes),
-          ].join(' '),
-        );
-        return _ScoredTableClient(entry: entry, score: score);
-      })
-      .where((match) => match.score > 0)
-      .toList(growable: false)..sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return _compareClientEntries(left.entry, right.entry);
-    });
-
-    return matches.map((match) => match.entry).toList(growable: false);
+    return entries;
   }
 
   List<_ScoredSnapshotRow> _filteredSnapshotRowsForQuery(
@@ -2753,40 +2695,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     String? clientName,
     bool limit = true,
   }) {
-    final query = _dataSearchController.text.trim();
-    final matches = _jobs
+    final jobs = _jobs
         .where((job) => job.table == table)
         .where((job) => clientName == null || job.clientName == clientName)
-        .map((job) {
-          final score =
-              query.isEmpty
-                  ? 1.0
-                  : _bestMatchScore(
-                    query,
-                    [
-                      job.clientName,
-                      job.table,
-                      job.status,
-                      job.direction,
-                      job.message,
-                      job.updatedAt,
-                      job.completedAt ?? '',
-                    ].join(' '),
-                  );
-          return (job: job, score: score);
-        })
-        .where((item) => item.score > 0)
         .toList(growable: false);
 
-    matches.sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return _compareTimestamps(right.job.updatedAt, left.job.updatedAt);
+    jobs.sort((left, right) {
+      return _compareTimestamps(right.updatedAt, left.updatedAt);
     });
 
-    final jobs = matches.map((item) => item.job);
     return (limit ? jobs.take(_historyLimit) : jobs).toList(growable: false);
   }
 
@@ -2992,19 +2909,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       title: summary.displayTitle,
       subtitle: '',
       expandChild: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSearchField(
-            controller: _dataSearchController,
-            label: 'Search Clients / History',
-            hint:
-                'Search client names, roles, statuses, directions, messages, and sync time.',
-          ),
-          const SizedBox(height: 10),
-          Expanded(child: _buildMergedDetailBody(summary)),
-        ],
-      ),
+      child: _buildMergedDetailBody(summary),
     );
   }
 
@@ -3052,7 +2957,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _buildHistoryTableSide(summary, limit: false);
   }
 
-  Widget _buildSelectedClientInfo(_TableClientEntry? selectedClient) {
+  Widget _buildSelectedClientInfo(
+    _TableClientEntry? selectedClient, {
+    required String tableName,
+    required bool busy,
+    required VoidCallback onDownload,
+    required VoidCallback onUpload,
+    required VoidCallback? onPush,
+    required VoidCallback? onPull,
+    required VoidCallback onOpenHistory,
+  }) {
     if (selectedClient == null) {
       return const EmptyStateCard(
         message: 'Select a client to view its table info and history.',
@@ -3062,39 +2976,220 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final agent = selectedClient.agent;
     final tableState = selectedClient.tableState;
 
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width =
+            constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width;
+        final columns =
+            width >= 860
+                ? 4
+                : width >= 620
+                ? 3
+                : width >= 420
+                ? 2
+                : 1;
+        final gap = 10.0;
+        final tileWidth = ((width - (gap * (columns - 1))) / columns).clamp(
+          160.0,
+          260.0,
+        );
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFD9E2EC)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minWidth: math.min(width, 260),
+                      maxWidth: math.max(280, width - 220),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          tableName,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.titleMedium?.copyWith(
+                            color: const Color(0xFF0F172A),
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${agent.machineName} - ${agent.server}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF667085),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _buildRoleBadge(agent.isMaster),
+                  StatusBadge(
+                    label: tableState.status,
+                    color: _statusColor(tableState.status),
+                  ),
+                  MetricPill(
+                    label: 'SQL',
+                    value: agent.sqlConnected ? 'Connected' : 'Disconnected',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Client',
+                    value: agent.clientName,
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Role',
+                    value: _roleLabel(agent.isMaster),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Status',
+                    value: agent.isOnline ? 'Online' : 'Offline',
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Database',
+                    value: agent.database,
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Last Sync',
+                    value: _formatTimestamp(_tableTimestampToken(tableState)),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Rows',
+                    value: '${tableState.rowCount}',
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Backup Size',
+                    value: _formatBytes(tableState.snapshotBytes),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Sync Direction',
+                    value:
+                        tableState.enabled
+                            ? (agent.isMaster ? 'Push source' : 'Pull target')
+                            : 'Disabled',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Divider(height: 1, color: Color(0xFFD9E2EC)),
+              const SizedBox(height: 14),
+              Text(
+                'Actions',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFF475467),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : onDownload,
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    label: const Text('Download Snapshot'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : onUpload,
+                    icon: const Icon(Icons.upload_file_rounded, size: 16),
+                    label: const Text('Upload Snapshot'),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: onPush,
+                    icon: const Icon(Icons.north_rounded, size: 16),
+                    label: const Text('Push Now'),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: onPull,
+                    icon: const Icon(Icons.south_rounded, size: 16),
+                    label: const Text('Pull Now'),
+                  ),
+                  TextButton.icon(
+                    onPressed: onOpenHistory,
+                    icon: const Icon(Icons.history_rounded, size: 16),
+                    label: const Text('Open Full History'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDetailFactTile({
+    required double width,
+    required String label,
+    required String value,
+  }) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(8),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          MetricPill(label: 'Client', value: agent.clientName),
-          MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
-          MetricPill(
-            label: 'Status',
-            value: agent.isOnline ? 'Online' : 'Offline',
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          MetricPill(
-            label: 'SQL',
-            value: agent.sqlConnected ? 'Connected' : 'Disconnected',
-          ),
-          MetricPill(label: 'Machine', value: agent.machineName),
-          MetricPill(label: 'Server', value: agent.server),
-          MetricPill(label: 'Database', value: agent.database),
-          MetricPill(
-            label: 'Last Sync',
-            value: _formatTimestamp(_tableTimestampToken(tableState)),
-          ),
-          MetricPill(label: 'Rows', value: '${tableState.rowCount}'),
-          MetricPill(
-            label: 'Backup',
-            value: _formatBytes(tableState.snapshotBytes),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF101828),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ],
       ),
@@ -3122,10 +3217,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           child:
               clients.isEmpty
                   ? EmptyStateCard(
-                    message:
-                        _dataSearchController.text.trim().isEmpty
-                            ? 'No clients are exposing ${summary.table} yet.'
-                            : 'No clients matched your search.',
+                    message: 'No clients are exposing ${summary.table} yet.',
                   )
                   : ListView.separated(
                     itemCount: clients.length,
@@ -3153,8 +3245,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       onTap: () => _selectClient(entry.agent.clientName),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        constraints: const BoxConstraints(minHeight: 44),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        constraints: const BoxConstraints(minHeight: 40),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFE6F4F1) : Colors.white,
           borderRadius: BorderRadius.circular(8),
@@ -3164,7 +3256,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final showSync = constraints.maxWidth >= 640;
+            final showSync = constraints.maxWidth >= 660;
+            final showRoleLabel = constraints.maxWidth >= 430;
+            final roleColumnWidth = showRoleLabel ? 86.0 : 28.0;
+            final statusColumnWidth = 88.0;
+            final syncColumnWidth = showSync ? 140.0 : 0.0;
 
             return Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -3180,16 +3276,32 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                _buildRoleBadge(entry.agent.isMaster, compact: true),
+                const SizedBox(width: 7),
+                SizedBox(
+                  width: roleColumnWidth,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildRoleBadge(
+                      entry.agent.isMaster,
+                      compact: !showRoleLabel,
+                    ),
+                  ),
+                ),
                 const SizedBox(width: 6),
-                StatusBadge(
-                  label: entry.tableState.status,
-                  color: _statusColor(entry.tableState.status),
+                SizedBox(
+                  width: statusColumnWidth,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: StatusBadge(
+                      label: entry.tableState.status,
+                      color: _statusColor(entry.tableState.status),
+                    ),
+                  ),
                 ),
                 if (showSync) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: syncColumnWidth,
                     child: Text(
                       lastSync,
                       maxLines: 1,
@@ -3203,13 +3315,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                 ],
-                const SizedBox(width: 4),
+                const SizedBox(width: 2),
                 Tooltip(
                   message: 'Open client details',
                   child: IconButton(
                     constraints: const BoxConstraints.tightFor(
-                      width: 32,
-                      height: 32,
+                      width: 28,
+                      height: 28,
                     ),
                     padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
@@ -3257,10 +3369,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           child:
               jobs.isEmpty
                   ? EmptyStateCard(
-                    message:
-                        _dataSearchController.text.trim().isEmpty
-                            ? 'No history is available yet for this table.'
-                            : 'No history entries matched your search.',
+                    message: 'No history is available yet for this table.',
                   )
                   : ListView.separated(
                     itemCount: jobs.length,
@@ -3960,8 +4069,7 @@ class _TableAggregateSummary {
     return localTable.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
   }
 
-  String get displayTitle =>
-      database.isEmpty ? displayTable : '$displayTable - $database';
+  String get displayTitle => displayTable;
 }
 
 class _TableClientEntry {
@@ -3991,13 +4099,6 @@ class _ScoredTableSummary {
   const _ScoredTableSummary({required this.summary, required this.score});
 
   final _TableAggregateSummary summary;
-  final double score;
-}
-
-class _ScoredTableClient {
-  const _ScoredTableClient({required this.entry, required this.score});
-
-  final _TableClientEntry entry;
   final double score;
 }
 

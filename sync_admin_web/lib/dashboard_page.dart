@@ -1925,6 +1925,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     entry,
                     tableName: summary.displayTitle,
                     busy: busy,
+                    recentHistoryCount: recentJobs.length,
+                    totalHistoryCount: jobs.length,
                     onDownload:
                         () => _downloadSnapshotFile(
                           clientName: entry.agent.clientName,
@@ -1958,21 +1960,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         ),
                   ),
                   const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      _buildSectionLabel('Recent History'),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${recentJobs.length} of ${jobs.length}',
-                        style: const TextStyle(
-                          color: Color(0xFF62717C),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
                   Expanded(
                     child:
                         recentJobs.isEmpty
@@ -2961,6 +2948,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _TableClientEntry? selectedClient, {
     required String tableName,
     required bool busy,
+    required int recentHistoryCount,
+    required int totalHistoryCount,
     required VoidCallback onDownload,
     required VoidCallback onUpload,
     required VoidCallback? onPush,
@@ -2975,6 +2964,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     final agent = selectedClient.agent;
     final tableState = selectedClient.tableState;
+    final normalizedProgress = tableState.progress.clamp(0, 100);
+    final progressColor = _statusColor(tableState.status);
+    final progressLabel =
+        tableState.inProgress
+            ? 'Sync in progress'
+            : tableState.enabled
+            ? 'Sync ready'
+            : 'Sync paused';
+    final activityMessage =
+        tableState.message.trim().isEmpty
+            ? 'No sync note is available for this table yet.'
+            : tableState.message.trim();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -3048,11 +3049,72 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     label: tableState.status,
                     color: _statusColor(tableState.status),
                   ),
-                  MetricPill(
+                  _buildCompactTag(
                     label: 'SQL',
                     value: agent.sqlConnected ? 'Connected' : 'Disconnected',
                   ),
+                  _buildCompactTag(
+                    label: 'History',
+                    value: '$recentHistoryCount of $totalHistoryCount',
+                  ),
                 ],
+              ),
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFDDE3EA)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            progressLabel,
+                            style: const TextStyle(
+                              color: Color(0xFF0F172A),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '$normalizedProgress%',
+                          style: const TextStyle(
+                            color: Color(0xFF475467),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ProgressStrip(
+                      progress: normalizedProgress,
+                      color: progressColor,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      activityMessage,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 14),
               Wrap(
@@ -3093,6 +3155,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     width: tileWidth,
                     label: 'Backup Size',
                     value: _formatBytes(tableState.snapshotBytes),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Direction',
+                    value: tableState.direction.toUpperCase(),
+                  ),
+                  _buildDetailFactTile(
+                    width: tileWidth,
+                    label: 'Mode',
+                    value: tableState.syncMode.toUpperCase(),
                   ),
                   _buildDetailFactTile(
                     width: tileWidth,
@@ -3150,6 +3222,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCompactTag({required String label, required String value}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label ',
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(
+                color: Color(0xFF101828),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        style: const TextStyle(fontSize: 12),
+      ),
     );
   }
 
