@@ -2515,27 +2515,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildRoleBadge(bool isMaster, {bool compact = false}) {
+    final color = _roleColor(isMaster);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8, vertical: 4),
+      constraints: BoxConstraints(minHeight: compact ? 24 : 26),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 8, vertical: 4),
+      alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: _roleColor(isMaster).withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(_roleIcon(isMaster), size: 16, color: _roleColor(isMaster)),
-          if (!compact) ...[
-            const SizedBox(width: 5),
-            Text(
-              _roleLabel(isMaster),
-              style: TextStyle(
-                color: _roleColor(isMaster),
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
+          Icon(_roleIcon(isMaster), size: compact ? 14 : 16, color: color),
+          const SizedBox(width: 5),
+          Text(
+            _roleLabel(isMaster),
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+              fontSize: compact ? 11 : 12,
+              height: 1,
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -3078,8 +3082,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       onTap: () => _selectClient(entry.agent.clientName),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        constraints: const BoxConstraints(minHeight: 44),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        constraints: const BoxConstraints(minHeight: 40),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFE6F4F1) : Colors.white,
           borderRadius: BorderRadius.circular(8),
@@ -3089,7 +3093,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final showSync = constraints.maxWidth >= 640;
+            final showSync = constraints.maxWidth >= 660;
+            final showRoleLabel = constraints.maxWidth >= 430;
+            final roleColumnWidth = showRoleLabel ? 86.0 : 28.0;
+            final statusColumnWidth = 88.0;
+            final syncColumnWidth = showSync ? 140.0 : 0.0;
 
             return Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -3105,16 +3113,32 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                _buildRoleBadge(entry.agent.isMaster, compact: true),
+                const SizedBox(width: 7),
+                SizedBox(
+                  width: roleColumnWidth,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildRoleBadge(
+                      entry.agent.isMaster,
+                      compact: !showRoleLabel,
+                    ),
+                  ),
+                ),
                 const SizedBox(width: 6),
-                StatusBadge(
-                  label: entry.tableState.status,
-                  color: _statusColor(entry.tableState.status),
+                SizedBox(
+                  width: statusColumnWidth,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: StatusBadge(
+                      label: entry.tableState.status,
+                      color: _statusColor(entry.tableState.status),
+                    ),
+                  ),
                 ),
                 if (showSync) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: syncColumnWidth,
                     child: Text(
                       lastSync,
                       maxLines: 1,
@@ -3128,13 +3152,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                 ],
-                const SizedBox(width: 4),
+                const SizedBox(width: 2),
                 Tooltip(
                   message: 'Open client details',
                   child: IconButton(
                     constraints: const BoxConstraints.tightFor(
-                      width: 32,
-                      height: 32,
+                      width: 28,
+                      height: 28,
                     ),
                     padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
