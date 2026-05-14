@@ -279,6 +279,56 @@ class AgentProgressStrip extends StatelessWidget {
   }
 }
 
+class AgentCircularProgressBadge extends StatelessWidget {
+  const AgentCircularProgressBadge({
+    super.key,
+    required this.progress,
+    required this.color,
+    this.size = 34,
+    this.strokeWidth = 3,
+  });
+
+  final int progress;
+  final Color color;
+  final double size;
+  final double strokeWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final clamped = progress.clamp(0, 100);
+    final value = clamped / 100;
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: size,
+            height: size,
+            child: CircularProgressIndicator(
+              value: value,
+              strokeWidth: strokeWidth,
+              backgroundColor: const Color(0xFFE4E7EC),
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+          Text(
+            '$clamped',
+            style: TextStyle(
+              color: color,
+              fontSize: size <= 34 ? 10 : 11,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class AgentEmptyStateCard extends StatelessWidget {
   const AgentEmptyStateCard({super.key, required this.message});
 

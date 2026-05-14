@@ -1011,6 +1011,73 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
+  IconData _statusIcon(String status) {
+    switch (status) {
+      case 'Paused':
+        return Icons.pause_circle_filled_rounded;
+      case 'Failed':
+        return Icons.error_rounded;
+      case 'Queued':
+        return Icons.schedule_rounded;
+      case 'Snapshotting':
+        return Icons.photo_camera_back_rounded;
+      case 'Uploading':
+        return Icons.cloud_upload_rounded;
+      case 'Downloading':
+        return Icons.cloud_download_rounded;
+      case 'Applying':
+        return Icons.system_update_alt_rounded;
+      case 'Completed':
+      case 'Success':
+      case 'Idle':
+      default:
+        return Icons.check_circle_rounded;
+    }
+  }
+
+  String _statusTooltip(String status) {
+    switch (status) {
+      case 'Paused':
+        return 'Paused: syncing is turned off for this table.';
+      case 'Failed':
+        return 'Failed: the last sync attempt ended with an error.';
+      case 'Queued':
+        return 'Queued: this table is waiting for the next sync job.';
+      case 'Snapshotting':
+        return 'Snapshotting: preparing table rows for transfer.';
+      case 'Uploading':
+        return 'Uploading: sending the local snapshot to the control plane.';
+      case 'Downloading':
+        return 'Downloading: fetching the remote snapshot.';
+      case 'Applying':
+        return 'Applying: writing downloaded rows into local SQL Server.';
+      case 'Completed':
+      case 'Success':
+        return 'Success: the last sync completed successfully.';
+      case 'Idle':
+      default:
+        return 'Idle: no sync job is currently running.';
+    }
+  }
+
+  Widget _buildSyncStatusSymbol(String status, {double size = 26}) {
+    final color = _statusColor(status);
+    return Tooltip(
+      message: _statusTooltip(status),
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.18)),
+        ),
+        child: Icon(_statusIcon(status), size: size * 0.58, color: color),
+      ),
+    );
+  }
+
   bool _shouldAutoDetectLocalSqlServer(String server) {
     final normalized = server.trim().toLowerCase();
     return normalized.isEmpty ||
@@ -1376,6 +1443,93 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         }
         _updateTableSyncMode(row.table, mode);
       },
+    );
+  }
+
+  Future<void> _openSyncModeDialog(_SyncTableRowData row) async {
+    var selectedMode = normalizeSyncMode(
+      row.state.syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    var saving = false;
+
+    await showDialog<void>(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: Text('Change Sync Mode: ${row.table}'),
+                content: SizedBox(
+                  width: 360,
+                  child: DropdownButtonFormField<String>(
+                    value: selectedMode,
+                    isDense: true,
+                    isExpanded: true,
+                    decoration: _compactInputDecoration(
+                      'Sync Mode',
+                    ).copyWith(hintText: 'Select mode'),
+                    selectedItemBuilder:
+                        (context) => const [
+                              kSyncModeMaster,
+                              kSyncModeClient,
+                              kSyncModeMasterMix,
+                            ]
+                            .map(
+                              (mode) =>
+                                  _buildSyncModeOption(mode, selected: true),
+                            )
+                            .toList(growable: false),
+                    items: [
+                      DropdownMenuItem(
+                        value: kSyncModeMaster,
+                        child: _buildSyncModeOption(kSyncModeMaster),
+                      ),
+                      DropdownMenuItem(
+                        value: kSyncModeClient,
+                        child: _buildSyncModeOption(kSyncModeClient),
+                      ),
+                      DropdownMenuItem(
+                        value: kSyncModeMasterMix,
+                        child: _buildSyncModeOption(kSyncModeMasterMix),
+                      ),
+                    ],
+                    onChanged:
+                        saving
+                            ? null
+                            : (mode) {
+                              if (mode == null) {
+                                return;
+                              }
+                              setDialogState(() {
+                                selectedMode = mode;
+                              });
+                            },
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed:
+                        saving ? null : () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed:
+                        saving
+                            ? null
+                            : () {
+                              setDialogState(() {
+                                saving = true;
+                              });
+                              Navigator.of(context).pop();
+                              _updateTableSyncMode(row.table, selectedMode);
+                            },
+                    child: Text(saving ? 'Saving...' : 'Save'),
+                  ),
+                ],
+              );
+            },
+          ),
     );
   }
 
@@ -3831,6 +3985,7 @@ WHEN NOT MATCHED BY TARGET THEN
     required bool selected,
   }) {
     final statusColor = _statusColor(row.state.status);
+    final lastSync = _formatTimestamp(row.state.lastSync);
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
@@ -3841,7 +3996,8 @@ WHEN NOT MATCHED BY TARGET THEN
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        constraints: const BoxConstraints(minHeight: 50),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFE6F4F1) : Colors.white,
           borderRadius: BorderRadius.circular(8),
@@ -3851,130 +4007,92 @@ WHEN NOT MATCHED BY TARGET THEN
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final stack = constraints.maxWidth < 680;
+            final showRowCount = constraints.maxWidth >= 560;
+            final showLastSync = constraints.maxWidth >= 960;
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                if (stack) ...[
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: row.state.enabled,
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          _updateSyncEnabledTable(row.table, value);
-                        },
-                      ),
-                      Expanded(
-                        child: Text(
-                          row.table,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      _buildSyncModeBadge(row.state.syncMode),
-                      AgentStatusPill(
-                        label: row.state.status,
-                        color: statusColor,
-                      ),
-                    ],
-                  ),
-                ] else
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: row.state.enabled,
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          _updateSyncEnabledTable(row.table, value);
-                        },
-                      ),
-                      Expanded(
-                        child: Text(
-                          row.table,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 196, child: _buildSyncModeSelector(row)),
-                      const SizedBox(width: 6),
-                      AgentStatusPill(
-                        label: row.state.status,
-                        color: statusColor,
-                      ),
-                    ],
-                  ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    _buildCompactMetricPill(
-                      label: 'Rows',
-                      value: '${row.state.rowCount}',
-                    ),
-                    _buildCompactMetricPill(
-                      label: 'Last Sync',
-                      value: _formatTimestamp(row.state.lastSync),
-                    ),
-                    _buildCompactMetricPill(
-                      label: 'Backup',
-                      value: _formatBytes(row.state.snapshotBytes),
-                    ),
-                  ],
+                Checkbox(
+                  value: row.state.enabled,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    _updateSyncEnabledTable(row.table, value);
+                  },
                 ),
-                const SizedBox(height: 8),
-                if (stack) ...[
-                  AgentProgressStrip(
-                    progress: row.state.progress,
-                    color: statusColor,
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    '${row.state.progress}%',
+                Expanded(
+                  child: Text(
+                    row.table,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
                     ),
                   ),
-                ] else
-                  Row(
-                    children: [
-                      Expanded(
-                        child: AgentProgressStrip(
-                          progress: row.state.progress,
-                          color: statusColor,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${row.state.progress}%',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 30,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildSyncModeBadge(
+                      row.state.syncMode,
+                      showLabel: false,
+                    ),
                   ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 30,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildSyncStatusSymbol(row.state.status, size: 26),
+                  ),
+                ),
+                if (showRowCount) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 72,
+                    child: Text(
+                      '${row.state.rowCount} rows',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                if (showLastSync) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      lastSync,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                AgentCircularProgressBadge(
+                  progress: row.state.progress,
+                  color: statusColor,
+                  size: 32,
+                  strokeWidth: 3,
+                ),
               ],
             );
           },
@@ -4037,16 +4155,32 @@ WHEN NOT MATCHED BY TARGET THEN
     return AgentSurfaceCard(
       title: selectedRow.table,
       subtitle: '',
-      titleWidget: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 10,
-        runSpacing: 8,
+      titleWidget: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             selectedRow.table,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
           ),
-          _buildSyncModeBadge(selectedRow.state.syncMode),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _buildSyncStatusSymbol(selectedRow.state.status, size: 26),
+              _buildSyncModeBadge(selectedRow.state.syncMode),
+              _buildCompactMetricPill(
+                label: 'Rows',
+                value: '${selectedRow.state.rowCount}',
+              ),
+              _buildCompactMetricPill(
+                label: 'Last Sync',
+                value: _formatTimestamp(selectedRow.state.lastSync),
+              ),
+            ],
+          ),
         ],
       ),
       headerTrailing: Wrap(
@@ -4054,6 +4188,11 @@ WHEN NOT MATCHED BY TARGET THEN
         spacing: 4,
         runSpacing: 4,
         children: [
+          OutlinedButton.icon(
+            onPressed: () => _openSyncModeDialog(selectedRow),
+            icon: const Icon(Icons.tune_rounded, size: 18),
+            label: const Text('Edit Mode'),
+          ),
           _buildSyncActionIconButton(
             tooltip: 'Open current table data',
             onPressed: () => _openTableDataDialog(selectedRow.table),
@@ -4136,56 +4275,137 @@ WHEN NOT MATCHED BY TARGET THEN
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 260),
-            child: _buildSyncModeSelector(row),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack = constraints.maxWidth < 720;
+          final metrics = Wrap(
+            spacing: 8,
+            runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              AgentStatusPill(label: row.state.status, color: statusColor),
-              AgentMetricPill(
-                label: 'Mode',
-                value: _syncModeLabel(row.state.syncMode),
+              _buildSyncStatusSymbol(row.state.status, size: 28),
+              _buildCompactMetricPill(
+                label: 'Rows',
+                value: '${row.state.rowCount}',
               ),
-              AgentMetricPill(
-                label: 'Behavior',
-                value: _syncModeDescription(row.state.syncMode),
+              _buildCompactMetricPill(
+                label: 'Last Sync',
+                value: _formatTimestamp(row.state.lastSync),
               ),
-              AgentMetricPill(
+              _buildCompactMetricPill(
+                label: 'Backup',
+                value: _formatBytes(row.state.snapshotBytes),
+              ),
+              _buildCompactMetricPill(
                 label: 'Enabled',
                 value: row.state.enabled ? 'Yes' : 'No',
               ),
-              AgentMetricPill(
-                label: 'Progress',
-                value: '${row.state.progress}%',
-              ),
             ],
-          ),
-          const SizedBox(height: 14),
-          AgentProgressStrip(progress: row.state.progress, color: statusColor),
-          const SizedBox(height: 10),
-          Text(
+          );
+
+          final selectorBlock = ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: _buildSyncModeSelector(row),
+          );
+
+          final progressBlock = Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AgentCircularProgressBadge(
+                  progress: row.state.progress,
+                  color: statusColor,
+                  size: 46,
+                  strokeWidth: 4,
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Progress',
+                      style: TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${row.state.progress}% complete',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+
+          final message = Text(
             row.state.message.isEmpty
                 ? 'No sync message yet.'
                 : row.state.message,
-            maxLines: 3,
+            maxLines: stack ? 4 : 3,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(height: 1.4),
-          ),
-        ],
+            style: const TextStyle(height: 1.35, color: Color(0xFF475467)),
+          );
+
+          if (stack) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [selectorBlock, progressBlock],
+                ),
+                const SizedBox(height: 10),
+                metrics,
+                const SizedBox(height: 10),
+                message,
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        selectorBlock,
+                        const SizedBox(height: 10),
+                        metrics,
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  progressBlock,
+                ],
+              ),
+              const SizedBox(height: 10),
+              message,
+            ],
+          );
+        },
       ),
     );
   }
