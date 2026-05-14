@@ -53,6 +53,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Timer? _refreshTimer;
 
   AdminLiveState? _state;
+  AdminLiveState? _derivedStateSource;
+  List<_TableAggregateSummary> _derivedTableSummaries =
+      const <_TableAggregateSummary>[];
+  Map<String, _TableAggregateSummary> _derivedSummaryByTable =
+      const <String, _TableAggregateSummary>{};
+  Map<String, List<_TableClientEntry>> _derivedClientsByTable =
+      const <String, List<_TableClientEntry>>{};
+  List<String> _derivedDatabaseNames = const <String>[];
+  Map<String, int> _derivedDatabaseTableCounts = const <String, int>{};
+  Map<String, _TableSnapshotSource> _derivedSnapshotSourcesByTable =
+      const <String, _TableSnapshotSource>{};
   AdminSnapshotDetail? _snapshot;
   bool _loading = true;
   bool _connected = false;
@@ -60,6 +71,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String? _selectedClientName;
   String? _selectedTableName;
   String? _selectedDatabaseName;
+  bool _sortLastSyncAscending = false;
   int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyBackupKeys = <String>{};
   @override
@@ -129,6 +141,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return;
       }
 
+      _ensureDerivedState(nextState);
       final nextDatabaseName = _resolveSelectedDatabase(nextState);
       final nextTableName = _resolveSelectedTable(
         nextState,
@@ -173,24 +186,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
 
-  List<_TableAggregateSummary> get _tableSummaries =>
-      _tableSummariesFromState(_state);
+  List<_TableAggregateSummary> get _tableSummaries {
+    _ensureDerivedState(_state);
+    return _derivedTableSummaries;
+  }
 
   _TableAggregateSummary? get _selectedTableSummary {
     final tableName = _selectedTableName;
     if (tableName == null) {
       return null;
     }
-    for (final summary in _tableSummaries) {
-      if (summary.table == tableName) {
-        return summary;
-      }
-    }
-    return null;
+    _ensureDerivedState(_state);
+    return _derivedSummaryByTable[tableName];
   }
 
-  List<_TableClientEntry> get _selectedTableClients =>
-      _clientsForTableFromState(_state, _selectedTableName);
+  List<_TableClientEntry> get _selectedTableClients {
+    _ensureDerivedState(_state);
+    return _derivedClientsByTable[_selectedTableName] ??
+        const <_TableClientEntry>[];
+  }
 
   _TableClientEntry? get _selectedClientEntry {
     final clientName = _selectedClientName;
@@ -205,29 +219,143 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return null;
   }
 
-  List<String> _databaseNamesFromState(AdminLiveState? state) {
-    if (state == null) {
-      return const <String>[];
+  void _ensureDerivedState(AdminLiveState? state) {
+    if (identical(_derivedStateSource, state)) {
+      return;
     }
 
-    final databaseNames = _tableSummariesFromState(state)
-      .map((summary) => summary.database.trim())
-      .where((database) => database.isNotEmpty)
-      .toSet()
-      .toList(growable: false)..sort();
-    return databaseNames;
-  }
+    _derivedStateSource = state;
+    if (state == null) {
+      _derivedTableSummaries = const <_TableAggregateSummary>[];
+      _derivedSummaryByTable = const <String, _TableAggregateSummary>{};
+      _derivedClientsByTable = const <String, List<_TableClientEntry>>{};
+      _derivedDatabaseNames = const <String>[];
+      _derivedDatabaseTableCounts = const <String, int>{};
+      _derivedSnapshotSourcesByTable = const <String, _TableSnapshotSource>{};
+      return;
+    }
 
-  Map<String, int> _databaseTableCountsFromState(AdminLiveState? state) {
-    final counts = <String, Set<String>>{};
-    for (final summary in _tableSummariesFromState(state)) {
+    final buckets = <String, List<_TableClientEntry>>{};
+    for (final agent in state.agents) {
+      for (final tableState in agent.tables) {
+        final tableKey = _tableKeyForAgent(agent, tableState);
+        buckets
+            .putIfAbsent(tableKey, () => <_TableClientEntry>[])
+            .add(_TableClientEntry(agent: agent, tableState: tableState));
+      }
+    }
+
+    final clientsByTable = <String, List<_TableClientEntry>>{};
+    final summaries = <_TableAggregateSummary>[];
+    for (final entry in buckets.entries) {
+      final clients = List<_TableClientEntry>.from(entry.value)
+        ..sort(_compareClientEntries);
+      clientsByTable[entry.key] = clients;
+
+      var latestClient = clients.first;
+      for (final client in clients.skip(1)) {
+        if (_compareTimestamps(
+              _tableTimestampToken(client.tableState),
+              _tableTimestampToken(latestClient.tableState),
+            ) >
+            0) {
+          latestClient = client;
+        }
+      }
+
+      summaries.add(
+        _TableAggregateSummary(
+          table: entry.key,
+          lastSync: _tableTimestampToken(latestClient.tableState),
+          clientCount: clients.length,
+          masterCount: clients.where((item) => item.agent.isMaster).length,
+          slaveCount: clients.where((item) => !item.agent.isMaster).length,
+          latestRowCount: latestClient.tableState.rowCount,
+          latestSnapshotBytes: latestClient.tableState.snapshotBytes,
+          sourceClientName: latestClient.agent.clientName,
+          clients: clients,
+        ),
+      );
+    }
+
+    summaries.sort(_compareSummariesByLastSyncDesc);
+    _derivedTableSummaries = summaries;
+    _derivedSummaryByTable = {
+      for (final summary in summaries) summary.table: summary,
+    };
+    _derivedClientsByTable = clientsByTable;
+
+    final databaseTableSets = <String, Set<String>>{};
+    for (final summary in summaries) {
       final database = summary.database.trim();
       if (database.isEmpty) {
         continue;
       }
-      counts.putIfAbsent(database, () => <String>{}).add(summary.displayTable);
+      databaseTableSets
+          .putIfAbsent(database, () => <String>{})
+          .add(summary.displayTable);
     }
-    return counts.map((database, tables) => MapEntry(database, tables.length));
+    final databaseNames = databaseTableSets.keys.toList(growable: false)
+      ..sort();
+    _derivedDatabaseNames = databaseNames;
+    _derivedDatabaseTableCounts = {
+      for (final entry in databaseTableSets.entries)
+        entry.key: entry.value.length,
+    };
+
+    final snapshotSources = <String, _TableSnapshotSource>{};
+    for (final snapshot in state.snapshots) {
+      final existing = snapshotSources[snapshot.table];
+      if (existing == null ||
+          _compareTimestamps(snapshot.createdAt, existing.createdAt) > 0) {
+        snapshotSources[snapshot.table] = _TableSnapshotSource(
+          clientName: snapshot.clientName,
+          table: snapshot.table,
+          createdAt: snapshot.createdAt,
+          rowCount: snapshot.rowCount,
+          snapshotBytes: snapshot.snapshotBytes,
+        );
+      }
+    }
+    for (final summary in summaries) {
+      snapshotSources.putIfAbsent(summary.table, () {
+        final clients = clientsByTable[summary.table]!;
+        _TableClientEntry? latestEntry;
+        for (final entry in clients) {
+          final token = _tableTimestampToken(entry.tableState);
+          if (token.isEmpty) {
+            continue;
+          }
+          if (latestEntry == null ||
+              _compareTimestamps(
+                    token,
+                    _tableTimestampToken(latestEntry.tableState),
+                  ) >
+                  0) {
+            latestEntry = entry;
+          }
+        }
+        final fallback = latestEntry ?? clients.first;
+        return _TableSnapshotSource(
+          clientName: fallback.agent.clientName,
+          table: summary.table,
+          createdAt: _tableTimestampToken(fallback.tableState),
+          rowCount: fallback.tableState.rowCount,
+          snapshotBytes: fallback.tableState.snapshotBytes,
+        );
+      });
+    }
+    _derivedSnapshotSourcesByTable = snapshotSources;
+  }
+
+  List<String> _databaseNamesFromState(AdminLiveState? state) {
+    _ensureDerivedState(state);
+    return _derivedDatabaseNames;
+  }
+
+  Map<String, int> _databaseTableCountsFromState(AdminLiveState? state) {
+    _ensureDerivedState(state);
+    return _derivedDatabaseTableCounts;
   }
 
   String _databaseDropdownLabel(String database) {
@@ -321,57 +449,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   List<_TableAggregateSummary> _tableSummariesFromState(AdminLiveState? state) {
-    if (state == null) {
-      return const <_TableAggregateSummary>[];
-    }
-
-    final buckets = <String, List<_TableClientEntry>>{};
-    for (final agent in state.agents) {
-      for (final tableState in agent.tables) {
-        final tableKey = _tableKeyForAgent(agent, tableState);
-        final entries = buckets.putIfAbsent(
-          tableKey,
-          () => <_TableClientEntry>[],
-        );
-        entries.add(_TableClientEntry(agent: agent, tableState: tableState));
-      }
-    }
-
-    final summaries = buckets.entries
-      .map((entry) {
-        final clients = List<_TableClientEntry>.from(entry.value)
-          ..sort(_compareClientEntries);
-        var latestClient = clients.first;
-        for (final client in clients.skip(1)) {
-          if (_compareTimestamps(
-                _tableTimestampToken(client.tableState),
-                _tableTimestampToken(latestClient.tableState),
-              ) >
-              0) {
-            latestClient = client;
-          }
-        }
-        return _TableAggregateSummary(
-          table: entry.key,
-          lastSync: _tableTimestampToken(latestClient.tableState),
-          clientCount: clients.length,
-          masterCount: clients.where((item) => item.agent.isMaster).length,
-          slaveCount: clients.where((item) => !item.agent.isMaster).length,
-          latestRowCount: latestClient.tableState.rowCount,
-          latestSnapshotBytes: latestClient.tableState.snapshotBytes,
-          sourceClientName: latestClient.agent.clientName,
-          clients: clients,
-        );
-      })
-      .toList(growable: false)..sort((left, right) {
-      final byTimestamp = _compareTimestamps(right.lastSync, left.lastSync);
-      if (byTimestamp != 0) {
-        return byTimestamp;
-      }
-      return left.table.compareTo(right.table);
-    });
-
-    return summaries;
+    _ensureDerivedState(state);
+    return _derivedTableSummaries;
   }
 
   String _tableKeyForAgent(AdminAgent agent, AdminTableState tableState) {
@@ -403,28 +482,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     AdminLiveState? state,
     String? tableName,
   ) {
-    if (state == null || tableName == null) {
+    if (tableName == null) {
       return const <_TableClientEntry>[];
     }
-
-    final entries = <_TableClientEntry>[];
-    for (final agent in state.agents) {
-      final tableState = _tableStateForAgent(agent, tableName);
-      if (tableState != null) {
-        entries.add(_TableClientEntry(agent: agent, tableState: tableState));
-      }
-    }
-    entries.sort(_compareClientEntries);
-    return entries;
-  }
-
-  AdminTableState? _tableStateForAgent(AdminAgent agent, String tableName) {
-    for (final table in agent.tables) {
-      if (_tableKeyForAgent(agent, table) == tableName) {
-        return table;
-      }
-    }
-    return null;
+    _ensureDerivedState(state);
+    return _derivedClientsByTable[tableName] ?? const <_TableClientEntry>[];
   }
 
   int _compareClientEntries(_TableClientEntry left, _TableClientEntry right) {
@@ -449,59 +511,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     AdminLiveState? state,
     String? tableName,
   ) {
-    if (state == null || tableName == null) {
+    if (tableName == null) {
       return null;
     }
-
-    final snapshots = state.snapshots
-      .where((snapshot) => snapshot.table == tableName)
-      .toList(growable: false)..sort(
-      (left, right) => _compareTimestamps(right.createdAt, left.createdAt),
-    );
-
-    if (snapshots.isNotEmpty) {
-      final snapshot = snapshots.first;
-      return _TableSnapshotSource(
-        clientName: snapshot.clientName,
-        table: snapshot.table,
-        createdAt: snapshot.createdAt,
-        rowCount: snapshot.rowCount,
-        snapshotBytes: snapshot.snapshotBytes,
-      );
-    }
-
-    final clients = _clientsForTableFromState(state, tableName);
-    if (clients.isEmpty) {
-      return null;
-    }
-
-    _TableClientEntry? latestEntry;
-    for (final entry in clients) {
-      final token = _tableTimestampToken(entry.tableState);
-      if (token.isEmpty) {
-        continue;
-      }
-      if (latestEntry == null ||
-          _compareTimestamps(
-                token,
-                _tableTimestampToken(latestEntry.tableState),
-              ) >
-              0) {
-        latestEntry = entry;
-      }
-    }
-
-    if (latestEntry == null) {
-      return null;
-    }
-
-    return _TableSnapshotSource(
-      clientName: latestEntry.agent.clientName,
-      table: tableName,
-      createdAt: _tableTimestampToken(latestEntry.tableState),
-      rowCount: latestEntry.tableState.rowCount,
-      snapshotBytes: latestEntry.tableState.snapshotBytes,
-    );
+    _ensureDerivedState(state);
+    return _derivedSnapshotSourcesByTable[tableName];
   }
 
   String _tableTimestampToken(AdminTableState tableState) {
@@ -514,6 +528,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   int _compareTimestamps(String left, String right) {
     return _timestampSortValue(left).compareTo(_timestampSortValue(right));
+  }
+
+  int _compareSummariesByLastSyncDesc(
+    _TableAggregateSummary left,
+    _TableAggregateSummary right,
+  ) {
+    final byTimestamp = _compareTimestamps(right.lastSync, left.lastSync);
+    if (byTimestamp != 0) {
+      return byTimestamp;
+    }
+    return left.table.compareTo(right.table);
+  }
+
+  int _compareSummariesByActiveSort(
+    _TableAggregateSummary left,
+    _TableAggregateSummary right,
+  ) {
+    final byTimestamp =
+        _sortLastSyncAscending
+            ? _compareTimestamps(left.lastSync, right.lastSync)
+            : _compareTimestamps(right.lastSync, left.lastSync);
+    if (byTimestamp != 0) {
+      return byTimestamp;
+    }
+    return left.table.compareTo(right.table);
+  }
+
+  List<_TableAggregateSummary> _sortSummariesByActiveSort(
+    List<_TableAggregateSummary> summaries,
+  ) {
+    return List<_TableAggregateSummary>.from(summaries)
+      ..sort(_compareSummariesByActiveSort);
   }
 
   int _timestampSortValue(String raw) {
@@ -545,6 +591,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedTableName = tableName;
       _selectedClientName = nextClientName;
       _snapshot = null;
+    });
+  }
+
+  void _toggleTableLastSyncSort() {
+    setState(() {
+      _sortLastSyncAscending = !_sortLastSyncAscending;
     });
   }
 
@@ -2499,46 +2551,41 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   ) {
     final query = _syncSearchController.text.trim();
     if (query.isEmpty) {
-      return summaries;
+      return _sortSummariesByActiveSort(summaries);
     }
 
     final matches = summaries
-      .map((summary) {
-        final score = _bestMatchScore(
-          query,
-          [
-            summary.table,
-            summary.database,
-            summary.displayTable,
-            summary.sourceClientName,
-            _formatTimestamp(summary.lastSync),
-            '${summary.clientCount}',
-            '${summary.masterCount}',
-            '${summary.slaveCount}',
-            ...summary.clients.map((entry) {
-              return [
-                entry.agent.clientName,
-                entry.agent.machineName,
-                _roleLabel(entry.agent.isMaster),
-                _tableKeyForAgent(entry.agent, entry.tableState),
-                entry.tableState.status,
-                entry.tableState.message,
-              ].join(' ');
-            }),
-          ].join(' '),
-        );
-        return _ScoredTableSummary(summary: summary, score: score);
-      })
-      .where((match) => match.score > 0)
-      .toList(growable: false)..sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return left.summary.table.compareTo(right.summary.table);
-    });
+        .map((summary) {
+          final score = _bestMatchScore(
+            query,
+            [
+              summary.table,
+              summary.database,
+              summary.displayTable,
+              summary.sourceClientName,
+              _formatTimestamp(summary.lastSync),
+              '${summary.clientCount}',
+              '${summary.masterCount}',
+              '${summary.slaveCount}',
+              ...summary.clients.map((entry) {
+                return [
+                  entry.agent.clientName,
+                  entry.agent.machineName,
+                  _roleLabel(entry.agent.isMaster),
+                  _tableKeyForAgent(entry.agent, entry.tableState),
+                  entry.tableState.status,
+                  entry.tableState.message,
+                ].join(' ');
+              }),
+            ].join(' '),
+          );
+          return _ScoredTableSummary(summary: summary, score: score);
+        })
+        .where((match) => match.score > 0)
+        .map((match) => match.summary)
+        .toList(growable: false);
 
-    return matches.map((match) => match.summary).toList(growable: false);
+    return _sortSummariesByActiveSort(matches);
   }
 
   List<_TableClientEntry> _filteredTableClients(
@@ -2635,6 +2682,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget _buildLastSyncSortButton() {
+    final tooltip =
+        _sortLastSyncAscending
+            ? 'Last sync: oldest first'
+            : 'Last sync: newest first';
+    return Tooltip(
+      message: tooltip,
+      child: IconButton.filledTonal(
+        onPressed: _toggleTableLastSyncSort,
+        icon: Icon(
+          _sortLastSyncAscending
+              ? Icons.arrow_upward_rounded
+              : Icons.arrow_downward_rounded,
+        ),
+        style: IconButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
+  }
+
   Widget _buildDatabaseSelector() {
     final databases = _databaseNamesFromState(_state);
     final selectedValue =
@@ -2687,9 +2756,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 hint: 'Search table names, databases, and clients.',
               );
               final database = _buildDatabaseSelector();
+              final sort = _buildLastSyncSortButton();
               if (stack) {
                 return Column(
-                  children: [database, const SizedBox(height: 10), search],
+                  children: [
+                    database,
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(child: search),
+                        const SizedBox(width: 8),
+                        sort,
+                      ],
+                    ),
+                  ],
                 );
               }
               return Row(
@@ -2697,6 +2777,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   SizedBox(width: 260, child: database),
                   const SizedBox(width: 10),
                   Expanded(child: search),
+                  const SizedBox(width: 8),
+                  sort,
                 ],
               );
             },
