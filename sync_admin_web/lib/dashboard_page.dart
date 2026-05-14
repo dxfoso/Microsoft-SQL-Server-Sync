@@ -56,16 +56,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   AdminSnapshotDetail? _snapshot;
   bool _loading = true;
   bool _connected = false;
-  // ignore: unused_field
-  bool _snapshotLoading = false;
   String? _error;
-  String? _snapshotError;
   String? _selectedClientName;
   String? _selectedTableName;
   String? _selectedDatabaseName;
-  String? _snapshotKey;
-  String? _snapshotVersionToken;
-  int _snapshotRequestToken = 0;
   int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyBackupKeys = <String>{};
   @override
@@ -154,8 +148,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _loading = false;
         _error = null;
       });
-
-      unawaited(_loadSelectedSnapshot());
     } catch (error) {
       if (!mounted) {
         return;
@@ -212,9 +204,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
     return null;
   }
-
-  _TableSnapshotSource? get _selectedSnapshotSource =>
-      _snapshotSourceForTable(_state, _selectedTableName);
 
   List<String> _databaseNamesFromState(AdminLiveState? state) {
     if (state == null) {
@@ -306,11 +295,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedTableName = nextTableName;
       _selectedClientName = nextClientName;
       _snapshot = null;
-      _snapshotError = null;
-      _snapshotKey = null;
-      _snapshotVersionToken = null;
     });
-    unawaited(_loadSelectedSnapshot(force: true));
   }
 
   String? _resolveSelectedClientForTable(
@@ -539,73 +524,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return raw.trim().isEmpty ? -1 : 0;
   }
 
-  Future<void> _loadSelectedSnapshot({bool force = false}) async {
-    final tableName = _selectedTableName;
-    final source = _selectedSnapshotSource;
-
-    if (tableName == null || source == null) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _snapshot = null;
-        _snapshotLoading = false;
-        _snapshotError = null;
-        _snapshotKey = null;
-        _snapshotVersionToken = null;
-      });
-      return;
-    }
-
-    final nextKey = '${source.clientName}::$tableName';
-    final nextVersion = source.createdAt.trim();
-
-    if (!force &&
-        nextKey == _snapshotKey &&
-        nextVersion == _snapshotVersionToken &&
-        (_snapshot != null || _snapshotError != null)) {
-      return;
-    }
-
-    final requestToken = ++_snapshotRequestToken;
-    if (mounted) {
-      setState(() {
-        _snapshotLoading = true;
-        _snapshotError = null;
-        _snapshotKey = nextKey;
-        _snapshotVersionToken = nextVersion;
-        _snapshot = null;
-      });
-    }
-
-    try {
-      final snapshot = await _api.fetchLatestSnapshot(
-        clientName: source.clientName,
-        table: tableName,
-      );
-      if (!mounted || requestToken != _snapshotRequestToken) {
-        return;
-      }
-      setState(() {
-        _snapshot = snapshot;
-        _snapshotLoading = false;
-        _snapshotError =
-            snapshot == null
-                ? 'No snapshot is available yet for $tableName.'
-                : null;
-      });
-    } catch (error) {
-      if (!mounted || requestToken != _snapshotRequestToken) {
-        return;
-      }
-      setState(() {
-        _snapshotLoading = false;
-        _snapshot = null;
-        _snapshotError = error.toString();
-      });
-    }
-  }
-
   void _selectClient(String? clientName) {
     if (clientName == null || clientName == _selectedClientName) {
       return;
@@ -627,9 +545,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedTableName = tableName;
       _selectedClientName = nextClientName;
       _snapshot = null;
-      _snapshotError = null;
     });
-    unawaited(_loadSelectedSnapshot(force: true));
   }
 
   Future<void> _openSettingsDialog() async {
@@ -2262,7 +2178,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       );
       await _refreshState(silent: true);
       if (_selectedClientName == clientName && _selectedTableName == table) {
-        await _loadSelectedSnapshot(force: true);
+        setState(() {
+          _snapshot = null;
+        });
       }
       if (!mounted) {
         return;

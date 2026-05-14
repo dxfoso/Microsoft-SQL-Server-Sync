@@ -4153,104 +4153,27 @@ WHEN NOT MATCHED BY TARGET THEN
     final busy = _isFileBusy(selectedRow.table);
 
     return AgentSurfaceCard(
-      title: selectedRow.table,
+      title: 'Sync Details',
       subtitle: '',
-      titleWidget: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            selectedRow.table,
-            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _buildSyncStatusSymbol(selectedRow.state.status, size: 26),
-              _buildSyncModeBadge(selectedRow.state.syncMode),
-              _buildCompactMetricPill(
-                label: 'Rows',
-                value: '${selectedRow.state.rowCount}',
-              ),
-              _buildCompactMetricPill(
-                label: 'Last Sync',
-                value: _formatTimestamp(selectedRow.state.lastSync),
-              ),
-            ],
-          ),
-        ],
-      ),
-      headerTrailing: Wrap(
-        alignment: WrapAlignment.end,
-        spacing: 4,
-        runSpacing: 4,
-        children: [
-          OutlinedButton.icon(
-            onPressed: () => _openSyncModeDialog(selectedRow),
-            icon: const Icon(Icons.tune_rounded, size: 18),
-            label: const Text('Edit Mode'),
-          ),
-          _buildSyncActionIconButton(
-            tooltip: 'Open current table data',
-            onPressed: () => _openTableDataDialog(selectedRow.table),
-            icon: Icons.table_rows_outlined,
-          ),
-          _buildSyncActionIconButton(
-            tooltip: 'Download backup',
-            onPressed:
-                _selectedDatabase == null || busy
-                    ? null
-                    : () => _exportTableBackup(selectedRow.table),
-            icon: Icons.download_rounded,
-          ),
-          _buildSyncActionIconButton(
-            tooltip: 'Upload backup',
-            onPressed:
-                _selectedDatabase == null || busy
-                    ? null
-                    : () => _importTableBackup(selectedRow.table),
-            icon: Icons.upload_file_rounded,
-          ),
-          _buildSyncActionIconButton(
-            tooltip: 'Push now',
-            onPressed:
-                selectedRow.state.enabled
-                    ? () =>
-                        _triggerSyncNow(selectedRow.table, direction: 'upload')
-                    : null,
-            icon: Icons.cloud_upload_rounded,
-          ),
-          _buildSyncActionIconButton(
-            tooltip: 'Pull now',
-            onPressed:
-                selectedRow.state.enabled
-                    ? () => _triggerSyncNow(
-                      selectedRow.table,
-                      direction: 'download',
-                    )
-                    : null,
-            icon: Icons.cloud_download_rounded,
-          ),
-        ],
-      ),
+      showHeader: false,
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [Expanded(child: _buildMergedSyncDetailBody(selectedRow))],
+        children: [
+          Expanded(child: _buildMergedSyncDetailBody(selectedRow, busy: busy)),
+        ],
       ),
     );
   }
 
-  Widget _buildMergedSyncDetailBody(_SyncTableRowData row) {
+  Widget _buildMergedSyncDetailBody(
+    _SyncTableRowData row, {
+    required bool busy,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionLabel('Overview'),
-        const SizedBox(height: 10),
-        _buildSyncOverviewSide(row),
+        _buildUnifiedSyncDetailHeader(row, busy: busy),
         const SizedBox(height: 18),
         _buildSectionLabel('History'),
         const SizedBox(height: 10),
@@ -4270,143 +4193,201 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
-  Widget _buildSyncOverviewSide(_SyncTableRowData row) {
+  Widget _buildUnifiedSyncDetailHeader(
+    _SyncTableRowData row, {
+    required bool busy,
+  }) {
     final statusColor = _statusColor(row.state.status);
+    final normalizedProgress = row.state.progress.clamp(0, 100);
+    final canRunSync = row.state.enabled;
+    final canTransferBackup = _selectedDatabase != null && !busy;
+    final message =
+        row.state.message.isEmpty ? 'No sync message yet.' : row.state.message;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final stack = constraints.maxWidth < 720;
-          final metrics = Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _buildSyncStatusSymbol(row.state.status, size: 28),
-              _buildCompactMetricPill(
-                label: 'Rows',
-                value: '${row.state.rowCount}',
-              ),
-              _buildCompactMetricPill(
-                label: 'Last Sync',
-                value: _formatTimestamp(row.state.lastSync),
-              ),
-              _buildCompactMetricPill(
-                label: 'Backup',
-                value: _formatBytes(row.state.snapshotBytes),
-              ),
-              _buildCompactMetricPill(
-                label: 'Enabled',
-                value: row.state.enabled ? 'Yes' : 'No',
-              ),
-            ],
-          );
-
-          final selectorBlock = ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 260),
-            child: _buildSyncModeSelector(row),
-          );
-
-          final progressBlock = Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFDDE3EA)),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack = constraints.maxWidth < 720;
+        final actions = Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () => _openSyncModeDialog(row),
+              icon: const Icon(Icons.tune_rounded, size: 18),
+              label: const Text('Edit Mode'),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AgentCircularProgressBadge(
-                  progress: row.state.progress,
-                  color: statusColor,
-                  size: 46,
-                  strokeWidth: 4,
-                ),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Progress',
-                      style: TextStyle(
-                        color: Color(0xFF667085),
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${row.state.progress}% complete',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ],
-                ),
-              ],
+            _buildSyncActionIconButton(
+              tooltip: 'Open current table data',
+              onPressed: () => _openTableDataDialog(row.table),
+              icon: Icons.table_rows_outlined,
             ),
-          );
+            _buildSyncActionIconButton(
+              tooltip: 'Download backup',
+              onPressed:
+                  canTransferBackup
+                      ? () => _exportTableBackup(row.table)
+                      : null,
+              icon: Icons.download_rounded,
+            ),
+            _buildSyncActionIconButton(
+              tooltip: 'Upload backup',
+              onPressed:
+                  canTransferBackup
+                      ? () => _importTableBackup(row.table)
+                      : null,
+              icon: Icons.upload_file_rounded,
+            ),
+            _buildSyncActionIconButton(
+              tooltip: 'Push now',
+              onPressed:
+                  canRunSync
+                      ? () => _triggerSyncNow(row.table, direction: 'upload')
+                      : null,
+              icon: Icons.cloud_upload_rounded,
+            ),
+            _buildSyncActionIconButton(
+              tooltip: 'Pull now',
+              onPressed:
+                  canRunSync
+                      ? () => _triggerSyncNow(row.table, direction: 'download')
+                      : null,
+              icon: Icons.cloud_download_rounded,
+            ),
+          ],
+        );
 
-          final message = Text(
-            row.state.message.isEmpty
-                ? 'No sync message yet.'
-                : row.state.message,
-            maxLines: stack ? 4 : 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(height: 1.35, color: Color(0xFF475467)),
-          );
+        final metrics = Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _buildSyncStatusSymbol(row.state.status, size: 26),
+            _buildSyncModeBadge(row.state.syncMode),
+            _buildCompactMetricPill(
+              label: 'Rows',
+              value: '${row.state.rowCount}',
+            ),
+            _buildCompactMetricPill(
+              label: 'Last Sync',
+              value: _formatTimestamp(row.state.lastSync),
+            ),
+            _buildCompactMetricPill(
+              label: 'Backup',
+              value: _formatBytes(row.state.snapshotBytes),
+            ),
+            _buildCompactMetricPill(
+              label: 'Enabled',
+              value: row.state.enabled ? 'Yes' : 'No',
+            ),
+          ],
+        );
 
-          if (stack) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [selectorBlock, progressBlock],
-                ),
-                const SizedBox(height: 10),
-                metrics,
-                const SizedBox(height: 10),
-                message,
-              ],
-            );
-          }
-
-          return Column(
+        final progressBlock = Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFDDE3EA)),
+          ),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        selectorBlock,
-                        const SizedBox(height: 10),
-                        metrics,
-                      ],
+                    child: Text(
+                      row.table,
+                      style: const TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  AgentStatusPill(
+                    label: '$normalizedProgress% complete',
+                    color: statusColor,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              metrics,
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: AgentProgressStrip(
+                      progress: normalizedProgress,
+                      color: statusColor,
                     ),
                   ),
                   const SizedBox(width: 12),
-                  progressBlock,
+                  Text(
+                    row.state.status,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
-              message,
+              Text(
+                message,
+                maxLines: stack ? 4 : 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(height: 1.35, color: Color(0xFF475467)),
+              ),
+            ],
+          ),
+        );
+
+        final selector = _buildSyncModeSelector(row);
+        final actionPanel = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Actions',
+              style: TextStyle(
+                color: Color(0xFF667085),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            actions,
+          ],
+        );
+
+        if (stack) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              progressBlock,
+              const SizedBox(height: 12),
+              selector,
+              const SizedBox(height: 12),
+              actionPanel,
             ],
           );
-        },
-      ),
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            progressBlock,
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: selector),
+                const SizedBox(width: 16),
+                Expanded(flex: 2, child: actionPanel),
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 
