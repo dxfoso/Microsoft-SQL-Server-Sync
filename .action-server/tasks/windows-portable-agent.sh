@@ -4,7 +4,7 @@ set -euo pipefail
 TASK_ID="windows-portable-agent"
 PORTABLE_NAME="sync_windows_agent-windows-portable"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUTPUT_DIR="$REPO_ROOT/tests/artifacts/windows_portable_agent"
+OUTPUT_DIR="$REPO_ROOT/artifacts/windows-portable-agent"
 SUMMARY_DIR="$OUTPUT_DIR"
 SUMMARY_FILE="$SUMMARY_DIR/windows-portable-agent-summary.txt"
 STATUS_JSON="$REPO_ROOT/task-status.json"
@@ -97,7 +97,7 @@ publish_success() {
   "summary": "$(json_escape "$summary")",
   "artifacts": [
     {
-      "path": "tests/artifacts/windows_portable_agent/$PORTABLE_NAME.zip",
+      "path": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip",
       "sizeBytes": $zip_size_bytes,
       "sha256": "$zip_sha256"
     }
@@ -109,14 +109,14 @@ JSON
   {
     "name": "publish portable zip",
     "status": "success",
-    "artifact": "tests/artifacts/windows_portable_agent/$PORTABLE_NAME.zip"
+    "artifact": "artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
   }
 ]
 JSON
-  printf '[1/1] success - portable Windows sync agent zip created at tests/artifacts/windows_portable_agent/%s.zip (%s bytes)\n' "$PORTABLE_NAME" "$zip_size_bytes" > "$SUMMARY_FILE"
+  printf '[1/1] success - portable Windows sync agent zip created at artifacts/windows-portable-agent/%s.zip (%s bytes)\n' "$PORTABLE_NAME" "$zip_size_bytes" > "$SUMMARY_FILE"
 
   echo "Portable Windows sync agent artifact:"
-  echo "  tests/artifacts/windows_portable_agent/$PORTABLE_NAME.zip"
+  echo "  artifacts/windows-portable-agent/$PORTABLE_NAME.zip"
   echo "  sha256: $zip_sha256"
 }
 

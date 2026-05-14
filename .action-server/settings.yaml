@@ -4,4 +4,4 @@ ignorePushPaths:
   - README.md
 favoriteArtifacts:
   windows-portable-agent:
-    - tests/artifacts/windows_portable_agent/sync_windows_agent-windows-portable.zip
+    - artifacts/windows-portable-agent/sync_windows_agent-windows-portable.zip
