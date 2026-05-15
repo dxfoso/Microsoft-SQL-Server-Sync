@@ -1891,111 +1891,256 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       table: summary.table,
     );
     final recentJobs = jobs.take(_historyLimit).toList(growable: false);
+    final searchController = TextEditingController();
+    final latestSnapshotFuture = _api.fetchLatestSnapshot(
+      clientName: entry.agent.clientName,
+      table: summary.table,
+    );
 
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        final busy = _isBackupBusy(entry.agent.clientName, summary.table);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final busy = _isBackupBusy(entry.agent.clientName, summary.table);
 
-        return Dialog(
-          insetPadding: const EdgeInsets.all(20),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 940,
-              maxHeight: MediaQuery.sizeOf(context).height * 0.84,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          entry.agent.clientName,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      _buildRoleBadge(entry.agent.isMaster),
-                      const SizedBox(width: 8),
-                      StatusBadge(
-                        label: entry.tableState.status,
-                        color: _statusColor(entry.tableState.status),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: 'Close',
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
+              return Dialog(
+                insetPadding: const EdgeInsets.all(20),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: 1180,
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.88,
                   ),
-                  const SizedBox(height: 12),
-                  _buildSelectedClientInfo(
-                    entry,
-                    tableName: summary.displayTitle,
-                    busy: busy,
-                    recentHistoryCount: recentJobs.length,
-                    totalHistoryCount: jobs.length,
-                    onDownload:
-                        () => _downloadSnapshotFile(
-                          clientName: entry.agent.clientName,
-                          table: summary.table,
-                        ),
-                    onUpload:
-                        () => _uploadSnapshotFile(
-                          clientName: entry.agent.clientName,
-                          table: summary.table,
-                        ),
-                    onPush:
-                        entry.tableState.enabled
-                            ? () => _triggerJob(
-                              clientName: entry.agent.clientName,
-                              table: summary.table,
-                              direction: 'upload',
-                            )
-                            : null,
-                    onPull:
-                        entry.tableState.enabled
-                            ? () => _triggerJob(
-                              clientName: entry.agent.clientName,
-                              table: summary.table,
-                              direction: 'download',
-                            )
-                            : null,
-                    onOpenHistory:
-                        () => _openHistoryDialog(
-                          clientName: entry.agent.clientName,
-                          table: summary.table,
-                        ),
-                  ),
-                  const SizedBox(height: 14),
-                  Expanded(
-                    child:
-                        recentJobs.isEmpty
-                            ? const EmptyStateCard(
-                              message:
-                                  'No sync jobs have been recorded yet for this client or table.',
-                            )
-                            : ListView.separated(
-                              itemCount: recentJobs.length,
-                              separatorBuilder:
-                                  (_, _) => const SizedBox(height: 6),
-                              itemBuilder:
-                                  (context, index) =>
-                                      _buildJobCard(recentJobs[index]),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${entry.agent.clientName} Details',
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleLarge
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
                             ),
+                            const SizedBox(width: 8),
+                            _buildRoleBadge(entry.agent.isMaster),
+                            const SizedBox(width: 8),
+                            StatusBadge(
+                              label: entry.tableState.status,
+                              color: _statusColor(entry.tableState.status),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              tooltip: 'Close',
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        _buildSelectedClientInfo(
+                          entry,
+                          tableName: summary.displayTitle,
+                          busy: busy,
+                          recentHistoryCount: recentJobs.length,
+                          totalHistoryCount: jobs.length,
+                          onDownload:
+                              () => _downloadSnapshotFile(
+                                clientName: entry.agent.clientName,
+                                table: summary.table,
+                              ),
+                          onUpload:
+                              () => _uploadSnapshotFile(
+                                clientName: entry.agent.clientName,
+                                table: summary.table,
+                              ),
+                          onPush:
+                              entry.tableState.enabled
+                                  ? () => _triggerJob(
+                                    clientName: entry.agent.clientName,
+                                    table: summary.table,
+                                    direction: 'upload',
+                                  )
+                                  : null,
+                          onPull:
+                              entry.tableState.enabled
+                                  ? () => _triggerJob(
+                                    clientName: entry.agent.clientName,
+                                    table: summary.table,
+                                    direction: 'download',
+                                  )
+                                  : null,
+                          onOpenHistory:
+                              () => _openHistoryDialog(
+                                clientName: entry.agent.clientName,
+                                table: summary.table,
+                              ),
+                        ),
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final stack = constraints.maxWidth < 900;
+                              final snapshotPanel =
+                                  FutureBuilder<AdminSnapshotDetail?>(
+                                    future: latestSnapshotFuture,
+                                    builder:
+                                        (context, snapshotState) =>
+                                            _buildLatestSnapshotPanel(
+                                              snapshotState: snapshotState,
+                                              searchController:
+                                                  searchController,
+                                              onSearchChanged:
+                                                  () => setDialogState(() {}),
+                                            ),
+                                  );
+                              final historyPanel = _buildRecentHistoryPanel(
+                                recentJobs,
+                              );
+
+                              if (stack) {
+                                return Column(
+                                  children: [
+                                    Expanded(flex: 3, child: snapshotPanel),
+                                    const SizedBox(height: 12),
+                                    Expanded(flex: 2, child: historyPanel),
+                                  ],
+                                );
+                              }
+
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(flex: 7, child: snapshotPanel),
+                                  const SizedBox(width: 12),
+                                  Expanded(flex: 4, child: historyPanel),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
+  }
+
+  Widget _buildLatestSnapshotPanel({
+    required AsyncSnapshot<AdminSnapshotDetail?> snapshotState,
+    required TextEditingController searchController,
+    required VoidCallback onSearchChanged,
+  }) {
+    final snapshot = snapshotState.data;
+    final filteredRows =
+        snapshot == null
+            ? const <_ScoredSnapshotRow>[]
+            : _filteredSnapshotRowsForQuery(snapshot, searchController.text);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Snapshot Data'),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            MetricPill(label: 'Rows', value: '${snapshot?.rowCount ?? 0}'),
+            MetricPill(
+              label: 'Columns',
+              value: '${snapshot?.columns.length ?? 0}',
             ),
+            MetricPill(
+              label: 'Size',
+              value: _formatBytes(snapshot?.snapshotBytes ?? 0),
+            ),
+            MetricPill(
+              label: 'Created',
+              value: _formatTimestamp(snapshot?.createdAt ?? ''),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: searchController,
+          onChanged: (_) => onSearchChanged(),
+          decoration: InputDecoration(
+            labelText: 'Search Snapshot Rows',
+            hintText: 'Search across loaded snapshot columns.',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon:
+                searchController.text.isEmpty
+                    ? null
+                    : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        searchController.clear();
+                        onSearchChanged();
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
           ),
-        );
-      },
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child:
+              snapshotState.connectionState == ConnectionState.waiting &&
+                      snapshot == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : snapshotState.hasError
+                  ? EmptyStateCard(message: snapshotState.error.toString())
+                  : snapshot == null
+                  ? const EmptyStateCard(
+                    message:
+                        'No snapshot data is stored yet for this client and table.',
+                  )
+                  : filteredRows.isEmpty
+                  ? EmptyStateCard(
+                    message:
+                        searchController.text.trim().isEmpty
+                            ? 'This snapshot has no rows.'
+                            : 'No rows matched your search. Try a broader term or clear the search box.',
+                  )
+                  : _buildSnapshotGrid(snapshot, filteredRows),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRecentHistoryPanel(List<AdminJob> recentJobs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Recent History'),
+        const SizedBox(height: 8),
+        Expanded(
+          child:
+              recentJobs.isEmpty
+                  ? const EmptyStateCard(
+                    message:
+                        'No sync jobs have been recorded yet for this client or table.',
+                  )
+                  : ListView.separated(
+                    itemCount: recentJobs.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 6),
+                    itemBuilder:
+                        (context, index) => _buildJobCard(recentJobs[index]),
+                  ),
+        ),
+      ],
     );
   }
 
@@ -3500,7 +3645,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: () => _selectClient(entry.agent.clientName),
+      onTap: () => _openClientDetailDialog(summary: summary, entry: entry),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         constraints: const BoxConstraints(minHeight: 40),

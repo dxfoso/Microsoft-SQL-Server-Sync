@@ -331,13 +331,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _defaultSyncTableState(key);
   }
 
-  void _updateSyncEnabledTable(String table, bool enabled) {
+  void _updateSyncEnabledTable(
+    String table,
+    bool enabled, {
+    String? selectedSyncMode,
+  }) {
     final syncKey = _syncTableKey(table);
     final current = _syncTableState(table, syncKey: syncKey);
     final now = DateTime.now().toIso8601String();
     final nextStatus = enabled ? 'Queued' : 'Paused';
     final syncMode = normalizeSyncMode(
-      current.syncMode,
+      selectedSyncMode ?? current.syncMode,
       fallbackIsMaster: _isMasterClient,
     );
     final syncDirection = syncDirectionForMode(syncMode);
@@ -371,6 +375,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         lastSync: enabled ? current.lastSync : now,
         progress: enabled ? 0 : current.progress,
         direction: syncDirection,
+        syncMode: syncMode,
         message:
             enabled
                 ? _isMasterClient
@@ -385,6 +390,26 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (enabled) {
       unawaited(_queueEnabledRoleJobs(forceTables: {syncKey}));
     }
+  }
+
+  Future<void> _handleSyncEnabledChange(String table, bool enabled) async {
+    if (!enabled) {
+      _updateSyncEnabledTable(table, false);
+      return;
+    }
+
+    final current = _syncTableState(table);
+    final selectedMode = await _openSyncModeDialog(
+      table: table,
+      initialMode: current.syncMode,
+      title: 'Start sync',
+      confirmLabel: 'Enable sync',
+    );
+    if (!mounted || selectedMode == null) {
+      return;
+    }
+
+    _updateSyncEnabledTable(table, true, selectedSyncMode: selectedMode);
   }
 
   SyncTableState _defaultSyncTableState(String table) {
@@ -424,6 +449,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         changed = true;
       }
     }
+    if (changed) {
+      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+    }
+  }
+
+  void _applyTableRowCounts({
+    required String database,
+    required Map<String, int> rowCounts,
+  }) {
+    if (rowCounts.isEmpty) {
+      return;
+    }
+
+    final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+    var changed = false;
+    for (final entry in rowCounts.entries) {
+      final syncKey = _syncTableKey(entry.key, database: database);
+      final current = _syncTableState(entry.key, syncKey: syncKey);
+      if (current.rowCount == entry.value) {
+        continue;
+      }
+      nextTables[syncKey] = current.copyWith(rowCount: entry.value);
+      changed = true;
+    }
+
     if (changed) {
       _replaceSyncState(_syncState.copyWith(tables: nextTables));
     }
@@ -583,6 +633,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     });
     _ensureSyncTablesLoaded(result.values);
 
+    final rowCounts = await _queryTableRowCounts(
+      profile: profile,
+      database: database,
+      tables: result.values,
+    );
+    if (!mounted) {
+      return;
+    }
+    _applyTableRowCounts(database: database, rowCounts: rowCounts);
+
     if (autoLoadRows && selectedTable != null) {
       await _loadTableRows(
         profile: profile,
@@ -693,6 +753,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _hasMoreRows = result.hasMoreRows;
       _totalTableRows = result.totalRows;
     });
+    _applyTableRowCounts(
+      database: database,
+      rowCounts: {table: result.totalRows},
+    );
     _refreshTableDataDialog();
   }
 
@@ -994,6 +1058,99 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (current.enabled) {
       unawaited(_queueEnabledRoleJobs(forceTables: {syncKey}));
     }
+  }
+
+  Future<void> _showSyncModeEditDialog(_SyncTableRowData row) async {
+    final selectedMode = await _openSyncModeDialog(
+      table: row.table,
+      initialMode: row.state.syncMode,
+      title: 'Sync type',
+      confirmLabel: 'Apply type',
+    );
+    if (!mounted || selectedMode == null) {
+      return;
+    }
+
+    _updateTableSyncMode(row.table, selectedMode);
+  }
+
+  Future<String?> _openSyncModeDialog({
+    required String table,
+    required String initialMode,
+    required String title,
+    required String confirmLabel,
+  }) {
+    const modes = [kSyncModeMaster, kSyncModeClient, kSyncModeMasterMix];
+    var selectedMode = normalizeSyncMode(
+      initialMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(title),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      table,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    ...modes.map(
+                      (mode) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _buildSyncModeChoice(
+                          mode: mode,
+                          selected: selectedMode == mode,
+                          onTap: () {
+                            setDialogState(() {
+                              selectedMode = mode;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Choose the sync behavior before this table starts. You can change it later from the three-dot menu.',
+                      style: TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(selectedMode),
+                  child: Text(confirmLabel),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Color _statusColor(String status) {
@@ -2692,6 +2849,75 @@ FROM sys.tables;
     return counts;
   }
 
+  Future<Map<String, int>> _queryTableRowCounts({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required List<String> tables,
+  }) async {
+    if (database.isEmpty || tables.isEmpty) {
+      return const <String, int>{};
+    }
+
+    final counts = <String, int>{};
+    const chunkSize = 150;
+    for (var offset = 0; offset < tables.length; offset += chunkSize) {
+      final chunk = tables.skip(offset).take(chunkSize).toList(growable: false);
+      final requestedValues = chunk
+          .map((tableName) {
+            final parts = _splitQualifiedName(tableName);
+            return '(N\'${_escapeSqlLiteral(parts.schema)}\', '
+                'N\'${_escapeSqlLiteral(parts.table)}\', '
+                'N\'${_escapeSqlLiteral(tableName)}\')';
+          })
+          .join(',\n');
+
+      final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+WITH requested(schema_name, table_name, display_name) AS (
+  SELECT *
+  FROM (VALUES
+$requestedValues
+  ) AS v(schema_name, table_name, display_name)
+)
+SELECT
+  r.display_name,
+  CONVERT(varchar(40), COALESCE(SUM(ps.row_count), 0)) AS row_count
+FROM requested AS r
+LEFT JOIN sys.schemas AS s ON s.name = r.schema_name
+LEFT JOIN sys.tables AS t
+  ON t.name = r.table_name AND t.schema_id = s.schema_id
+LEFT JOIN sys.dm_db_partition_stats AS ps
+  ON ps.object_id = t.object_id AND ps.index_id IN (0, 1)
+GROUP BY r.display_name
+ORDER BY r.display_name;
+''';
+      final processResult = await _runSqlCmd(
+        profile: profile,
+        database: database,
+        query: query,
+      );
+      if (processResult == null || processResult.exitCode != 0) {
+        continue;
+      }
+
+      final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        if (_isSkippableOutputLine(trimmedLine)) {
+          continue;
+        }
+        final parts = _splitRowValues(trimmedLine);
+        if (parts.length < 2) {
+          continue;
+        }
+        counts[parts[0]] = int.tryParse(parts[1]) ?? 0;
+      }
+    }
+
+    return counts;
+  }
+
   Future<_TableRowsResult> _queryTableRows({
     required _SqlConnectionProfile profile,
     required String database,
@@ -4069,7 +4295,7 @@ WHEN NOT MATCHED BY TARGET THEN
             if (value == null) {
               return;
             }
-            _updateSyncEnabledTable(row.table, value);
+            unawaited(_handleSyncEnabledChange(row.table, value));
           },
         ),
       ),
@@ -4232,6 +4458,8 @@ WHEN NOT MATCHED BY TARGET THEN
                     label: '$normalizedProgress%',
                     color: statusColor,
                   ),
+                  const SizedBox(width: 6),
+                  _buildSyncDetailMenu(row),
                 ],
               ),
               const SizedBox(height: 10),
@@ -4267,7 +4495,7 @@ WHEN NOT MATCHED BY TARGET THEN
                 ? () => _triggerSyncNow(row.table, direction: 'download')
                 : null,
       ),
-      _buildModeDropdownControl(row),
+      _buildModeReadOnlyControl(row),
       _buildToolbarStat(
         tooltip: 'Rows',
         icon: Icons.format_list_numbered_rounded,
@@ -4342,7 +4570,7 @@ WHEN NOT MATCHED BY TARGET THEN
               if (value == null) {
                 return;
               }
-              _updateSyncEnabledTable(row.table, value);
+              unawaited(_handleSyncEnabledChange(row.table, value));
             },
           ),
         ),
@@ -4350,103 +4578,183 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
-  Widget _buildModeDropdownControl(_SyncTableRowData row) {
-    final value = normalizeSyncMode(
-      row.state.syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
-    const modes = [kSyncModeMaster, kSyncModeClient, kSyncModeMasterMix];
-    final color = _syncModeColor(value);
-
+  Widget _buildSyncDetailMenu(_SyncTableRowData row) {
     return Tooltip(
-      message: _syncModeDescription(value),
+      message: 'More table actions',
       child: PopupMenuButton<String>(
         tooltip: '',
-        initialValue: value,
-        onSelected: (mode) => _updateTableSyncMode(row.table, mode),
+        onSelected: (value) {
+          if (value == 'syncType') {
+            unawaited(_showSyncModeEditDialog(row));
+          }
+        },
         itemBuilder:
-            (context) => modes
-                .map(
-                  (mode) => PopupMenuItem<String>(
-                    value: mode,
-                    child: _buildModeMenuItem(mode),
-                  ),
-                )
-                .toList(growable: false),
-        child: Container(
-          height: 42,
-          constraints: const BoxConstraints(minWidth: 196),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withValues(alpha: 0.18)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(_syncModeIcon(value), size: 17, color: color),
-              const SizedBox(width: 8),
-              Text(
-                _syncModeLabel(value),
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
+            (context) => [
+              PopupMenuItem<String>(
+                value: 'syncType',
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.tune_rounded,
+                      size: 18,
+                      color: Color(0xFF475467),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Change sync type',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _syncModeLabel(row.state.syncMode),
+                            style: const TextStyle(
+                              color: Color(0xFF667085),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: color),
             ],
+        child: Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: const Color(0xFFDDE3EA)),
+          ),
+          child: const Icon(
+            Icons.more_vert_rounded,
+            size: 20,
+            color: Color(0xFF475467),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildModeMenuItem(String mode) {
-    final color = _syncModeColor(mode);
-    return Row(
-      children: [
-        Container(
-          width: 30,
-          height: 30,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Icon(_syncModeIcon(mode), size: 17, color: color),
+  Widget _buildModeReadOnlyControl(_SyncTableRowData row) {
+    final value = normalizeSyncMode(
+      row.state.syncMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    final color = _syncModeColor(value);
+
+    return Tooltip(
+      message: '${_syncModeDescription(value)} Change from the three-dot menu.',
+      child: Container(
+        height: 42,
+        constraints: const BoxConstraints(minWidth: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.18)),
         ),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 190,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_syncModeIcon(value), size: 17, color: color),
+            const SizedBox(width: 8),
+            Text(
+              _syncModeLabel(value),
+              style: TextStyle(
+                color: color,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.lock_outline_rounded, size: 15, color: color),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSyncModeChoice({
+    required String mode,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final color = _syncModeColor(mode);
+    return Material(
+      color: selected ? color.withValues(alpha: 0.11) : const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color:
+                  selected
+                      ? color.withValues(alpha: 0.55)
+                      : const Color(0xFFDDE3EA),
+            ),
+          ),
+          child: Row(
             children: [
-              Text(
-                _syncModeLabel(mode),
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(_syncModeIcon(mode), size: 18, color: color),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _syncModeLabel(mode),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _syncModeDescription(mode),
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                _syncModeDescription(mode),
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF667085),
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                ),
+              const SizedBox(width: 10),
+              Icon(
+                selected
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                size: 20,
+                color: selected ? color : const Color(0xFF98A2B3),
               ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 
