@@ -1,7 +1,5 @@
 displayName: Microsoft SQL Server Sync
 allowForkPullRequests: false
-ignorePushPaths:
-  - README.md
 favoriteArtifacts:
   windows-portable-agent:
     - artifacts/windows-portable-agent/sync_windows_agent-windows-portable.zip
