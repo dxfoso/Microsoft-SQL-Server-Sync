@@ -1947,32 +1947,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '${entry.agent.clientName} Details',
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleLarge
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            _buildRoleBadge(entry.agent.isMaster),
-                            const SizedBox(width: 8),
-                            StatusBadge(
-                              label: entry.tableState.status,
-                              color: _statusColor(entry.tableState.status),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              tooltip: 'Close',
-                              onPressed: () => Navigator.of(context).pop(),
-                              icon: const Icon(Icons.close),
-                            ),
-                          ],
+                        _buildClientDetailDialogHeader(
+                          summary: summary,
+                          entry: entry,
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 8),
                         _buildSelectedClientInfo(
                           entry,
                           tableName: summary.displayTitle,
@@ -3557,10 +3536,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             _formatTimestamp(_tableTimestampToken(tableState)),
           ),
           MapEntry('Rows', '${tableState.rowCount}'),
-          MapEntry('Backup Size', _formatBytes(tableState.snapshotBytes)),
-          MapEntry('Agent', agent.isOnline ? 'Online' : 'Offline'),
-          MapEntry('SQL', agent.sqlConnected ? 'Connected' : 'Disconnected'),
-          MapEntry('History', '$recentHistoryCount of $totalHistoryCount'),
+          MapEntry('Backup', _formatBytes(tableState.snapshotBytes)),
+          MapEntry('History', '$recentHistoryCount / $totalHistoryCount'),
         ];
         final actions = <Widget>[
           _buildDetailActionButton(
@@ -3594,50 +3571,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (stackIdentity)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildDetailIdentityBlock(context, tableName, agent),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      StatusBadge(
-                        label: tableState.status,
-                        color: _statusColor(tableState.status),
-                      ),
-                      _buildCompactTag(
-                        label: 'Client',
-                        value: agent.clientName,
-                      ),
-                    ],
-                  ),
-                ],
-              )
+              _buildDetailIdentityBlock(context, tableName, agent)
             else
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: _buildDetailIdentityBlock(context, tableName, agent),
-                  ),
-                  const SizedBox(width: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      StatusBadge(
-                        label: tableState.status,
-                        color: _statusColor(tableState.status),
-                      ),
-                      _buildCompactTag(
-                        label: 'Client',
-                        value: agent.clientName,
-                      ),
-                    ],
                   ),
                 ],
               ),
@@ -3709,21 +3649,149 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget _buildClientDetailDialogHeader({
+    required _TableAggregateSummary summary,
+    required _TableClientEntry entry,
+  }) {
+    final tableState = entry.tableState;
+    final statusColor = _statusColor(tableState.status);
+    final lastSync = _formatTimestamp(_tableTimestampToken(tableState));
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFD9E2EC)),
+            ),
+            child: const Icon(
+              Icons.computer_rounded,
+              size: 18,
+              color: Color(0xFF2563EB),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  entry.agent.clientName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${tableState.status} - ${summary.displayTitle} - Last sync $lastSync',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF667085),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Close',
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDetailMetadataFooter(List<MapEntry<String, String>> items) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFFFCFCFD),
         borderRadius: BorderRadius.circular(9),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: items
-            .map((item) => _buildCompactTag(label: item.key, value: item.value))
-            .toList(growable: false),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final itemWidth =
+              constraints.maxWidth < 520
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 36) / 4;
+          return Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            children: items
+                .map((item) => _buildDetailMetadataText(item, width: itemWidth))
+                .toList(growable: false),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDetailMetadataText(
+    MapEntry<String, String> item, {
+    required double width,
+  }) {
+    return SizedBox(
+      width: width,
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '${item.key}: ',
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            TextSpan(
+              text: item.value,
+              style: const TextStyle(
+                color: Color(0xFF101828),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 11.5, height: 1.25),
       ),
     );
   }
@@ -3776,38 +3844,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         visualDensity: VisualDensity.compact,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-    );
-  }
-
-  Widget _buildCompactTag({required String label, required String value}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: '$label ',
-              style: const TextStyle(
-                color: Color(0xFF667085),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            TextSpan(
-              text: value,
-              style: const TextStyle(
-                color: Color(0xFF101828),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-        style: const TextStyle(fontSize: 11.5),
       ),
     );
   }

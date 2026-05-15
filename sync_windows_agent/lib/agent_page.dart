@@ -3309,7 +3309,7 @@ ORDER BY [__sync_agent_row_number];
 
     try {
       return await Process.run(
-        'sqlcmd',
+        _sqlCmdExecutable(),
         arguments,
         runInShell: false,
         stdoutEncoding: SystemEncoding(),
@@ -3318,6 +3318,48 @@ ORDER BY [__sync_agent_row_number];
     } on ProcessException {
       return null;
     }
+  }
+
+  String _sqlCmdExecutable() {
+    const executableName = 'sqlcmd';
+    if (!Platform.isWindows) {
+      return executableName;
+    }
+
+    final pathEnvironment = Platform.environment['PATH'] ?? '';
+    for (final directory in pathEnvironment.split(';')) {
+      final normalizedDirectory = directory.trim();
+      if (normalizedDirectory.isEmpty) {
+        continue;
+      }
+      final candidate = File(
+        '$normalizedDirectory${Platform.pathSeparator}SQLCMD.EXE',
+      );
+      if (candidate.existsSync()) {
+        return candidate.path;
+      }
+    }
+
+    final programFiles = <String>[
+      Platform.environment['ProgramFiles'] ?? r'C:\Program Files',
+      Platform.environment['ProgramFiles(x86)'] ?? r'C:\Program Files (x86)',
+    ];
+    const odbcVersions = ['180', '170', '160', '150', '130', '110'];
+    for (final base in programFiles) {
+      for (final version in odbcVersions) {
+        final candidate = File(
+          '$base${Platform.pathSeparator}Microsoft SQL Server'
+          '${Platform.pathSeparator}Client SDK${Platform.pathSeparator}ODBC'
+          '${Platform.pathSeparator}$version${Platform.pathSeparator}Tools'
+          '${Platform.pathSeparator}Binn${Platform.pathSeparator}SQLCMD.EXE',
+        );
+        if (candidate.existsSync()) {
+          return candidate.path;
+        }
+      }
+    }
+
+    return executableName;
   }
 
   String _quoteIdentifier(String value) => '[${value.replaceAll(']', ']]')}]';
