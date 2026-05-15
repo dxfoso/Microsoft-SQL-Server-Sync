@@ -3198,16 +3198,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   tooltip: 'Clients with synced data',
                   icon: Icons.sync_rounded,
                   value: '$syncedClients/${summary.clientCount}',
+                  onPressed:
+                      () => _openTableMetricDialog(
+                        summary,
+                        _TableMetricKind.synced,
+                      ),
                 ),
                 _buildTableListMetric(
                   tooltip: 'Clients with merged data',
                   icon: Icons.merge_type_rounded,
                   value: '$mergedClients',
+                  onPressed:
+                      () => _openTableMetricDialog(
+                        summary,
+                        _TableMetricKind.merged,
+                      ),
                 ),
                 _buildTableListMetric(
                   tooltip: 'Clients that tried to sync this table',
                   icon: Icons.history_rounded,
                   value: '$attemptedClients',
+                  onPressed:
+                      () => _openTableMetricDialog(
+                        summary,
+                        _TableMetricKind.attempted,
+                      ),
                 ),
                 _buildProgressStatusBadge(progress, statusColor),
                 _buildOpenTableDataButton(summary),
@@ -3331,32 +3346,347 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required String tooltip,
     required IconData icon,
     required String value,
+    VoidCallback? onPressed,
   }) {
+    final content = Container(
+      constraints: const BoxConstraints(minHeight: 26),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: onPressed == null ? Colors.white : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color:
+              onPressed == null
+                  ? const Color(0xFFDDE3EA)
+                  : const Color(0xFFC9D5E1),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF667085)),
+          const SizedBox(width: 5),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Color(0xFF101828),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+
     return Tooltip(
       message: tooltip,
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 26),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFDDE3EA)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: const Color(0xFF667085)),
-            const SizedBox(width: 5),
-            Text(
-              value,
-              style: const TextStyle(
-                color: Color(0xFF101828),
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
+      child:
+          onPressed == null
+              ? content
+              : Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: onPressed,
+                  child: content,
+                ),
+              ),
+    );
+  }
+
+  Future<void> _openTableMetricDialog(
+    _TableAggregateSummary summary,
+    _TableMetricKind kind,
+  ) async {
+    final data = _tableMetricDialogData(summary, kind);
+    await showDialog<void>(
+      context: context,
+      builder:
+          (context) => Dialog(
+            insetPadding: const EdgeInsets.all(20),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 620,
+                maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildMetricDialogHeader(data),
+                    const SizedBox(height: 10),
+                    Text(
+                      data.meaning,
+                      style: const TextStyle(
+                        color: Color(0xFF475467),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child:
+                          data.clients.isEmpty
+                              ? EmptyStateCard(message: data.emptyMessage)
+                              : ListView.separated(
+                                itemCount: data.clients.length,
+                                separatorBuilder:
+                                    (_, _) => const SizedBox(height: 6),
+                                itemBuilder:
+                                    (context, index) => _buildMetricClientTile(
+                                      data.clients[index],
+                                    ),
+                              ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ],
-        ),
+          ),
+    );
+  }
+
+  _TableMetricDialogData _tableMetricDialogData(
+    _TableAggregateSummary summary,
+    _TableMetricKind kind,
+  ) {
+    switch (kind) {
+      case _TableMetricKind.synced:
+        final clients =
+            summary.clients
+                .where((entry) => _tableStateHasSynced(entry.tableState))
+                .map(
+                  (entry) => _TableMetricClientInfo(
+                    name: entry.agent.clientName,
+                    subtitle:
+                        'Last sync ${_formatTimestamp(_tableTimestampToken(entry.tableState))}',
+                    detail:
+                        'Rows ${entry.tableState.rowCount} - ${entry.tableState.status}',
+                    active: entry.agent.isOnline,
+                  ),
+                )
+                .toList()
+              ..sort((left, right) => left.name.compareTo(right.name));
+        return _TableMetricDialogData(
+          title: 'Synced Clients',
+          tableName: summary.displayTitle,
+          icon: Icons.sync_rounded,
+          countText: '${clients.length} / ${summary.clientCount}',
+          meaning:
+              'This number counts clients that already have sync data for this table. A client is counted when it has a last sync time, snapshot id, or snapshot timestamp.',
+          emptyMessage: 'No client has synced this table yet.',
+          clients: clients,
+        );
+      case _TableMetricKind.merged:
+        final clients =
+            summary.clients
+                .where((entry) => _tableStateHasMerged(entry.tableState))
+                .map((entry) {
+                  final sources =
+                      entry.tableState.mergedSnapshotSources.keys
+                          .where((name) => name.trim().isNotEmpty)
+                          .toList();
+                  sources.sort();
+                  return _TableMetricClientInfo(
+                    name: entry.agent.clientName,
+                    subtitle:
+                        sources.isEmpty
+                            ? 'Merged mode with synced table data'
+                            : 'Merged from ${sources.join(', ')}',
+                    detail:
+                        'Mode ${entry.tableState.syncMode.toUpperCase()} - ${entry.tableState.status}',
+                    active: entry.agent.isOnline,
+                  );
+                })
+                .toList()
+              ..sort((left, right) => left.name.compareTo(right.name));
+        return _TableMetricDialogData(
+          title: 'Merged Clients',
+          tableName: summary.displayTitle,
+          icon: Icons.merge_type_rounded,
+          countText: '${clients.length}',
+          meaning:
+              'This number counts clients whose table data has merged master snapshot sources, or clients in merge mode that already synced this table.',
+          emptyMessage: 'No client has merged data for this table yet.',
+          clients: clients,
+        );
+      case _TableMetricKind.attempted:
+        _ensureDerivedState(_state);
+        final grouped = <String, List<AdminJob>>{};
+        for (final job
+            in _derivedJobsByTable[summary.table] ?? const <AdminJob>[]) {
+          final name = job.clientName.trim();
+          if (name.isEmpty) {
+            continue;
+          }
+          grouped.putIfAbsent(name, () => <AdminJob>[]).add(job);
+        }
+        final clients =
+            grouped.entries.map((entry) {
+                final jobs =
+                    entry.value..sort(
+                      (left, right) => (right.completedAt ?? right.updatedAt)
+                          .compareTo(left.completedAt ?? left.updatedAt),
+                    );
+                final latest = jobs.first;
+                _TableClientEntry? agent;
+                for (final client in summary.clients) {
+                  if (client.agent.clientName == entry.key) {
+                    agent = client;
+                    break;
+                  }
+                }
+                return _TableMetricClientInfo(
+                  name: entry.key,
+                  subtitle:
+                      '${jobs.length} sync ${jobs.length == 1 ? 'attempt' : 'attempts'}',
+                  detail:
+                      'Last ${latest.direction.toUpperCase()} - ${latest.status.toUpperCase()} - ${_formatTimestamp(latest.completedAt ?? latest.updatedAt)}',
+                  active: agent?.agent.isOnline ?? false,
+                );
+              }).toList()
+              ..sort((left, right) => left.name.compareTo(right.name));
+        return _TableMetricDialogData(
+          title: 'Sync Attempts',
+          tableName: summary.displayTitle,
+          icon: Icons.history_rounded,
+          countText: '${clients.length}',
+          meaning:
+              'This number counts unique clients that have at least one sync job recorded for this table. Multiple jobs from the same client count as one client here.',
+          emptyMessage: 'No client has tried to sync this table yet.',
+          clients: clients,
+        );
+    }
+  }
+
+  Widget _buildMetricDialogHeader(_TableMetricDialogData data) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: const Color(0xFFD9E2EC)),
+            ),
+            child: Icon(data.icon, size: 17, color: const Color(0xFF0F766E)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${data.title} (${data.countText})',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  data.tableName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Close',
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricClientTile(_TableMetricClientInfo client) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color:
+                  client.active
+                      ? const Color(0xFF16A34A)
+                      : const Color(0xFF94A3B8),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  client.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  client.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF475467),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  client.detail,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 11.5,
+                    height: 1.25,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3565,6 +3895,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             icon: Icons.history_rounded,
             onPressed: onOpenHistory,
           ),
+          _buildDetailActionButton(
+            label: 'Details',
+            icon: Icons.info_outline_rounded,
+            onPressed:
+                () => _openClientMetadataDialog(
+                  title: agent.clientName,
+                  subtitle: tableName,
+                  items: footerItems,
+                ),
+          ),
         ];
 
         return Column(
@@ -3641,11 +3981,104 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 ],
               ),
             ),
-            const SizedBox(height: 6),
-            _buildDetailMetadataFooter(footerItems),
           ],
         );
       },
+    );
+  }
+
+  Future<void> _openClientMetadataDialog({
+    required String title,
+    required String subtitle,
+    required List<MapEntry<String, String>> items,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder:
+          (context) => Dialog(
+            insetPadding: const EdgeInsets.all(20),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 540),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(9),
+                              border: Border.all(
+                                color: const Color(0xFFD9E2EC),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.info_outline_rounded,
+                              size: 17,
+                              color: Color(0xFF0F766E),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFF0F172A),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  subtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFF667085),
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Close',
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _buildDetailMetadataFooter(items),
+                  ],
+                ),
+              ),
+            ),
+          ),
     );
   }
 
@@ -5214,6 +5647,42 @@ class _ScoredTableSummary {
 
   final _TableAggregateSummary summary;
   final double score;
+}
+
+enum _TableMetricKind { synced, merged, attempted }
+
+class _TableMetricDialogData {
+  const _TableMetricDialogData({
+    required this.title,
+    required this.tableName,
+    required this.icon,
+    required this.countText,
+    required this.meaning,
+    required this.emptyMessage,
+    required this.clients,
+  });
+
+  final String title;
+  final String tableName;
+  final IconData icon;
+  final String countText;
+  final String meaning;
+  final String emptyMessage;
+  final List<_TableMetricClientInfo> clients;
+}
+
+class _TableMetricClientInfo {
+  const _TableMetricClientInfo({
+    required this.name,
+    required this.subtitle,
+    required this.detail,
+    required this.active,
+  });
+
+  final String name;
+  final String subtitle;
+  final String detail;
+  final bool active;
 }
 
 class _ScoredSnapshotRow {
