@@ -2056,6 +2056,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       clientName: clientName,
       table: summary.table,
     );
+    final masterSnapshotsFuture = _loadLatestMasterSnapshotsForTable(
+      summary.table,
+    );
 
     try {
       await showDialog<void>(
@@ -2138,6 +2141,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                       searchController: searchController,
                                       onSearchChanged:
                                           () => setDialogState(() {}),
+                                      rowMasterSnapshotsFuture:
+                                          masterSnapshotsFuture,
                                     ),
                           ),
                         ),
@@ -2159,6 +2164,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required AsyncSnapshot<AdminSnapshotDetail?> snapshotState,
     required TextEditingController searchController,
     required VoidCallback onSearchChanged,
+    Future<List<AdminSnapshotDetail>>? rowMasterSnapshotsFuture,
   }) {
     final snapshot = snapshotState.data;
     final filteredRows =
@@ -2231,7 +2237,26 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             ? 'This snapshot has no rows.'
                             : 'No rows matched your search. Try a broader term or clear the search box.',
                   )
-                  : _buildSnapshotGrid(snapshot, filteredRows),
+                  : rowMasterSnapshotsFuture == null
+                  ? _buildSnapshotGrid(snapshot, filteredRows)
+                  : FutureBuilder<List<AdminSnapshotDetail>>(
+                    future: rowMasterSnapshotsFuture,
+                    builder: (context, masterState) {
+                      final rowMasterCounts =
+                          masterState.hasData
+                              ? _masterRowCountsForSnapshot(
+                                snapshot,
+                                masterState.data!,
+                              )
+                              : null;
+                      return _buildSnapshotGrid(
+                        snapshot,
+                        filteredRows,
+                        showMasterMatchColumn: true,
+                        rowMasterCounts: rowMasterCounts,
+                      );
+                    },
+                  ),
         ),
       ],
     );
@@ -4468,9 +4493,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildSnapshotGrid(
     AdminSnapshotDetail snapshot,
-    List<_ScoredSnapshotRow> filteredRows,
-  ) {
+    List<_ScoredSnapshotRow> filteredRows, {
+    bool showMasterMatchColumn = false,
+    Map<String, int>? rowMasterCounts,
+  }) {
     const rowNumberWidth = 72.0;
+    const masterCountWidth = 104.0;
     const cellWidth = 220.0;
 
     return LayoutBuilder(
@@ -4481,7 +4509,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 : MediaQuery.sizeOf(context).width;
         final totalWidth = math.max(
           panelWidth,
-          rowNumberWidth + (snapshot.columns.length * cellWidth),
+          rowNumberWidth +
+              (showMasterMatchColumn ? masterCountWidth : 0) +
+              (snapshot.columns.length * cellWidth),
         );
         final panelHeight =
             constraints.maxHeight.isFinite
@@ -4508,6 +4538,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         _buildSnapshotHeaderCell('#', rowNumberWidth),
+                        if (showMasterMatchColumn)
+                          _buildSnapshotHeaderCell('Masters', masterCountWidth),
                         ...snapshot.columns.map(
                           (column) =>
                               _buildSnapshotHeaderCell(column, cellWidth),
@@ -4525,8 +4557,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             row: match.row,
                             rowNumber: match.originalIndex + 1,
                             rowNumberWidth: rowNumberWidth,
+                            masterCountWidth: masterCountWidth,
                             cellWidth: cellWidth,
                             alternate: index.isOdd,
+                            showMasterMatchColumn: showMasterMatchColumn,
+                            rowMasterCount:
+                                rowMasterCounts?[_snapshotRowSignature(
+                                  snapshot.columns,
+                                  match.row,
+                                )],
                           );
                         },
                       ),
@@ -4563,8 +4602,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required Map<String, String?> row,
     required int rowNumber,
     required double rowNumberWidth,
+    required double masterCountWidth,
     required double cellWidth,
     required bool alternate,
+    bool showMasterMatchColumn = false,
+    int? rowMasterCount,
   }) {
     return Material(
       color: Colors.transparent,
@@ -4585,6 +4627,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               alternate: alternate,
               alignCenter: true,
             ),
+            if (showMasterMatchColumn)
+              _buildSnapshotBodyCell(
+                rowMasterCount == null ? '...' : '$rowMasterCount',
+                masterCountWidth,
+                alternate: alternate,
+                alignCenter: true,
+              ),
             ...columns.map(
               (column) => _buildSnapshotBodyCell(
                 row[column] ?? 'NULL',
@@ -4971,7 +5020,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       final isSelectedSource = snapshot.id == sourceSnapshot.id;
       final hasMatchingRow = snapshot.rows.any(
         (candidateRow) =>
-            _snapshotRowSignature(snapshot.columns, candidateRow) == signature,
+            _snapshotRowSignature(sourceSnapshot.columns, candidateRow) ==
+            signature,
       );
       if (!isSelectedSource && !hasMatchingRow) {
         continue;
@@ -5007,6 +5057,83 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return right.snapshot.createdAt.compareTo(left.snapshot.createdAt);
     });
     return attempts;
+  }
+
+  Future<List<AdminSnapshotDetail>> _loadLatestMasterSnapshotsForTable(
+    String table,
+  ) async {
+    final state = _state;
+    if (state == null) {
+      return const [];
+    }
+
+    final masterNames =
+        state.agents
+            .where((agent) => agent.isMaster)
+            .map((agent) => agent.clientName)
+            .toSet();
+    final summaries = state.snapshots
+        .where(
+          (snapshot) =>
+              snapshot.table == table &&
+              masterNames.contains(snapshot.clientName),
+        )
+        .toList(growable: false);
+    final seenIds = <String>{};
+    final loaded = await Future.wait(
+      summaries.where((snapshot) => seenIds.add(snapshot.id)).map((
+        snapshot,
+      ) async {
+        try {
+          return await _api.fetchSnapshotById(snapshot.id);
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+    return loaded.whereType<AdminSnapshotDetail>().toList(growable: false);
+  }
+
+  Map<String, int> _masterRowCountsForSnapshot(
+    AdminSnapshotDetail sourceSnapshot,
+    List<AdminSnapshotDetail> masterSnapshots,
+  ) {
+    final snapshots = <AdminSnapshotDetail>[...masterSnapshots];
+    if (_isMasterClientName(sourceSnapshot.clientName) &&
+        !snapshots.any((snapshot) => snapshot.id == sourceSnapshot.id)) {
+      snapshots.add(sourceSnapshot);
+    }
+
+    final counts = <String, int>{};
+    for (final snapshot in snapshots) {
+      if (snapshot.table != sourceSnapshot.table ||
+          !_isMasterClientName(snapshot.clientName)) {
+        continue;
+      }
+      final uniqueRowsInMaster = <String>{};
+      for (final row in snapshot.rows) {
+        uniqueRowsInMaster.add(
+          _snapshotRowSignature(sourceSnapshot.columns, row),
+        );
+      }
+      for (final signature in uniqueRowsInMaster) {
+        counts[signature] = (counts[signature] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  bool _isMasterClientName(String clientName) {
+    final state = _state;
+    if (state == null) {
+      return false;
+    }
+    for (final agent in state.agents) {
+      if (agent.clientName == clientName) {
+        return agent.isMaster;
+      }
+    }
+    return false;
   }
 
   List<String> _clientsUsingMasterSnapshot(AdminSnapshotDetail snapshot) {
