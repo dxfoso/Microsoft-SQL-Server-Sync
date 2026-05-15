@@ -1578,6 +1578,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Future<void> _openHistoryDialog({
     required String clientName,
     required String table,
+    String? backLabel,
   }) async {
     _selectClient(clientName);
     final jobs = _jobsForClientAndTable(clientName: clientName, table: table);
@@ -1593,6 +1594,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             builder: (context, setDialogState) {
               final job = selectedJob;
               final showingData = job != null;
+              final canGoBackToDetails =
+                  !showingData && (backLabel?.trim().isNotEmpty ?? false);
 
               return Dialog(
                 insetPadding: const EdgeInsets.all(20),
@@ -1608,10 +1611,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       children: [
                         Row(
                           children: [
-                            if (showingData) ...[
+                            if (showingData || canGoBackToDetails) ...[
                               IconButton(
-                                tooltip: 'Back to history',
+                                tooltip:
+                                    showingData
+                                        ? 'Back to history'
+                                        : backLabel!.trim(),
                                 onPressed: () {
+                                  if (!showingData) {
+                                    Navigator.of(context).pop();
+                                    return;
+                                  }
                                   setDialogState(() {
                                     selectedJob = null;
                                     selectedSnapshotFuture = null;
@@ -1999,6 +2009,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               () => _openHistoryDialog(
                                 clientName: entry.agent.clientName,
                                 table: summary.table,
+                                backLabel: 'Back to details',
                               ),
                         ),
                         const SizedBox(height: 14),
@@ -3530,10 +3541,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 ? constraints.maxWidth
                 : MediaQuery.sizeOf(context).width;
         final stackIdentity = width < 760;
-        final metaItems = <MapEntry<String, String>>[
-          MapEntry('Client', agent.clientName),
+        final footerItems = <MapEntry<String, String>>[
           MapEntry('Role', _roleLabel(agent.isMaster)),
-          MapEntry('Client Status', agent.isOnline ? 'Online' : 'Offline'),
+          MapEntry(
+            'Flow',
+            tableState.enabled
+                ? (agent.isMaster ? 'Push source' : 'Pull target')
+                : 'Disabled',
+          ),
+          MapEntry('Mode', tableState.syncMode.toUpperCase()),
+          MapEntry('Direction', tableState.direction.toUpperCase()),
           MapEntry('Database', agent.database),
           MapEntry(
             'Last Sync',
@@ -3541,14 +3558,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
           MapEntry('Rows', '${tableState.rowCount}'),
           MapEntry('Backup Size', _formatBytes(tableState.snapshotBytes)),
-          MapEntry('Direction', tableState.direction.toUpperCase()),
-          MapEntry('Mode', tableState.syncMode.toUpperCase()),
-          MapEntry(
-            'Flow',
-            tableState.enabled
-                ? (agent.isMaster ? 'Push source' : 'Pull target')
-                : 'Disabled',
-          ),
+          MapEntry('Agent', agent.isOnline ? 'Online' : 'Offline'),
+          MapEntry('SQL', agent.sqlConnected ? 'Connected' : 'Disconnected'),
+          MapEntry('History', '$recentHistoryCount of $totalHistoryCount'),
         ];
         final actions = <Widget>[
           _buildDetailActionButton(
@@ -3592,19 +3604,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _buildRoleBadge(agent.isMaster),
                       StatusBadge(
                         label: tableState.status,
                         color: _statusColor(tableState.status),
                       ),
                       _buildCompactTag(
-                        label: 'SQL',
-                        value:
-                            agent.sqlConnected ? 'Connected' : 'Disconnected',
-                      ),
-                      _buildCompactTag(
-                        label: 'History',
-                        value: '$recentHistoryCount of $totalHistoryCount',
+                        label: 'Client',
+                        value: agent.clientName,
                       ),
                     ],
                   ),
@@ -3623,28 +3629,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _buildRoleBadge(agent.isMaster),
                       StatusBadge(
                         label: tableState.status,
                         color: _statusColor(tableState.status),
                       ),
                       _buildCompactTag(
-                        label: 'SQL',
-                        value:
-                            agent.sqlConnected ? 'Connected' : 'Disconnected',
-                      ),
-                      _buildCompactTag(
-                        label: 'History',
-                        value: '$recentHistoryCount of $totalHistoryCount',
+                        label: 'Client',
+                        value: agent.clientName,
                       ),
                     ],
                   ),
                 ],
               ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
                 color: const Color(0xFFF8FAFC),
                 borderRadius: BorderRadius.circular(10),
@@ -3684,7 +3684,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     progress: normalizedProgress,
                     color: progressColor,
                   ),
-                  const SizedBox(height: 7),
+                  const SizedBox(height: 6),
                   Text(
                     activityMessage,
                     maxLines: 1,
@@ -3696,27 +3696,35 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 9),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: metaItems
-                        .map(
-                          (item) => _buildCompactTag(
-                            label: item.key,
-                            value: item.value,
-                          ),
-                        )
-                        .toList(growable: false),
-                  ),
-                  const SizedBox(height: 9),
+                  const SizedBox(height: 8),
                   Wrap(spacing: 6, runSpacing: 6, children: actions),
                 ],
               ),
             ),
+            const SizedBox(height: 6),
+            _buildDetailMetadataFooter(footerItems),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildDetailMetadataFooter(List<MapEntry<String, String>> items) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFCFCFD),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: items
+            .map((item) => _buildCompactTag(label: item.key, value: item.value))
+            .toList(growable: false),
+      ),
     );
   }
 
