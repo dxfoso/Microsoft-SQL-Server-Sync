@@ -4087,6 +4087,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         itemBuilder: (context, index) {
                           final match = filteredRows[index];
                           return _buildSnapshotRow(
+                            snapshot: snapshot,
                             columns: snapshot.columns,
                             row: match.row,
                             rowNumber: match.originalIndex + 1,
@@ -4124,6 +4125,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildSnapshotRow({
+    required AdminSnapshotDetail snapshot,
     required List<String> columns,
     required Map<String, String?> row,
     required int rowNumber,
@@ -4131,23 +4133,483 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required double cellWidth,
     required bool alternate,
   }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        _buildSnapshotBodyCell(
-          '$rowNumber',
-          rowNumberWidth,
-          alternate: alternate,
-          alignCenter: true,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap:
+            () => _openSnapshotRowDetailDialog(
+              snapshot: snapshot,
+              row: row,
+              rowNumber: rowNumber,
+            ),
+        mouseCursor: SystemMouseCursors.click,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _buildSnapshotBodyCell(
+              '$rowNumber',
+              rowNumberWidth,
+              alternate: alternate,
+              alignCenter: true,
+            ),
+            ...columns.map(
+              (column) => _buildSnapshotBodyCell(
+                row[column] ?? 'NULL',
+                cellWidth,
+                alternate: alternate,
+              ),
+            ),
+          ],
         ),
-        ...columns.map(
-          (column) => _buildSnapshotBodyCell(
-            row[column] ?? 'NULL',
-            cellWidth,
-            alternate: alternate,
+      ),
+    );
+  }
+
+  Future<void> _openSnapshotRowDetailDialog({
+    required AdminSnapshotDetail snapshot,
+    required Map<String, String?> row,
+    required int rowNumber,
+  }) async {
+    final attemptsFuture = _loadMasterRowAttempts(
+      sourceSnapshot: snapshot,
+      row: row,
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(20),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 840,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildSnapshotRowDialogHeader(
+                    snapshot: snapshot,
+                    rowNumber: rowNumber,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Uploaded by master: ${snapshot.clientName}',
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSnapshotRowValuePreview(snapshot.columns, row),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: FutureBuilder<List<_MasterRowAttempt>>(
+                      future: attemptsFuture,
+                      builder: (context, attemptState) {
+                        if (attemptState.connectionState ==
+                                ConnectionState.waiting &&
+                            !attemptState.hasData) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        if (attemptState.hasError) {
+                          return EmptyStateCard(
+                            message: attemptState.error.toString(),
+                          );
+                        }
+                        final attempts =
+                            attemptState.data ?? const <_MasterRowAttempt>[];
+                        if (attempts.isEmpty) {
+                          return const EmptyStateCard(
+                            message:
+                                'No master snapshot contains this same row value yet.',
+                          );
+                        }
+                        return _buildMasterRowAttemptList(attempts);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSnapshotRowDialogHeader({
+    required AdminSnapshotDetail snapshot,
+    required int rowNumber,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: const Color(0xFFD9E2EC)),
+            ),
+            child: const Icon(
+              Icons.data_object_rounded,
+              size: 17,
+              color: Color(0xFF0F766E),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Row $rowNumber',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${snapshot.table} - ${_formatTimestamp(snapshot.createdAt)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Close',
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSnapshotRowValuePreview(
+    List<String> columns,
+    Map<String, String?> row,
+  ) {
+    final visibleColumns = columns.take(8).toList(growable: false);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFCFCFD),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final itemWidth =
+              constraints.maxWidth < 620
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 18) / 2;
+          return Wrap(
+            spacing: 18,
+            runSpacing: 6,
+            children: [
+              ...visibleColumns.map(
+                (column) => _buildRowValueText(
+                  column,
+                  row[column] ?? 'NULL',
+                  width: itemWidth,
+                ),
+              ),
+              if (columns.length > visibleColumns.length)
+                SizedBox(
+                  width: itemWidth,
+                  child: Text(
+                    '+${columns.length - visibleColumns.length} more columns',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildRowValueText(
+    String label,
+    String value, {
+    required double width,
+  }) {
+    return SizedBox(
+      width: width,
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(
+                color: Color(0xFF101828),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 11.5, height: 1.25),
+      ),
+    );
+  }
+
+  Widget _buildMasterRowAttemptList(List<_MasterRowAttempt> attempts) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Master Attempts'),
+        const SizedBox(height: 8),
+        Expanded(
+          child: ListView.separated(
+            itemCount: attempts.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 6),
+            itemBuilder:
+                (context, index) => _buildMasterRowAttemptTile(attempts[index]),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildMasterRowAttemptTile(_MasterRowAttempt attempt) {
+    final usedByText =
+        attempt.usedByClients.isEmpty
+            ? 'No client has merged this master yet'
+            : 'Used by ${attempt.usedByClients.join(', ')}';
+    final statusText =
+        attempt.isSelectedSource
+            ? 'Current uploaded row value'
+            : 'Same row value found in this master snapshot';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color:
+            attempt.isSelectedSource ? const Color(0xFFEFF6FF) : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color:
+              attempt.isSelectedSource
+                  ? const Color(0xFFBFDBFE)
+                  : const Color(0xFFE5E7EB),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color:
+                  attempt.isSelectedSource
+                      ? const Color(0xFF2563EB)
+                      : const Color(0xFF94A3B8),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  attempt.masterName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$statusText - $usedByText',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            _formatTimestamp(attempt.snapshot.createdAt),
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: Color(0xFF475467),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<List<_MasterRowAttempt>> _loadMasterRowAttempts({
+    required AdminSnapshotDetail sourceSnapshot,
+    required Map<String, String?> row,
+  }) async {
+    final state = _state;
+    final signature = _snapshotRowSignature(sourceSnapshot.columns, row);
+    final masterNames =
+        (state?.agents ?? const <AdminAgent>[])
+            .where((agent) => agent.isMaster)
+            .map((agent) => agent.clientName)
+            .toSet();
+    if (sourceSnapshot.clientName.trim().isNotEmpty) {
+      masterNames.add(sourceSnapshot.clientName);
+    }
+
+    final candidateSummaries = (state?.snapshots ?? const <AdminSnapshot>[])
+        .where(
+          (snapshot) =>
+              snapshot.table == sourceSnapshot.table &&
+              masterNames.contains(snapshot.clientName),
+        )
+        .toList(growable: false);
+
+    final loadedSnapshots = await Future.wait(
+      candidateSummaries.map((summary) async {
+        if (summary.id == sourceSnapshot.id) {
+          return sourceSnapshot;
+        }
+        try {
+          return await _api.fetchSnapshotById(summary.id);
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+
+    final attempts = <_MasterRowAttempt>[];
+    var sourceAdded = false;
+    for (final snapshot in loadedSnapshots.whereType<AdminSnapshotDetail>()) {
+      final isSelectedSource = snapshot.id == sourceSnapshot.id;
+      final hasMatchingRow = snapshot.rows.any(
+        (candidateRow) =>
+            _snapshotRowSignature(snapshot.columns, candidateRow) == signature,
+      );
+      if (!isSelectedSource && !hasMatchingRow) {
+        continue;
+      }
+      if (isSelectedSource) {
+        sourceAdded = true;
+      }
+      attempts.add(
+        _MasterRowAttempt(
+          masterName: snapshot.clientName,
+          snapshot: snapshot,
+          isSelectedSource: isSelectedSource,
+          usedByClients: _clientsUsingMasterSnapshot(snapshot),
+        ),
+      );
+    }
+
+    if (!sourceAdded) {
+      attempts.add(
+        _MasterRowAttempt(
+          masterName: sourceSnapshot.clientName,
+          snapshot: sourceSnapshot,
+          isSelectedSource: true,
+          usedByClients: _clientsUsingMasterSnapshot(sourceSnapshot),
+        ),
+      );
+    }
+
+    attempts.sort((left, right) {
+      if (left.isSelectedSource != right.isSelectedSource) {
+        return left.isSelectedSource ? -1 : 1;
+      }
+      return right.snapshot.createdAt.compareTo(left.snapshot.createdAt);
+    });
+    return attempts;
+  }
+
+  List<String> _clientsUsingMasterSnapshot(AdminSnapshotDetail snapshot) {
+    final state = _state;
+    if (state == null) {
+      return const [];
+    }
+    final clients = <String>{};
+    for (final agent in state.agents) {
+      AdminTableState? tableState;
+      for (final candidate in agent.tables) {
+        if (candidate.table == snapshot.table) {
+          tableState = candidate;
+          break;
+        }
+      }
+      if (tableState == null) {
+        continue;
+      }
+      if (agent.clientName == snapshot.clientName) {
+        clients.add(agent.clientName);
+        continue;
+      }
+      if (tableState.snapshotId == snapshot.id ||
+          tableState.mergedSnapshotSources.containsKey(snapshot.clientName)) {
+        clients.add(agent.clientName);
+      }
+    }
+    return clients.toList()..sort();
+  }
+
+  String _snapshotRowSignature(List<String> columns, Map<String, String?> row) {
+    return jsonEncode(
+      columns
+          .map((column) => <String, String?>{column: row[column]})
+          .toList(growable: false),
     );
   }
 
@@ -4764,4 +5226,18 @@ class _ScoredSnapshotRow {
   final int originalIndex;
   final Map<String, String?> row;
   final double score;
+}
+
+class _MasterRowAttempt {
+  const _MasterRowAttempt({
+    required this.masterName,
+    required this.snapshot,
+    required this.isSelectedSource,
+    required this.usedByClients,
+  });
+
+  final String masterName;
+  final AdminSnapshotDetail snapshot;
+  final bool isSelectedSource;
+  final List<String> usedByClients;
 }
