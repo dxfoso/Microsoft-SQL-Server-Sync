@@ -4507,16 +4507,142 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             constraints.maxWidth.isFinite
                 ? constraints.maxWidth
                 : MediaQuery.sizeOf(context).width;
-        final totalWidth = math.max(
+        final mainTableWidth = math.max(
           panelWidth,
-          rowNumberWidth +
-              (showMasterMatchColumn ? masterCountWidth : 0) +
-              (snapshot.columns.length * cellWidth),
+          rowNumberWidth + (snapshot.columns.length * cellWidth),
         );
         final panelHeight =
             constraints.maxHeight.isFinite
                 ? constraints.maxHeight
                 : MediaQuery.sizeOf(context).height * 0.65;
+
+        if (showMasterMatchColumn) {
+          final stickyColumnController = ScrollController();
+          return Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: mainTableWidth,
+                        height: panelHeight,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                _buildSnapshotHeaderCell('#', rowNumberWidth),
+                                ...snapshot.columns.map(
+                                  (column) => _buildSnapshotHeaderCell(
+                                    column,
+                                    cellWidth,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Expanded(
+                              child: NotificationListener<
+                                ScrollUpdateNotification
+                              >(
+                                onNotification: (notification) {
+                                  if (stickyColumnController.hasClients) {
+                                    final targetOffset = notification
+                                        .metrics
+                                        .pixels
+                                        .clamp(
+                                          0.0,
+                                          stickyColumnController
+                                              .position
+                                              .maxScrollExtent,
+                                        );
+                                    if ((stickyColumnController.offset -
+                                                targetOffset)
+                                            .abs() >
+                                        0.5) {
+                                      stickyColumnController.jumpTo(
+                                        targetOffset,
+                                      );
+                                    }
+                                  }
+                                  return false;
+                                },
+                                child: ListView.builder(
+                                  itemCount: filteredRows.length,
+                                  itemBuilder: (context, index) {
+                                    final match = filteredRows[index];
+                                    return _buildSnapshotRow(
+                                      snapshot: snapshot,
+                                      columns: snapshot.columns,
+                                      row: match.row,
+                                      rowNumber: match.originalIndex + 1,
+                                      rowNumberWidth: rowNumberWidth,
+                                      masterCountWidth: masterCountWidth,
+                                      cellWidth: cellWidth,
+                                      alternate: index.isOdd,
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: masterCountWidth,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF5F3FF),
+                      border: Border(
+                        left: BorderSide(color: Color(0xFFD8CCFF)),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        _buildSnapshotStickyHeaderCell(
+                          'Masters',
+                          masterCountWidth,
+                        ),
+                        Expanded(
+                          child: ListView.builder(
+                            controller: stickyColumnController,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: filteredRows.length,
+                            itemBuilder: (context, index) {
+                              final match = filteredRows[index];
+                              final rowNumber = match.originalIndex + 1;
+                              return _buildSnapshotStickyMasterCell(
+                                snapshot: snapshot,
+                                row: match.row,
+                                rowNumber: rowNumber,
+                                width: masterCountWidth,
+                                alternate: index.isOdd,
+                                value:
+                                    rowMasterCounts?[_snapshotRowSignature(
+                                      snapshot.columns,
+                                      match.row,
+                                    )],
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
 
         return Container(
           decoration: BoxDecoration(
@@ -4529,7 +4655,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: SizedBox(
-                width: totalWidth,
+                width: mainTableWidth,
                 height: panelHeight,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -4538,8 +4664,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         _buildSnapshotHeaderCell('#', rowNumberWidth),
-                        if (showMasterMatchColumn)
-                          _buildSnapshotHeaderCell('Masters', masterCountWidth),
                         ...snapshot.columns.map(
                           (column) =>
                               _buildSnapshotHeaderCell(column, cellWidth),
@@ -4560,12 +4684,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             masterCountWidth: masterCountWidth,
                             cellWidth: cellWidth,
                             alternate: index.isOdd,
-                            showMasterMatchColumn: showMasterMatchColumn,
-                            rowMasterCount:
-                                rowMasterCounts?[_snapshotRowSignature(
-                                  snapshot.columns,
-                                  match.row,
-                                )],
                           );
                         },
                       ),
@@ -4596,6 +4714,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget _buildSnapshotStickyHeaderCell(String value, double width) {
+    return Container(
+      width: width,
+      height: 45,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFFE9E3FF),
+        border: Border(bottom: BorderSide(color: Color(0xFFD4C6FF))),
+      ),
+      child: Text(
+        value,
+        textAlign: TextAlign.center,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontWeight: FontWeight.w800,
+          color: Color(0xFF4C1D95),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSnapshotRow({
     required AdminSnapshotDetail snapshot,
     required List<String> columns,
@@ -4605,8 +4744,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required double masterCountWidth,
     required double cellWidth,
     required bool alternate,
-    bool showMasterMatchColumn = false,
-    int? rowMasterCount,
   }) {
     return Material(
       color: Colors.transparent,
@@ -4627,13 +4764,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               alternate: alternate,
               alignCenter: true,
             ),
-            if (showMasterMatchColumn)
-              _buildSnapshotBodyCell(
-                rowMasterCount == null ? '...' : '$rowMasterCount',
-                masterCountWidth,
-                alternate: alternate,
-                alignCenter: true,
-              ),
             ...columns.map(
               (column) => _buildSnapshotBodyCell(
                 row[column] ?? 'NULL',
@@ -4642,6 +4772,47 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSnapshotStickyMasterCell({
+    required AdminSnapshotDetail snapshot,
+    required Map<String, String?> row,
+    required int rowNumber,
+    required double width,
+    required bool alternate,
+    required int? value,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap:
+            () => _openSnapshotRowDetailDialog(
+              snapshot: snapshot,
+              row: row,
+              rowNumber: rowNumber,
+            ),
+        mouseCursor: SystemMouseCursors.click,
+        child: Container(
+          width: width,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color:
+                alternate ? const Color(0xFFF8F5FF) : const Color(0xFFF3EEFF),
+            border: const Border(bottom: BorderSide(color: Color(0xFFE2D9FF))),
+          ),
+          child: Text(
+            value == null ? '...' : '$value',
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF5B21B6),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
       ),
     );
