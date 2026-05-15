@@ -2982,6 +2982,44 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return limit ? jobs.take(_historyLimit).toList(growable: false) : jobs;
   }
 
+  int _syncedClientCountForSummary(_TableAggregateSummary summary) {
+    return summary.clients
+        .where((entry) => _tableStateHasSynced(entry.tableState))
+        .length;
+  }
+
+  int _mergedClientCountForSummary(_TableAggregateSummary summary) {
+    return summary.clients
+        .where((entry) => _tableStateHasMerged(entry.tableState))
+        .length;
+  }
+
+  int _attemptedClientCountForTable(String table) {
+    _ensureDerivedState(_state);
+    final names = <String>{};
+    for (final job in _derivedJobsByTable[table] ?? const <AdminJob>[]) {
+      final name = job.clientName.trim();
+      if (name.isNotEmpty) {
+        names.add(name);
+      }
+    }
+    return names.length;
+  }
+
+  bool _tableStateHasSynced(AdminTableState tableState) {
+    final status = tableState.status.toLowerCase();
+    return status == 'synced' ||
+        tableState.lastSync.trim().isNotEmpty ||
+        (tableState.snapshotId?.trim().isNotEmpty ?? false) ||
+        (tableState.snapshotCreatedAt?.trim().isNotEmpty ?? false);
+  }
+
+  bool _tableStateHasMerged(AdminTableState tableState) {
+    return tableState.mergedSnapshotSources.isNotEmpty ||
+        (tableState.syncMode == 'masterMix' &&
+            _tableStateHasSynced(tableState));
+  }
+
   Widget _buildSearchField({
     required TextEditingController controller,
     required String label,
@@ -3133,9 +3171,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final selected = summary.table == _selectedTableName;
     final sourceEntry = _sourceEntryForSummary(summary);
     final statusColor = _statusColor(sourceEntry.tableState.status);
-    final roleColor = _roleColor(sourceEntry.agent.isMaster);
     final lastSync = _formatTimestamp(summary.lastSync);
     final progress = sourceEntry.tableState.progress.clamp(0, 100);
+    final syncedClients = _syncedClientCountForSummary(summary);
+    final mergedClients = _mergedClientCountForSummary(summary);
+    final attemptedClients = _attemptedClientCountForTable(summary.table);
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
@@ -3159,20 +3199,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               runSpacing: 6,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _buildRoleBadge(sourceEntry.agent.isMaster, compact: true),
-                StatusBadge(
-                  label: sourceEntry.tableState.status,
-                  color: statusColor,
-                ),
                 _buildTableListMetric(
                   tooltip: 'Rows',
                   icon: Icons.format_list_numbered_rounded,
                   value: '${summary.latestRowCount}',
                 ),
                 _buildTableListMetric(
-                  tooltip: 'Agents',
-                  icon: Icons.devices_rounded,
-                  value: '${summary.clientCount}',
+                  tooltip: 'Clients with synced data',
+                  icon: Icons.sync_rounded,
+                  value: '$syncedClients/${summary.clientCount}',
+                ),
+                _buildTableListMetric(
+                  tooltip: 'Clients with merged data',
+                  icon: Icons.merge_type_rounded,
+                  value: '$mergedClients',
+                ),
+                _buildTableListMetric(
+                  tooltip: 'Clients that tried to sync this table',
+                  icon: Icons.history_rounded,
+                  value: '$attemptedClients',
                 ),
                 _buildProgressStatusBadge(progress, statusColor),
                 _buildOpenTableDataButton(summary),
@@ -3187,14 +3232,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   height: 34,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: roleColor.withValues(alpha: 0.11),
+                    color: const Color(0xFFE6F4F1),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: roleColor.withValues(alpha: 0.2)),
+                    border: Border.all(color: const Color(0xFFB8DDD6)),
                   ),
-                  child: Icon(
-                    _roleIcon(sourceEntry.agent.isMaster),
+                  child: const Icon(
+                    Icons.table_chart_outlined,
                     size: 18,
-                    color: roleColor,
+                    color: Color(0xFF0F766E),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -3353,7 +3398,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildDetailTabBar(tabIndex),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Expanded(
           child:
               tabIndex == 0
@@ -3366,7 +3411,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildDetailTabBar(int selectedIndex) {
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
         color: const Color(0xFFF2F4F7),
         borderRadius: BorderRadius.circular(10),
@@ -3402,13 +3447,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         borderRadius: BorderRadius.circular(8),
         onTap: selected ? null : onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
           child: Text(
             label,
             style: TextStyle(
               color:
                   selected ? const Color(0xFF101828) : const Color(0xFF667085),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -3507,27 +3552,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ];
         final actions = <Widget>[
           _buildDetailActionButton(
-            label: 'Download Snapshot',
+            label: 'Download',
             icon: Icons.download_rounded,
             onPressed: busy ? null : onDownload,
           ),
           _buildDetailActionButton(
-            label: 'Upload Snapshot',
+            label: 'Upload',
             icon: Icons.upload_file_rounded,
             onPressed: busy ? null : onUpload,
           ),
           _buildDetailActionButton(
-            label: 'Push Now',
+            label: 'Push',
             icon: Icons.north_rounded,
             onPressed: onPush,
           ),
           _buildDetailActionButton(
-            label: 'Pull Now',
+            label: 'Pull',
             icon: Icons.south_rounded,
             onPressed: onPull,
           ),
           _buildDetailActionButton(
-            label: 'Open Full History',
+            label: 'History',
             icon: Icons.history_rounded,
             onPressed: onOpenHistory,
           ),
@@ -3541,10 +3586,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildDetailIdentityBlock(context, tableName, agent),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                    spacing: 6,
+                    runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       _buildRoleBadge(agent.isMaster),
@@ -3572,10 +3617,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   Expanded(
                     child: _buildDetailIdentityBlock(context, tableName, agent),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                    spacing: 6,
+                    runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       _buildRoleBadge(agent.isMaster),
@@ -3596,13 +3641,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                 ],
               ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: const Color(0xFFE2E8F0)),
               ),
               child: Column(
@@ -3615,7 +3660,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           progressLabel,
                           style: const TextStyle(
                             color: Color(0xFF0F172A),
-                            fontSize: 13,
+                            fontSize: 12,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -3627,34 +3672,34 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           textAlign: TextAlign.right,
                           style: const TextStyle(
                             color: Color(0xFF475467),
-                            fontSize: 12,
+                            fontSize: 11.5,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   ProgressStrip(
                     progress: normalizedProgress,
                     color: progressColor,
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 7),
                   Text(
                     activityMessage,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Color(0xFF667085),
-                      fontSize: 12,
+                      fontSize: 11.5,
                       height: 1.3,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 9),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                    spacing: 6,
+                    runSpacing: 6,
                     children: metaItems
                         .map(
                           (item) => _buildCompactTag(
@@ -3664,8 +3709,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         )
                         .toList(growable: false),
                   ),
-                  const SizedBox(height: 14),
-                  Wrap(spacing: 10, runSpacing: 10, children: actions),
+                  const SizedBox(height: 9),
+                  Wrap(spacing: 6, runSpacing: 6, children: actions),
                 ],
               ),
             ),
@@ -3689,17 +3734,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             tableName,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
               color: const Color(0xFF0F172A),
+              fontSize: 15,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             '${agent.machineName} - ${agent.server}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Color(0xFF667085),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -3716,17 +3762,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return FilledButton.tonalIcon(
       onPressed: onPressed,
       icon: Icon(icon, size: 16),
-      label: Text(label),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
       style: FilledButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        minimumSize: const Size(0, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        visualDensity: VisualDensity.compact,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
 
   Widget _buildCompactTag({required String label, required String value}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(999),
@@ -3751,7 +3799,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
           ],
         ),
-        style: const TextStyle(fontSize: 12),
+        style: const TextStyle(fontSize: 11.5),
       ),
     );
   }
@@ -3917,14 +3965,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
+          spacing: 6,
+          runSpacing: 6,
           children: [
             MetricPill(label: 'Client', value: historyLabel),
             MetricPill(label: 'Events', value: '${jobs.length}'),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Expanded(
           child:
               jobs.isEmpty
@@ -3933,7 +3981,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   )
                   : ListView.separated(
                     itemCount: jobs.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 6),
+                    separatorBuilder: (_, _) => const SizedBox(height: 4),
                     itemBuilder: (context, index) => _buildJobCard(jobs[index]),
                   ),
         ),
@@ -4135,17 +4183,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           width: double.infinity,
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(7),
             border: Border.all(color: const Color(0xFFE2D8CB)),
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final stack = constraints.maxWidth < 620;
                 final trailing = Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
+                  spacing: 6,
+                  runSpacing: 3,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
@@ -4153,7 +4201,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       style: const TextStyle(
                         color: Color(0xFF5F6B76),
                         fontWeight: FontWeight.w700,
-                        fontSize: 11.5,
+                        fontSize: 11,
                       ),
                     ),
                     Text(
@@ -4161,27 +4209,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       style: const TextStyle(
                         color: Color(0xFF5F6B76),
                         fontWeight: FontWeight.w700,
-                        fontSize: 11.5,
+                        fontSize: 11,
                       ),
                     ),
                     Text(
                       '${job.rowCount} rows',
                       style: const TextStyle(
                         color: Color(0xFF5F6B76),
-                        fontSize: 11.5,
+                        fontSize: 11,
                       ),
                     ),
                     Text(
                       _formatBytes(job.snapshotBytes),
                       style: const TextStyle(
                         color: Color(0xFF5F6B76),
-                        fontSize: 11.5,
+                        fontSize: 11,
                       ),
                     ),
                     if (canOpenSnapshot)
                       const Icon(
                         Icons.table_rows_outlined,
-                        size: 15,
+                        size: 14,
                         color: Color(0xFF62717C),
                       ),
                   ],
@@ -4192,8 +4240,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
+                        spacing: 6,
+                        runSpacing: 4,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           StatusBadge(
@@ -4204,27 +4252,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             job.direction.toUpperCase(),
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
-                              fontSize: 12,
+                              fontSize: 11.5,
                             ),
                           ),
                           Text(
                             eventTime,
                             style: const TextStyle(
                               color: Color(0xFF5F6B76),
-                              fontSize: 11.5,
+                              fontSize: 11,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 3),
                       Text(
                         message,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(height: 1.15, fontSize: 12),
+                        style: const TextStyle(height: 1.1, fontSize: 11.5),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 3),
                       trailing,
                     ],
                   );
@@ -4246,7 +4294,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
-                          fontSize: 12,
+                          fontSize: 11.5,
                         ),
                       ),
                     ),
@@ -4255,7 +4303,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         message,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(height: 1.15, fontSize: 12),
+                        style: const TextStyle(height: 1.1, fontSize: 11.5),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -4268,7 +4316,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         textAlign: TextAlign.right,
                         style: const TextStyle(
                           color: Color(0xFF5F6B76),
-                          fontSize: 11.5,
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
                       ),

@@ -176,6 +176,7 @@ class AdminTableState {
     required this.snapshotCreatedAt,
     required this.snapshotBytes,
     required this.message,
+    required this.mergedSnapshotSources,
   });
 
   final String table;
@@ -190,6 +191,7 @@ class AdminTableState {
   final String? snapshotCreatedAt;
   final int snapshotBytes;
   final String message;
+  final Map<String, String> mergedSnapshotSources;
 
   factory AdminTableState.fromJson(Map<String, dynamic> json) {
     return AdminTableState(
@@ -205,6 +207,12 @@ class AdminTableState {
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
       snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
+      mergedSnapshotSources: (json['mergedSnapshotSources']
+                  as Map<dynamic, dynamic>? ??
+              const {})
+          .map(
+            (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+          ),
     );
   }
 
