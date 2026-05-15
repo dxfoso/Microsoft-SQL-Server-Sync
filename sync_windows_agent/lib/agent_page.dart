@@ -4223,7 +4223,8 @@ WHEN NOT MATCHED BY TARGET THEN
                   icon: Icons.format_list_numbered_rounded,
                   value: '${row.state.rowCount}',
                 ),
-                AgentStatusPill(label: '$progress%', color: statusColor),
+                _buildFixedProgressPill(progress, statusColor),
+                _buildOpenLiveTableButton(row.table),
               ],
             );
 
@@ -4265,6 +4266,31 @@ WHEN NOT MATCHED BY TARGET THEN
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFixedProgressPill(int progress, Color color) {
+    final normalizedProgress = progress.clamp(0, 100);
+    return SizedBox(
+      width: 48,
+      child: AgentStatusPill(label: '$normalizedProgress%', color: color),
+    );
+  }
+
+  Widget _buildOpenLiveTableButton(String table) {
+    return Tooltip(
+      message: 'Open live DB table',
+      child: SizedBox(
+        width: 30,
+        height: 30,
+        child: IconButton(
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          iconSize: 18,
+          onPressed: () => _openTableDataDialog(table),
+          icon: const Icon(Icons.table_rows_outlined),
         ),
       ),
     );
@@ -4454,10 +4480,7 @@ WHEN NOT MATCHED BY TARGET THEN
                       ),
                     ),
                   ),
-                  AgentStatusPill(
-                    label: '$normalizedProgress%',
-                    color: statusColor,
-                  ),
+                  _buildFixedProgressPill(normalizedProgress, statusColor),
                   const SizedBox(width: 6),
                   _buildSyncDetailMenu(row),
                 ],

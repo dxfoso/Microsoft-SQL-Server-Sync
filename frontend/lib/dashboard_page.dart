@@ -292,24 +292,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     };
     _derivedClientsByTable = clientsByTable;
 
-    final databaseTableSets = <String, Set<String>>{};
-    for (final summary in summaries) {
-      final database = summary.database.trim();
-      if (database.isEmpty) {
-        continue;
-      }
-      databaseTableSets
-          .putIfAbsent(database, () => <String>{})
-          .add(summary.displayTable);
-    }
-    final databaseNames = databaseTableSets.keys.toList(growable: false)
-      ..sort();
-    _derivedDatabaseNames = databaseNames;
-    _derivedDatabaseTableCounts = {
-      for (final entry in databaseTableSets.entries)
-        entry.key: entry.value.length,
-    };
-
     final snapshotSources = <String, _TableSnapshotSource>{};
     for (final snapshot in state.snapshots) {
       final existing = snapshotSources[snapshot.table];
@@ -353,6 +335,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       });
     }
     _derivedSnapshotSourcesByTable = snapshotSources;
+
+    final databaseTableSets = <String, Set<String>>{};
+    for (final summary in summaries.where(
+      (summary) =>
+          _summaryHasDataRows(summary, snapshotSources: snapshotSources),
+    )) {
+      final database = summary.database.trim();
+      if (database.isEmpty) {
+        continue;
+      }
+      databaseTableSets
+          .putIfAbsent(database, () => <String>{})
+          .add(summary.displayTable);
+    }
+    final databaseNames = databaseTableSets.keys.toList(growable: false)
+      ..sort();
+    _derivedDatabaseNames = databaseNames;
+    _derivedDatabaseTableCounts = {
+      for (final entry in databaseTableSets.entries)
+        entry.key: entry.value.length,
+    };
 
     final jobsByTable = <String, List<AdminJob>>{};
     final jobsByTableClient = <String, List<AdminJob>>{};
@@ -400,11 +403,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     List<_TableAggregateSummary> summaries,
   ) {
     final databaseName = _selectedDatabaseName?.trim();
-    if (databaseName == null || databaseName.isEmpty) {
-      return summaries;
-    }
     return summaries
-        .where((summary) => summary.database == databaseName)
+        .where(
+          (summary) =>
+              _summaryHasDataRows(summary) &&
+              (databaseName == null ||
+                  databaseName.isEmpty ||
+                  summary.database == databaseName),
+        )
         .toList(growable: false);
   }
 
@@ -424,9 +430,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final summaries = _tableSummariesFromState(state)
         .where(
           (summary) =>
-              databaseName == null ||
-              databaseName.isEmpty ||
-              summary.database == databaseName,
+              _summaryHasDataRows(summary) &&
+              (databaseName == null ||
+                  databaseName.isEmpty ||
+                  summary.database == databaseName),
         )
         .toList(growable: false);
     if (summaries.isEmpty) {
@@ -437,6 +444,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return _selectedTableName;
     }
     return summaries.first.table;
+  }
+
+  bool _summaryHasDataRows(
+    _TableAggregateSummary summary, {
+    Map<String, _TableSnapshotSource>? snapshotSources,
+  }) {
+    final sourceRows =
+        (snapshotSources ?? _derivedSnapshotSourcesByTable)[summary.table]
+            ?.rowCount ??
+        0;
+    return summary.latestRowCount > 0 ||
+        sourceRows > 0 ||
+        summary.clients.any((entry) => entry.tableState.rowCount > 0);
   }
 
   void _selectDatabase(String? databaseName) {
@@ -2038,6 +2058,113 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
+  Future<void> _openTableDataDialog(_TableAggregateSummary summary) async {
+    final source = _snapshotSourceForTable(_state, summary.table);
+    final clientName = source?.clientName ?? summary.sourceClientName;
+    final searchController = TextEditingController();
+    final latestSnapshotFuture = _api.fetchLatestSnapshot(
+      clientName: clientName,
+      table: summary.table,
+    );
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return Dialog(
+                insetPadding: const EdgeInsets.all(20),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: 1180,
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE6F4F1),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFB8DDD6),
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.table_rows_outlined,
+                                color: Color(0xFF0F766E),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    summary.displayTitle,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge
+                                        ?.copyWith(fontWeight: FontWeight.w800),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Latest rows from $clientName',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFF667085),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              tooltip: 'Close',
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: FutureBuilder<AdminSnapshotDetail?>(
+                            future: latestSnapshotFuture,
+                            builder:
+                                (context, snapshotState) =>
+                                    _buildLatestSnapshotPanel(
+                                      snapshotState: snapshotState,
+                                      searchController: searchController,
+                                      onSearchChanged:
+                                          () => setDialogState(() {}),
+                                    ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
+  }
+
   Widget _buildLatestSnapshotPanel({
     required AsyncSnapshot<AdminSnapshotDetail?> snapshotState,
     required TextEditingController searchController,
@@ -3047,7 +3174,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   icon: Icons.devices_rounded,
                   value: '${summary.clientCount}',
                 ),
-                StatusBadge(label: '$progress%', color: statusColor),
+                _buildProgressStatusBadge(progress, statusColor),
+                _buildOpenTableDataButton(summary),
               ],
             );
 
@@ -3103,6 +3231,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProgressStatusBadge(int progress, Color color) {
+    final normalizedProgress = progress.clamp(0, 100);
+    return SizedBox(
+      width: 48,
+      child: StatusBadge(label: '$normalizedProgress%', color: color),
+    );
+  }
+
+  Widget _buildOpenTableDataButton(_TableAggregateSummary summary) {
+    return Tooltip(
+      message: 'Open table rows',
+      child: SizedBox(
+        width: 30,
+        height: 30,
+        child: IconButton(
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          iconSize: 18,
+          onPressed: () => _openTableDataDialog(summary),
+          icon: const Icon(Icons.table_rows_outlined),
         ),
       ),
     );
@@ -3467,12 +3620,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           ),
                         ),
                       ),
-                      Text(
-                        '$normalizedProgress%',
-                        style: const TextStyle(
-                          color: Color(0xFF475467),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
+                      SizedBox(
+                        width: 48,
+                        child: Text(
+                          '$normalizedProgress%',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: Color(0xFF475467),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                     ],
