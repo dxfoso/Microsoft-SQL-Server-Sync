@@ -1,12 +1,3 @@
-param(
-    [string] $ProjectPath = "$PSScriptRoot\sync_windows_agent",
-    [string] $OutputRoot = "$PSScriptRoot",
-    [string] $PortableName = "",
-    [switch] $SkipPubGet,
-    [switch] $Clean,
-    [switch] $NoVCRuntime
-)
-
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -368,8 +359,9 @@ function Get-DirectorySize {
     return [long] $sum.Sum
 }
 
-$ProjectPath = Get-FullPath -Path $ProjectPath
-$OutputRoot = Get-FullPath -Path $OutputRoot
+$ProjectPath = Get-FullPath -Path (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent')
+$OutputRoot = Get-FullPath -Path $PSScriptRoot
+$PortableName = ''
 
 if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
     throw 'Flutter is not installed or not available in PATH.'
@@ -394,14 +386,7 @@ New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
 
 Push-Location $ProjectPath
 try {
-    if ($Clean) {
-        Invoke-NativeCommand -Description 'Running flutter clean...' -Command { & flutter clean }
-    }
-
-    if (-not $SkipPubGet) {
-        Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & flutter pub get }
-    }
-
+    Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & flutter pub get }
     Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release }
 }
 finally {
@@ -419,17 +404,15 @@ New-Item -Path $portableDir -ItemType Directory -Force | Out-Null
 Get-ChildItem -LiteralPath $releaseDir -Force |
     Copy-Item -Destination $portableDir -Recurse -Force
 
-if (-not $NoVCRuntime) {
-    Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
-}
+Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
 
 New-PortableLauncher -Destination $portableDir -ExeName $exeName
 Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath
-Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime:(-not $NoVCRuntime)
+Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime
 
 Write-Host "Creating zip archive..."
 Compress-Archive -LiteralPath $portableDir -DestinationPath $zipPath -Force
-Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime:(-not $NoVCRuntime)
+Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime
 
 $portableSize = Get-DirectorySize -Path $portableDir
 $zipSize = (Get-Item -LiteralPath $zipPath).Length
