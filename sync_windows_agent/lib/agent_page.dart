@@ -87,6 +87,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
   final Set<String> _busyFileTables = <String>{};
+  String? _lastSqlCmdLaunchError;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -2626,9 +2627,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
 
     if (processResult == null) {
-      throw Exception(
-        'sqlcmd is not available. Install SQL Server Command Line Utilities.',
-      );
+      throw Exception(_sqlCmdUnavailableMessage(profile));
     }
     if (processResult.exitCode != 0) {
       throw Exception(_sqlCmdFailed('download apply', processResult));
@@ -2748,8 +2747,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return _StringQueryResult(
         success: false,
         values: const [],
-        errorText:
-            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+        errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
@@ -2806,8 +2804,7 @@ ORDER BY table_name;
       return _StringQueryResult(
         success: false,
         values: const [],
-        errorText:
-            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+        errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
@@ -3013,8 +3010,7 @@ ORDER BY [__sync_agent_row_number];
         rows: const [],
         totalRows: rowCountResult.value,
         hasMoreRows: false,
-        errorText:
-            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+        errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
@@ -3060,8 +3056,7 @@ ORDER BY ORDINAL_POSITION;
       return _StringQueryResult(
         success: false,
         values: const [],
-        errorText:
-            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+        errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
@@ -3111,11 +3106,10 @@ ORDER BY c.column_id;
     );
 
     if (processResult == null) {
-      return const _ColumnSchemaResult(
+      return _ColumnSchemaResult(
         success: false,
         values: [],
-        errorText:
-            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+        errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
@@ -3171,11 +3165,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     );
 
     if (processResult == null) {
-      return const _IntQueryResult(
+      return _IntQueryResult(
         success: false,
         value: 0,
-        errorText:
-            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+        errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
@@ -3232,11 +3225,10 @@ ORDER BY [__sync_agent_row_number];
     );
 
     if (processResult == null) {
-      return const _SnapshotPageResult(
+      return _SnapshotPageResult(
         success: false,
         rows: [],
-        errorText:
-            'sqlcmd is not available. Install SQL Server Command Line Utilities.',
+        errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
@@ -3277,6 +3269,7 @@ ORDER BY [__sync_agent_row_number];
     String? database,
     required String query,
   }) async {
+    _lastSqlCmdLaunchError = null;
     final normalizedQuery = query
         .trim()
         .replaceAll('\r\n', ' ')
@@ -3302,22 +3295,46 @@ ORDER BY [__sync_agent_row_number];
       arguments.insert(0, '-E');
     } else {
       if (profile.user.isEmpty || profile.password.isEmpty) {
+        _lastSqlCmdLaunchError =
+            'SQL authentication is incomplete. Enter a SQL username and password, or use Windows authentication.';
         return null;
       }
       arguments.insertAll(0, ['-U', profile.user, '-P', profile.password]);
     }
 
+    final executable = _sqlCmdExecutable();
     try {
       return await Process.run(
-        _sqlCmdExecutable(),
+        executable,
         arguments,
         runInShell: false,
         stdoutEncoding: SystemEncoding(),
         stderrEncoding: SystemEncoding(),
       );
-    } on ProcessException {
+    } on ProcessException catch (error) {
+      _lastSqlCmdLaunchError =
+          'Unable to start sqlcmd from "$executable": ${error.message}';
+      logStartupEvent(_lastSqlCmdLaunchError!);
       return null;
     }
+  }
+
+  String _sqlCmdUnavailableMessage(_SqlConnectionProfile profile) {
+    if (_lastSqlCmdLaunchError != null &&
+        _lastSqlCmdLaunchError!.trim().isNotEmpty) {
+      return _lastSqlCmdLaunchError!;
+    }
+    if (!profile.useWindowsAuth &&
+        (profile.user.isEmpty || profile.password.isEmpty)) {
+      return 'SQL authentication is incomplete. Enter a SQL username and password, or use Windows authentication.';
+    }
+    final executable = _sqlCmdExecutable();
+    if (Platform.isWindows &&
+        executable.toLowerCase() != 'sqlcmd' &&
+        !File(executable).existsSync()) {
+      return 'sqlcmd was not found at "$executable". Install SQL Server Command Line Utilities or repair the SQL Server client tools installation.';
+    }
+    return 'sqlcmd is not available. Install SQL Server Command Line Utilities.';
   }
 
   String _sqlCmdExecutable() {
