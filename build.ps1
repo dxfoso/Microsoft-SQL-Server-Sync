@@ -215,6 +215,151 @@ exit /b %EXIT_CODE%
     Set-Content -LiteralPath $launcherPath -Value $launcher -Encoding ASCII
 }
 
+function Get-PortableRequiredFiles {
+    param([Parameter(Mandatory = $true)][string] $ExeName)
+
+    return @(
+        $ExeName,
+        'flutter_windows.dll',
+        'run_portable.bat'
+    )
+}
+
+function Write-PortableManifest {
+    param(
+        [Parameter(Mandatory = $true)][string] $PortableDir,
+        [Parameter(Mandatory = $true)][string] $ZipPath
+    )
+
+    $manifestPath = Join-Path -Path $PortableDir -ChildPath 'portable-manifest.txt'
+    $entries = Get-ChildItem -LiteralPath $PortableDir -Recurse -File -Force |
+        Sort-Object FullName |
+        ForEach-Object {
+            $relativePath = $_.FullName.Substring($PortableDir.Length).TrimStart('\', '/')
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            '{0} {1}' -f $hash, $relativePath.Replace('\', '/')
+        }
+
+    $manifestLines = @(
+        "BuiltAtUtc: $([DateTime]::UtcNow.ToString('o'))",
+        "PortableDir: $PortableDir",
+        "ZipPath: $ZipPath",
+        ''
+    ) + $entries
+
+    Set-Content -LiteralPath $manifestPath -Value $manifestLines -Encoding ASCII
+}
+
+function Assert-PortablePayload {
+    param(
+        [Parameter(Mandatory = $true)][string] $ReleaseDir,
+        [Parameter(Mandatory = $true)][string] $PortableDir,
+        [Parameter(Mandatory = $true)][string] $ExeName,
+        [switch] $RequireVCRuntime
+    )
+
+    $releaseFiles = Get-ChildItem -LiteralPath $ReleaseDir -Recurse -File -Force
+    if ($releaseFiles.Count -eq 0) {
+        throw "Release directory is empty: $ReleaseDir"
+    }
+
+    $portableFiles = Get-ChildItem -LiteralPath $PortableDir -Recurse -File -Force
+    if ($portableFiles.Count -eq 0) {
+        throw "Portable directory is empty: $PortableDir"
+    }
+
+    $releaseRelativePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in $releaseFiles) {
+        $relativePath = $file.FullName.Substring($ReleaseDir.Length).TrimStart('\', '/').Replace('\', '/')
+        [void] $releaseRelativePaths.Add($relativePath)
+    }
+
+    $portableRelativePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in $portableFiles) {
+        $relativePath = $file.FullName.Substring($PortableDir.Length).TrimStart('\', '/').Replace('\', '/')
+        [void] $portableRelativePaths.Add($relativePath)
+    }
+
+    $missingReleaseFiles = [System.Collections.Generic.List[string]]::new()
+    foreach ($relativePath in $releaseRelativePaths) {
+        if (-not $portableRelativePaths.Contains($relativePath)) {
+            [void] $missingReleaseFiles.Add($relativePath)
+        }
+    }
+
+    if ($missingReleaseFiles.Count -gt 0) {
+        throw "Portable directory is missing release payload files: $($missingReleaseFiles -join ', ')"
+    }
+
+    $requiredFiles = Get-PortableRequiredFiles -ExeName $ExeName
+    foreach ($requiredFile in $requiredFiles) {
+        $requiredPath = Join-Path -Path $PortableDir -ChildPath $requiredFile
+        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+            throw "Portable output is missing required file: $requiredFile"
+        }
+    }
+
+    $payloadDlls = Get-ChildItem -LiteralPath $PortableDir -Filter '*.dll' -File -Force
+    if ($payloadDlls.Count -eq 0) {
+        throw "Portable output contains no DLLs: $PortableDir"
+    }
+
+    if ($RequireVCRuntime) {
+        $runtimeDlls = @(
+            'concrt140.dll',
+            'msvcp140.dll',
+            'vcruntime140.dll'
+        )
+        foreach ($dll in $runtimeDlls) {
+            $dllPath = Join-Path -Path $PortableDir -ChildPath $dll
+            if (-not (Test-Path -LiteralPath $dllPath -PathType Leaf)) {
+                throw "Portable output is missing VC runtime DLL: $dll"
+            }
+        }
+    }
+}
+
+function Assert-PortableZipContents {
+    param(
+        [Parameter(Mandatory = $true)][string] $ZipPath,
+        [Parameter(Mandatory = $true)][string] $PortableName,
+        [Parameter(Mandatory = $true)][string] $ExeName,
+        [switch] $RequireVCRuntime
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $entryNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($entry in $archive.Entries) {
+            [void] $entryNames.Add($entry.FullName.Replace('\', '/'))
+        }
+
+        $requiredEntries = @(
+            "$PortableName/$ExeName",
+            "$PortableName/flutter_windows.dll",
+            "$PortableName/run_portable.bat",
+            "$PortableName/portable-manifest.txt"
+        )
+        if ($RequireVCRuntime) {
+            $requiredEntries += @(
+                "$PortableName/concrt140.dll",
+                "$PortableName/msvcp140.dll",
+                "$PortableName/vcruntime140.dll"
+            )
+        }
+
+        foreach ($requiredEntry in $requiredEntries) {
+            if (-not $entryNames.Contains($requiredEntry)) {
+                throw "Portable zip is missing required entry: $requiredEntry"
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
 function Get-DirectorySize {
     param([Parameter(Mandatory = $true)][string] $Path)
 
@@ -279,9 +424,12 @@ if (-not $NoVCRuntime) {
 }
 
 New-PortableLauncher -Destination $portableDir -ExeName $exeName
+Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath
+Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime:(-not $NoVCRuntime)
 
 Write-Host "Creating zip archive..."
 Compress-Archive -LiteralPath $portableDir -DestinationPath $zipPath -Force
+Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime:(-not $NoVCRuntime)
 
 $portableSize = Get-DirectorySize -Path $portableDir
 $zipSize = (Get-Item -LiteralPath $zipPath).Length
