@@ -49,6 +49,10 @@ spec:
               value: {{ .Values.backend.service.port | quote }}
             - name: STATE_FILE
               value: {{ $backendStateFile | quote }}
+          {{- with .Values.backend.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
           volumeMounts:
             - name: state-data

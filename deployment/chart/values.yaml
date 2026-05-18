@@ -18,6 +18,13 @@ frontend:
   image: sync-admin-web/frontend:latest
   backendBaseUrl: https://sync.velvet-leaf.com/api
   stateFile: /app/data/state.json
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
   ingress:
     enabled: true
     className: nginx
@@ -37,6 +44,13 @@ backend:
   service:
     port: 9001
   stateFile: /app/data/state.json
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
 
 persistence:
   enabled: true
