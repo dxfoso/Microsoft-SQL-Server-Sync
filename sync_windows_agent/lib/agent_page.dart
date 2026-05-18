@@ -97,6 +97,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<String> _tableColumns = const [];
   List<List<String>> _tableRows = const [];
   int _rowOffset = 0;
+  String _tableSearchQuery = '';
+  final ScrollController _tableHorizontalScrollController = ScrollController();
 
   bool get _isMasterClient => _syncState.isMaster;
   Duration get _autoSyncInterval =>
@@ -152,6 +154,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _serverController.dispose();
     _userController.dispose();
     _passwordController.dispose();
+    _tableHorizontalScrollController.dispose();
     super.dispose();
   }
 
@@ -3285,6 +3288,8 @@ ORDER BY [__sync_agent_row_number];
       '-W',
       '-w',
       '32767',
+      '-f',
+      '65001',
       '-s',
       '|',
       '-Q',
@@ -3308,8 +3313,8 @@ ORDER BY [__sync_agent_row_number];
         executable,
         arguments,
         runInShell: false,
-        stdoutEncoding: SystemEncoding(),
-        stderrEncoding: SystemEncoding(),
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
       );
     } on ProcessException catch (error) {
       _lastSqlCmdLaunchError =
@@ -5055,6 +5060,7 @@ WHEN NOT MATCHED BY TARGET THEN
       return;
     }
 
+    _tableSearchQuery = '';
     final dialogScrollController = ScrollController();
 
     Future<void> handleDialogScroll() async {
@@ -5128,6 +5134,33 @@ WHEN NOT MATCHED BY TARGET THEN
                           ],
                         ),
                         const SizedBox(height: 14),
+                        TextField(
+                          onChanged: (value) {
+                            setState(() {
+                              _tableSearchQuery = value;
+                            });
+                            _refreshTableDataDialog();
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Search rows',
+                            hintText: 'Type any part of a cell value...',
+                            prefixIcon: const Icon(Icons.search),
+                            suffixIcon:
+                                _tableSearchQuery.trim().isEmpty
+                                    ? null
+                                    : IconButton(
+                                      tooltip: 'Clear search',
+                                      onPressed: () {
+                                        setState(() {
+                                          _tableSearchQuery = '';
+                                        });
+                                        _refreshTableDataDialog();
+                                      },
+                                      icon: const Icon(Icons.close),
+                                    ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
                         if (_errorMessage != null)
                           Container(
                             width: double.infinity,
@@ -5164,6 +5197,11 @@ WHEN NOT MATCHED BY TARGET THEN
         },
       );
     } finally {
+      if (mounted) {
+        setState(() {
+          _tableSearchQuery = '';
+        });
+      }
       _tableDataDialogRefresh = null;
       dialogScrollController.removeListener(handleDialogScroll);
       dialogScrollController.dispose();
@@ -5744,6 +5782,20 @@ WHEN NOT MATCHED BY TARGET THEN
     }
 
     final cellWidth = 180.0;
+    final tableSearch = _tableSearchQuery.trim().toLowerCase();
+    final filteredRows =
+        tableSearch.isEmpty
+            ? _tableRows
+            : _tableRows
+                .where((row) {
+                  for (final cell in row) {
+                    if (cell.toLowerCase().contains(tableSearch)) {
+                      return true;
+                    }
+                  }
+                  return false;
+                })
+                .toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5773,127 +5825,141 @@ WHEN NOT MATCHED BY TARGET THEN
 
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      width: columnWidth,
-                      height: panelHeight,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 64,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 12,
-                                ),
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFFE3E8E1),
-                                  border: Border(
-                                    bottom: BorderSide(
-                                      color: Color(0xFFBFC9BE),
+                  child: Scrollbar(
+                    controller: _tableHorizontalScrollController,
+                    thumbVisibility: true,
+                    notificationPredicate:
+                        (notification) =>
+                            notification.metrics.axis == Axis.horizontal,
+                    child: SingleChildScrollView(
+                      controller: _tableHorizontalScrollController,
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: columnWidth,
+                        height: panelHeight,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 64,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 12,
+                                  ),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFE3E8E1),
+                                    border: Border(
+                                      bottom: BorderSide(
+                                        color: Color(0xFFBFC9BE),
+                                      ),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    '#',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
                                     ),
                                   ),
                                 ),
-                                child: const Text(
-                                  '#',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                              ),
-                              ..._tableColumns.asMap().entries.map((entry) {
-                                final isSortedColumn =
-                                    _sortColumnIndex == entry.key;
-                                final icon =
-                                    isSortedColumn
-                                        ? (_sortAscending
-                                            ? Icons.arrow_upward
-                                            : Icons.arrow_downward)
-                                        : Icons.unfold_more;
+                                ..._tableColumns.asMap().entries.map((entry) {
+                                  final isSortedColumn =
+                                      _sortColumnIndex == entry.key;
+                                  final icon =
+                                      isSortedColumn
+                                          ? (_sortAscending
+                                              ? Icons.arrow_upward
+                                              : Icons.arrow_downward)
+                                          : Icons.unfold_more;
 
-                                return InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTap: () {
-                                    final ascending =
-                                        isSortedColumn ? !_sortAscending : true;
-                                    setState(() {
-                                      _sortColumnIndex = entry.key;
-                                      _sortAscending = ascending;
-                                    });
-                                    _refreshTableDataDialog();
-                                    unawaited(_reloadCurrentTableRows());
-                                  },
-                                  child: Container(
-                                    width: cellWidth,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 12,
-                                    ),
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFFE3E8E1),
-                                      border: Border(
-                                        bottom: BorderSide(
-                                          color: Color(0xFFBFC9BE),
-                                        ),
+                                  return InkWell(
+                                    borderRadius: BorderRadius.circular(10),
+                                    onTap: () {
+                                      final ascending =
+                                          isSortedColumn
+                                              ? !_sortAscending
+                                              : true;
+                                      setState(() {
+                                        _sortColumnIndex = entry.key;
+                                        _sortAscending = ascending;
+                                      });
+                                      _refreshTableDataDialog();
+                                      unawaited(_reloadCurrentTableRows());
+                                    },
+                                    child: Container(
+                                      width: cellWidth,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 12,
                                       ),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Flexible(
-                                          child: Text(
-                                            entry.value,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                            ),
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFFE3E8E1),
+                                        border: Border(
+                                          bottom: BorderSide(
+                                            color: Color(0xFFBFC9BE),
                                           ),
                                         ),
-                                        const SizedBox(width: 6),
-                                        Icon(
-                                          icon,
-                                          size: 16,
-                                          color: Colors.black54,
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              entry.value,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Icon(
+                                            icon,
+                                            size: 16,
+                                            color: Colors.black54,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
+                            Expanded(
+                              child:
+                                  filteredRows.isEmpty && !_rowsLoading
+                                      ? Center(
+                                        child: Text(
+                                          _tableSearchQuery.trim().isEmpty
+                                              ? '0 rows found in $_selectedTable.'
+                                              : 'No rows matched your search.',
+                                          style:
+                                              Theme.of(
+                                                context,
+                                              ).textTheme.titleMedium,
                                         ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              }),
-                            ],
-                          ),
-                          Expanded(
-                            child:
-                                _tableRows.isEmpty && !_rowsLoading
-                                    ? Center(
-                                      child: Text(
-                                        '0 rows found in $_selectedTable.',
-                                        style:
-                                            Theme.of(
-                                              context,
-                                            ).textTheme.titleMedium,
-                                      ),
-                                    )
-                                    : Scrollbar(
-                                      controller: verticalScrollController,
-                                      thumbVisibility:
-                                          verticalScrollController != null,
-                                      child: ListView.builder(
+                                      )
+                                      : Scrollbar(
                                         controller: verticalScrollController,
-                                        itemCount: _tableRows.length,
-                                        itemBuilder: (context, index) {
-                                          return _buildTableRow(
-                                            _tableRows[index],
-                                            cellWidth,
-                                            index,
-                                          );
-                                        },
+                                        thumbVisibility:
+                                            verticalScrollController != null,
+                                        child: ListView.builder(
+                                          controller: verticalScrollController,
+                                          itemCount: filteredRows.length,
+                                          itemBuilder: (context, index) {
+                                            return _buildTableRow(
+                                              filteredRows[index],
+                                              cellWidth,
+                                              index,
+                                            );
+                                          },
+                                        ),
                                       ),
-                                    ),
-                          ),
-                        ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
