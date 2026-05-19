@@ -8,6 +8,9 @@ const PORT = Number(process.env.PORT || "9001");
 const STATE_FILE =
   process.env.STATE_FILE ||
   path.join(process.cwd(), "data", "state.json");
+const UPLOADS_DIR =
+  process.env.UPLOADS_DIR ||
+  path.join(path.dirname(STATE_FILE), "upload-chunks");
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), "public");
 const MAX_BODY_SIZE = 100 * 1024 * 1024;
 const SNAPSHOT_TRANSFER_CHUNK_SIZE = 100 * 1024;
@@ -15,6 +18,7 @@ const SNAPSHOT_TRANSFER_ENCODING = "gzip";
 const AGENT_ONLINE_WINDOW_MS = 60 * 1000;
 const DEFAULT_HISTORY_LIMIT = 5;
 const MAX_HISTORY_LIMIT = 100;
+const HEARTBEAT_SAVE_MIN_INTERVAL_MS = 5000;
 const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 30;
 const MIN_AUTO_SYNC_INTERVAL_MINUTES = 1;
 const MAX_AUTO_SYNC_INTERVAL_MINUTES = 1440;
@@ -42,6 +46,7 @@ const MIME_TYPES = {
 
 let state = createDefaultState();
 let saveQueue = Promise.resolve();
+let lastHeartbeatSaveAt = 0;
 
 function createDefaultState() {
   return {
@@ -798,6 +803,50 @@ function queueSave() {
   return saveQueue;
 }
 
+function maybeQueueHeartbeatSave() {
+  const now = Date.now();
+  if (now - lastHeartbeatSaveAt < HEARTBEAT_SAVE_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastHeartbeatSaveAt = now;
+  queueSave().catch(() => {});
+}
+
+function safePathToken(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "item";
+}
+
+function chunkStorageDir(job, session) {
+  const jobToken = safePathToken(job?.id || "job");
+  const uploadToken = safePathToken(session?.id || "upload");
+  return path.join(UPLOADS_DIR, jobToken, uploadToken);
+}
+
+function chunkStoragePath(job, session, chunkIndex) {
+  return path.join(
+    chunkStorageDir(job, session),
+    `${String(Number(chunkIndex)).padStart(8, "0")}.bin`,
+  );
+}
+
+async function ensureChunkStorageDir(job, session) {
+  await fs.mkdir(chunkStorageDir(job, session), { recursive: true });
+}
+
+async function clearUploadSessionFiles(job, session) {
+  if (!session) {
+    return;
+  }
+  try {
+    await fs.rm(chunkStorageDir(job, session), { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup only.
+  }
+}
+
 function sortJobsDescending(items) {
   return items.sort((left, right) =>
     String(right.updatedAt || right.createdAt || "").localeCompare(
@@ -1360,7 +1409,7 @@ function createSnapshotTransfer(snapshot) {
   };
 }
 
-function snapshotFromUploadSession(job) {
+async function snapshotFromUploadSession(job) {
   const session = job.uploadSession;
   if (!session) {
     throw new Error("upload session not found");
@@ -1368,11 +1417,22 @@ function snapshotFromUploadSession(job) {
 
   const buffers = [];
   for (let index = 0; index < session.chunkCount; index += 1) {
-    const chunk = session.chunks?.[String(index)];
-    if (!chunk?.data) {
+    const chunk = session.chunks?.[String(index)] || null;
+    const chunkPath = chunkStoragePath(job, session, index);
+    let buffer = null;
+    try {
+      buffer = await fs.readFile(chunkPath);
+    } catch {
+      buffer = null;
+    }
+
+    if (!buffer && chunk?.data) {
+      buffer = Buffer.from(chunk.data, "base64");
+    }
+    if (!buffer) {
       throw new Error(`missing upload chunk ${index}`);
     }
-    buffers.push(Buffer.from(chunk.data, "base64"));
+    buffers.push(buffer);
   }
 
   const compressedBuffer = Buffer.concat(buffers);
@@ -1798,7 +1858,7 @@ async function handleRequest(req, res) {
       agent.tables = nextTables;
     }
 
-    await queueSave();
+    maybeQueueHeartbeatSave();
     sendJson(res, 200, {
       ok: true,
       syncSettings: agent.syncSettings,
@@ -2282,12 +2342,13 @@ async function handleRequest(req, res) {
       }
 
       const requestedUploadId = String(body.uploadId || "").trim();
-      if (
+    if (
         !job.uploadSession ||
         (requestedUploadId && job.uploadSession.id !== requestedUploadId) ||
         job.uploadSession.chunkCount !== chunkCount ||
         job.uploadSession.compressedBytes !== compressedBytes
       ) {
+        await clearUploadSessionFiles(job, job.uploadSession || null);
         job.uploadSession = {
           id: requestedUploadId || crypto.randomUUID(),
           table: qualifyTableWithDatabase(
@@ -2306,6 +2367,7 @@ async function handleRequest(req, res) {
           updatedAt: nowIso(),
         };
       }
+      await ensureChunkStorageDir(job, job.uploadSession);
 
       updateJob(job, {
         status: "uploading",
@@ -2351,8 +2413,10 @@ async function handleRequest(req, res) {
         return;
       }
 
+      await ensureChunkStorageDir(job, session);
+      await fs.writeFile(chunkStoragePath(job, session, chunkIndex), buffer);
+
       session.chunks[String(chunkIndex)] = {
-        data: buffer.toString("base64"),
         bytes: buffer.length,
         receivedAt: nowIso(),
       };
@@ -2368,7 +2432,6 @@ async function handleRequest(req, res) {
         rowCount: Number(session.rowCount || job.rowCount || 0),
         message: `Received snapshot chunk ${receivedCount}/${session.chunkCount}.`,
       });
-      await queueSave();
       sendJson(res, 200, {
         job: publicJobPayload(job),
         ...uploadSessionStatus(session),
@@ -2393,8 +2456,9 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const snapshot = snapshotFromUploadSession(job);
+      const snapshot = await snapshotFromUploadSession(job);
       state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
+      await clearUploadSessionFiles(job, session);
       job.uploadSession = null;
       updateJob(job, {
         status: "completed",
@@ -2558,6 +2622,7 @@ async function handleRequest(req, res) {
 
     if (req.method === "POST" && action === "fail") {
       const body = await parseJsonBody(req);
+      await clearUploadSessionFiles(job, job.uploadSession || null);
       job.uploadSession = null;
       job.downloadSession = null;
       updateJob(job, {

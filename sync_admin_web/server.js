@@ -18,6 +18,7 @@ const SNAPSHOT_TRANSFER_ENCODING = "gzip";
 const AGENT_ONLINE_WINDOW_MS = 60 * 1000;
 const DEFAULT_HISTORY_LIMIT = 5;
 const MAX_HISTORY_LIMIT = 100;
+const HEARTBEAT_SAVE_MIN_INTERVAL_MS = 5000;
 const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 30;
 const MIN_AUTO_SYNC_INTERVAL_MINUTES = 1;
 const MAX_AUTO_SYNC_INTERVAL_MINUTES = 1440;
@@ -45,6 +46,7 @@ const MIME_TYPES = {
 
 let state = createDefaultState();
 let saveQueue = Promise.resolve();
+let lastHeartbeatSaveAt = 0;
 
 function createDefaultState() {
   return {
@@ -799,6 +801,15 @@ function queueSave() {
     })
     .catch(() => {});
   return saveQueue;
+}
+
+function maybeQueueHeartbeatSave() {
+  const now = Date.now();
+  if (now - lastHeartbeatSaveAt < HEARTBEAT_SAVE_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastHeartbeatSaveAt = now;
+  queueSave().catch(() => {});
 }
 
 function safePathToken(value) {
@@ -1847,7 +1858,7 @@ async function handleRequest(req, res) {
       agent.tables = nextTables;
     }
 
-    await queueSave();
+    maybeQueueHeartbeatSave();
     sendJson(res, 200, {
       ok: true,
       syncSettings: agent.syncSettings,
