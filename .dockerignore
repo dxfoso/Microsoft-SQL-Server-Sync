@@ -2,8 +2,6 @@
 .gitignore
 .vscode
 .cp-images
-
-backend
 branding
 database
 deployment
