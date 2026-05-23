@@ -1603,7 +1603,15 @@ async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
 
-  if (req.method === "GET" && (pathname === "/health" || pathname === "/api/health")) {
+  if (
+    req.method === "GET" &&
+    (
+      pathname === "/health" ||
+      pathname === "/ready" ||
+      pathname === "/api/health" ||
+      pathname === "/api/ready"
+    )
+  ) {
     sendJson(res, 200, { ok: true, generatedAt: nowIso() });
     return;
   }
