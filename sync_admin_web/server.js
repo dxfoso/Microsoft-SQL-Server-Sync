@@ -774,6 +774,14 @@ function clearLiveStateCache() {
   liveStateCache.clear();
 }
 
+function markLiveStateCacheStale() {
+  const now = Date.now();
+  for (const entry of liveStateCache.values()) {
+    entry.freshUntil = 0;
+    entry.staleUntil = Math.max(entry.staleUntil || 0, now + LIVE_STATE_CACHE_STALE_MS);
+  }
+}
+
 async function buildLiveStateCacheEntry(viewer) {
   const plainBuffer = Buffer.from(JSON.stringify(buildLiveState(viewer)));
   const gzipBuffer = await gzipAsync(plainBuffer);
@@ -898,7 +906,7 @@ async function loadState() {
 }
 
 function queueSave() {
-  clearLiveStateCache();
+  markLiveStateCacheStale();
   saveQueue = saveQueue
     .then(async () => {
       await fs.mkdir(path.dirname(STATE_FILE), { recursive: true });
