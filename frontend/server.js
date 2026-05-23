@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
+const { promisify } = require("node:util");
 const zlib = require("node:zlib");
 
 const PORT = Number(process.env.PORT || "9001");
@@ -22,6 +23,8 @@ const HEARTBEAT_SAVE_MIN_INTERVAL_MS = 5000;
 const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 30;
 const MIN_AUTO_SYNC_INTERVAL_MINUTES = 1;
 const MAX_AUTO_SYNC_INTERVAL_MINUTES = 1440;
+const LIVE_STATE_CACHE_TTL_MS = 3000;
+const LIVE_STATE_CACHE_STALE_MS = 15000;
 const ADMIN_USERNAME = "dxfoso@gmail.com";
 const ADMIN_EMAIL = "dxfoso@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
@@ -47,6 +50,8 @@ const MIME_TYPES = {
 let state = createDefaultState();
 let saveQueue = Promise.resolve();
 let lastHeartbeatSaveAt = 0;
+const gzipAsync = promisify(zlib.gzip);
+const liveStateCache = new Map();
 
 function createDefaultState() {
   return {
@@ -755,6 +760,107 @@ function sendBuffer(res, statusCode, buffer, contentType, extraHeaders = {}) {
   res.end(buffer);
 }
 
+function acceptsGzip(req) {
+  return String(req.headers["accept-encoding"] || "")
+    .toLowerCase()
+    .includes("gzip");
+}
+
+function liveStateCacheKey(viewer) {
+  return `${viewer.role}:${viewer.id}`;
+}
+
+function clearLiveStateCache() {
+  liveStateCache.clear();
+}
+
+async function buildLiveStateCacheEntry(viewer) {
+  const plainBuffer = Buffer.from(JSON.stringify(buildLiveState(viewer)));
+  const gzipBuffer = await gzipAsync(plainBuffer);
+  const now = Date.now();
+  return {
+    plainBuffer,
+    gzipBuffer,
+    freshUntil: now + LIVE_STATE_CACHE_TTL_MS,
+    staleUntil: now + LIVE_STATE_CACHE_STALE_MS,
+    refreshPromise: null,
+  };
+}
+
+function refreshLiveStateCacheEntry(key, viewer, existingEntry = null) {
+  const refreshPromise = buildLiveStateCacheEntry(viewer)
+    .then((nextEntry) => {
+      liveStateCache.set(key, nextEntry);
+      return nextEntry;
+    })
+    .catch((error) => {
+      if (existingEntry) {
+        existingEntry.refreshPromise = null;
+        liveStateCache.set(key, existingEntry);
+      } else {
+        liveStateCache.delete(key);
+      }
+      throw error;
+    });
+
+  if (existingEntry) {
+    existingEntry.refreshPromise = refreshPromise;
+    liveStateCache.set(key, existingEntry);
+  } else {
+    liveStateCache.set(key, {
+      plainBuffer: null,
+      gzipBuffer: null,
+      freshUntil: 0,
+      staleUntil: 0,
+      refreshPromise,
+    });
+  }
+
+  return refreshPromise;
+}
+
+async function cachedLiveStateEntry(viewer) {
+  const key = liveStateCacheKey(viewer);
+  const cached = liveStateCache.get(key);
+  const now = Date.now();
+
+  if (cached?.plainBuffer && cached.freshUntil > now) {
+    return cached;
+  }
+
+  if (cached?.plainBuffer && cached.staleUntil > now) {
+    if (!cached.refreshPromise) {
+      refreshLiveStateCacheEntry(key, viewer, cached).catch(() => {});
+    }
+    return cached;
+  }
+
+  if (cached?.refreshPromise) {
+    return cached.refreshPromise;
+  }
+
+  return refreshLiveStateCacheEntry(key, viewer, cached || null);
+}
+
+async function sendLiveState(req, res, viewer) {
+  const cached = await cachedLiveStateEntry(viewer);
+  if (acceptsGzip(req) && cached.gzipBuffer) {
+    sendBuffer(res, 200, cached.gzipBuffer, "application/json; charset=utf-8", {
+      "Content-Encoding": "gzip",
+      Vary: "Accept-Encoding",
+    });
+    return;
+  }
+
+  sendBuffer(
+    res,
+    200,
+    cached.plainBuffer,
+    "application/json; charset=utf-8",
+    { Vary: "Accept-Encoding" },
+  );
+}
+
 async function parseJsonBody(req) {
   const chunks = [];
   let totalBytes = 0;
@@ -783,6 +889,7 @@ async function loadState() {
   } catch {
     state = createDefaultState();
   }
+  clearLiveStateCache();
 
   const seeded = ensureSeedUsers();
   if (seeded) {
@@ -791,6 +898,7 @@ async function loadState() {
 }
 
 function queueSave() {
+  clearLiveStateCache();
   saveQueue = saveQueue
     .then(async () => {
       await fs.mkdir(path.dirname(STATE_FILE), { recursive: true });
@@ -1793,7 +1901,7 @@ async function handleRequest(req, res) {
     if (!context) {
       return;
     }
-    sendJson(res, 200, buildLiveState(context.user));
+    await sendLiveState(req, res, context.user);
     return;
   }
 
