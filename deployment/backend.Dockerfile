@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.89 AS builder
+WORKDIR /app
+ARG TRU_BUILD_GIT_SHA=""
+ENV TRU_BUILD_GIT_SHA=${TRU_BUILD_GIT_SHA}
+
+COPY backend/server/Cargo.toml backend/server/Cargo.lock ./server/
+RUN mkdir -p server/src && echo "fn main() {}" > server/src/main.rs
+RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server
+
+COPY backend/server/src ./server/src
+RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server
+
+FROM rust:1.89 AS runtime
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates openssh-client \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /app/server/target/release/tru_server /usr/local/bin/tru_server
+COPY business /app/business
+
+EXPOSE 9001
+ENV TRU_CONFIG_PATH=/app/business/tru.json
+ENTRYPOINT ["tru_server", "/app/business"]

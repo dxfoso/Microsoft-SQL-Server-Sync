@@ -1,5 +1,10 @@
-# Resources deploy into the Helm release namespace.
 domain: sync.velvet-leaf.com
+serverDomain: server.sync.velvet-leaf.com
+
+dockerRegistry: dockerhub.divclouds.com
+dockerUsername: ""
+dockerPassword: ""
+dockerEmail: ""
 
 certManager:
   enabled: true
@@ -13,58 +18,62 @@ certManager:
     ingressClassName: nginx
 
 frontend:
-  # Keep this as a string because the cloud deploy runner overrides
-  # frontend.image/backend.image as full image refs.
-  image: sync-admin-web/frontend:latest
-  backendBaseUrl: https://sync.velvet-leaf.com/api
-  stateFile: /app/data/state.json
+  replicas: 2
+  image: dockerhub.divclouds.com/microsoft-sql-server-sync/frontend:latest
+  backendBaseUrl: /call
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
-    limits:
-      cpu: "2"
-      memory: 2Gi
-  ingress:
-    enabled: true
-    className: nginx
-    annotations:
-      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-      nginx.ingress.kubernetes.io/service-upstream: "true"
-      nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
-      nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
-      nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
-    hosts:
-      - host: sync.velvet-leaf.com
-        paths:
-          - path: /
-            pathType: Prefix
-    tls:
-      - secretName: sync-velvet-leaf-com-letsencrypt-tls
-        hosts:
-          - sync.velvet-leaf.com
-
-backend:
-  enabled: false
-  image: sync-admin-web/backend:latest
-  service:
-    port: 9001
-  stateFile: /app/data/state.json
-  resources:
-    requests:
-      cpu: 200m
+      cpu: 250m
       memory: 512Mi
     limits:
       cpu: "1"
       memory: 1Gi
 
+backend:
+  enabled: true
+  replicas: 1
+  image: dockerhub.divclouds.com/microsoft-sql-server-sync/backend:latest
+  service:
+    port: 9001
+  env:
+    truConfigPath: /app/business/tru.json
+    truStorageDir: /app/data/storage
+    truSpecCachePath: /app/data/.tru_spec_cache.sqlite
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  database: sqlsync
+  username: tru
+  password: tru
+  service:
+    port: 5432
+  persistence:
+    size: 10Gi
+    storageClassName: ""
+
 persistence:
   enabled: true
-  existingClaim: ""
-  storageClassName: ""
-  accessModes:
-    - ReadWriteOnce
-  size: 1Gi
-  mountPath: /app/data
-  retain: true
-  annotations: {}
+  data:
+    size: 5Gi
+    storageClassName: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+  tls:
+    frontendSecretName: sync-velvet-leaf-com-letsencrypt-tls
+    backendSecretName: server-sync-velvet-leaf-com-letsencrypt-tls

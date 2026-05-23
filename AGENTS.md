@@ -3,7 +3,10 @@
 ## Workflow Rule
 
 - When a `.dart` file is changed in the workspace, restart the Windows Flutter app automatically using `agent.ps1`.
-- When any file under `sync_admin_web/` changes, redeploy the website automatically using the current redeploy link from `deployment/chart/.env`.
+- Keep the repo layout aligned to the current structure:
+  - `frontend/` is the web control plane
+  - `backend/` is only the `tru` submodule
+  - `business/` is the only root location for app-specific backend `.tru` logic
 
 Use this from the repository root:
 
@@ -13,15 +16,8 @@ Use this from the repository root:
 
 This ensures the app is relaunched with the updated Dart code.
 
-## Deployment Rule
+## Backend Rule
 
-- Before triggering a cloud redeploy for local code changes, commit the changes and push the commit so the redeploy link can build the latest committed revision.
-- Do not expect the redeploy link to include uncommitted local files; it deploys the latest commit visible to the remote deployment runner.
-- When redeploying to the cloud, use the deployment links stored in `deployment/chart/.env`.
-- Treat `deployment/chart/.env` as the source of truth for the current redeploy URL, deployment debug URL, and namespace resource URL.
-- Do not rely on old redeploy links or tokens copied from chat if `deployment/chart/.env` is available.
-- Before triggering any remote redeploy, read `deployment/chart/.env` and use the URLs from that file only.
-- If `deployment/chart/.env` is available, deployments must be triggered only through the redeploy link in that file.
-- Do not deploy through direct cluster access, `kubectl apply`, `helm upgrade`, SSH deployment commands, or any manual server-side rollout path when the `.env` redeploy link is available.
-- Direct cluster access may be used for inspection, debugging, and verification only, not as the deployment mechanism.
-- Cloud redeployments must preserve the control-plane state database at `/app/data/state.json`; do not remove the Helm PVC, `/app/data` volume mount, or `STATE_FILE` wiring without replacing them with an equivalent persistent storage mechanism.
+- Run the backend from the `backend/` submodule against the root `business/tru.json` config.
+- Keep TRU runtime files, build logic, and server internals inside the `backend/` submodule.
+- Keep app API logic, DB API logic, and project-owned `.tru` files only under the root `business/` directory.

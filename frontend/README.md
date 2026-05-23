@@ -1,4 +1,4 @@
-# sync_admin_web
+# frontend
 
 Flutter web admin dashboard for the SQL Server sync control plane.
 

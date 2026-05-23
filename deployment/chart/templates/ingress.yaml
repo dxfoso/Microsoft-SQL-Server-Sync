@@ -1,10 +1,4 @@
-{{- if .Values.frontend.ingress.enabled }}
-{{- $apiServiceName := include "sync-admin-web.frontendFullname" . -}}
-{{- $apiServicePort := 80 -}}
-{{- if eq (include "sync-admin-web.backendEnabled" .) "true" -}}
-{{- $apiServiceName = include "sync-admin-web.backendFullname" . -}}
-{{- $apiServicePort = .Values.backend.service.port -}}
-{{- end -}}
+{{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -12,49 +6,53 @@ metadata:
   namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
-  {{- $certManaged := eq (include "sync-admin-web.certManagerShouldManageTls" .) "true" -}}
-  {{- $hasIngressAnnotations := .Values.frontend.ingress.annotations -}}
-  {{- if or $certManaged $hasIngressAnnotations }}
   annotations:
-    {{- with .Values.frontend.ingress.annotations }}
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{- if $certManaged }}
-    {{ include "sync-admin-web.certManagerAnnotationKey" . }}: {{ include "sync-admin-web.certManagerIssuerName" . | quote }}
-    {{- end }}
-  {{- end }}
+    {{ include "sync-admin-web.certManagerAnnotationKey" . }}: {{ .Values.certManager.issuerName | quote }}
 spec:
-  ingressClassName: {{ .Values.frontend.ingress.className | default "nginx" }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
   rules:
-    {{- range .Values.frontend.ingress.hosts }}
-    - host: {{ .host }}
+    - host: {{ .Values.domain | quote }}
       http:
         paths:
           - path: /api
             pathType: Prefix
             backend:
               service:
-                name: {{ $apiServiceName }}
+                name: {{ include "sync-admin-web.backendFullname" . }}
                 port:
-                  number: {{ $apiServicePort }}
-          {{- range .paths }}
-          - path: {{ .path }}
-            pathType: {{ .pathType | default "Prefix" }}
+                  number: {{ .Values.backend.service.port }}
+          - path: /call
+            pathType: Prefix
             backend:
               service:
-                name: {{ include "sync-admin-web.frontendFullname" $ }}
+                name: {{ include "sync-admin-web.backendFullname" . }}
+                port:
+                  number: {{ .Values.backend.service.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sync-admin-web.frontendFullname" . }}
                 port:
                   number: 80
-          {{- end }}
-    {{- end }}
-  {{- if .Values.frontend.ingress.tls }}
+    - host: {{ .Values.serverDomain | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sync-admin-web.backendFullname" . }}
+                port:
+                  number: {{ .Values.backend.service.port }}
   tls:
-    {{- range .Values.frontend.ingress.tls }}
-    - secretName: {{ .secretName }}
+    - secretName: {{ .Values.ingress.tls.frontendSecretName | quote }}
       hosts:
-        {{- range .hosts }}
-        - {{ . }}
-        {{- end }}
-    {{- end }}
-  {{- end }}
+        - {{ .Values.domain | quote }}
+    - secretName: {{ .Values.ingress.tls.backendSecretName | quote }}
+      hosts:
+        - {{ .Values.serverDomain | quote }}
 {{- end }}

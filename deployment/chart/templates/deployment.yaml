@@ -1,7 +1,3 @@
-{{- $persistence := .Values.persistence | default dict -}}
-{{- $stateMountPath := $persistence.mountPath | default "/app/data" -}}
-{{- $frontend := .Values.frontend | default dict -}}
-{{- $frontendStateFile := $frontend.stateFile | default (printf "%s/state.json" $stateMountPath) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,12 +6,8 @@ metadata:
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:
-  {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
-  strategy:
-    type: Recreate
-  {{- end }}
+  replicas: {{ .Values.frontend.replicas }}
   revisionHistoryLimit: 2
-  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "sync-admin-web.name" . }}
@@ -26,57 +18,31 @@ spec:
       labels:
         {{- include "sync-admin-web.labels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
-      annotations:
-        rollout.sync-admin-web/revision: {{ .Release.Revision | quote }}
-        divclouds.com/restartedAt: {{ default (printf "%d" .Release.Revision) .Values.appReleaseDate | quote }}
     spec:
+      {{- if and .Values.dockerRegistry .Values.dockerUsername .Values.dockerPassword }}
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
-      {{- $frontendImage := .Values.frontend.image -}}
-      {{- if and (not (kindIs "string" $frontendImage)) .Values.image .Values.image.repository }}
-      {{- $frontendRepo := include "sync-admin-web.componentImageRepository" (list .Values.image.repository "frontend" .Values.dockerRegistry) -}}
-      {{- $frontendImage = dict "repository" $frontendRepo "tag" .Values.image.tag "pullPolicy" .Values.image.pullPolicy -}}
       {{- end }}
       containers:
         - name: frontend
-          image: "{{ include "sync-admin-web.validatedImageRef" $frontendImage }}"
-          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" $frontendImage }}
+          image: {{ .Values.frontend.image | quote }}
+          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" . }}
           ports:
             - containerPort: 80
           env:
             - name: BACKEND_BASE_URL
               value: {{ .Values.frontend.backendBaseUrl | quote }}
-            - name: STATE_FILE
-              value: {{ $frontendStateFile | quote }}
-          {{- with .Values.frontend.resources }}
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
-          volumeMounts:
-            - name: state-data
-              mountPath: {{ $stateMountPath | quote }}
-          {{- end }}
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /ready
               port: 80
-            initialDelaySeconds: 15
+            initialDelaySeconds: 10
             periodSeconds: 10
-            timeoutSeconds: 5
-            successThreshold: 1
-            failureThreshold: 6
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /health
               port: 80
-            initialDelaySeconds: 45
+            initialDelaySeconds: 30
             periodSeconds: 20
-            timeoutSeconds: 5
-            failureThreshold: 6
-      {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
-      volumes:
-        - name: state-data
-          persistentVolumeClaim:
-            claimName: {{ include "sync-admin-web.statePvcName" . }}
-      {{- end }}

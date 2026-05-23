@@ -1,6 +1,6 @@
 FROM ghcr.io/cirruslabs/flutter:stable AS build
 
-WORKDIR /app/sync_admin_web
+WORKDIR /app/frontend
 
 ARG BACKEND_BASE_URL=http://localhost:9001
 ARG BUILD_COMMIT_HASH=dev
@@ -12,10 +12,10 @@ ENV BUILD_COMMIT_HASH=${BUILD_COMMIT_HASH}
 ENV BUILD_COMMIT_DATE=${BUILD_COMMIT_DATE}
 ENV BUILD_RELEASE_DATE=${BUILD_RELEASE_DATE}
 
-COPY sync_admin_web/pubspec.yaml sync_admin_web/pubspec.lock ./
+COPY frontend/pubspec.yaml frontend/pubspec.lock ./
 RUN flutter pub get
 
-COPY sync_admin_web ./
+COPY frontend ./
 RUN flutter build web --release \
   --dart-define=BACKEND_BASE_URL=${BACKEND_BASE_URL} \
   --dart-define=BUILD_COMMIT_HASH=${BUILD_COMMIT_HASH} \
@@ -26,14 +26,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY sync_admin_web/server.js /app/server.js
-COPY --from=build /app/sync_admin_web/build/web /app/public
+COPY frontend/server.js /app/server.js
+COPY --from=build /app/frontend/build/web /app/public
 
 ENV PORT=80
 ENV PUBLIC_DIR=/app/public
-ENV STATE_FILE=/app/data/state.json
-
-RUN mkdir -p /app/data
 
 EXPOSE 80
 

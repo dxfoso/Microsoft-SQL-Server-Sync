@@ -6,7 +6,7 @@ import 'models.dart';
 
 const String _defaultBackendBaseUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
-  defaultValue: '/api',
+  defaultValue: '/call',
 );
 
 class LiveSyncApiClient {
@@ -21,7 +21,7 @@ class LiveSyncApiClient {
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
     if (trimmed.isEmpty) {
-      return '/api';
+      return '/call';
     }
     return trimmed.endsWith('/')
         ? trimmed.substring(0, trimmed.length - 1)
@@ -29,9 +29,7 @@ class LiveSyncApiClient {
   }
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
-
-  Uri _uriWithQuery(String path, Map<String, String> queryParameters) =>
-      _uri(path).replace(queryParameters: queryParameters);
+  Uri _uriCall() => Uri.parse(_baseUrl);
 
   void setAuthToken(String? token) {
     final trimmed = token?.trim();
@@ -49,18 +47,31 @@ class LiveSyncApiClient {
     return headers;
   }
 
-  Future<AuthLoginResult> loginWeb({
-    required String name,
-    required String password,
-  }) async {
+  dynamic _unwrapApiResponse(dynamic decoded) {
+    if (decoded is! Map<String, dynamic>) {
+      return decoded;
+    }
+
+    final status = decoded['status'];
+    if (status == 'failed') {
+      throw LiveSyncApiException(_errorMessageFromMap(decoded));
+    }
+
+    if (status == 'success' && decoded.containsKey('value')) {
+      return decoded['value'];
+    }
+
+    return decoded;
+  }
+
+  Future<dynamic> _invokeFunction(
+    String name,
+    Map<String, dynamic> args,
+  ) async {
     final response = await _client.post(
-      _uri('/auth/login'),
+      _uriCall(),
       headers: _headers(json: true),
-      body: jsonEncode({
-        'name': name.trim(),
-        'password': password,
-        'app': 'web',
-      }),
+      body: jsonEncode({'name': name, 'args': args}),
     );
 
     if (response.statusCode != 200) {
@@ -68,6 +79,18 @@ class LiveSyncApiClient {
     }
 
     final decoded = jsonDecode(response.body);
+    return _unwrapApiResponse(decoded);
+  }
+
+  Future<AuthLoginResult> loginWeb({
+    required String name,
+    required String password,
+  }) async {
+    final decoded = await _invokeFunction('auth_login', {
+      'name': name.trim(),
+      'password': password,
+      'app': 'web',
+    });
     if (decoded is! Map || decoded['user'] is! Map) {
       throw const LiveSyncApiException('Unexpected login payload.');
     }
@@ -83,12 +106,7 @@ class LiveSyncApiClient {
   }
 
   Future<AuthenticatedUser> fetchCurrentUser() async {
-    final response = await _client.get(_uri('/auth/me'), headers: _headers());
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
-
-    final decoded = jsonDecode(response.body);
+    final decoded = await _invokeFunction('auth_me', {});
     if (decoded is! Map || decoded['user'] is! Map) {
       throw const LiveSyncApiException('Unexpected current-user payload.');
     }
@@ -98,23 +116,12 @@ class LiveSyncApiClient {
   }
 
   Future<void> logout() async {
-    final response = await _client.post(
-      _uri('/auth/logout'),
-      headers: _headers(json: true),
-    );
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
+    await _invokeFunction('auth_logout', {});
     setAuthToken(null);
   }
 
   Future<List<AuthenticatedUser>> listUsers() async {
-    final response = await _client.get(_uri('/users'), headers: _headers());
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
-
-    final decoded = jsonDecode(response.body);
+    final decoded = await _invokeFunction('users_list', {});
     if (decoded is! Map) {
       throw const LiveSyncApiException('Unexpected users payload.');
     }
@@ -136,28 +143,17 @@ class LiveSyncApiClient {
     required String role,
     String? ownerUserId,
   }) async {
-    final response = await _client.post(
-      _uri('/users'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'name': name.trim(),
-        'email': email?.trim() ?? '',
-        'password': password,
-        'role': role,
-        if (ownerUserId != null && ownerUserId.trim().isNotEmpty)
-          'ownerUserId': ownerUserId.trim(),
-      }),
-    );
-
-    if (response.statusCode != 201) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
-
-    final decoded = jsonDecode(response.body);
+    final decoded = await _invokeFunction('users_create', {
+      'name': name.trim(),
+      'email': email?.trim() ?? '',
+      'password': password,
+      'role': role,
+      if (ownerUserId != null && ownerUserId.trim().isNotEmpty)
+        'ownerUserId': ownerUserId.trim(),
+    });
     if (decoded is! Map || decoded['user'] is! Map) {
       throw const LiveSyncApiException('Unexpected create-user payload.');
     }
-
     return AuthenticatedUser.fromJson(
       Map<String, dynamic>.from(decoded['user'] as Map),
     );
@@ -168,27 +164,14 @@ class LiveSyncApiClient {
     required String newPassword,
   }) async {
     final trimmedUserId = userId.trim();
-    final response = await _client.post(
-      _uri('/users/$trimmedUserId/reset-password'),
-      headers: _headers(json: true),
-      body: jsonEncode({'password': newPassword}),
-    );
-
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
+    await _invokeFunction('user_reset_password', {
+      'userId': trimmedUserId,
+      'password': newPassword,
+    });
   }
 
   Future<AdminLiveState> fetchLiveState() async {
-    final response = await _client.get(
-      _uri('/live-state'),
-      headers: _headers(),
-    );
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
-
-    final decoded = jsonDecode(response.body);
+    final decoded = await _invokeFunction('live_state', {});
     if (decoded is! Map) {
       throw const LiveSyncApiException('Unexpected live state payload.');
     }
@@ -202,20 +185,15 @@ class LiveSyncApiClient {
     required String direction,
     String? sourceClientName,
   }) async {
-    final response = await _client.post(
-      _uri('/jobs'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'clientName': clientName,
-        if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
-          'sourceClientName': sourceClientName,
-        'direction': direction,
-        'tables': [table],
-      }),
-    );
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
+    final decoded = await _invokeFunction('jobs_create', {
+      'clientName': clientName,
+      if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
+        'sourceClientName': sourceClientName,
+      'direction': direction,
+      'tables': [table],
+    });
+    if (decoded is! Map || decoded['jobs'] is! List) {
+      throw const LiveSyncApiException('Unexpected job queue payload.');
     }
   }
 
@@ -225,46 +203,34 @@ class LiveSyncApiClient {
     required int historyLimit,
     required int autoSyncIntervalMinutes,
   }) async {
-    final response = await _client.post(
-      _uri('/agents/${Uri.encodeComponent(clientName)}/sync-settings'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'isMaster': isMaster,
-        'historyLimit': historyLimit,
-        'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
+    await _invokeFunction('agent_sync_settings_post', {
+      'clientName': clientName,
+      'isMaster': isMaster,
+      'historyLimit': historyLimit,
+      'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+    });
   }
 
   Future<AdminSnapshotDetail?> fetchLatestSnapshot({
     required String clientName,
     required String table,
   }) async {
-    final response = await _client.get(
-      _uriWithQuery('/snapshots/latest', {
-        'clientName': clientName,
-        'table': table,
-      }),
-      headers: _headers(),
-    );
-
-    if (response.statusCode == 404) {
-      return null;
+    try {
+      final decoded = await _invokeFunction(
+        'snapshots_latest',
+        {'clientName': clientName, 'table': table},
+      );
+      if (decoded is! Map) {
+        throw const LiveSyncApiException('Unexpected latest snapshot payload.');
+      }
+      return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
+    } catch (error) {
+      if (error is LiveSyncApiException &&
+          error.message.toLowerCase().contains('not found')) {
+        return null;
+      }
+      rethrow;
     }
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw const LiveSyncApiException('Unexpected latest snapshot payload.');
-    }
-
-    return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
   }
 
   Future<AdminSnapshotDetail?> fetchSnapshotById(String snapshotId) async {
@@ -273,23 +239,22 @@ class LiveSyncApiClient {
       return null;
     }
 
-    final response = await _client.get(
-      _uri('/snapshots/$trimmedId'),
-      headers: _headers(),
-    );
-    if (response.statusCode == 404) {
-      return null;
-    }
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
+    try {
+      final decoded = await _invokeFunction('snapshots_by_id', {
+        'snapshotId': trimmedId,
+      });
+      if (decoded is! Map) {
+        throw const LiveSyncApiException('Unexpected snapshot payload.');
+      }
 
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw const LiveSyncApiException('Unexpected snapshot payload.');
+      return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
+    } catch (error) {
+      if (error is LiveSyncApiException &&
+          error.message.toLowerCase().contains('not found')) {
+        return null;
+      }
+      rethrow;
     }
-
-    return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
   }
 
   Future<AdminSnapshotDetail> importSnapshot({
@@ -297,25 +262,14 @@ class LiveSyncApiClient {
     required String table,
     required Map<String, dynamic> snapshot,
   }) async {
-    final response = await _client.post(
-      _uri('/snapshots/import'),
-      headers: _headers(json: true),
-      body: jsonEncode({
-        'clientName': clientName,
-        'table': table,
-        'snapshot': snapshot,
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw LiveSyncApiException(_errorMessageFromResponse(response));
-    }
-
-    final decoded = jsonDecode(response.body);
+    final decoded = await _invokeFunction('snapshots_import', {
+      'clientName': clientName,
+      'table': table,
+      'snapshot': snapshot,
+    });
     if (decoded is! Map || decoded['snapshot'] is! Map) {
       throw const LiveSyncApiException('Unexpected snapshot import payload.');
     }
-
     return AdminSnapshotDetail.fromJson(
       Map<String, dynamic>.from(decoded['snapshot'] as Map),
     );
@@ -324,7 +278,11 @@ class LiveSyncApiClient {
   Future<bool> checkHealth() async {
     try {
       final response = await _client.get(_uri('/health'));
-      return response.statusCode == 200;
+      if (response.statusCode != 200) {
+        return false;
+      }
+      final decoded = _unwrapApiResponse(jsonDecode(response.body));
+      return decoded is Map && decoded['ok'] == true;
     } catch (_) {
       return false;
     }
@@ -334,11 +292,25 @@ class LiveSyncApiClient {
     _client.close();
   }
 
+  String _errorMessageFromMap(Map<String, dynamic> payload) {
+    final messages = payload['messages'];
+    if (messages is List && messages.isNotEmpty) {
+      final first = messages.first;
+      if (first is Map && first['text'] is String) {
+        return first['text'] as String;
+      }
+    }
+    if (payload['error'] is String) {
+      return payload['error'] as String;
+    }
+    return 'Request failed.';
+  }
+
   String _errorMessageFromResponse(http.Response response) {
     try {
       final decoded = jsonDecode(response.body);
-      if (decoded is Map && decoded['error'] is String) {
-        return decoded['error'] as String;
+      if (decoded is Map<String, dynamic>) {
+        return _errorMessageFromMap(decoded);
       }
     } catch (_) {}
     return 'Request failed with ${response.statusCode}.';

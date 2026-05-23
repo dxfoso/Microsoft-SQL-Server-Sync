@@ -1,8 +1,4 @@
-{{- if eq (include "sync-admin-web.backendEnabled" .) "true" }}
-{{- $persistence := .Values.persistence | default dict -}}
-{{- $stateMountPath := $persistence.mountPath | default "/app/data" -}}
-{{- $backend := .Values.backend | default dict -}}
-{{- $backendStateFile := $backend.stateFile | default (printf "%s/state.json" $stateMountPath) -}}
+{{- if .Values.backend.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,12 +7,8 @@ metadata:
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:
-  {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
-  strategy:
-    type: Recreate
-  {{- end }}
+  replicas: {{ .Values.backend.replicas }}
   revisionHistoryLimit: 2
-  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "sync-admin-web.name" . }}
@@ -27,53 +19,49 @@ spec:
       labels:
         {{- include "sync-admin-web.labels" . | nindent 8 }}
         app.kubernetes.io/component: backend
-      annotations:
-        rollout.sync-admin-web/revision: {{ .Release.Revision | quote }}
-        divclouds.com/restartedAt: {{ default (printf "%d" .Release.Revision) .Values.appReleaseDate | quote }}
     spec:
+      {{- if and .Values.dockerRegistry .Values.dockerUsername .Values.dockerPassword }}
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
-      {{- $backendImage := .Values.backend.image -}}
-      {{- if and (not (kindIs "string" $backendImage)) .Values.image .Values.image.repository }}
-      {{- $backendRepo := include "sync-admin-web.componentImageRepository" (list .Values.image.repository "backend" .Values.dockerRegistry) -}}
-      {{- $backendImage = dict "repository" $backendRepo "tag" .Values.image.tag "pullPolicy" .Values.image.pullPolicy -}}
       {{- end }}
       containers:
         - name: backend
-          image: "{{ include "sync-admin-web.validatedImageRef" $backendImage }}"
-          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" $backendImage }}
+          image: {{ .Values.backend.image | quote }}
+          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" . }}
           ports:
             - containerPort: {{ .Values.backend.service.port }}
           env:
-            - name: PORT
+            - name: TRU_CONFIG_PATH
+              value: {{ .Values.backend.env.truConfigPath | quote }}
+            - name: TRU_HOST
+              value: "0.0.0.0"
+            - name: TRU_PORT
               value: {{ .Values.backend.service.port | quote }}
-            - name: STATE_FILE
-              value: {{ $backendStateFile | quote }}
-          {{- with .Values.backend.resources }}
+            - name: TRU_POSTGRESQL_URL
+              value: {{ include "sync-admin-web.backendPostgresUrl" . | quote }}
+            - name: TRU_STORAGE_DIR
+              value: {{ .Values.backend.env.truStorageDir | quote }}
+            - name: TRU_SPEC_CACHE_PATH
+              value: {{ .Values.backend.env.truSpecCachePath | quote }}
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
+            {{- toYaml .Values.backend.resources | nindent 12 }}
           volumeMounts:
-            - name: state-data
-              mountPath: {{ $stateMountPath | quote }}
-          {{- end }}
+            - name: backend-data
+              mountPath: /app/data
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /call/ready
               port: {{ .Values.backend.service.port }}
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /call/health
               port: {{ .Values.backend.service.port }}
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
             periodSeconds: 20
-      {{- if eq (include "sync-admin-web.persistenceEnabled" .) "true" }}
       volumes:
-        - name: state-data
+        - name: backend-data
           persistentVolumeClaim:
-            claimName: {{ include "sync-admin-web.statePvcName" . }}
-      {{- end }}
+            claimName: {{ include "sync-admin-web.backendDataPvcName" . }}
 {{- end }}

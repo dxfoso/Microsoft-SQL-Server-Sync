@@ -13,9 +13,7 @@ sql-sync
 {{- define "sync-admin-web.componentFullname" -}}
 {{- $root := index . 0 -}}
 {{- $suffix := index . 1 -}}
-{{- $base := include "sync-admin-web.fullname" $root -}}
-{{- $budget := int (sub 63 (add 1 (len $suffix))) -}}
-{{- printf "%s-%s" ($base | trunc $budget | trimSuffix "-") $suffix | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" (include "sync-admin-web.fullname" $root) $suffix | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "sync-admin-web.frontendFullname" -}}
@@ -26,26 +24,16 @@ sql-sync
 {{- include "sync-admin-web.componentFullname" (list . "back") -}}
 {{- end -}}
 
-{{- define "sync-admin-web.statePvcName" -}}
-{{- $persistence := .Values.persistence | default dict -}}
-{{- $existingClaim := $persistence.existingClaim | default "" -}}
-{{- if $existingClaim -}}
-{{- $existingClaim -}}
-{{- else -}}
-{{- include "sync-admin-web.componentFullname" (list . "state") -}}
-{{- end -}}
+{{- define "sync-admin-web.postgresFullname" -}}
+{{- include "sync-admin-web.componentFullname" (list . "postgres") -}}
 {{- end -}}
 
-{{- define "sync-admin-web.backendEnabled" -}}
-{{- if .Values.backend -}}
-{{- if hasKey .Values.backend "enabled" -}}
-{{- .Values.backend.enabled -}}
-{{- else -}}
-true
+{{- define "sync-admin-web.backendDataPvcName" -}}
+{{- include "sync-admin-web.componentFullname" (list . "back-data") -}}
 {{- end -}}
-{{- else -}}
-false
-{{- end -}}
+
+{{- define "sync-admin-web.postgresPvcName" -}}
+{{- include "sync-admin-web.componentFullname" (list . "postgres-data") -}}
 {{- end -}}
 
 {{- define "sync-admin-web.labels" -}}
@@ -63,147 +51,16 @@ app.kubernetes.io/managed-by: Helm
 {{- printf "{\"auths\":{\"%s\":{\"username\":\"%s\",\"password\":\"%s\",\"email\":\"%s\",\"auth\":\"%s\"}}}" .Values.dockerRegistry .Values.dockerUsername .Values.dockerPassword .Values.dockerEmail $auth | b64enc -}}
 {{- end -}}
 
-{{- define "sync-admin-web.imageRef" -}}
-{{- $image := . -}}
-{{- if kindIs "string" $image -}}
-{{- $image -}}
-{{- else -}}
-{{- $repository := $image.repository | default "" | lower -}}
-{{- $tag := $image.tag | default "" -}}
-{{- $hasDigest := contains "@" $repository -}}
-{{- $hasTag := regexMatch ".+:[^/]+$" $repository -}}
-{{- if or $hasDigest $hasTag (eq $tag "") -}}
-{{- $repository -}}
-{{- else -}}
-{{- printf "%s:%s" $repository $tag -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "sync-admin-web.validatedImageRef" -}}
-{{- $ref := include "sync-admin-web.imageRef" . | trim -}}
-{{- $parts := splitList "/" $ref -}}
-{{- $registryHost := index $parts 0 | default "" -}}
-{{- $hasRegistryHost := or (contains "." $registryHost) (contains ":" $registryHost) (eq $registryHost "localhost") -}}
-{{- $hasDigest := contains "@" $ref -}}
-{{- $hasTag := regexMatch ".+:[^/]+$" $ref -}}
-{{- if not $ref -}}
-{{- fail "workload image ref must not be empty" -}}
-{{- end -}}
-{{- if not $hasRegistryHost -}}
-{{- fail (printf "workload image ref %q must be fully qualified with a registry host" $ref) -}}
-{{- end -}}
-{{- if not (or $hasDigest $hasTag) -}}
-{{- fail (printf "workload image ref %q must include an immutable tag or digest" $ref) -}}
-{{- end -}}
-{{- $ref -}}
-{{- end -}}
-
-{{- define "sync-admin-web.componentImageRepository" -}}
-{{- $repository := index . 0 | default "" | lower -}}
-{{- $component := index . 1 -}}
-{{- $dockerRegistry := "" -}}
-{{- if ge (len .) 3 -}}
-{{- $dockerRegistry = index . 2 | default "" -}}
-{{- end -}}
-{{- if and $dockerRegistry (not (contains "/" $repository)) -}}
-{{- $repository = printf "%s/%s" $dockerRegistry $repository -}}
-{{- end -}}
-{{- $repository = trimSuffix "/frontend" $repository -}}
-{{- $repository = trimSuffix "/backend" $repository -}}
-{{- printf "%s/%s" ($repository | trimSuffix "/") $component -}}
-{{- end -}}
-
 {{- define "sync-admin-web.imagePullPolicy" -}}
-{{- $image := . -}}
-{{- $policy := "Always" -}}
-{{- if and (kindIs "map" $image) $image.pullPolicy -}}
-{{- $candidate := lower (trim $image.pullPolicy) -}}
-{{- if eq $candidate "never" -}}
-{{- fail "imagePullPolicy Never is not allowed for Cloud deployments; use a pullable registry-backed image ref" -}}
-{{- end -}}
-{{- if eq $candidate "ifnotpresent" -}}
-{{- $policy = "IfNotPresent" -}}
-{{- end -}}
-{{- end -}}
-{{- $policy -}}
+IfNotPresent
 {{- end -}}
 
-{{- define "sync-admin-web.persistenceEnabled" -}}
-{{- $persistence := .Values.persistence | default dict -}}
-{{- if hasKey $persistence "enabled" -}}
-{{- if $persistence.enabled -}}
-true
-{{- else -}}
-false
-{{- end -}}
-{{- else -}}
-true
-{{- end -}}
-{{- end -}}
-
-{{- define "sync-admin-web.certManagerCreateClusterIssuer" -}}
-{{- if hasKey .Values.certManager "createClusterIssuer" -}}
-{{- .Values.certManager.createClusterIssuer -}}
-{{- else -}}
-true
-{{- end -}}
-{{- end -}}
-
-{{- define "sync-admin-web.certManagerIssuerName" -}}
-{{- if eq (include "sync-admin-web.certManagerCreateClusterIssuer" .) "true" -}}
-{{- printf "%s-letsencrypt" (include "sync-admin-web.fullname" .) | trunc 63 | trimSuffix "-" -}}
-{{- else -}}
-{{- $issuerName := .Values.certManager.issuerName | default "" -}}
-{{- if or (eq $issuerName "") (eq $issuerName "sync-admin-web-letsencrypt") -}}
-letsencrypt-http01
-{{- else -}}
-{{- $issuerName -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "sync-admin-web.certManagerShouldManageTls" -}}
-{{- $enabled := false -}}
-{{- if .Values.certManager -}}
-{{- if hasKey .Values.certManager "enabled" -}}
-{{- $enabled = .Values.certManager.enabled -}}
-{{- else -}}
-{{- $enabled = true -}}
-{{- end -}}
-{{- end -}}
-{{- if $enabled -}}
-true
-{{- else -}}
-{{- $tlsConfigured := and .Values.frontend .Values.frontend.ingress .Values.frontend.ingress.enabled .Values.frontend.ingress.tls -}}
-{{- if $tlsConfigured -}}
-{{- $tls := index .Values.frontend.ingress.tls 0 -}}
-{{- if and $tls $tls.secretName -}}
-{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $tls.secretName -}}
-{{- if $existingSecret -}}
-false
-{{- else -}}
-true
-{{- end -}}
-{{- else -}}
-false
-{{- end -}}
-{{- else -}}
-false
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "sync-admin-web.certManagerIssuerKind" -}}
-{{- if eq (include "sync-admin-web.certManagerCreateClusterIssuer" .) "true" -}}
-ClusterIssuer
-{{- else -}}
-{{- .Values.certManager.issuerKind | default "ClusterIssuer" -}}
-{{- end -}}
+{{- define "sync-admin-web.backendPostgresUrl" -}}
+{{- printf "postgresql://%s:%s@%s:%v/%s" .Values.postgres.username .Values.postgres.password (include "sync-admin-web.postgresFullname" .) .Values.postgres.service.port .Values.postgres.database -}}
 {{- end -}}
 
 {{- define "sync-admin-web.certManagerAnnotationKey" -}}
-{{- if eq (include "sync-admin-web.certManagerIssuerKind" .) "Issuer" -}}
+{{- if eq (.Values.certManager.issuerKind | default "ClusterIssuer") "Issuer" -}}
 cert-manager.io/issuer
 {{- else -}}
 cert-manager.io/cluster-issuer

@@ -1,36 +1,39 @@
-{{- $persistence := .Values.persistence | default dict -}}
-{{- $existingClaim := $persistence.existingClaim | default "" -}}
-{{- $annotations := $persistence.annotations | default dict -}}
-{{- $retain := true -}}
-{{- if hasKey $persistence "retain" -}}
-{{- $retain = $persistence.retain -}}
-{{- end -}}
-{{- if and (eq (include "sync-admin-web.persistenceEnabled" .) "true") (not $existingClaim) }}
+{{- if .Values.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "sync-admin-web.statePvcName" . }}
+  name: {{ include "sync-admin-web.backendDataPvcName" . }}
   namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
-  {{- if or $retain $annotations }}
   annotations:
-    {{- if $retain }}
     helm.sh/resource-policy: keep
-    {{- end }}
-    {{- with $annotations }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
-  {{- end }}
 spec:
   accessModes:
-    {{- range ($persistence.accessModes | default (list "ReadWriteOnce")) }}
-    - {{ . | quote }}
-    {{- end }}
+    - ReadWriteOnce
   resources:
     requests:
-      storage: {{ ($persistence.size | default "1Gi") | quote }}
-  {{- if $persistence.storageClassName }}
-  storageClassName: {{ $persistence.storageClassName | quote }}
+      storage: {{ .Values.persistence.data.size | quote }}
+  {{- if .Values.persistence.data.storageClassName }}
+  storageClassName: {{ .Values.persistence.data.storageClassName | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sync-admin-web.postgresPvcName" . }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgres.persistence.size | quote }}
+  {{- if .Values.postgres.persistence.storageClassName }}
+  storageClassName: {{ .Values.postgres.persistence.storageClassName | quote }}
   {{- end }}
 {{- end }}

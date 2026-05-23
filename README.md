@@ -1,8 +1,11 @@
 # Microsoft SQL Server Sync Workspace
 
-This repository contains two separate Flutter applications for a Microsoft SQL Server sync platform:
+This repository contains the web control plane, the Windows desktop agent, and
+the TRU backend business logic for a Microsoft SQL Server sync platform:
 
-- `sync_admin_web`: Flutter web control plane for the website
+- `frontend`: Flutter web control plane for the website
+- `backend`: upstream `tru` runtime as a git submodule
+- `business`: project-owned TRU business logic for the backend
 - `sync_windows_agent`: Flutter Windows desktop agent for each customer PC
 
 ## What Is In This Repo
@@ -10,9 +13,11 @@ This repository contains two separate Flutter applications for a Microsoft SQL S
 The repo now includes:
 
 - a responsive Flutter web dashboard where an operator can choose the source PC, sink PCs, tables, and 5-minute schedule
+- the upstream TRU runtime mounted directly at `backend/`
+- a root `business/` source tree for all backend `.tru` files
 - a responsive Flutter Windows desktop agent where a user can enter the website domain, local SQL Server settings, and table exposure rules
 - updated widget tests for both apps
-- project-level documentation and rollout steps
+- project-level documentation for the current repo layout
 
 ## Important Architecture Note
 
@@ -21,11 +26,12 @@ A Flutter web app running in the browser cannot safely or directly connect to Mi
 To make your product work correctly, you need 3 parts:
 
 1. A web control plane
-   This is `sync_admin_web`. It is where the admin creates sync plans and selects source and sink machines.
+   This is `frontend`. It is where the admin creates sync plans and selects source and sink machines.
 2. A Windows desktop agent on each PC
    This is `sync_windows_agent`. It runs locally on the machine, stores SQL credentials, and performs the actual sync work.
 3. A backend API/orchestrator
-   This stores plans, authenticates agents, schedules jobs every 5 minutes, records logs, and coordinates source/sink execution.
+   This runs on the TRU runtime in `backend/` and loads the app-specific logic
+   from the root `business/` directory.
 
 The first two parts are implemented here as separate Flutter apps. The backend is described below and should be the next build phase.
 
@@ -35,7 +41,7 @@ The first two parts are implemented here as separate Flutter apps. The backend i
 2. The agent stores:
    the central domain URL, local SQL Server instance, database name, secure credentials, and machine identity.
 3. The agent registers with the backend API.
-4. An admin opens `sync_admin_web` and creates a sync plan:
+4. An admin opens `frontend` and creates a sync plan:
    source PC, sink PCs, tables, and 5-minute cadence.
 5. The backend saves the plan and assigns it to the relevant agents.
 6. Every 5 minutes:
@@ -48,10 +54,12 @@ The first two parts are implemented here as separate Flutter apps. The backend i
 ```text
 .
 |-- README.md
-|-- sync_admin_web/
+|-- frontend/
 |   |-- lib/
 |   |-- test/
 |   `-- web/
+|-- backend/
+|-- business/
 `-- sync_windows_agent/
     |-- lib/
     |-- test/
@@ -60,7 +68,7 @@ The first two parts are implemented here as separate Flutter apps. The backend i
 
 ## What Each App Does
 
-### `sync_admin_web`
+### `frontend`
 
 Use this as the website that operators open in the browser.
 
@@ -73,6 +81,17 @@ Current UI supports:
 - schedule selection, including every 5 minutes
 - recent run history
 - architecture guidance inside the UI
+
+### `backend`
+
+Use this as the upstream TRU runtime submodule. It contains the server,
+tooling, tests, and TRU runtime source, but it should not contain this app's
+custom business logic.
+
+### `business`
+
+Use this as the source of truth for backend `.tru` business logic, including the
+app API and DB API for this project.
 
 ### `sync_windows_agent`
 
@@ -96,9 +115,15 @@ Install SSMS from Microsoft Learn: [Download SQL Server Management Studio (SSMS)
 ### Web app
 
 ```bash
-cd sync_admin_web
+cd frontend
 flutter run -d chrome
 ``` 
+
+### Backend
+
+```powershell
+.\backend\run.ps1 -Server -ConfigPath ..\business\tru.json
+```
 
 ### Windows app
 
@@ -120,20 +145,8 @@ Status: done in this repo
 
 ### Phase 2: Backend API and Authentication
 
-Recommended stack:
-
-- ASP.NET Core API
-- SQL Server or PostgreSQL for metadata
-- SignalR or WebSocket for near-real-time agent commands
-- JWT or mutual TLS for agent authentication
-
-Core backend responsibilities:
-
-- store users, tenants, agents, sync plans, table mappings, and logs
-- authenticate the website and the Windows agents
-- schedule and queue jobs every 5 minutes
-- track agent heartbeat and online status
-- expose REST endpoints for the Flutter web app
+Backend work lives on the TRU runtime in `backend/`, with project-owned API
+logic in root `business/`.
 
 ### Phase 3: Real SQL Server Sync Engine
 
@@ -164,7 +177,7 @@ Recommended SQL Server techniques:
 ## Step-By-Step To Achieve The Full Product
 
 1. Finalize the data model for agents, plans, and table mappings.
-2. Build the backend API that both Flutter apps will call.
+2. Build the backend API in `business/` that both Flutter apps will call.
 3. Add agent registration and secure login.
 4. Add machine heartbeat and online/offline tracking.
 5. Add source/sink assignment APIs.
@@ -178,4 +191,7 @@ Recommended SQL Server techniques:
 
 ## Current Limitation
 
-The Flutter apps in this repository are strong UI foundations, but they use mock data today. Real cross-PC SQL Server synchronization still requires the backend/orchestrator plus the actual SQL sync engine inside the Windows agent.
+The Flutter apps in this repository are strong UI foundations, but they use mock
+data today. The TRU backend is wired for health/readiness from `business/`, but
+the full SQL sync API and DB flows still need to be implemented in the root
+`business/` files.

@@ -9,7 +9,7 @@ import 'sync_state.dart';
 
 const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
-  defaultValue: 'https://sync.velvet-leaf.com/api',
+  defaultValue: 'https://sync.velvet-leaf.com/call',
 );
 const int _snapshotTransferChunkSizeBytes = 100 * 1024;
 const int _snapshotTransferMaxAttempts = 10;
@@ -39,7 +39,7 @@ class AgentControlPlaneClient {
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
     if (trimmed.isEmpty) {
-      return 'https://sync.velvet-leaf.com/api';
+      return 'https://sync.velvet-leaf.com/call';
     }
     return trimmed.endsWith('/')
         ? trimmed.substring(0, trimmed.length - 1)
@@ -47,6 +47,40 @@ class AgentControlPlaneClient {
   }
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
+  Uri _uriCall() => Uri.parse(_baseUrl);
+
+  dynamic _unwrapApiResponse(dynamic decoded) {
+    if (decoded is! Map<String, dynamic>) {
+      return decoded;
+    }
+    final status = decoded['status'];
+    if (status == 'failed') {
+      throw AgentControlPlaneException(_errorMessageFromMap(decoded));
+    }
+    if (status == 'success' && decoded.containsKey('value')) {
+      return decoded['value'];
+    }
+    return decoded;
+  }
+
+  Future<dynamic> _invokeFunction(
+    String functionName,
+    Map<String, dynamic> args,
+    String phase,
+  ) async {
+    final response = await _sendRequest(
+      _client.post(
+        _uriCall(),
+        headers: _headers(json: true),
+        body: jsonEncode({'name': functionName, 'args': args}),
+      ),
+      phase,
+    );
+    if (response.statusCode != 200) {
+      throw _exceptionFromResponse(response);
+    }
+    return _unwrapApiResponse(jsonDecode(response.body));
+  }
 
   void setAuthToken(String? token) {
     final trimmed = token?.trim();
@@ -82,24 +116,11 @@ class AgentControlPlaneClient {
     required String name,
     required String password,
   }) async {
-    final response = await _sendRequest(
-      _client.post(
-        _uri('/auth/login'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'name': name.trim(),
-          'password': password,
-          'app': 'windows',
-        }),
-      ),
-      'signing in',
-    );
-
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
-
-    final decoded = jsonDecode(response.body);
+    final decoded = await _invokeFunction('auth_login', {
+      'name': name.trim(),
+      'password': password,
+      'app': 'windows',
+    }, 'signing in');
     if (decoded is! Map || decoded['user'] is! Map) {
       throw const AgentControlPlaneException('Unexpected login payload.');
     }
@@ -121,15 +142,11 @@ class AgentControlPlaneClient {
   }
 
   Future<AgentAuthenticatedUser> fetchCurrentUser() async {
-    final response = await _sendRequest(
-      _client.get(_uri('/auth/me'), headers: _headers()),
+    final decoded = await _invokeFunction(
+      'auth_me',
+      {},
       'restoring session',
     );
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
-
-    final decoded = jsonDecode(response.body);
     if (decoded is! Map || decoded['user'] is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected current-user payload.',
@@ -154,13 +171,7 @@ class AgentControlPlaneClient {
     if (_authToken == null) {
       return;
     }
-    final response = await _sendRequest(
-      _client.post(_uri('/auth/logout'), headers: _headers(json: true)),
-      'logging out',
-    );
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
+    await _invokeFunction('auth_logout', {}, 'logging out');
     setAuthToken(null);
   }
 
@@ -231,6 +242,44 @@ class AgentControlPlaneClient {
     );
   }
 
+  Future<dynamic> _invokeFunctionWithRetry(
+    String functionName,
+    Map<String, dynamic> args,
+    String phase,
+  ) async {
+    Object? lastError;
+    for (
+      var attempt = 0;
+      attempt < _snapshotTransferMaxAttempts;
+      attempt += 1
+    ) {
+      try {
+        return await _invokeFunction(functionName, args, phase);
+      } catch (error) {
+        lastError = error;
+        final statusCode = error is AgentControlPlaneException
+            ? error.statusCode
+            : null;
+        final canRetry =
+            statusCode != null && _isRetryableTransferStatus(statusCode);
+        if (!canRetry || attempt == _snapshotTransferMaxAttempts - 1) {
+          throw error is AgentControlPlaneException
+              ? error
+              : AgentControlPlaneException(
+                'Control plane connection dropped during $phase. Retrying automatically.',
+                statusCode: 503,
+              );
+        }
+        await Future<void>.delayed(_transferRetryDelay(attempt));
+      }
+    }
+
+    throw AgentControlPlaneException(
+      'Control plane connection dropped during $phase. Retrying automatically. $lastError',
+      statusCode: 503,
+    );
+  }
+
   Future<HeartbeatResult> heartbeat({
     required String clientName,
     required String machineName,
@@ -244,37 +293,30 @@ class AgentControlPlaneClient {
     required String? selectedTable,
     required Map<String, SyncTableState> tables,
   }) async {
-    final response = await _sendRequest(
-      _client.post(
-        _uri('/agents/heartbeat'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'clientName': clientName,
-          'machineName': machineName,
-          'isMaster': isMaster,
-          'historyLimit': historyLimit,
-          'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
-          'server': server,
-          'database': database,
-          'serverConnected': serverConnected,
-          'sqlConnected': sqlConnected,
-          'selectedTable': selectedTable,
-          'tables': tables.entries
-              .map((entry) => {'table': entry.key, ...entry.value.toJson()})
-              .toList(growable: false),
-        }),
-      ),
+    final response = await _invokeFunction(
+      'agents_heartbeat',
+      {
+        'clientName': clientName,
+        'machineName': machineName,
+        'isMaster': isMaster,
+        'historyLimit': historyLimit,
+        'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+        'server': server,
+        'database': database,
+        'serverConnected': serverConnected,
+        'sqlConnected': sqlConnected,
+        'selectedTable': selectedTable,
+        'tables': tables.entries
+            .map((entry) => {'table': entry.key, ...entry.value.toJson()})
+            .toList(growable: false),
+      },
       'sending heartbeat',
     );
 
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
+    if (response is! Map) {
       throw const AgentControlPlaneException('Unexpected heartbeat payload.');
     }
+    final decoded = response;
 
     final jobs = decoded['jobs'] as List<dynamic>? ?? const [];
     final syncSettings =
@@ -305,31 +347,24 @@ class AgentControlPlaneClient {
     String? sourceClientName,
     String? syncMode,
   }) async {
-    final response = await _sendRequest(
-      _client.post(
-        _uri('/jobs'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'clientName': clientName,
-          if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
-            'sourceClientName': sourceClientName,
-          if (syncMode != null && syncMode.trim().isNotEmpty)
-            'syncMode': syncMode,
-          'direction': direction,
-          'tables': tables,
-        }),
-      ),
+    final response = await _invokeFunction(
+      'jobs_create',
+      {
+        'clientName': clientName,
+        if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
+          'sourceClientName': sourceClientName,
+        if (syncMode != null && syncMode.trim().isNotEmpty)
+          'syncMode': syncMode,
+        'direction': direction,
+        'tables': tables,
+      },
       'creating jobs',
     );
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _exceptionFromResponse(response);
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
+    if (response is! Map) {
       throw const AgentControlPlaneException('Unexpected job queue payload.');
     }
+    final decoded = response;
     final jobs = decoded['jobs'] as List<dynamic>? ?? const [];
     return jobs
         .map(
@@ -345,19 +380,17 @@ class AgentControlPlaneClient {
     required int progress,
     required String message,
   }) async {
-    final response = await _sendRequest(
-      _client.post(
-        _uri('/jobs/$jobId/start'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'status': status,
-          'progress': progress,
-          'message': message,
-        }),
-      ),
+    final response = await _invokeFunction(
+      'jobs_start',
+      {
+        'jobId': jobId,
+        'status': status,
+        'progress': progress,
+        'message': message,
+      },
       'starting job',
     );
-    return _parseJobResponse(response, 'job start');
+    return _parseJobPayload(response, 'job start');
   }
 
   Future<RemoteSyncJob> updateJobProgress(
@@ -368,21 +401,19 @@ class AgentControlPlaneClient {
     required int rowCount,
     required String direction,
   }) async {
-    final response = await _sendRequest(
-      _client.post(
-        _uri('/jobs/$jobId/progress'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'status': status,
-          'progress': progress,
-          'message': message,
-          'rowCount': rowCount,
-          'direction': direction,
-        }),
-      ),
+    final response = await _invokeFunction(
+      'jobs_progress',
+      {
+        'jobId': jobId,
+        'status': status,
+        'progress': progress,
+        'message': message,
+        'rowCount': rowCount,
+        'direction': direction,
+      },
       'updating job progress',
     );
-    return _parseJobResponse(response, 'job progress');
+    return _parseJobPayload(response, 'job progress');
   }
 
   Future<UploadSnapshotResult> uploadSnapshot(
@@ -404,9 +435,12 @@ class AgentControlPlaneClient {
     final startResponse = await _transferRequestWithRetry(
       () => _sendRequest(
         _client.post(
-          _uri('/jobs/$jobId/upload-chunk-start'),
+          _uriCall(),
           headers: _headers(json: true),
           body: jsonEncode({
+            'name': 'jobs_upload_chunk_start',
+            'args': {
+            'jobId': jobId,
             'uploadId': uploadId,
             'clientName': clientName,
             'table': table,
@@ -417,6 +451,7 @@ class AgentControlPlaneClient {
             'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
             'chunkCount': chunkCount,
             'encoding': 'gzip',
+            },
           }),
         ),
         'starting snapshot upload',
@@ -428,7 +463,7 @@ class AgentControlPlaneClient {
       throw _exceptionFromResponse(startResponse);
     }
 
-    final startDecoded = jsonDecode(startResponse.body);
+    final startDecoded = _unwrapApiResponse(jsonDecode(startResponse.body));
     if (startDecoded is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected chunked upload start payload.',
@@ -454,12 +489,16 @@ class AgentControlPlaneClient {
       final chunkResponse = await _transferRequestWithRetry(
         () => _sendRequest(
           _client.post(
-            _uri('/jobs/$jobId/upload-chunk'),
+            _uriCall(),
             headers: _headers(json: true),
             body: jsonEncode({
-              'uploadId': uploadId,
-              'chunkIndex': chunkIndex,
-              'chunkData': base64Encode(chunkBytes),
+              'name': 'jobs_upload_chunk',
+              'args': {
+                'jobId': jobId,
+                'uploadId': uploadId,
+                'chunkIndex': chunkIndex,
+                'chunkData': base64Encode(chunkBytes),
+              },
             }),
           ),
           'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
@@ -470,14 +509,21 @@ class AgentControlPlaneClient {
       if (chunkResponse.statusCode != 200) {
         throw _exceptionFromResponse(chunkResponse);
       }
+      _unwrapApiResponse(jsonDecode(chunkResponse.body));
     }
 
     final response = await _transferRequestWithRetry(
       () => _sendRequest(
         _client.post(
-          _uri('/jobs/$jobId/upload-chunk-complete'),
+          _uriCall(),
           headers: _headers(json: true),
-          body: jsonEncode({'uploadId': uploadId}),
+          body: jsonEncode({
+            'name': 'jobs_upload_chunk_complete',
+            'args': {
+              'jobId': jobId,
+              'uploadId': uploadId,
+            },
+          }),
         ),
         'completing snapshot upload',
       ),
@@ -488,7 +534,7 @@ class AgentControlPlaneClient {
       throw _exceptionFromResponse(response);
     }
 
-    final decoded = jsonDecode(response.body);
+    final decoded = _unwrapApiResponse(jsonDecode(response.body));
     if (decoded is! Map) {
       throw const AgentControlPlaneException('Unexpected upload payload.');
     }
@@ -504,36 +550,29 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
-    final manifestResponse = await _transferRequestWithRetry(
-      () => _sendRequest(
-        _client.get(
-          _uri('/jobs/$jobId/download-snapshot-manifest'),
-          headers: _headers(),
-        ),
+    Map<String, dynamic> manifestDecoded;
+    try {
+      final manifest = await _invokeFunctionWithRetry(
+        'jobs_download_snapshot_manifest',
+        {'jobId': jobId},
         'starting snapshot download',
-      ),
-      'starting snapshot download',
-    );
-
-    if (manifestResponse.statusCode == 404) {
-      return _downloadSnapshotLegacy(jobId);
-    }
-    if (manifestResponse.statusCode != 200) {
-      throw _exceptionFromResponse(manifestResponse);
-    }
-
-    final manifestDecoded = jsonDecode(manifestResponse.body);
-    if (manifestDecoded is! Map || manifestDecoded['manifest'] is! Map) {
-      throw const AgentControlPlaneException(
-        'Unexpected chunked download manifest payload.',
       );
+      if (manifest is! Map || manifest['manifest'] is! Map) {
+        throw const AgentControlPlaneException(
+          'Unexpected chunked download manifest payload.',
+        );
+      }
+      manifestDecoded = Map<String, dynamic>.from(manifest['manifest'] as Map);
+    } catch (error) {
+      if (error is AgentControlPlaneException &&
+          error.message.toLowerCase().contains('not found')) {
+        return _downloadSnapshotLegacy(jobId);
+      }
+      rethrow;
     }
-    final manifest = Map<String, dynamic>.from(
-      manifestDecoded['manifest'] as Map,
-    );
-    final transferId = manifest['id'] as String? ?? '';
-    final chunkCount = (manifest['chunkCount'] as num? ?? 0).round();
-    final compressedBytes = (manifest['compressedBytes'] as num? ?? 0).round();
+    final transferId = manifestDecoded['id'] as String? ?? '';
+    final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
+    final compressedBytes = (manifestDecoded['compressedBytes'] as num? ?? 0).round();
 
     if (transferId.isEmpty || chunkCount < 1 || compressedBytes < 1) {
       throw const AgentControlPlaneException(
@@ -543,19 +582,11 @@ class AgentControlPlaneClient {
 
     final buffer = BytesBuilder(copy: false);
     for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-      final chunkResponse = await _transferRequestWithRetry(
-        () => _client.get(
-          _uri('/jobs/$jobId/download-snapshot-chunk?index=$chunkIndex'),
-          headers: _headers(),
-        ),
+      final chunkDecoded = await _invokeFunctionWithRetry(
+        'jobs_download_snapshot_chunk',
+        {'jobId': jobId, 'chunkIndex': chunkIndex},
         'downloading snapshot chunk ${chunkIndex + 1} of $chunkCount',
       );
-
-      if (chunkResponse.statusCode != 200) {
-        throw _exceptionFromResponse(chunkResponse);
-      }
-
-      final chunkDecoded = jsonDecode(chunkResponse.body);
       if (chunkDecoded is! Map || chunkDecoded['chunkData'] is! String) {
         throw const AgentControlPlaneException(
           'Unexpected snapshot chunk payload.',
@@ -583,15 +614,11 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> _downloadSnapshotLegacy(String jobId) async {
-    final response = await _sendRequest(
-      _client.get(_uri('/jobs/$jobId/download-snapshot'), headers: _headers()),
+    final decoded = await _invokeFunctionWithRetry(
+      'jobs_download_snapshot',
+      {'jobId': jobId},
       'downloading snapshot',
     );
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
-
-    final decoded = jsonDecode(response.body);
     if (decoded is! Map) {
       throw const AgentControlPlaneException('Unexpected download payload.');
     }
@@ -611,54 +638,38 @@ class AgentControlPlaneClient {
     String? snapshotCreatedAt,
     int? snapshotBytes,
   }) async {
-    final response = await _sendRequest(
-      _client.post(
-        _uri('/jobs/$jobId/complete'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'status': status,
-          'progress': progress,
-          'message': message,
-          'rowCount': rowCount,
-          'snapshotId': snapshotId,
-          'snapshotCreatedAt': snapshotCreatedAt,
-          'snapshotBytes': snapshotBytes,
-        }),
-      ),
+    final response = await _invokeFunction(
+      'jobs_complete',
+      {
+        'jobId': jobId,
+        'status': status,
+        'progress': progress,
+        'message': message,
+        'rowCount': rowCount,
+        'snapshotId': snapshotId,
+        'snapshotCreatedAt': snapshotCreatedAt,
+        'snapshotBytes': snapshotBytes,
+      },
       'completing job',
     );
-    return _parseJobResponse(response, 'job completion');
+    return _parseJobPayload(response, 'job completion');
   }
 
   Future<void> failJob(String jobId, String message, {int? progress}) async {
-    final response = await _sendRequest(
-      _client.post(
-        _uri('/jobs/$jobId/fail'),
-        headers: _headers(json: true),
-        body: jsonEncode({
-          'message': message,
-          if (progress != null) 'progress': progress,
-        }),
-      ),
-      'failing job',
-    );
-
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
+    await _invokeFunction('jobs_fail', {
+      'jobId': jobId,
+      'message': message,
+      if (progress != null) 'progress': progress,
+    }, 'failing job');
   }
 
-  RemoteSyncJob _parseJobResponse(http.Response response, String phase) {
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
+  RemoteSyncJob _parseJobPayload(dynamic response, String phase) {
+    if (response is! Map) {
       throw AgentControlPlaneException(
         'Unexpected payload returned from $phase.',
       );
     }
+    final decoded = Map<String, dynamic>.from(response);
 
     return RemoteSyncJob.fromJson(
       Map<String, dynamic>.from(decoded['job'] as Map),
@@ -675,11 +686,25 @@ class AgentControlPlaneClient {
     }
     try {
       final decoded = jsonDecode(response.body);
-      if (decoded is Map && decoded['error'] is String) {
-        return decoded['error'] as String;
+      if (decoded is Map<String, dynamic>) {
+        return _errorMessageFromMap(decoded);
       }
     } catch (_) {}
     return 'Request failed with ${response.statusCode}.';
+  }
+
+  String _errorMessageFromMap(Map<String, dynamic> payload) {
+    final messages = payload['messages'];
+    if (messages is List && messages.isNotEmpty) {
+      final first = messages[0];
+      if (first is Map && first['text'] is String) {
+        return first['text'] as String;
+      }
+    }
+    if (payload['error'] is String) {
+      return payload['error'] as String;
+    }
+    return 'Request failed.';
   }
 
   AgentControlPlaneException _exceptionFromResponse(http.Response response) {

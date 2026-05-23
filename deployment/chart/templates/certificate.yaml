@@ -1,19 +1,31 @@
-{{- if and (eq (include "sync-admin-web.certManagerShouldManageTls" .) "true") .Values.frontend.ingress.enabled .Values.frontend.ingress.tls }}
-{{- $tls := index .Values.frontend.ingress.tls 0 }}
+{{- if .Values.certManager.enabled }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "sync-admin-web.fullname" . }}-tls
+  name: {{ include "sync-admin-web.fullname" . }}-frontend-tls
   namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:
-  secretName: {{ $tls.secretName }}
+  secretName: {{ .Values.ingress.tls.frontendSecretName | quote }}
   issuerRef:
-    name: {{ include "sync-admin-web.certManagerIssuerName" . }}
-    kind: {{ include "sync-admin-web.certManagerIssuerKind" . }}
+    name: {{ .Values.certManager.issuerName | quote }}
+    kind: {{ .Values.certManager.issuerKind | default "ClusterIssuer" | quote }}
   dnsNames:
-    {{- range $tls.hosts }}
-    - {{ . }}
-    {{- end }}
+    - {{ .Values.domain | quote }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "sync-admin-web.fullname" . }}-backend-tls
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.ingress.tls.backendSecretName | quote }}
+  issuerRef:
+    name: {{ .Values.certManager.issuerName | quote }}
+    kind: {{ .Values.certManager.issuerKind | default "ClusterIssuer" | quote }}
+  dnsNames:
+    - {{ .Values.serverDomain | quote }}
 {{- end }}
