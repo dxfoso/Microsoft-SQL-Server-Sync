@@ -80,6 +80,25 @@ app.kubernetes.io/managed-by: Helm
 {{- end -}}
 {{- end -}}
 
+{{- define "sync-admin-web.validatedImageRef" -}}
+{{- $ref := include "sync-admin-web.imageRef" . | trim -}}
+{{- $parts := splitList "/" $ref -}}
+{{- $registryHost := index $parts 0 | default "" -}}
+{{- $hasRegistryHost := or (contains "." $registryHost) (contains ":" $registryHost) (eq $registryHost "localhost") -}}
+{{- $hasDigest := contains "@" $ref -}}
+{{- $hasTag := regexMatch ".+:[^/]+$" $ref -}}
+{{- if not $ref -}}
+{{- fail "workload image ref must not be empty" -}}
+{{- end -}}
+{{- if not $hasRegistryHost -}}
+{{- fail (printf "workload image ref %q must be fully qualified with a registry host" $ref) -}}
+{{- end -}}
+{{- if not (or $hasDigest $hasTag) -}}
+{{- fail (printf "workload image ref %q must include an immutable tag or digest" $ref) -}}
+{{- end -}}
+{{- $ref -}}
+{{- end -}}
+
 {{- define "sync-admin-web.componentImageRepository" -}}
 {{- $repository := index . 0 | default "" | lower -}}
 {{- $component := index . 1 -}}
@@ -97,11 +116,17 @@ app.kubernetes.io/managed-by: Helm
 
 {{- define "sync-admin-web.imagePullPolicy" -}}
 {{- $image := . -}}
+{{- $policy := "Always" -}}
 {{- if and (kindIs "map" $image) $image.pullPolicy -}}
-{{- $image.pullPolicy -}}
-{{- else -}}
-Always
+{{- $candidate := lower (trim $image.pullPolicy) -}}
+{{- if eq $candidate "never" -}}
+{{- fail "imagePullPolicy Never is not allowed for Cloud deployments; use a pullable registry-backed image ref" -}}
 {{- end -}}
+{{- if eq $candidate "ifnotpresent" -}}
+{{- $policy = "IfNotPresent" -}}
+{{- end -}}
+{{- end -}}
+{{- $policy -}}
 {{- end -}}
 
 {{- define "sync-admin-web.persistenceEnabled" -}}

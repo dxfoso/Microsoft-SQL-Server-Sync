@@ -39,7 +39,7 @@ spec:
       {{- end }}
       containers:
         - name: frontend
-          image: "{{ include "sync-admin-web.imageRef" $frontendImage }}"
+          image: "{{ include "sync-admin-web.validatedImageRef" $frontendImage }}"
           imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" $frontendImage }}
           ports:
             - containerPort: 80

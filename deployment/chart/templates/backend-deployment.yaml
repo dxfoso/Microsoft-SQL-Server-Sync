@@ -40,7 +40,7 @@ spec:
       {{- end }}
       containers:
         - name: backend
-          image: "{{ include "sync-admin-web.imageRef" $backendImage }}"
+          image: "{{ include "sync-admin-web.validatedImageRef" $backendImage }}"
           imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" $backendImage }}
           ports:
             - containerPort: {{ .Values.backend.service.port }}
