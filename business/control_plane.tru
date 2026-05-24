@@ -162,7 +162,7 @@ function is_owner_user(user: map<json>): bool {
   return user.role == "owner";
 }
 
-function can_read_agent(current: map<json>?, ownerUserId: string?, createdByUserId: string?): bool {
+function can_read_agent(current: map<json>? = null, ownerUserId: string? = null, createdByUserId: string? = null): bool {
   if (current == null) {
     return false;
   }
@@ -178,7 +178,7 @@ function can_read_agent(current: map<json>?, ownerUserId: string?, createdByUser
   return false;
 }
 
-function can_manage_user(current: map<json>?, target: map<json>?): bool {
+function can_manage_user(current: map<json>? = null, target: map<json>? = null): bool {
   if (current == null) {
     return false;
   }
@@ -197,7 +197,7 @@ function can_manage_user(current: map<json>?, target: map<json>?): bool {
   return false;
 }
 
-function can_access_job(current: map<json>?, job: map<json>): bool {
+function can_access_job(current: map<json>? = null, job: map<json>): bool {
   if (current == null) {
     return false;
   }
@@ -233,7 +233,7 @@ function normalize_user_name(value: string): string {
   return trimmed.toLowerCase();
 }
 
-function clamp_history_limit(value: int?): int {
+function clamp_history_limit(value: int? = null): int {
   if (value == null || value < 1) {
     return 5;
   }
@@ -243,7 +243,7 @@ function clamp_history_limit(value: int?): int {
   return value;
 }
 
-function clamp_auto_sync_interval(value: int?): int {
+function clamp_auto_sync_interval(value: int? = null): int {
   if (value == null || value < 1) {
     return 15;
   }
@@ -253,7 +253,7 @@ function clamp_auto_sync_interval(value: int?): int {
   return value;
 }
 
-function normalize_sync_mode(value: string?, fallbackIsMaster: bool = true): string {
+function normalize_sync_mode(value: string? = null, fallbackIsMaster: bool = true): string {
   if (value == 'client' || value == 'download') {
     return 'client';
   }
@@ -306,7 +306,7 @@ function find_user_by_identity(name: string): map<json>? {
   return db.selectOne(User, { email: name.trim().toLowerCase() });
 }
 
-function find_user_by_id(userId: string?): map<json>? {
+function find_user_by_id(userId: string? = null): map<json>? {
   if (userId == null || userId.trim().length == 0) {
     return null;
   }
@@ -607,7 +607,7 @@ function public_snapshot_detail_payload(snapshot: map<json>): map<json> {
   };
 }
 
-function ensure_agent(clientName: string, clientUserId: string?, ownerUserId: string?): map<json> {
+function ensure_agent(clientName: string, clientUserId: string? = null, ownerUserId: string? = null): map<json> {
   const existing = db.selectOne(Agent, { clientName });
   if (existing != null) {
     return existing;
