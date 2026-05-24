@@ -3,7 +3,7 @@ name: Nightly
   schedule:
     - id: nightly
       cron: "15 03 * * *"
-      ref: main
+      ref: master
   workflow_dispatch: {}
 jobs:
   nightly:
