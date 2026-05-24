@@ -1,5 +1,6 @@
 .cp-images/
 /artifacts/
+workspace/
 sync_windows_agent/debug/
 sync_windows_agent/portable_release/
 sync_windows_agent/release/

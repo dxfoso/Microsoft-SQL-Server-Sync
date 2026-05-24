@@ -1,0 +1,12 @@
+name: Nightly
+"on":
+  schedule:
+    - id: nightly
+      cron: "15 03 * * *"
+      ref: main
+  workflow_dispatch: {}
+jobs:
+  nightly:
+    name: Nightly
+    run: .action-server/tasks/nightly.sh
+    timeoutMinutes: 180

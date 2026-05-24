@@ -1,0 +1,16 @@
+FROM rust:1.89
+
+ENV PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3 \
+    curl \
+    ca-certificates \
+    postgresql-client \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+CMD ["bash"]
