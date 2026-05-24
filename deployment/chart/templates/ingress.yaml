@@ -1,4 +1,5 @@
 {{- if .Values.ingress.enabled }}
+{{- $backendHost := .Values.backend.publicHost | default .Values.serverDomain }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -38,7 +39,7 @@ spec:
                 name: {{ include "sync-admin-web.frontendFullname" . }}
                 port:
                   number: 80
-    - host: {{ .Values.serverDomain | quote }}
+    - host: {{ $backendHost | quote }}
       http:
         paths:
           - path: /
@@ -54,5 +55,5 @@ spec:
         - {{ .Values.domain | quote }}
     - secretName: {{ .Values.ingress.tls.backendSecretName | quote }}
       hosts:
-        - {{ .Values.serverDomain | quote }}
+        - {{ $backendHost | quote }}
 {{- end }}

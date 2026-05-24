@@ -1,5 +1,4 @@
 domain: sync.velvet-leaf.com
-serverDomain: server.sync.velvet-leaf.com
 
 dockerRegistry: dockerhub.divclouds.com
 dockerUsername: ""
@@ -33,6 +32,7 @@ backend:
   enabled: true
   replicas: 1
   image: dockerhub.divclouds.com/microsoft-sql-server-sync/backend:latest
+  publicHost: server.sync.velvet-leaf.com
   service:
     port: 9001
   env:
