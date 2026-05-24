@@ -52,7 +52,7 @@ app.kubernetes.io/managed-by: Helm
 {{- end -}}
 
 {{- define "sync-admin-web.imagePullPolicy" -}}
-IfNotPresent
+Always
 {{- end -}}
 
 {{- define "sync-admin-web.backendPostgresUrl" -}}
