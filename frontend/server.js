@@ -34,6 +34,10 @@ const ROLE_OWNER = "owner";
 const ROLE_CLIENT = "client";
 const APP_WEB = "web";
 const APP_WINDOWS = "windows";
+const BUILD_GIT_COMMIT = process.env.BUILD_COMMIT_HASH || "unknown";
+const BUILD_COMMIT_MESSAGE = process.env.BUILD_COMMIT_MESSAGE || "";
+const BUILD_COMMIT_DATE = process.env.BUILD_COMMIT_DATE || "unknown";
+const BUILD_RELEASE_DATE = process.env.BUILD_RELEASE_DATE || "unknown";
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -678,6 +682,27 @@ function sortUsers(users) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function buildInfo() {
+  return {
+    git_commit: BUILD_GIT_COMMIT,
+    commit_message: BUILD_COMMIT_MESSAGE,
+    commit_date: BUILD_COMMIT_DATE,
+    release_date: BUILD_RELEASE_DATE,
+  };
+}
+
+function healthPayload() {
+  const build = buildInfo();
+  return {
+    ok: true,
+    ready: true,
+    generatedAt: nowIso(),
+    commit: build.git_commit,
+    commit_hash: build.git_commit,
+    build,
+  };
 }
 
 function snapshotKey(clientName, table) {
@@ -1728,7 +1753,17 @@ async function handleRequest(req, res) {
       pathname === "/api/ready"
     )
   ) {
-    sendJson(res, 200, { ok: true, generatedAt: nowIso() });
+    sendJson(res, 200, healthPayload());
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/env") {
+    sendJson(res, 200, {
+      generatedAt: nowIso(),
+      commit: BUILD_GIT_COMMIT,
+      commit_hash: BUILD_GIT_COMMIT,
+      build: buildInfo(),
+    });
     return;
   }
 
