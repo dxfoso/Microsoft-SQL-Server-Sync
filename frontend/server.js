@@ -34,10 +34,14 @@ const ROLE_OWNER = "owner";
 const ROLE_CLIENT = "client";
 const APP_WEB = "web";
 const APP_WINDOWS = "windows";
-const BUILD_GIT_COMMIT = process.env.BUILD_COMMIT_HASH || "unknown";
-const BUILD_COMMIT_MESSAGE = process.env.BUILD_COMMIT_MESSAGE || "";
-const BUILD_COMMIT_DATE = process.env.BUILD_COMMIT_DATE || "unknown";
-const BUILD_RELEASE_DATE = process.env.BUILD_RELEASE_DATE || "unknown";
+const BUILD_GIT_COMMIT =
+  process.env.BUILD_COMMIT_HASH || process.env.TRU_BUILD_GIT_SHA || "unknown";
+const BUILD_COMMIT_MESSAGE =
+  process.env.BUILD_COMMIT_MESSAGE || process.env.TRU_BUILD_COMMIT_MESSAGE || "";
+const BUILD_COMMIT_DATE =
+  process.env.BUILD_COMMIT_DATE || process.env.TRU_BUILD_COMMIT_DATE || "unknown";
+const BUILD_RELEASE_DATE =
+  process.env.BUILD_RELEASE_DATE || process.env.TRU_BUILD_RELEASE_DATE || "unknown";
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
