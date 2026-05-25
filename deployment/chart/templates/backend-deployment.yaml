@@ -50,13 +50,13 @@ spec:
               mountPath: /app/data
           readinessProbe:
             httpGet:
-              path: /call/ready
+              path: /ready
               port: {{ .Values.backend.service.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /call/health
+              path: /ready
               port: {{ .Values.backend.service.port }}
             initialDelaySeconds: 30
             periodSeconds: 20

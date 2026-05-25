@@ -21,3 +21,8 @@ This ensures the app is relaunched with the updated Dart code.
 - Run the backend from the `backend/` submodule against the root `business/tru.json` config.
 - Keep TRU runtime files, build logic, and server internals inside the `backend/` submodule.
 - Keep app API logic, DB API logic, and project-owned `.tru` files only under the root `business/` directory.
+
+## Deployment Rule
+
+- Always use the deployment environment located at `[deployment/chart/.env](deployment/chart/.env)` (absolute path: `D:\Microsoft-SQL-Server-Sync\deployment\chart\.env`) for deployment-related steps.
+- If deployment behavior regresses, refresh deployment inputs from `deployment/chart/.env` before retrying redeploy.
