@@ -1,5 +1,5 @@
 {{- if .Values.certManager.enabled }}
-{{- $backendHost := .Values.backend.publicHost | default .Values.serverDomain }}
+{{- $backendHost := .Values.adminDomain }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

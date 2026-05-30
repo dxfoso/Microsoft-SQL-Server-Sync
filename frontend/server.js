@@ -709,6 +709,22 @@ function healthPayload() {
   };
 }
 
+function envJsPayload() {
+  return [
+    "window.__env = window.__env || {};",
+    `window.__env.BACKEND_BASE_URL = ${JSON.stringify(
+      process.env.BACKEND_BASE_URL || "",
+    )};`,
+    `window.__env.BUILD_COMMIT_HASH = ${JSON.stringify(BUILD_GIT_COMMIT)};`,
+    `window.__env.BUILD_COMMIT_MESSAGE = ${JSON.stringify(
+      BUILD_COMMIT_MESSAGE,
+    )};`,
+    `window.__env.BUILD_COMMIT_DATE = ${JSON.stringify(BUILD_COMMIT_DATE)};`,
+    `window.__env.BUILD_RELEASE_DATE = ${JSON.stringify(BUILD_RELEASE_DATE)};`,
+    "",
+  ].join("\n");
+}
+
 function snapshotKey(clientName, table) {
   return `${clientName}::${table}`;
 }
@@ -787,6 +803,16 @@ function sendBuffer(res, statusCode, buffer, contentType, extraHeaders = {}) {
     ...extraHeaders,
   });
   res.end(buffer);
+}
+
+function sendText(res, statusCode, body, contentType, extraHeaders = {}) {
+  sendBuffer(
+    res,
+    statusCode,
+    Buffer.from(String(body ?? ""), "utf8"),
+    contentType,
+    extraHeaders,
+  );
 }
 
 function acceptsGzip(req) {
@@ -1758,6 +1784,15 @@ async function handleRequest(req, res) {
     )
   ) {
     sendJson(res, 200, healthPayload());
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/env.js") {
+    sendText(res, 200, envJsPayload(), "application/javascript; charset=utf-8", {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+      Pragma: "no-cache",
+      Expires: "0",
+    });
     return;
   }
 

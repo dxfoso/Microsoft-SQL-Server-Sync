@@ -1,5 +1,5 @@
 {{- if .Values.ingress.enabled }}
-{{- $backendHost := .Values.backend.publicHost | default .Values.serverDomain }}
+{{- $backendHost := .Values.adminDomain }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
