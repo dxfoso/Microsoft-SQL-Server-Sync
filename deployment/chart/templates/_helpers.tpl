@@ -43,7 +43,7 @@ app.kubernetes.io/managed-by: Helm
 {{- end -}}
 
 {{- define "sync-admin-web.registrySecretName" -}}
-{{ include "sync-admin-web.fullname" . }}-registry
+{{ .Values.imagePullSecretName | default "regcred" }}
 {{- end -}}
 
 {{- define "sync-admin-web.registrySecretData" -}}
@@ -53,6 +53,10 @@ app.kubernetes.io/managed-by: Helm
 
 {{- define "sync-admin-web.imagePullPolicy" -}}
 Always
+{{- end -}}
+
+{{- define "sync-admin-web.usesImagePullSecret" -}}
+{{- if (.Values.imagePullSecretName | default "" | trim) -}}true{{- end -}}
 {{- end -}}
 
 {{- define "sync-admin-web.backendPostgresUrl" -}}

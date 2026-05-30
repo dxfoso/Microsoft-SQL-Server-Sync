@@ -4,6 +4,8 @@ dockerRegistry: dockerhub.divclouds.com
 dockerUsername: ""
 dockerPassword: ""
 dockerEmail: ""
+imagePullSecretName: regcred
+createImagePullSecret: true
 
 certManager:
   enabled: true

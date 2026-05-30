@@ -20,7 +20,7 @@ spec:
         {{- include "sync-admin-web.labels" . | nindent 8 }}
         app.kubernetes.io/component: backend
     spec:
-      {{- if and .Values.dockerRegistry .Values.dockerUsername .Values.dockerPassword }}
+      {{- if (include "sync-admin-web.usesImagePullSecret" . | trim) }}
       imagePullSecrets:
         - name: {{ include "sync-admin-web.registrySecretName" . }}
       {{- end }}
