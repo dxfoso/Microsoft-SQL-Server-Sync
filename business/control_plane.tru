@@ -650,6 +650,9 @@ function active_jobs_for_client(clientName: string): array<json> {
     fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'snapshotId', 'snapshotCreatedAt', 'snapshotBytes', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
+  if (rows == null || rows.rows == null) {
+    return [];
+  }
   return rows.rows.map((job) => public_job_payload(job));
 }
 
@@ -821,6 +824,9 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   let nextAgent = agent;
   if (updated != null) {
     nextAgent = updated;
+  }
+  if (nextAgent == null) {
+    return raw_json_error(500, 'agent heartbeat state unavailable');
   }
   return {
     ok: true,
