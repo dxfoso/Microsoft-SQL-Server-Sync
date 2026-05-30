@@ -773,9 +773,10 @@ function live_state(): map<json> {
 }
 
 function agents_heartbeat(clientName: string? = null, machineName: string = '', isMaster: bool = true, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null): map<json> {
-  const current = current_user_record();
   let resolvedClientName = '';
+  let current = null;
   if (clientName == null || clientName.trim().length == 0) {
+    current = current_user_record();
     if (current == null) {
       return raw_json_error(401, 'permission denied');
     }
@@ -787,12 +788,11 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   } else {
     resolvedClientName = normalize_user_name(clientName);
   }
-  const clientUser = find_user_by_identity(resolvedClientName);
   let userId = null;
   let ownerUserId = null;
-  if (clientUser != null) {
-    userId = clientUser.id;
-    ownerUserId = clientUser.ownerUserId;
+  if (current != null) {
+    userId = current.id;
+    ownerUserId = current.ownerUserId;
   }
   const agent = ensure_agent(
     resolvedClientName,
