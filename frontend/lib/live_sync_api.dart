@@ -23,9 +23,20 @@ class LiveSyncApiClient {
     if (trimmed.isEmpty) {
       return '/call';
     }
-    return trimmed.endsWith('/')
+    final normalized = trimmed.endsWith('/')
         ? trimmed.substring(0, trimmed.length - 1)
         : trimmed;
+    if (normalized == '/call') {
+      return normalized;
+    }
+    final parsed = Uri.tryParse(normalized);
+    if (parsed != null &&
+        parsed.hasScheme &&
+        parsed.host.isNotEmpty &&
+        (parsed.path.isEmpty || parsed.path == '/')) {
+      return '${normalized}/call';
+    }
+    return normalized;
   }
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');

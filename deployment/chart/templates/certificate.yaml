@@ -1,5 +1,6 @@
 {{- if .Values.certManager.enabled }}
 {{- $backendHost := .Values.adminDomain }}
+{{- $sharedBackendHost := eq $backendHost .Values.domain }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -14,6 +15,7 @@ spec:
     kind: {{ .Values.certManager.issuerKind | default "ClusterIssuer" | quote }}
   dnsNames:
     - {{ .Values.domain | quote }}
+{{- if not $sharedBackendHost }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -29,4 +31,5 @@ spec:
     kind: {{ .Values.certManager.issuerKind | default "ClusterIssuer" | quote }}
   dnsNames:
     - {{ $backendHost | quote }}
+{{- end }}
 {{- end }}

@@ -1,5 +1,5 @@
 domain: sync.velvet-leaf.com
-adminDomain: server.sync.velvet-leaf.com
+adminDomain: sync.velvet-leaf.com
 
 dockerRegistry: dockerhub.divclouds.com
 dockerUsername: ""

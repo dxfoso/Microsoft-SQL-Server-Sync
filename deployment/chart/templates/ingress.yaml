@@ -1,5 +1,6 @@
 {{- if .Values.ingress.enabled }}
 {{- $backendHost := .Values.adminDomain }}
+{{- $sharedBackendHost := eq $backendHost .Values.domain }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -18,6 +19,15 @@ spec:
     - host: {{ .Values.domain | quote }}
       http:
         paths:
+          {{- if $sharedBackendHost }}
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sync-admin-web.backendFullname" . }}
+                port:
+                  number: {{ .Values.backend.service.port }}
+          {{- end }}
           - path: /api
             pathType: Prefix
             backend:
@@ -39,6 +49,7 @@ spec:
                 name: {{ include "sync-admin-web.frontendFullname" . }}
                 port:
                   number: 80
+    {{- if not $sharedBackendHost }}
     - host: {{ $backendHost | quote }}
       http:
         paths:
@@ -49,11 +60,14 @@ spec:
                 name: {{ include "sync-admin-web.backendFullname" . }}
                 port:
                   number: {{ .Values.backend.service.port }}
+    {{- end }}
   tls:
     - secretName: {{ .Values.ingress.tls.frontendSecretName | quote }}
       hosts:
         - {{ .Values.domain | quote }}
+    {{- if not $sharedBackendHost }}
     - secretName: {{ .Values.ingress.tls.backendSecretName | quote }}
       hosts:
         - {{ $backendHost | quote }}
+    {{- end }}
 {{- end }}
