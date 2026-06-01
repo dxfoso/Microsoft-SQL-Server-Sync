@@ -357,7 +357,7 @@ function create_session_for_user(user: map<json>, app: string): map<json> {
 
 function latest_active_session(): map<json>? {
   const rows = db.selectMany(Session, {
-    where: { app: { like: '%' } },
+    where: { app: { in: ['web', 'windows'] } },
     orderBy: { field: 'createdAt', dir: 'desc' },
     fields: ['id', 'token', 'userId', 'app', 'createdAt', 'revokedAt'],
     limit: 100
