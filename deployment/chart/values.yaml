@@ -8,6 +8,10 @@ dockerEmail: ""
 imagePullSecretName: regcred
 createImagePullSecret: true
 
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
 certManager:
   enabled: true
   createClusterIssuer: false
