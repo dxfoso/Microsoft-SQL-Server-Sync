@@ -509,7 +509,7 @@ function list_user_rows(): array<json> {
 
 function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
-    where: { clientName: { like: '%' } },
+    where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
     fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'tables', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
@@ -519,7 +519,7 @@ function list_agent_rows(): array<json> {
 
 function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
-    where: { createdAt: { like: '%' } },
+    where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
     fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'snapshotId', 'snapshotCreatedAt', 'snapshotBytes', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
@@ -529,7 +529,7 @@ function list_job_rows(): array<json> {
 
 function list_snapshot_rows(): array<json> {
   const rows = db.selectMany(SnapshotRecord, {
-    where: { createdAt: { like: '%' } },
+    where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
     fields: ['id', 'clientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'rows', 'previewRows', 'sourceJobId', 'clientUserId', 'ownerUserId'],
     limit: 1000

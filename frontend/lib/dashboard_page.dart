@@ -191,9 +191,135 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
 
+  List<_ServerInventoryItem> get _serverInventoryItems {
+    final machineLabel = _localMachineLabel();
+    final agents = _state?.agents ?? const <AdminAgent>[];
+    final localAgents = agents
+        .where((agent) {
+          final machineName = agent.machineName.trim();
+          return machineName.isEmpty || machineName == machineLabel;
+        })
+        .toList(growable: false);
+    final rackAgents = agents
+        .where((agent) {
+          final machineName = agent.machineName.trim();
+          return machineName.isNotEmpty && machineName != machineLabel;
+        })
+        .toList(growable: false);
+
+    return <_ServerInventoryItem>[
+      _buildServerInventoryItem(
+        title: 'This Machine',
+        platformLabel: 'Windows',
+        fallbackMachineName: machineLabel,
+        fallbackRole: 'Local workstation',
+        agents: localAgents,
+        isLocal: true,
+      ),
+      _buildServerInventoryItem(
+        title: 'Rack Server',
+        platformLabel: 'Linux',
+        fallbackMachineName:
+            rackAgents.isEmpty
+                ? 'Rack server'
+                : rackAgents.first.machineName.trim(),
+        fallbackRole: 'Linux rack host',
+        agents: rackAgents,
+        isLocal: false,
+      ),
+    ];
+  }
+
   List<_TableAggregateSummary> get _tableSummaries {
     _ensureDerivedState(_state);
     return _derivedTableSummaries;
+  }
+
+  String _localMachineLabel() {
+    for (final agent in _state?.agents ?? const <AdminAgent>[]) {
+      final machineName = agent.machineName.trim();
+      if (machineName.isNotEmpty) {
+        return machineName;
+      }
+    }
+    return 'This machine';
+  }
+
+  _ServerInventoryItem _buildServerInventoryItem({
+    required String title,
+    required String platformLabel,
+    required String fallbackMachineName,
+    required String fallbackRole,
+    required List<AdminAgent> agents,
+    required bool isLocal,
+  }) {
+    final sample = agents.isEmpty ? null : agents.first;
+    final serverName = _serverDisplayName(agents);
+    final machineName =
+        sample?.machineName.trim().isNotEmpty == true
+            ? sample!.machineName.trim()
+            : fallbackMachineName;
+    final databases = <String>{
+      for (final agent in agents)
+        if (agent.database.trim().isNotEmpty) agent.database.trim(),
+    }.toList(growable: false)..sort();
+    final clientNames = <String>{
+      for (final agent in agents)
+        if (agent.clientName.trim().isNotEmpty) agent.clientName.trim(),
+    }.toList(growable: false)..sort();
+    final onlineClients = agents.where((agent) => agent.isOnline).length;
+    final serverConnectedClients =
+        agents.where((agent) => agent.serverConnected).length;
+    final sqlConnectedClients =
+        agents.where((agent) => agent.sqlConnected).length;
+    final available =
+        agents.isEmpty ||
+        onlineClients > 0 ||
+        serverConnectedClients > 0 ||
+        sqlConnectedClients > 0;
+    final lastHeartbeat = _latestHeartbeat(agents);
+
+    return _ServerInventoryItem(
+      title: title,
+      serverName: serverName,
+      machineName: machineName,
+      platformLabel: platformLabel,
+      roleLabel: fallbackRole,
+      statusLabel: available ? 'Available' : 'Offline',
+      available: available,
+      isLocal: isLocal,
+      connectedClients: agents.length,
+      onlineClients: onlineClients,
+      serverConnectedClients: serverConnectedClients,
+      sqlConnectedClients: sqlConnectedClients,
+      databases: databases,
+      clientNames: clientNames,
+      lastHeartbeat: lastHeartbeat,
+    );
+  }
+
+  String _serverDisplayName(List<AdminAgent> agents) {
+    for (final agent in agents) {
+      final serverName = agent.server.trim();
+      if (serverName.isNotEmpty) {
+        return serverName;
+      }
+    }
+    return 'Not reported';
+  }
+
+  String _latestHeartbeat(List<AdminAgent> agents) {
+    String latest = '';
+    for (final agent in agents) {
+      final heartbeat = agent.lastHeartbeat.trim();
+      if (heartbeat.isEmpty) {
+        continue;
+      }
+      if (latest.isEmpty || _compareTimestamps(heartbeat, latest) > 0) {
+        latest = heartbeat;
+      }
+    }
+    return latest;
   }
 
   _TableAggregateSummary? get _selectedTableSummary {
@@ -5367,6 +5493,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildDashboardContent() {
+    final serverInventory = _buildServerInventoryCard();
     return LayoutBuilder(
       builder: (context, constraints) {
         final mobileStack = constraints.maxWidth < 760;
@@ -5374,31 +5501,206 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         if (mobileStack) {
           return ListView(
             children: [
+              serverInventory,
+              const SizedBox(height: 10),
               SizedBox(height: 460, child: _buildTableListCard()),
               const SizedBox(height: 10),
               SizedBox(height: 600, child: _buildDetailCard()),
             ],
           );
         }
-        if (useSideBySide) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 7, child: _buildTableListCard()),
-              const SizedBox(width: 10),
-              Expanded(flex: 5, child: _buildDetailCard()),
-            ],
-          );
-        }
-
         return Column(
           children: [
-            Expanded(flex: 6, child: _buildTableListCard()),
+            serverInventory,
             const SizedBox(height: 10),
-            Expanded(flex: 7, child: _buildDetailCard()),
+            Expanded(
+              child:
+                  useSideBySide
+                      ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 7, child: _buildTableListCard()),
+                          const SizedBox(width: 10),
+                          Expanded(flex: 5, child: _buildDetailCard()),
+                        ],
+                      )
+                      : Column(
+                        children: [
+                          Expanded(flex: 6, child: _buildTableListCard()),
+                          const SizedBox(height: 10),
+                          Expanded(flex: 7, child: _buildDetailCard()),
+                        ],
+                      ),
+            ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildServerInventoryCard() {
+    final items = _serverInventoryItems;
+    return SurfaceCard(
+      title: 'Servers',
+      subtitle:
+          'Two server cards with full details for this machine and the rack server.',
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 720;
+          final itemWidth =
+              wide ? (constraints.maxWidth - 12) / 2 : constraints.maxWidth;
+          return Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: items
+                .map(
+                  (item) => SizedBox(
+                    width: itemWidth,
+                    child: _buildServerInventoryTile(item),
+                  ),
+                )
+                .toList(growable: false),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildServerInventoryTile(_ServerInventoryItem item) {
+    final statusColor =
+        item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    final icon =
+        item.platformLabel == 'Linux'
+            ? Icons.terminal_rounded
+            : Icons.desktop_windows_rounded;
+    final databases =
+        item.databases.isEmpty ? 'None reported' : item.databases.join(', ');
+    final clients =
+        item.clientNames.isEmpty
+            ? 'None reported'
+            : item.clientNames.join(', ');
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: item.isLocal ? const Color(0xFFF8FFFC) : const Color(0xFFFCFCFD),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color:
+              item.isLocal ? const Color(0xFFB7DDD7) : const Color(0xFFDDE3EA),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFDDE3EA)),
+                ),
+                child: Icon(icon, size: 19, color: const Color(0xFF0F766E)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF101828),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      item.roleLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              StatusBadge(label: item.statusLabel, color: statusColor),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              MetricPill(label: 'Platform', value: item.platformLabel),
+              MetricPill(label: 'Machine', value: item.machineName),
+              MetricPill(label: 'Server', value: item.serverName),
+              MetricPill(label: 'Clients', value: '${item.connectedClients}'),
+              if (item.onlineClients > 0)
+                MetricPill(label: 'Online', value: '${item.onlineClients}'),
+              MetricPill(
+                label: 'Server Link',
+                value: '${item.serverConnectedClients}',
+              ),
+              if (item.sqlConnectedClients > 0)
+                MetricPill(label: 'SQL', value: '${item.sqlConnectedClients}'),
+              MetricPill(
+                label: 'Scope',
+                value: item.isLocal ? 'Local' : 'Live',
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _buildServerInfoLine('Databases', databases),
+          const SizedBox(height: 4),
+          _buildServerInfoLine('Clients', clients),
+          const SizedBox(height: 4),
+          _buildServerInfoLine(
+            'Last Heartbeat',
+            item.lastHeartbeat.isEmpty
+                ? 'No heartbeat reported'
+                : _formatTimestamp(item.lastHeartbeat),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServerInfoLine(String label, String value) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          TextSpan(
+            text: value,
+            style: const TextStyle(
+              color: Color(0xFF101828),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -5938,6 +6240,42 @@ class _TableSnapshotSource {
   final String createdAt;
   final int rowCount;
   final int snapshotBytes;
+}
+
+class _ServerInventoryItem {
+  const _ServerInventoryItem({
+    required this.title,
+    required this.serverName,
+    required this.machineName,
+    required this.platformLabel,
+    required this.roleLabel,
+    required this.statusLabel,
+    required this.available,
+    required this.isLocal,
+    required this.connectedClients,
+    this.onlineClients = 0,
+    this.serverConnectedClients = 0,
+    this.sqlConnectedClients = 0,
+    this.databases = const <String>[],
+    this.clientNames = const <String>[],
+    this.lastHeartbeat = '',
+  });
+
+  final String title;
+  final String serverName;
+  final String machineName;
+  final String platformLabel;
+  final String roleLabel;
+  final String statusLabel;
+  final bool available;
+  final bool isLocal;
+  final int connectedClients;
+  final int onlineClients;
+  final int serverConnectedClients;
+  final int sqlConnectedClients;
+  final List<String> databases;
+  final List<String> clientNames;
+  final String lastHeartbeat;
 }
 
 class _ScoredTableSummary {
