@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM dockerhub.divclouds.com/library/rust:1.89 AS builder
+FROM docker.io/library/rust:1.89 AS builder
 WORKDIR /app
 ARG TRU_BUILD_GIT_SHA=""
 ENV TRU_BUILD_GIT_SHA=${TRU_BUILD_GIT_SHA}
@@ -12,7 +12,7 @@ RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server
 COPY backend/server/src ./server/src
 RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server
 
-FROM dockerhub.divclouds.com/library/rust:1.89 AS runtime
+FROM docker.io/library/rust:1.89 AS runtime
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates openssh-client \
   && rm -rf /var/lib/apt/lists/*
