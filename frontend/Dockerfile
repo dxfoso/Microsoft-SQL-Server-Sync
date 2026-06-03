@@ -30,7 +30,7 @@ RUN flutter build web --release \
   --dart-define=BUILD_COMMIT_DATE=${BUILD_COMMIT_DATE} \
   --dart-define=BUILD_RELEASE_DATE=${BUILD_RELEASE_DATE}
 
-FROM node:20-alpine
+FROM dockerhub.divclouds.com/library/node:20-alpine
 
 WORKDIR /app
 
