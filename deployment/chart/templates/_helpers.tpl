@@ -63,6 +63,14 @@ Always
 {{- printf "postgresql://%s:%s@%s:%v/%s" .Values.postgres.username .Values.postgres.password (include "sync-admin-web.postgresFullname" .) .Values.postgres.service.port .Values.postgres.database -}}
 {{- end -}}
 
+{{- define "sync-admin-web.backendSecretName" -}}
+{{ .Values.backend.secretName | default (printf "%s-backend" (include "sync-admin-web.fullname" .)) }}
+{{- end -}}
+
+{{- define "sync-admin-web.adminSecretName" -}}
+{{ .Values.admin.secretName | default (printf "%s-admin" (include "sync-admin-web.fullname" .)) }}
+{{- end -}}
+
 {{- define "sync-admin-web.certManagerAnnotationKey" -}}
 {{- if eq (.Values.certManager.issuerKind | default "ClusterIssuer") "Issuer" -}}
 cert-manager.io/issuer

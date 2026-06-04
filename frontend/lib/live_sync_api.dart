@@ -79,10 +79,14 @@ class LiveSyncApiClient {
     String name,
     Map<String, dynamic> args,
   ) async {
+    final payloadArgs = <String, dynamic>{...args};
+    if (_authToken != null && _authToken!.isNotEmpty && name != 'auth_login') {
+      payloadArgs['token'] = _authToken;
+    }
     final response = await _client.post(
       _uriCall(),
       headers: _headers(json: true),
-      body: jsonEncode({'name': name, 'args': args}),
+      body: jsonEncode({'name': name, 'args': payloadArgs}),
     );
 
     if (response.statusCode != 200) {

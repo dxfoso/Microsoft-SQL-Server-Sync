@@ -39,10 +39,12 @@ backend:
   enabled: true
   replicas: 1
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:latest
+  secretName: sql-sync-backend
   service:
     port: 9001
   env:
     truConfigPath: /app/business/tru.json
+    postgresqlUrl: ""
     truStorageDir: /app/data/storage
     truSpecCachePath: /app/data/.tru_spec_cache.sqlite
   resources:
@@ -52,6 +54,10 @@ backend:
     limits:
       cpu: "2"
       memory: 2Gi
+
+admin:
+  secretName: sql-sync-admin
+  key: ""
 
 postgres:
   enabled: true

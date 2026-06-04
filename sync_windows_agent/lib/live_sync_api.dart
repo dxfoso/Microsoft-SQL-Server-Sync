@@ -68,11 +68,17 @@ class AgentControlPlaneClient {
     Map<String, dynamic> args,
     String phase,
   ) async {
+    final payloadArgs = <String, dynamic>{...args};
+    if (_authToken != null &&
+        _authToken!.isNotEmpty &&
+        functionName != 'auth_login') {
+      payloadArgs['token'] = _authToken;
+    }
     final response = await _sendRequest(
       _client.post(
         _uriCall(),
         headers: _headers(json: true),
-        body: jsonEncode({'name': functionName, 'args': args}),
+        body: jsonEncode({'name': functionName, 'args': payloadArgs}),
       ),
       phase,
     );

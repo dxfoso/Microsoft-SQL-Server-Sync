@@ -357,15 +357,35 @@ function create_session_for_user(user: map<json>, app: string): map<json> {
 
 function latest_active_session(): map<json>? {
   const rows = db.selectMany(Session, {
-    where: { app: { in: ['web', 'windows'] } },
+    where: { createdAt: { gte: '' } },
     orderBy: { field: 'createdAt', dir: 'desc' },
     fields: ['id', 'token', 'userId', 'app', 'createdAt', 'revokedAt'],
     limit: 100
   });
   for (const session of rows.rows) {
-    if (session.revokedAt == null) {
+    if (
+      (session.app == 'web' || session.app == 'windows') &&
+      (session.revokedAt == null || session.revokedAt.trim().length == 0)
+    ) {
       return session;
     }
+  }
+  return null;
+}
+
+function find_active_session_by_token(token: string? = null): map<json>? {
+  if (token == null || token.trim().length == 0) {
+    return null;
+  }
+  const session = db.selectOne(Session, { token });
+  if (session == null) {
+    return null;
+  }
+  if (
+    (session.app == 'web' || session.app == 'windows') &&
+    (session.revokedAt == null || session.revokedAt.trim().length == 0)
+  ) {
+    return session;
   }
   return null;
 }
@@ -486,15 +506,15 @@ function download_session_payload(session: map<json>): map<json> {
   };
 }
 
-function current_user_record(): map<json> {
-  const session = latest_active_session();
+function current_user_record(token: string? = null): map<json>? {
+  const session = find_active_session_by_token(token);
   if (session != null) {
     const user = find_user_by_id(session.userId);
     if (user != null) {
       return user;
     }
   }
-  return seed_admin_user();
+  return null;
 }
 
 function list_user_rows(): array<json> {
@@ -714,30 +734,45 @@ function auth_login(name: string, password: string, app: string = 'web'): map<js
   return create_session_for_user(user, app);
 }
 
-function auth_me(): map<json> {
-  return { user: public_user_payload(current_user_record()) };
+function auth_me(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'not authenticated');
+  }
+  return { user: public_user_payload(current) };
 }
 
-function auth_logout(): map<json> {
-  const session = latest_active_session();
-  if (session != null) {
-    db.update(Session, { id: session.id }, { revokedAt: now_iso() });
+function auth_logout(token: string? = null): map<json> {
+  const session = find_active_session_by_token(token);
+  if (session == null) {
+    return raw_json_error(401, 'not authenticated');
   }
+  db.update(Session, { id: session.id }, { revokedAt: now_iso() });
   return { ok: true };
 }
 
-function users_list(): map<json> {
+function users_list(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
   const users = list_user_rows().map((user) => public_user_payload(user));
   return { users };
 }
 
-function users_create(name: string, email: string = '', password: string, role: string, ownerUserId: string? = null): map<json> {
+function users_create(name: string, email: string = '', password: string, role: string, ownerUserId: string? = null, token: string? = null): map<json> {
   const normalized = normalize_user_name(name);
   const existing = find_user_by_identity(normalized);
   if (existing != null) {
     return raw_json_error(409, 'an account with that name already exists');
   }
-  const current = current_user_record();
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
   if (!can_manage_user(current, null)) {
     return raw_json_error(403, 'permission denied');
   }
@@ -755,7 +790,15 @@ function users_create(name: string, email: string = '', password: string, role: 
   return raw_json_success({ user: public_user_payload(user) }, 201);
 }
 
-function user_reset_password(userId: string, password: string): map<json> {
+function user_reset_password(userId: string, password: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const target = find_user_by_id(userId);
+  if (!can_manage_user(current, target)) {
+    return raw_json_error(403, 'permission denied');
+  }
   const user = db.update(User, { id: userId }, { password });
   if (user == null) {
     return raw_json_error(404, 'user not found');
@@ -763,7 +806,11 @@ function user_reset_password(userId: string, password: string): map<json> {
   return { ok: true };
 }
 
-function live_state(): map<json> {
+function live_state(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
   const agents = list_agent_rows().map((agent) => public_agent_payload(agent));
   const jobs = list_job_rows().map((job) => public_job_payload(job));
   const snapshots = list_snapshot_rows().map((snapshot) => public_snapshot_payload(snapshot));
@@ -775,14 +822,13 @@ function live_state(): map<json> {
   };
 }
 
-function agents_heartbeat(clientName: string? = null, machineName: string = '', isMaster: bool = true, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null): map<json> {
+function agents_heartbeat(clientName: string? = null, machineName: string = '', isMaster: bool = true, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, token: string? = null): map<json> {
   let resolvedClientName = '';
-  let current = null;
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
   if (clientName == null || clientName.trim().length == 0) {
-    current = current_user_record();
-    if (current == null) {
-      return raw_json_error(401, 'permission denied');
-    }
     if (current.username == null) {
       resolvedClientName = normalize_user_name(current.name);
     } else {
@@ -791,12 +837,14 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   } else {
     resolvedClientName = normalize_user_name(clientName);
   }
+  const clientUser = find_user_by_identity(resolvedClientName);
+  if (clientUser != null && !can_manage_user(current, clientUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
   let userId = null;
   let ownerUserId = null;
-  if (current != null) {
-    userId = current.id;
-    ownerUserId = current.ownerUserId;
-  }
+  userId = current.id;
+  ownerUserId = current.ownerUserId;
   const agent = ensure_agent(
     resolvedClientName,
     userId,
@@ -835,8 +883,15 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   };
 }
 
-function agent_sync_settings_get(clientName: string): map<json> {
+function agent_sync_settings_get(clientName: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
   const user = find_user_by_identity(clientName);
+  if (user != null && !can_manage_user(current, user)) {
+    return raw_json_error(403, 'permission denied');
+  }
   let userId = null;
   let ownerUserId = null;
   if (user != null) {
@@ -847,8 +902,15 @@ function agent_sync_settings_get(clientName: string): map<json> {
   return { syncSettings: sync_settings_payload(agent) };
 }
 
-function agent_sync_settings_post(clientName: string, isMaster: bool = true, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null): map<json> {
+function agent_sync_settings_post(clientName: string, isMaster: bool = true, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
   const user = find_user_by_identity(clientName);
+  if (user != null && !can_manage_user(current, user)) {
+    return raw_json_error(403, 'permission denied');
+  }
   let userId = null;
   let ownerUserId = null;
   if (user != null) {
@@ -872,22 +934,24 @@ function agent_jobs(clientName: string): map<json> {
   return { jobs: active_jobs_for_client(clientName) };
 }
 
-function jobs_create(clientName: string, tables: array<string>, direction: string = 'upload', sourceClientName: string = '', syncMode: string? = null): map<json> {
+function jobs_create(clientName: string, tables: array<string>, direction: string = 'upload', sourceClientName: string = '', syncMode: string? = null, token: string? = null): map<json> {
   if (tables.length == 0) {
     return raw_json_error(400, 'tables are required.');
   }
-  let current = null;
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
   let resolvedClientName = clientName;
   if (clientName.trim().length == 0) {
-    current = current_user_record();
-    if (current == null) {
-      return raw_json_error(401, 'permission denied');
-    }
     if (current.username != null) {
       resolvedClientName = current.username;
     }
   }
   const clientUser = find_user_by_identity(resolvedClientName);
+  if (clientUser != null && !can_manage_user(current, clientUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
   const createdJobsRaw = tables.map((table) => {
     let clientUserId = null;
     let ownerId = null;
@@ -922,7 +986,15 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
   return raw_json_success({ jobs: createdJobs.map((job) => public_job_payload(job)) }, 201);
 }
 
-function snapshots_latest(clientName: string, table: string): map<json> {
+function snapshots_latest(clientName: string, table: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const clientUser = find_user_by_identity(clientName);
+  if (clientUser != null && !can_manage_user(current, clientUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
   const snapshot = latest_snapshot_for(clientName, table);
   if (snapshot == null) {
     return raw_json_error(404, 'snapshot not found');
@@ -930,15 +1002,30 @@ function snapshots_latest(clientName: string, table: string): map<json> {
   return public_snapshot_detail_payload(snapshot);
 }
 
-function snapshots_by_id(snapshotId: string): map<json> {
+function snapshots_by_id(snapshotId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
   const snapshot = db.selectOne(SnapshotRecord, { id: snapshotId });
   if (snapshot == null) {
     return raw_json_error(404, 'snapshot not found');
   }
+  if (!can_read_agent(current, snapshot.ownerUserId, snapshot.clientUserId)) {
+    return raw_json_error(403, 'permission denied');
+  }
   return public_snapshot_detail_payload(snapshot);
 }
 
-function snapshots_import(clientName: string, table: string, snapshot: map<json>): map<json> {
+function snapshots_import(clientName: string, table: string, snapshot: map<json>, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const clientUserForAuth = find_user_by_identity(clientName);
+  if (clientUserForAuth != null && !can_manage_user(current, clientUserForAuth)) {
+    return raw_json_error(403, 'permission denied');
+  }
   let columns = [];
   let rows = [];
   let createdAt = now_iso();
@@ -1071,8 +1158,8 @@ function snapshots_latest_file(clientName: string, table: string): json {
   });
 }
 
-function jobs_start(jobId: string, status: string = 'snapshotting', progress: int? = null, message: string = 'Started.'): map<json> {
-  const current = current_user_record();
+function jobs_start(jobId: string, status: string = 'snapshotting', progress: int? = null, message: string = 'Started.', token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -1099,8 +1186,8 @@ function jobs_start(jobId: string, status: string = 'snapshotting', progress: in
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_progress(jobId: string, status: string = 'snapshotting', progress: int, message: string, rowCount: int, direction: string): map<json> {
-  const current = current_user_record();
+function jobs_progress(jobId: string, status: string = 'snapshotting', progress: int, message: string, rowCount: int, direction: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -1124,12 +1211,12 @@ function jobs_progress(jobId: string, status: string = 'snapshotting', progress:
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: string = '', table: string = '', rowCount: int = 0, snapshotCreatedAt: string = '', snapshotBytes: int = 0, compressedBytes: int = 0, chunkSizeBytes: int = kSnapshotTransferChunkSizeBytes(), chunkCount: int = 0, encoding: string = kSnapshotTransferEncoding()): map<json> {
+function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: string = '', table: string = '', rowCount: int = 0, snapshotCreatedAt: string = '', snapshotBytes: int = 0, compressedBytes: int = 0, chunkSizeBytes: int = kSnapshotTransferChunkSizeBytes(), chunkCount: int = 0, encoding: string = kSnapshotTransferEncoding(), token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
 
@@ -1198,12 +1285,12 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   });
 }
 
-function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string): map<json> {
+function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
 
@@ -1276,12 +1363,12 @@ function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chu
   };
 }
 
-function jobs_upload_chunk_complete(jobId: string, uploadId: string): map<json> {
+function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
   const session = find_upload_session_by_upload_id(uploadId);
@@ -1382,12 +1469,12 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string): map<json> 
   });
 }
 
-function jobs_download_snapshot(jobId: string): map<json> {
+function jobs_download_snapshot(jobId: string, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
 
@@ -1405,12 +1492,12 @@ function jobs_download_snapshot(jobId: string): map<json> {
   };
 }
 
-function jobs_download_snapshot_manifest(jobId: string): map<json> {
+function jobs_download_snapshot_manifest(jobId: string, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
 
@@ -1442,12 +1529,12 @@ function jobs_download_snapshot_manifest(jobId: string): map<json> {
   };
 }
 
-function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null): map<json> {
+function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
   if (chunkIndex == null) {
@@ -1495,12 +1582,12 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null): m
   };
 }
 
-function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, table: string = '', snapshotCreatedAt: string = '', rowCount: int = 0, checksum: string = ''): map<json> {
+function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, table: string = '', snapshotCreatedAt: string = '', rowCount: int = 0, checksum: string = '', token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
 
@@ -1575,12 +1662,12 @@ function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, t
   };
 }
 
-function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null): map<json> {
+function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
 
@@ -1615,12 +1702,12 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_fail(jobId: string, message: string, progress: int? = null): map<json> {
+function jobs_fail(jobId: string, message: string, progress: int? = null, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(), job)) {
+  if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
   }
   let nextProgress = job.progress;

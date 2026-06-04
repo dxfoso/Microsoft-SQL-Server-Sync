@@ -45,12 +45,22 @@ spec:
           env:
             - name: TRU_CONFIG_PATH
               value: {{ .Values.backend.env.truConfigPath | quote }}
+            - name: TRU_ADMIN_REQUIRE_KEY
+              value: "1"
+            - name: TRU_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sync-admin-web.adminSecretName" . }}
+                  key: TRU_ADMIN_KEY
             - name: TRU_HOST
               value: "0.0.0.0"
             - name: TRU_PORT
               value: {{ .Values.backend.service.port | quote }}
             - name: TRU_POSTGRESQL_URL
-              value: {{ include "sync-admin-web.backendPostgresUrl" . | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sync-admin-web.backendSecretName" . }}
+                  key: TRU_POSTGRESQL_URL
             - name: TRU_STORAGE_DIR
               value: {{ .Values.backend.env.truStorageDir | quote }}
             - name: TRU_SPEC_CACHE_PATH
