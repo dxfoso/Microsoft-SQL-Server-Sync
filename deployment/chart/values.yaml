@@ -1,7 +1,7 @@
 domain: sync.velvet-leaf.com
 adminDomain: sync.velvet-leaf.com
 
-dockerRegistry: dockerhub.divclouds.com
+dockerRegistry: registry.cloud.divclouds.com
 dockerUsername: ""
 dockerPassword: ""
 dockerEmail: ""
@@ -25,7 +25,7 @@ certManager:
 
 frontend:
   replicas: 2
-  image: dockerhub.divclouds.com/microsoft-sql-server-sync/frontend:latest
+  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:latest
   backendBaseUrl: /call
   resources:
     requests:
@@ -38,7 +38,7 @@ frontend:
 backend:
   enabled: true
   replicas: 1
-  image: dockerhub.divclouds.com/microsoft-sql-server-sync/backend:latest
+  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:latest
   service:
     port: 9001
   env:
