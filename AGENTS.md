@@ -30,4 +30,5 @@ This ensures the app is relaunched with the updated Dart code.
 - Before changing or diagnosing any deployment-related item, first check the cloud deployment instructions at `https://cloud.divclouds.com/deployment-instructions.txt` to confirm current expected node/DNS/health behavior.
 - Any nonzero compile errors in project-owned TRU files under `business/` must be treated as a failed deployment, even if pods start and other health checks pass.
 - Keep the public backend `/admin/health` endpoint readable without admin credentials. Cloud deployment compile gating depends on a public JSON response that includes `ready`, `compile_errors`, and build commit data.
+- Keep `business/tru.json` aligned with that contract. `settings.admin.requireKey`, `admin.requireKey`, and `adminRequireKey` must stay `false` for deployed environments unless the public health gate is intentionally redesigned in Cloud in the same coordinated change.
 - Keep `deployment/chart/values.yaml` free of dead admin-auth settings. If the chart no longer consumes an `admin` block, remove it from default values in the same change so redeploy records do not preserve misleading rendered values.
