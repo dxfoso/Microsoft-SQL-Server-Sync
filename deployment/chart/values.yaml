@@ -37,7 +37,7 @@ frontend:
 
 backend:
   enabled: true
-  replicas: 1
+  replicas: 2
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:latest
   secretName: sql-sync-backend
   service:
@@ -78,10 +78,11 @@ ingress:
   className: nginx
   annotations:
     nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    nginx.ingress.kubernetes.io/service-upstream: "true"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_503 http_504"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
   tls:
     frontendSecretName: sync-velvet-leaf-com-letsencrypt-tls
     backendSecretName: server-sync-velvet-leaf-com-letsencrypt-tls
