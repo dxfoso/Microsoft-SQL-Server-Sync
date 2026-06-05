@@ -29,3 +29,4 @@ This ensures the app is relaunched with the updated Dart code.
 - Node target must be supplied by Cloud deployment metadata for each deployment/redeploy; do not hardcode a fixed node name in repo files or scripts.
 - Before changing or diagnosing any deployment-related item, first check the cloud deployment instructions at `https://cloud.divclouds.com/deployment-instructions.txt` to confirm current expected node/DNS/health behavior.
 - Any nonzero compile errors in project-owned TRU files under `business/` must be treated as a failed deployment, even if pods start and other health checks pass.
+- Keep the public backend `/admin/health` endpoint readable without admin credentials. Cloud deployment compile gating depends on a public JSON response that includes `ready`, `compile_errors`, and build commit data.
