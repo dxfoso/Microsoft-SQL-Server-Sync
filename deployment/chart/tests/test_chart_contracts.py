@@ -21,6 +21,11 @@ class ChartContractsTests(unittest.TestCase):
         self.assertNotIn("admin secret", backend_secret)
         self.assertNotIn("TRU_ADMIN_KEY", backend_secret)
 
+    def test_values_do_not_expose_dead_admin_block(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("\nadmin:\n", values_yaml)
+        self.assertNotIn("sql-sync-admin", values_yaml)
+
 
 if __name__ == "__main__":
     unittest.main()

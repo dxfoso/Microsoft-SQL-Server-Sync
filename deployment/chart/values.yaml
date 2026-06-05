@@ -55,10 +55,6 @@ backend:
       cpu: "2"
       memory: 2Gi
 
-admin:
-  secretName: sql-sync-admin
-  key: ""
-
 postgres:
   enabled: true
   image: postgres:16-alpine
