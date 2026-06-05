@@ -7,7 +7,7 @@ metadata:
   labels:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.backend.replicas }}
+  replicas: {{ max 2 (int .Values.backend.replicas) }}
   revisionHistoryLimit: 2
   selector:
     matchLabels:

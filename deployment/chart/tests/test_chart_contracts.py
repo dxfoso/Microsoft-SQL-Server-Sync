@@ -40,6 +40,12 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
 
+    def test_backend_deployment_enforces_minimum_two_replicas(self):
+        backend_deployment = (
+            ROOT / "templates" / "backend-deployment.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("replicas: {{ max 2 (int .Values.backend.replicas) }}", backend_deployment)
+
     def test_runtime_config_keeps_public_admin_health_ungated(self):
         tru_json = (PROJECT_ROOT / "business" / "tru.json").read_text(
             encoding="utf-8"
