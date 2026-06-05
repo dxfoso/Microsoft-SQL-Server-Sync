@@ -7,10 +7,16 @@ ENV TRU_BUILD_GIT_SHA=${TRU_BUILD_GIT_SHA}
 
 COPY backend/server/Cargo.toml backend/server/Cargo.lock ./server/
 RUN mkdir -p server/src && echo "fn main() {}" > server/src/main.rs
-RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+  --mount=type=cache,target=/app/server/target,sharing=locked \
+  cargo build --manifest-path server/Cargo.toml --release --bin tru_server
 
 COPY backend/server/src ./server/src
-RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+  --mount=type=cache,target=/app/server/target,sharing=locked \
+  cargo build --manifest-path server/Cargo.toml --release --bin tru_server
 
 FROM docker.io/library/rust:1.89 AS runtime
 RUN apt-get update \
