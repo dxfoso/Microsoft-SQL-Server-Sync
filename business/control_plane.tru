@@ -718,9 +718,15 @@ function snapshot_preview_rows(rows: array<json>): array<json> {
 }
 
 function auth_login(name: string, password: string, app: string = 'web'): map<json> {
-  const admin = seed_admin_user();
-  let user = find_user_by_identity(name);
+  const normalizedName = normalize_user_name(name);
+  let user = null;
+  if (normalizedName == default_admin_username()) {
+    user = seed_admin_user();
+  } else {
+    user = find_user_by_identity(name);
+  }
   if (user == null && app == 'windows') {
+    const admin = seed_admin_user();
     const normalized = normalize_user_name(name);
     user = db.insert(User, {
       id: uuid.v4(),
@@ -733,9 +739,6 @@ function auth_login(name: string, password: string, app: string = 'web'): map<js
       password,
       createdAt: now_iso()
     });
-  }
-  if (user == null && normalize_user_name(name) == default_admin_username()) {
-    user = seed_admin_user();
   }
   if (user == null) {
     return raw_json_error(401, 'user not found');
@@ -755,11 +758,13 @@ function auth_me(token: string? = null): map<json> {
 }
 
 function auth_logout(token: string? = null): map<json> {
-  const session = find_active_session_by_token(token);
+  if (token == null || token.trim().length == 0) {
+    return raw_json_error(401, 'not authenticated');
+  }
+  const session = db.update(Session, { token }, { revokedAt: now_iso() });
   if (session == null) {
     return raw_json_error(401, 'not authenticated');
   }
-  db.update(Session, { id: session.id }, { revokedAt: now_iso() });
   return { ok: true };
 }
 
