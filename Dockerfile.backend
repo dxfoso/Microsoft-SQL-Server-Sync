@@ -16,7 +16,8 @@ COPY backend/server/src ./server/src
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   --mount=type=cache,target=/app/server/target,sharing=locked \
-  cargo build --manifest-path server/Cargo.toml --release --bin tru_server
+  cargo build --manifest-path server/Cargo.toml --release --bin tru_server && \
+  install -D /app/server/target/release/tru_server /tmp/tru_server
 
 FROM docker.io/library/rust:1.89 AS runtime
 RUN apt-get update \
@@ -24,7 +25,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /app/server/target/release/tru_server /usr/local/bin/tru_server
+COPY --from=builder /tmp/tru_server /usr/local/bin/tru_server
 COPY business /app/business
 
 EXPOSE 9001
