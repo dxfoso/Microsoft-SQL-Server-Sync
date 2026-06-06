@@ -16,6 +16,13 @@ class Session {
   field id: string min=1 max=64
   field token: string min=1 max=128
   field userId: string min=1 max=64
+  field userUsername: string? min=0 max=128
+  field userEmail: string? min=0 max=254
+  field userName: string? min=0 max=128
+  field userRole: string? min=0 max=32
+  field userOwnerUserId: string? min=0 max=64
+  field userCreatedByUserId: string? min=0 max=64
+  field userCreatedAt: datetime?
   field app: string min=1 max=32
   field createdAt: datetime
   field revokedAt: datetime?
@@ -112,6 +119,7 @@ class DownloadSession {
 index User_id on User(id)
 index User_username on User(username)
 index User_email on User(email)
+index Session_token on Session(token)
 index Session_createdAt on Session(createdAt)
 index Session_userId_createdAt on Session(userId, createdAt)
 index Agent_clientName on Agent(clientName)
@@ -345,6 +353,13 @@ function create_session_for_user(user: map<json>, app: string): map<json> {
     id: uuid.v4(),
     token,
     userId: user.id,
+    userUsername: user.username,
+    userEmail: user.email,
+    userName: user.name,
+    userRole: user.role,
+    userOwnerUserId: user.ownerUserId,
+    userCreatedByUserId: user.createdByUserId,
+    userCreatedAt: user.createdAt,
     app,
     createdAt: now_iso(),
     revokedAt: null
@@ -509,6 +524,22 @@ function download_session_payload(session: map<json>): map<json> {
 function current_user_record(token: string? = null): map<json>? {
   const session = find_active_session_by_token(token);
   if (session != null) {
+    if (
+      session.userUsername != null &&
+      session.userRole != null &&
+      session.userCreatedAt != null
+    ) {
+      return {
+        id: session.userId,
+        username: session.userUsername,
+        email: session.userEmail ?? '',
+        name: session.userName ?? session.userUsername,
+        role: session.userRole,
+        ownerUserId: session.userOwnerUserId,
+        createdByUserId: session.userCreatedByUserId,
+        createdAt: session.userCreatedAt
+      };
+    }
     const user = find_user_by_id(session.userId);
     if (user != null) {
       return user;
