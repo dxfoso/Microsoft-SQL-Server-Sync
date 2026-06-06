@@ -24,7 +24,7 @@ certManager:
     ingressClassName: nginx
 
 frontend:
-  replicas: 2
+  replicas: 1
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:latest
   backendBaseUrl: /call
   resources:
@@ -37,7 +37,7 @@ frontend:
 
 backend:
   enabled: true
-  replicas: 2
+  replicas: 1
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:latest
   secretName: sql-sync-backend
   service:

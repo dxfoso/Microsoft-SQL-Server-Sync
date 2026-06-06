@@ -27,9 +27,10 @@ class ChartContractsTests(unittest.TestCase):
         self.assertNotIn("\nadmin:\n", values_yaml)
         self.assertNotIn("sql-sync-admin", values_yaml)
 
-    def test_values_keep_backend_replicas_redundant_and_use_endpoint_upstreams(self):
+    def test_values_keep_single_pod_defaults_and_use_endpoint_upstreams(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
-        self.assertIn("backend:\n  enabled: true\n  replicas: 2\n", values_yaml)
+        self.assertIn("frontend:\n  replicas: 1\n", values_yaml)
+        self.assertIn("backend:\n  enabled: true\n  replicas: 1\n", values_yaml)
         self.assertNotIn('nginx.ingress.kubernetes.io/service-upstream: "true"', values_yaml)
         self.assertIn(
             'nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_503 http_504"',
@@ -40,11 +41,11 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
 
-    def test_backend_deployment_enforces_minimum_two_replicas(self):
+    def test_backend_deployment_uses_configured_replica_count(self):
         backend_deployment = (
             ROOT / "templates" / "backend-deployment.yaml"
         ).read_text(encoding="utf-8")
-        self.assertIn("replicas: {{ max 2 (int .Values.backend.replicas) }}", backend_deployment)
+        self.assertIn("replicas: {{ .Values.backend.replicas }}", backend_deployment)
 
     def test_runtime_config_keeps_public_admin_health_ungated(self):
         tru_json = (PROJECT_ROOT / "business" / "tru.json").read_text(
