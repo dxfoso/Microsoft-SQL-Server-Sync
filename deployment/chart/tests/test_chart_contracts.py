@@ -37,6 +37,14 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
         self.assertIn(
+            'nginx.ingress.kubernetes.io/proxy-http-version: "1.1"',
+            values_yaml,
+        )
+        self.assertIn(
+            'nginx.ingress.kubernetes.io/connection-proxy-header: "keep-alive"',
+            values_yaml,
+        )
+        self.assertIn(
             'nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"',
             values_yaml,
         )
