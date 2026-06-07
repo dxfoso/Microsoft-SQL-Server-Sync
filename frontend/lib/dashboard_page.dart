@@ -15,6 +15,8 @@ const int _maxHistoryLimit = 100;
 const int _defaultAutoSyncIntervalMinutes = 15;
 const int _minAutoSyncIntervalMinutes = 1;
 const int _maxAutoSyncIntervalMinutes = 1440;
+const Duration _dashboardRefreshInterval = Duration(seconds: 5);
+const Duration _dashboardReconnectDelay = Duration(minutes: 1);
 const String _buildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
   defaultValue: 'd6ad13468380fff48127806b860e02c2b8cee659',
@@ -51,6 +53,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final LiveSyncApiClient _api = LiveSyncApiClient();
   final TextEditingController _syncSearchController = TextEditingController();
   Timer? _refreshTimer;
+  Timer? _reconnectTimer;
 
   AdminLiveState? _state;
   AdminLiveState? _derivedStateSource;
@@ -85,16 +88,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _api.setAuthToken(widget.authToken);
     _historyLimit = _readStoredHistoryLimit();
     _syncSearchController.addListener(_handleSearchChange);
+    _startRefreshPolling();
     unawaited(_refreshState());
-    _refreshTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => unawaited(_refreshState(silent: true)),
-    );
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _reconnectTimer?.cancel();
     _syncSearchController.removeListener(_handleSearchChange);
     _syncSearchController.dispose();
     _api.dispose();
@@ -133,6 +134,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         message.contains('forbidden');
   }
 
+  void _startRefreshPolling() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(
+      _dashboardRefreshInterval,
+      (_) => unawaited(_refreshState(silent: true)),
+    );
+  }
+
+  void _scheduleReconnectRetry() {
+    if (_reconnectTimer?.isActive ?? false) {
+      return;
+    }
+    _refreshTimer?.cancel();
+    _reconnectTimer = Timer(_dashboardReconnectDelay, () {
+      _reconnectTimer = null;
+      if (!mounted) {
+        return;
+      }
+      unawaited(_refreshState());
+    });
+  }
+
   Future<void> _refreshState({bool silent = false}) async {
     if (!silent && mounted) {
       setState(() {
@@ -166,6 +189,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _loading = false;
         _error = null;
       });
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+      _startRefreshPolling();
     } catch (error) {
       if (!mounted) {
         return;
@@ -186,6 +212,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _loading = false;
         _error = error.toString();
       });
+      _scheduleReconnectRetry();
     }
   }
 
