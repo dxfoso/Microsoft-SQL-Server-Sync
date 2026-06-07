@@ -24,20 +24,20 @@ certManager:
     ingressClassName: nginx
 
 frontend:
-  replicas: 1
+  replicas: 2
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:latest
   backendBaseUrl: /call
   resources:
     requests:
-      cpu: 250m
+      cpu: 300m
       memory: 512Mi
     limits:
-      cpu: "1"
+      cpu: "1500m"
       memory: 1Gi
 
 backend:
   enabled: true
-  replicas: 1
+  replicas: 2
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:latest
   secretName: sql-sync-backend
   service:
@@ -49,11 +49,11 @@ backend:
     truSpecCachePath: /app/data/.tru_spec_cache.sqlite
   resources:
     requests:
-      cpu: 250m
-      memory: 768Mi
+      cpu: 500m
+      memory: 1Gi
     limits:
-      cpu: "2"
-      memory: 2Gi
+      cpu: "2500m"
+      memory: 3Gi
 
 postgres:
   enabled: true
@@ -81,6 +81,7 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_503 http_504"
     nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
   tls:
