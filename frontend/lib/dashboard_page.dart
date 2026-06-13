@@ -78,6 +78,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String? _selectedClientName;
   String? _selectedTableName;
   String? _selectedDatabaseName;
+  String? _selectedServerKey;
+  String? _selectedPageClientName;
   bool _sortLastSyncAscending = false;
   int _detailTabIndex = 0;
   int _historyLimit = _defaultHistoryLimit;
@@ -170,6 +172,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
 
       _ensureDerivedState(nextState);
+      final nextServerItems = _serverInventoryItemsFromState(nextState);
       final nextDatabaseName = _resolveSelectedDatabase(nextState);
       final nextTableName = _resolveSelectedTable(
         nextState,
@@ -179,12 +182,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         nextState,
         nextTableName,
       );
+      var nextServerKey = _selectedServerKey;
+      var nextPageClientName = _selectedPageClientName;
+      if (nextPageClientName != null) {
+        final serverItem = _serverItemForClientName(
+          nextPageClientName,
+          items: nextServerItems,
+        );
+        if (serverItem == null) {
+          nextPageClientName = null;
+        } else {
+          nextServerKey = serverItem.key;
+        }
+      }
+      if (nextServerKey != null &&
+          !nextServerItems.any((item) => item.key == nextServerKey)) {
+        nextServerKey = null;
+      }
 
       setState(() {
         _state = nextState;
         _selectedDatabaseName = nextDatabaseName;
         _selectedTableName = nextTableName;
         _selectedClientName = nextClientName;
+        _selectedServerKey = nextServerKey;
+        _selectedPageClientName = nextPageClientName;
         _connected = true;
         _loading = false;
         _error = null;
@@ -218,43 +240,43 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
 
-  List<_ServerInventoryItem> get _serverInventoryItems {
-    final machineLabel = _localMachineLabel();
-    final agents = _state?.agents ?? const <AdminAgent>[];
-    final localAgents = agents
-        .where((agent) {
-          final machineName = agent.machineName.trim();
-          return machineName.isEmpty || machineName == machineLabel;
-        })
-        .toList(growable: false);
-    final rackAgents = agents
-        .where((agent) {
-          final machineName = agent.machineName.trim();
-          return machineName.isNotEmpty && machineName != machineLabel;
-        })
-        .toList(growable: false);
+  List<_ServerInventoryItem> get _serverInventoryItems =>
+      _serverInventoryItemsFromState(_state);
 
-    return <_ServerInventoryItem>[
-      _buildServerInventoryItem(
-        title: 'This Machine',
-        platformLabel: 'Windows',
-        fallbackMachineName: machineLabel,
-        fallbackRole: 'Local workstation',
-        agents: localAgents,
-        isLocal: true,
-      ),
-      _buildServerInventoryItem(
-        title: 'Rack Server',
-        platformLabel: 'Linux',
-        fallbackMachineName:
-            rackAgents.isEmpty
-                ? 'Rack server'
-                : rackAgents.first.machineName.trim(),
-        fallbackRole: 'Linux rack host',
-        agents: rackAgents,
-        isLocal: false,
-      ),
-    ];
+  List<_ServerInventoryItem> _serverInventoryItemsFromState(
+    AdminLiveState? state,
+  ) {
+    final machineLabel = _localMachineLabelFromState(state);
+    final agents = state?.agents ?? const <AdminAgent>[];
+    final groupedAgents = <String, List<AdminAgent>>{};
+    for (final agent in agents) {
+      final serverName = _serverListTitleForAgent(agent, machineLabel);
+      groupedAgents.putIfAbsent(serverName, () => <AdminAgent>[]).add(agent);
+    }
+
+    final items = groupedAgents.entries
+        .map(
+          (entry) => _buildServerInventoryItem(
+            key: entry.key,
+            title: entry.key,
+            platformLabel: _platformLabelForServerAgents(entry.value),
+            fallbackMachineName:
+                entry.value.first.machineName.trim().isEmpty
+                    ? machineLabel
+                    : entry.value.first.machineName.trim(),
+            fallbackRole: 'Server',
+            agents: entry.value,
+            isLocal: entry.value.any(
+              (agent) =>
+                  agent.machineName.trim().isEmpty ||
+                  agent.machineName.trim() == machineLabel,
+            ),
+          ),
+        )
+        .toList(growable: false)
+      ..sort((left, right) => left.title.compareTo(right.title));
+
+    return items;
   }
 
   List<_TableAggregateSummary> get _tableSummaries {
@@ -262,8 +284,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _derivedTableSummaries;
   }
 
-  String _localMachineLabel() {
-    for (final agent in _state?.agents ?? const <AdminAgent>[]) {
+  String _localMachineLabelFromState(AdminLiveState? state) {
+    for (final agent in state?.agents ?? const <AdminAgent>[]) {
       final machineName = agent.machineName.trim();
       if (machineName.isNotEmpty) {
         return machineName;
@@ -273,6 +295,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   _ServerInventoryItem _buildServerInventoryItem({
+    required String key,
     required String title,
     required String platformLabel,
     required String fallbackMachineName,
@@ -307,6 +330,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final lastHeartbeat = _latestHeartbeat(agents);
 
     return _ServerInventoryItem(
+      key: key,
       title: title,
       serverName: serverName,
       machineName: machineName,
@@ -322,6 +346,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       databases: databases,
       clientNames: clientNames,
       lastHeartbeat: lastHeartbeat,
+      agents: List<AdminAgent>.unmodifiable(agents),
     );
   }
 
@@ -333,6 +358,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
     }
     return 'Not reported';
+  }
+
+  String _serverListTitleForAgent(AdminAgent agent, String machineLabel) {
+    final serverName = agent.server.trim();
+    if (serverName.isNotEmpty) {
+      return serverName;
+    }
+    final machineName = agent.machineName.trim();
+    if (machineName.isNotEmpty) {
+      return machineName;
+    }
+    return machineLabel;
+  }
+
+  String _platformLabelForServerAgents(List<AdminAgent> agents) {
+    final hasLocalMachine = agents.any(
+      (agent) => agent.machineName.trim().isNotEmpty,
+    );
+    return hasLocalMachine ? 'Connected' : 'Unknown';
   }
 
   String _latestHeartbeat(List<AdminAgent> agents) {
@@ -347,6 +391,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
     }
     return latest;
+  }
+
+  _ServerInventoryItem? get _selectedServerInventoryItem {
+    final serverKey = _selectedServerKey;
+    if (serverKey == null) {
+      return null;
+    }
+    for (final item in _serverInventoryItems) {
+      if (item.key == serverKey) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  AdminAgent? get _selectedPageClientAgent {
+    final clientName = _selectedPageClientName;
+    if (clientName == null) {
+      return null;
+    }
+    return _agentForClientName(clientName);
   }
 
   _TableAggregateSummary? get _selectedTableSummary {
@@ -813,6 +878,51 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     });
   }
 
+  AdminAgent? _agentForClientName(String clientName) {
+    for (final agent in _state?.agents ?? const <AdminAgent>[]) {
+      if (agent.clientName == clientName) {
+        return agent;
+      }
+    }
+    return null;
+  }
+
+  _ServerInventoryItem? _serverItemForClientName(
+    String clientName, {
+    List<_ServerInventoryItem>? items,
+  }) {
+    for (final item in items ?? _serverInventoryItems) {
+      for (final agent in item.agents) {
+        if (agent.clientName == clientName) {
+          return item;
+        }
+      }
+    }
+    return null;
+  }
+
+  void _selectOverviewPage() {
+    setState(() {
+      _selectedServerKey = null;
+      _selectedPageClientName = null;
+    });
+  }
+
+  void _selectServerPage(String serverKey) {
+    setState(() {
+      _selectedServerKey = serverKey;
+      _selectedPageClientName = null;
+    });
+  }
+
+  void _openClientPage(String clientName) {
+    final serverItem = _serverItemForClientName(clientName);
+    setState(() {
+      _selectedServerKey = serverItem?.key;
+      _selectedPageClientName = clientName;
+    });
+  }
+
   void _toggleTableLastSyncSort() {
     setState(() {
       _sortLastSyncAscending = !_sortLastSyncAscending;
@@ -1195,7 +1305,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   (selectedOwnerUserId == null ||
                       selectedOwnerUserId!.trim().isEmpty)) {
                 setDialogState(() {
-                  errorText = 'Select an owner for the client account.';
+                  errorText = 'Select a server for the client account.';
                 });
                 return;
               }
@@ -1448,8 +1558,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       const SizedBox(height: 8),
                       Text(
                         widget.authenticatedUser.isAdmin
-                            ? 'Admin can create owner or client accounts. Owners can create client accounts only.'
-                            : 'Owner accounts can create client accounts for the Windows app.',
+                            ? 'Admin can create server or client accounts. Server accounts can create client accounts only.'
+                            : 'Server accounts can create client accounts for the Windows app.',
                         style: const TextStyle(
                           color: Color(0xFF58656B),
                           height: 1.45,
@@ -1561,7 +1671,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               child: DropdownButtonFormField<String>(
                                 value: selectedOwnerUserId,
                                 decoration: const InputDecoration(
-                                  labelText: 'Owner',
+                                  labelText: 'Server',
                                 ),
                                 items: owners
                                     .map(
@@ -1619,7 +1729,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                       (_, _) => const SizedBox(height: 8),
                                   itemBuilder: (context, index) {
                                     final user = dialogUsers[index];
-                                    final ownerLabel =
+                                    final serverLabel =
                                         user.ownerName ??
                                         user.ownerUsername ??
                                         user.ownerEmail ??
@@ -1674,7 +1784,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                             width: 180,
                                             child: Text(
                                               user.isClient
-                                                  ? 'Owner: $ownerLabel'
+                                                  ? 'Server: $serverLabel'
                                                   : 'Web account',
                                               textAlign: TextAlign.right,
                                               style: const TextStyle(
@@ -2819,7 +2929,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String _userRoleLabel(String role) {
     switch (role) {
       case 'owner':
-        return 'Owner';
+        return 'Server';
       case 'admin':
         return 'Admin';
       case 'client':
@@ -2831,7 +2941,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String _userRoleDescription(String role) {
     switch (role) {
       case 'owner':
-        return 'Manages client accounts.';
+        return 'Manages client accounts as a server.';
       case 'admin':
         return 'Full control plane access.';
       case 'client':
@@ -5520,7 +5630,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildDashboardContent() {
-    final serverInventory = _buildServerInventoryCard();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showSidebar = constraints.maxWidth >= 980;
+        final content = _buildCurrentPageContent();
+        if (!showSidebar) {
+          return content;
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 280, child: _buildNavigationPane()),
+            const SizedBox(width: 12),
+            Expanded(child: content),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCurrentPageContent() {
+    final serverItem = _selectedServerInventoryItem;
+    final clientAgent = _selectedPageClientAgent;
+    if (clientAgent != null) {
+      return _buildClientPage(clientAgent);
+    }
+    if (serverItem != null) {
+      return _buildServerPage(serverItem);
+    }
+    return _buildOverviewPage();
+  }
+
+  Widget _buildOverviewPage() {
     return LayoutBuilder(
       builder: (context, constraints) {
         final mobileStack = constraints.maxWidth < 760;
@@ -5528,7 +5669,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         if (mobileStack) {
           return ListView(
             children: [
-              serverInventory,
+              _buildOverviewIntroCard(),
+              const SizedBox(height: 10),
+              _buildServerListCard(),
               const SizedBox(height: 10),
               SizedBox(height: 460, child: _buildTableListCard()),
               const SizedBox(height: 10),
@@ -5538,7 +5681,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         }
         return Column(
           children: [
-            serverInventory,
+            _buildOverviewIntroCard(),
+            const SizedBox(height: 10),
+            _buildServerListCard(),
             const SizedBox(height: 10),
             Expanded(
               child:
@@ -5565,41 +5710,658 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildServerInventoryCard() {
+  Widget _buildServerListCard() {
     final items = _serverInventoryItems;
     return SurfaceCard(
       title: 'Servers',
+      subtitle: 'Open a server to enter its clients and tables.',
+      child:
+          items.isEmpty
+              ? const EmptyStateCard(message: 'No servers are available yet.')
+              : Column(
+                children: [
+                  for (var index = 0; index < items.length; index++) ...[
+                    _buildServerNavigationTile(
+                      items[index],
+                      closeAfterSelection: false,
+                    ),
+                    if (index != items.length - 1) const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+    );
+  }
+
+  Widget _buildOverviewIntroCard() {
+    return SurfaceCard(
+      title: 'Overview',
       subtitle:
-          'Two server cards with full details for this machine and the rack server.',
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 720;
-          final itemWidth =
-              wide ? (constraints.maxWidth - 12) / 2 : constraints.maxWidth;
-          return Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: items
-                .map(
-                  (item) => SizedBox(
-                    width: itemWidth,
-                    child: _buildServerInventoryTile(item),
-                  ),
-                )
-                .toList(growable: false),
-          );
-        },
+          'Use the left menu to open a server page, then drill into its tables and clients.',
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          MetricPill(
+            label: 'Servers',
+            value: '${_serverInventoryItems.length}',
+          ),
+          MetricPill(label: 'Agents', value: '${_state?.agents.length ?? 0}'),
+          MetricPill(label: 'Jobs', value: '${_jobs.length}'),
+          MetricPill(
+            label: 'Updated',
+            value: _formatTimestamp(_state?.generatedAt ?? ''),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildNavigationPane({bool closeAfterSelection = false}) {
+    final items = _serverInventoryItems;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Servers',
+            style: TextStyle(
+              color: Color(0xFF101828),
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Open a server to see its tables and clients.',
+            style: TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildNavigationTile(
+            icon: Icons.dashboard_customize_outlined,
+            label: 'Overview',
+            subtitle: 'Tables, sync status, and detail panels',
+            selected:
+                _selectedServerKey == null && _selectedPageClientName == null,
+            onTap:
+                () => _handleNavigationSelection(
+                  _selectOverviewPage,
+                  closeAfterSelection: closeAfterSelection,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: ListView.separated(
+              itemCount: items.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder:
+                  (context, index) => _buildServerNavigationTile(
+                    items[index],
+                    closeAfterSelection: closeAfterSelection,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleNavigationSelection(
+    VoidCallback onSelect, {
+    required bool closeAfterSelection,
+  }) {
+    onSelect();
+    if (closeAfterSelection && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Widget _buildNavigationTile({
+    required IconData icon,
+    required String label,
+    required String subtitle,
+    required bool selected,
+    required VoidCallback onTap,
+    Color iconColor = const Color(0xFF0F766E),
+    Widget? trailing,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFE6F4F1) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color:
+                  selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: const Color(0xFFDDE3EA)),
+                ),
+                child: Icon(icon, size: 18, color: iconColor),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF101828),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[const SizedBox(width: 8), trailing],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildServerNavigationTile(
+    _ServerInventoryItem item, {
+    required bool closeAfterSelection,
+  }) {
+    final selected =
+        _selectedServerKey == item.key &&
+        (_selectedPageClientName == null ||
+            item.clientNames.contains(_selectedPageClientName));
+    return _buildNavigationTile(
+      icon: Icons.dns_rounded,
+      iconColor:
+          item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318),
+      label: item.title,
+      subtitle: '${item.connectedClients} clients',
+      selected: selected,
+      onTap:
+          () => _handleNavigationSelection(
+            () => _selectServerPage(item.key),
+            closeAfterSelection: closeAfterSelection,
+          ),
+      trailing: StatusBadge(
+        label: item.available ? 'Live' : 'Down',
+        color:
+            item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318),
+      ),
+    );
+  }
+
+  Widget _buildServerPage(_ServerInventoryItem item) {
+    final agents = List<AdminAgent>.from(item.agents)
+      ..sort((left, right) => left.clientName.compareTo(right.clientName));
+    final summaries = _serverTableSummaries(item);
+    return ListView(
+      children: [
+        _buildServerInventoryTile(item),
+        const SizedBox(height: 10),
+        SurfaceCard(
+          title: 'Tables',
+          subtitle: 'Tables exposed by this server.',
+          child:
+              summaries.isEmpty
+                  ? const EmptyStateCard(
+                    message: 'No tables are exposed by this server yet.',
+                  )
+                  : Column(
+                    children: [
+                      for (
+                        var index = 0;
+                        index < summaries.length;
+                        index++
+                      ) ...[
+                        _buildServerTableTile(summaries[index]),
+                        if (index != summaries.length - 1)
+                          const SizedBox(height: 8),
+                      ],
+                    ],
+                  ),
+        ),
+        const SizedBox(height: 10),
+        SurfaceCard(
+          title: 'Clients',
+          subtitle: 'Each client opens as its own page.',
+          child:
+              agents.isEmpty
+                  ? const EmptyStateCard(
+                    message: 'No clients are connected to this server yet.',
+                  )
+                  : Column(
+                    children: [
+                      for (var index = 0; index < agents.length; index++) ...[
+                        _buildServerClientTile(item, agents[index]),
+                        if (index != agents.length - 1)
+                          const SizedBox(height: 8),
+                      ],
+                    ],
+                  ),
+        ),
+      ],
+    );
+  }
+
+  List<_TableAggregateSummary> _serverTableSummaries(
+    _ServerInventoryItem item,
+  ) {
+    final serverClientNames =
+        item.agents
+            .map((agent) => agent.clientName)
+            .where((clientName) => clientName.trim().isNotEmpty)
+            .toSet();
+    final summaries = _tableSummaries
+        .where(
+          (summary) => summary.clients.any(
+            (entry) => serverClientNames.contains(entry.agent.clientName),
+          ),
+        )
+        .toList(growable: false);
+    summaries.sort(_compareSummariesByActiveSort);
+    return summaries;
+  }
+
+  Widget _buildServerTableTile(_TableAggregateSummary summary) {
+    final entry = summary.clients.first;
+    final lastSync = _formatTimestamp(summary.lastSync);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
+            ),
+            child: const Icon(
+              Icons.table_rows_outlined,
+              size: 18,
+              color: Color(0xFF2563EB),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  summary.displayTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF101828),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${summary.clientCount} clients - Last sync $lastSync',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          StatusBadge(
+            label: summary.masterCount > 0 ? 'Live' : 'Idle',
+            color:
+                summary.masterCount > 0
+                    ? const Color(0xFF0F766E)
+                    : const Color(0xFF667085),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Open table details',
+            onPressed:
+                () => _openClientDetailDialog(summary: summary, entry: entry),
+            icon: const Icon(Icons.open_in_new_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServerClientTile(_ServerInventoryItem item, AdminAgent agent) {
+    final statusColor =
+        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
+            ),
+            child: const Icon(
+              Icons.computer_rounded,
+              size: 18,
+              color: Color(0xFF2563EB),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  agent.clientName,
+                  style: const TextStyle(
+                    color: Color(0xFF101828),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${agent.database} - ${agent.tables.length} tables - ${item.serverName}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _buildRoleBadge(agent.isMaster),
+                    StatusBadge(
+                      label: agent.isOnline ? 'Online' : 'Offline',
+                      color: statusColor,
+                    ),
+                    MetricPill(
+                      label: 'Server Link',
+                      value: agent.serverConnected ? 'Connected' : 'Pending',
+                    ),
+                    MetricPill(
+                      label: 'SQL',
+                      value: agent.sqlConnected ? 'Connected' : 'Pending',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton.tonalIcon(
+            onPressed: () => _openClientPage(agent.clientName),
+            icon: const Icon(Icons.open_in_new_rounded, size: 16),
+            label: const Text('Open Client'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientPage(AdminAgent agent) {
+    final tables = List<AdminTableState>.from(agent.tables)
+      ..sort((left, right) => left.table.compareTo(right.table));
+    final jobs = List<AdminJob>.from(_jobs)..sort(_compareJobsByUpdatedAtDesc);
+    final clientJobs = jobs
+        .where((job) => job.clientName == agent.clientName)
+        .take(_historyLimit)
+        .toList(growable: false);
+
+    return ListView(
+      children: [
+        _buildClientHeroCard(agent),
+        const SizedBox(height: 10),
+        SurfaceCard(
+          title: 'Tables',
+          subtitle:
+              'Open a client table to inspect its sync state and history.',
+          child:
+              tables.isEmpty
+                  ? const EmptyStateCard(
+                    message: 'This client is not exposing any tables yet.',
+                  )
+                  : Column(
+                    children: [
+                      for (var index = 0; index < tables.length; index++) ...[
+                        _buildClientTablePageTile(agent, tables[index]),
+                        if (index != tables.length - 1)
+                          const SizedBox(height: 8),
+                      ],
+                    ],
+                  ),
+        ),
+        const SizedBox(height: 10),
+        SurfaceCard(
+          title: 'Recent History',
+          subtitle: 'Latest sync jobs for this client.',
+          child:
+              clientJobs.isEmpty
+                  ? const EmptyStateCard(
+                    message:
+                        'No sync jobs have been recorded for this client yet.',
+                  )
+                  : Column(
+                    children: [
+                      for (
+                        var index = 0;
+                        index < clientJobs.length;
+                        index++
+                      ) ...[
+                        _buildClientJobTile(clientJobs[index]),
+                        if (index != clientJobs.length - 1)
+                          const SizedBox(height: 8),
+                      ],
+                    ],
+                  ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildClientHeroCard(AdminAgent agent) {
+    final serverItem = _serverItemForClientName(agent.clientName);
+    return SurfaceCard(
+      title: agent.clientName,
+      subtitle: 'Client page for ${serverItem?.title ?? 'server'}',
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          MetricPill(label: 'Server', value: agent.server),
+          MetricPill(label: 'Machine', value: agent.machineName),
+          MetricPill(label: 'Database', value: agent.database),
+          MetricPill(label: 'Tables', value: '${agent.tables.length}'),
+          MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
+          MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientTablePageTile(
+    AdminAgent agent,
+    AdminTableState tableState,
+  ) {
+    final summary =
+        _derivedSummaryByTable[_tableKeyForAgent(agent, tableState)];
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _displayTableName(tableState.table),
+                  style: const TextStyle(
+                    color: Color(0xFF101828),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${tableState.rowCount} rows - Last sync ${_formatTimestamp(_tableTimestampToken(tableState))}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          StatusBadge(
+            label: tableState.status,
+            color: _statusColor(tableState.status),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Open table details',
+            onPressed:
+                summary == null
+                    ? null
+                    : () => _openClientDetailDialog(
+                      summary: summary,
+                      entry: _TableClientEntry(
+                        agent: agent,
+                        tableState: tableState,
+                      ),
+                    ),
+            icon: const Icon(Icons.open_in_new_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientJobTile(AdminJob job) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _displayTableName(job.table),
+                  style: const TextStyle(
+                    color: Color(0xFF101828),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${job.direction.toUpperCase()} - ${_formatTimestamp(job.updatedAt)}',
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          StatusBadge(label: job.status, color: _statusColor(job.status)),
+        ],
+      ),
+    );
+  }
+
+  String _displayTableName(String table) {
+    final separatorIndex = table.indexOf(_TableAggregateSummary.separator);
+    final value =
+        separatorIndex < 0
+            ? table
+            : table.substring(
+              separatorIndex + _TableAggregateSummary.separator.length,
+            );
+    return value.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
   }
 
   Widget _buildServerInventoryTile(_ServerInventoryItem item) {
     final statusColor =
         item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318);
-    final icon =
-        item.platformLabel == 'Linux'
-            ? Icons.terminal_rounded
-            : Icons.desktop_windows_rounded;
     final databases =
         item.databases.isEmpty ? 'None reported' : item.databases.join(', ');
     final clients =
@@ -5630,7 +6392,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: const Color(0xFFDDE3EA)),
                 ),
-                child: Icon(icon, size: 19, color: const Color(0xFF0F766E)),
+                child: const Icon(
+                  Icons.dns_rounded,
+                  size: 19,
+                  color: Color(0xFF0F766E),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -6014,6 +6780,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final state = _state;
     final screenWidth = MediaQuery.sizeOf(context).width;
     final compactAppBar = screenWidth < 760;
+    final compactLayout = screenWidth < 980;
     final profileCompact = screenWidth < 560;
     final pagePadding =
         screenWidth < 480
@@ -6021,16 +6788,24 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             : (screenWidth < 760
                 ? const EdgeInsets.all(10)
                 : const EdgeInsets.all(12));
-    final title =
-        _selectedTableName == null
-            ? 'SQL Sync'
-            : 'SQL Sync - ${_selectedTableSummary?.displayTitle ?? _selectedTableName}';
+    final title = _currentPageTitle();
     final profileLabel =
         widget.authenticatedUser.name.trim().isEmpty
             ? widget.authenticatedUser.username
             : widget.authenticatedUser.name;
 
     return Scaffold(
+      drawer:
+          compactLayout
+              ? Drawer(
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: _buildNavigationPane(closeAfterSelection: true),
+                  ),
+                ),
+              )
+              : null,
       appBar: AppBar(
         toolbarHeight: 52,
         titleSpacing: 12,
@@ -6202,6 +6977,21 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       bottomNavigationBar: _buildPinnedSummaryBar(),
     );
   }
+
+  String _currentPageTitle() {
+    final clientAgent = _selectedPageClientAgent;
+    if (clientAgent != null) {
+      return 'SQL Sync - ${clientAgent.clientName}';
+    }
+    final serverItem = _selectedServerInventoryItem;
+    if (serverItem != null) {
+      return 'SQL Sync - ${serverItem.title}';
+    }
+    if (_selectedTableName == null) {
+      return 'SQL Sync';
+    }
+    return 'SQL Sync - ${_selectedTableSummary?.displayTitle ?? _selectedTableName}';
+  }
 }
 
 class _TableAggregateSummary {
@@ -6271,6 +7061,7 @@ class _TableSnapshotSource {
 
 class _ServerInventoryItem {
   const _ServerInventoryItem({
+    required this.key,
     required this.title,
     required this.serverName,
     required this.machineName,
@@ -6286,8 +7077,10 @@ class _ServerInventoryItem {
     this.databases = const <String>[],
     this.clientNames = const <String>[],
     this.lastHeartbeat = '',
+    this.agents = const <AdminAgent>[],
   });
 
+  final String key;
   final String title;
   final String serverName;
   final String machineName;
@@ -6303,6 +7096,7 @@ class _ServerInventoryItem {
   final List<String> databases;
   final List<String> clientNames;
   final String lastHeartbeat;
+  final List<AdminAgent> agents;
 }
 
 class _ScoredTableSummary {

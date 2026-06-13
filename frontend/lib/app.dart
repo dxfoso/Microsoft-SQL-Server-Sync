@@ -308,7 +308,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                 ),
                                 const SizedBox(height: 10),
                                 const Text(
-                                  'Owner and admin accounts only.',
+                                  'Server and admin accounts only.',
                                   style: TextStyle(
                                     color: Color(0xFF667085),
                                     fontSize: 14.5,
@@ -344,7 +344,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                 ),
                                 const SizedBox(height: 6),
                                 const Text(
-                                  'Owner and admin accounts only.',
+                                  'Server and admin accounts only.',
                                   style: TextStyle(
                                     color: Color(0xFF667085),
                                     fontSize: 14,
@@ -357,7 +357,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                   textInputAction: TextInputAction.next,
                                   decoration: const InputDecoration(
                                     labelText: 'Name',
-                                    hintText: 'owner-name',
+                                    hintText: 'server-name',
                                   ),
                                 ),
                                 const SizedBox(height: 10),
