@@ -64,6 +64,15 @@ class ChartContractsTests(unittest.TestCase):
             ROOT / "templates" / "backend-deployment.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("replicas: {{ .Values.backend.replicas }}", backend_deployment)
+        self.assertIn(".Values.backend.nodeSelector", backend_deployment)
+        self.assertIn(".Values.backend.tolerations", backend_deployment)
+
+    def test_postgres_deployment_uses_workload_specific_scheduling(self):
+        postgres_deployment = (
+            ROOT / "templates" / "postgres-deployment.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".Values.postgres.nodeSelector", postgres_deployment)
+        self.assertIn(".Values.postgres.tolerations", postgres_deployment)
 
     def test_runtime_config_keeps_public_admin_health_ungated(self):
         tru_json = (PROJECT_ROOT / "business" / "tru.json").read_text(

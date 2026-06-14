@@ -20,15 +20,15 @@ spec:
         {{- include "sync-admin-web.labels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
     spec:
-      {{- with .Values.nodeSelector }}
+      {{- with .Values.postgres.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- with .Values.postgres.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- with .Values.postgres.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
