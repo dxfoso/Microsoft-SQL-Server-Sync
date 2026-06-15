@@ -61,7 +61,7 @@ function Stop-ProcessTree {
 
 function Start-App {
     Stop-OrphanedAgentProcesses
-    Write-Host "Starting Windows desktop agent: flutter run -d $Device"
+    Write-Host "Starting Windows desktop client: flutter run -d $Device"
     $script:flutterProcess = Start-Process -FilePath flutter `
         -ArgumentList "run", "-d", $Device `
         -WorkingDirectory $ProjectPath `

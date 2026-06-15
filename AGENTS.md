@@ -2,7 +2,7 @@
 
 ## Workflow Rule
 
-- When a `.dart` file is changed in the workspace, restart the Windows Flutter app automatically using `agent.ps1`.
+- When a `.dart` file is changed in the workspace, restart the Windows Flutter app automatically using `client.ps1`.
 - Keep the repo layout aligned to the current structure:
   - `frontend/` is the web control plane
   - `backend/` is only the `tru` submodule
@@ -11,7 +11,7 @@
 Use this from the repository root:
 
 ```powershell
-.\agent.ps1 -SkipGet
+.\client.ps1 -SkipGet
 ```
 
 This ensures the app is relaunched with the updated Dart code.
