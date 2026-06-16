@@ -1,3 +1,4 @@
+import json
 import pathlib
 import unittest
 
@@ -64,22 +65,42 @@ class ChartContractsTests(unittest.TestCase):
             ROOT / "templates" / "backend-deployment.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("replicas: {{ .Values.backend.replicas }}", backend_deployment)
-        self.assertIn(".Values.backend.nodeSelector", backend_deployment)
-        self.assertIn(".Values.backend.tolerations", backend_deployment)
+        self.assertIn(".Values.nodeSelector", backend_deployment)
+        self.assertIn(".Values.tolerations", backend_deployment)
+        self.assertNotIn(".Values.backend.nodeSelector", backend_deployment)
+        self.assertNotIn(".Values.backend.tolerations", backend_deployment)
 
-    def test_postgres_deployment_uses_workload_specific_scheduling(self):
+    def test_all_workloads_inherit_cloud_selected_scheduling(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("kubernetes.io/hostname: rack", values_yaml)
+        self.assertNotIn("\n  nodeSelector:\n", values_yaml)
+        self.assertNotIn("\n  tolerations:\n", values_yaml)
+
+        for template_name in (
+            "deployment.yaml",
+            "backend-deployment.yaml",
+            "postgres-deployment.yaml",
+        ):
+            template = (ROOT / "templates" / template_name).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(".Values.nodeSelector", template)
+            self.assertIn(".Values.tolerations", template)
+            self.assertIn(".Values.affinity", template)
+
         postgres_deployment = (
             ROOT / "templates" / "postgres-deployment.yaml"
         ).read_text(encoding="utf-8")
-        self.assertIn(".Values.postgres.nodeSelector", postgres_deployment)
-        self.assertIn(".Values.postgres.tolerations", postgres_deployment)
+        self.assertNotIn(".Values.postgres.nodeSelector", postgres_deployment)
+        self.assertNotIn(".Values.postgres.tolerations", postgres_deployment)
 
     def test_runtime_config_keeps_public_admin_health_ungated(self):
-        tru_json = (PROJECT_ROOT / "business" / "tru.json").read_text(
-            encoding="utf-8"
+        tru_config = json.loads(
+            (PROJECT_ROOT / "business" / "tru.json").read_text(encoding="utf-8")
         )
-        self.assertIn('"adminRequireKey": false', tru_json)
-        self.assertIn('"requireKey": false', tru_json)
+        self.assertIs(tru_config["adminRequireKey"], False)
+        self.assertIs(tru_config["admin"]["requireKey"], False)
+        self.assertIs(tru_config["settings"]["admin"]["requireKey"], False)
 
 
 if __name__ == "__main__":
