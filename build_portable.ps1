@@ -1,3 +1,7 @@
+param(
+    [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call'
+)
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -387,7 +391,8 @@ New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
 Push-Location $ProjectPath
 try {
     Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & flutter pub get }
-    Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release }
+    Write-Host "Portable backend URL: $BackendBaseUrl"
+    Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release --dart-define "BACKEND_BASE_URL=$BackendBaseUrl" }
 }
 finally {
     Pop-Location

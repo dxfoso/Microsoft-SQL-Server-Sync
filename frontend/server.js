@@ -5,7 +5,7 @@ const path = require("node:path");
 const { promisify } = require("node:util");
 const zlib = require("node:zlib");
 
-const PORT = Number(process.env.PORT || "9001");
+const PORT = Number(process.env.PORT || "6006");
 const STATE_FILE =
   process.env.STATE_FILE ||
   path.join(process.cwd(), "data", "state.json");
@@ -1815,20 +1815,6 @@ async function handleRequest(req, res) {
 
     if (!user || passwordHash(password, user.passwordSalt) !== user.passwordHash) {
       sendJson(res, 401, { error: "invalid name or password" });
-      return;
-    }
-
-    if (app === APP_WEB && user.role === ROLE_CLIENT) {
-      sendJson(res, 403, {
-        error: "client accounts can sign in only in the Windows app",
-      });
-      return;
-    }
-
-    if (app === APP_WINDOWS && user.role !== ROLE_CLIENT) {
-      sendJson(res, 403, {
-        error: "only client accounts can sign in in the Windows app",
-      });
       return;
     }
 

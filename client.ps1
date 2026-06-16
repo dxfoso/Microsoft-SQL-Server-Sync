@@ -1,6 +1,7 @@
 param(
     [string] $ProjectPath = "$PSScriptRoot\sync_windows_agent",
     [string] $Device = "windows",
+    [string] $BackendBaseUrl = "http://127.0.0.1:6006/call",
     [switch] $SkipGet,
     [bool] $AutoRestart = $true,
     [int] $DebounceMs = 900
@@ -62,8 +63,10 @@ function Stop-ProcessTree {
 function Start-App {
     Stop-OrphanedAgentProcesses
     Write-Host "Starting Windows desktop client: flutter run -d $Device"
+    Write-Host "Backend URL: $BackendBaseUrl"
+    $dartDefine = "BACKEND_BASE_URL=$BackendBaseUrl"
     $script:flutterProcess = Start-Process -FilePath flutter `
-        -ArgumentList "run", "-d", $Device `
+        -ArgumentList "run", "-d", $Device, "--dart-define", $dartDefine `
         -WorkingDirectory $ProjectPath `
         -PassThru `
         -NoNewWindow

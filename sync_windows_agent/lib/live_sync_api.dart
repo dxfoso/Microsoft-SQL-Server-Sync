@@ -82,7 +82,7 @@ class AgentControlPlaneClient {
       ),
       phase,
     );
-    if (response.statusCode != 200) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _exceptionFromResponse(response);
     }
     return _unwrapApiResponse(jsonDecode(response.body));
@@ -124,6 +124,7 @@ class AgentControlPlaneClient {
   }) async {
     final decoded = await _invokeFunction('auth_login', {
       'name': name.trim(),
+      'email': name.trim(),
       'password': password,
       'app': 'windows',
     }, 'signing in');
@@ -148,11 +149,7 @@ class AgentControlPlaneClient {
   }
 
   Future<AgentAuthenticatedUser> fetchCurrentUser() async {
-    final decoded = await _invokeFunction(
-      'auth_me',
-      {},
-      'restoring session',
-    );
+    final decoded = await _invokeFunction('auth_me', {}, 'restoring session');
     if (decoded is! Map || decoded['user'] is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected current-user payload.',
@@ -263,9 +260,8 @@ class AgentControlPlaneClient {
         return await _invokeFunction(functionName, args, phase);
       } catch (error) {
         lastError = error;
-        final statusCode = error is AgentControlPlaneException
-            ? error.statusCode
-            : null;
+        final statusCode =
+            error is AgentControlPlaneException ? error.statusCode : null;
         final canRetry =
             statusCode != null && _isRetryableTransferStatus(statusCode);
         if (!canRetry || attempt == _snapshotTransferMaxAttempts - 1) {
@@ -299,25 +295,21 @@ class AgentControlPlaneClient {
     required String? selectedTable,
     required Map<String, SyncTableState> tables,
   }) async {
-    final response = await _invokeFunction(
-      'agents_heartbeat',
-      {
-        'clientName': clientName,
-        'machineName': machineName,
-        'isMaster': isMaster,
-        'historyLimit': historyLimit,
-        'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
-        'server': server,
-        'database': database,
-        'serverConnected': serverConnected,
-        'sqlConnected': sqlConnected,
-        'selectedTable': selectedTable,
-        'tables': tables.entries
-            .map((entry) => {'table': entry.key, ...entry.value.toJson()})
-            .toList(growable: false),
-      },
-      'sending heartbeat',
-    );
+    final response = await _invokeFunction('agents_heartbeat', {
+      'clientName': clientName,
+      'machineName': machineName,
+      'isMaster': isMaster,
+      'historyLimit': historyLimit,
+      'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+      'server': server,
+      'database': database,
+      'serverConnected': serverConnected,
+      'sqlConnected': sqlConnected,
+      'selectedTable': selectedTable,
+      'tables': tables.entries
+          .map((entry) => {'table': entry.key, ...entry.value.toJson()})
+          .toList(growable: false),
+    }, 'sending heartbeat');
 
     if (response is! Map) {
       throw const AgentControlPlaneException('Unexpected heartbeat payload.');
@@ -353,19 +345,14 @@ class AgentControlPlaneClient {
     String? sourceClientName,
     String? syncMode,
   }) async {
-    final response = await _invokeFunction(
-      'jobs_create',
-      {
-        'clientName': clientName,
-        if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
-          'sourceClientName': sourceClientName,
-        if (syncMode != null && syncMode.trim().isNotEmpty)
-          'syncMode': syncMode,
-        'direction': direction,
-        'tables': tables,
-      },
-      'creating jobs',
-    );
+    final response = await _invokeFunction('jobs_create', {
+      'clientName': clientName,
+      if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
+        'sourceClientName': sourceClientName,
+      if (syncMode != null && syncMode.trim().isNotEmpty) 'syncMode': syncMode,
+      'direction': direction,
+      'tables': tables,
+    }, 'creating jobs');
 
     if (response is! Map) {
       throw const AgentControlPlaneException('Unexpected job queue payload.');
@@ -386,16 +373,12 @@ class AgentControlPlaneClient {
     required int progress,
     required String message,
   }) async {
-    final response = await _invokeFunction(
-      'jobs_start',
-      {
-        'jobId': jobId,
-        'status': status,
-        'progress': progress,
-        'message': message,
-      },
-      'starting job',
-    );
+    final response = await _invokeFunction('jobs_start', {
+      'jobId': jobId,
+      'status': status,
+      'progress': progress,
+      'message': message,
+    }, 'starting job');
     return _parseJobPayload(response, 'job start');
   }
 
@@ -407,18 +390,14 @@ class AgentControlPlaneClient {
     required int rowCount,
     required String direction,
   }) async {
-    final response = await _invokeFunction(
-      'jobs_progress',
-      {
-        'jobId': jobId,
-        'status': status,
-        'progress': progress,
-        'message': message,
-        'rowCount': rowCount,
-        'direction': direction,
-      },
-      'updating job progress',
-    );
+    final response = await _invokeFunction('jobs_progress', {
+      'jobId': jobId,
+      'status': status,
+      'progress': progress,
+      'message': message,
+      'rowCount': rowCount,
+      'direction': direction,
+    }, 'updating job progress');
     return _parseJobPayload(response, 'job progress');
   }
 
@@ -446,17 +425,17 @@ class AgentControlPlaneClient {
           body: jsonEncode({
             'name': 'jobs_upload_chunk_start',
             'args': {
-            'jobId': jobId,
-            'uploadId': uploadId,
-            'clientName': clientName,
-            'table': table,
-            'rowCount': rowCount,
-            'snapshotCreatedAt': snapshotCreatedAt,
-            'snapshotBytes': snapshotBytes,
-            'compressedBytes': compressedBytes.length,
-            'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
-            'chunkCount': chunkCount,
-            'encoding': 'gzip',
+              'jobId': jobId,
+              'uploadId': uploadId,
+              'clientName': clientName,
+              'table': table,
+              'rowCount': rowCount,
+              'snapshotCreatedAt': snapshotCreatedAt,
+              'snapshotBytes': snapshotBytes,
+              'compressedBytes': compressedBytes.length,
+              'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
+              'chunkCount': chunkCount,
+              'encoding': 'gzip',
             },
           }),
         ),
@@ -525,10 +504,7 @@ class AgentControlPlaneClient {
           headers: _headers(json: true),
           body: jsonEncode({
             'name': 'jobs_upload_chunk_complete',
-            'args': {
-              'jobId': jobId,
-              'uploadId': uploadId,
-            },
+            'args': {'jobId': jobId, 'uploadId': uploadId},
           }),
         ),
         'completing snapshot upload',
@@ -541,6 +517,42 @@ class AgentControlPlaneClient {
     }
 
     final decoded = _unwrapApiResponse(jsonDecode(response.body));
+    if (decoded is! Map) {
+      throw const AgentControlPlaneException('Unexpected upload payload.');
+    }
+
+    return UploadSnapshotResult(
+      job: RemoteSyncJob.fromJson(
+        Map<String, dynamic>.from(decoded['job'] as Map),
+      ),
+      snapshot: RemoteSnapshot.fromJson(
+        Map<String, dynamic>.from(decoded['snapshot'] as Map),
+      ),
+    );
+  }
+
+  Future<UploadSnapshotResult> uploadSnapshotRows(
+    String jobId, {
+    required String clientName,
+    required String table,
+    required int rowCount,
+    required String snapshotCreatedAt,
+    required int snapshotBytes,
+    required List<String> columns,
+    required List<Map<String, String?>> rows,
+    required List<String> keyColumns,
+  }) async {
+    final decoded = await _invokeFunction('jobs_upload', {
+      'jobId': jobId,
+      'clientName': clientName,
+      'table': table,
+      'rowCount': rowCount,
+      'snapshotCreatedAt': snapshotCreatedAt,
+      'snapshotBytes': snapshotBytes,
+      'columns': columns,
+      'rows': rows,
+      'keyColumns': keyColumns,
+    }, 'uploading snapshot rows');
     if (decoded is! Map) {
       throw const AgentControlPlaneException('Unexpected upload payload.');
     }
@@ -578,7 +590,8 @@ class AgentControlPlaneClient {
     }
     final transferId = manifestDecoded['id'] as String? ?? '';
     final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
-    final compressedBytes = (manifestDecoded['compressedBytes'] as num? ?? 0).round();
+    final compressedBytes =
+        (manifestDecoded['compressedBytes'] as num? ?? 0).round();
 
     if (transferId.isEmpty || chunkCount < 1 || compressedBytes < 1) {
       throw const AgentControlPlaneException(
@@ -620,11 +633,9 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> _downloadSnapshotLegacy(String jobId) async {
-    final decoded = await _invokeFunctionWithRetry(
-      'jobs_download_snapshot',
-      {'jobId': jobId},
-      'downloading snapshot',
-    );
+    final decoded = await _invokeFunctionWithRetry('jobs_download_snapshot', {
+      'jobId': jobId,
+    }, 'downloading snapshot');
     if (decoded is! Map) {
       throw const AgentControlPlaneException('Unexpected download payload.');
     }
@@ -644,20 +655,16 @@ class AgentControlPlaneClient {
     String? snapshotCreatedAt,
     int? snapshotBytes,
   }) async {
-    final response = await _invokeFunction(
-      'jobs_complete',
-      {
-        'jobId': jobId,
-        'status': status,
-        'progress': progress,
-        'message': message,
-        'rowCount': rowCount,
-        'snapshotId': snapshotId,
-        'snapshotCreatedAt': snapshotCreatedAt,
-        'snapshotBytes': snapshotBytes,
-      },
-      'completing job',
-    );
+    final response = await _invokeFunction('jobs_complete', {
+      'jobId': jobId,
+      'status': status,
+      'progress': progress,
+      'message': message,
+      'rowCount': rowCount,
+      'snapshotId': snapshotId,
+      'snapshotCreatedAt': snapshotCreatedAt,
+      'snapshotBytes': snapshotBytes,
+    }, 'completing job');
     return _parseJobPayload(response, 'job completion');
   }
 

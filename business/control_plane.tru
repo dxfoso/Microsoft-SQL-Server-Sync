@@ -205,6 +205,16 @@ function can_manage_user(current: map<json>? = null, target: map<json>? = null):
   return false;
 }
 
+function owner_namespace_for_user(user: map<json>): string {
+  if (is_owner_user(user)) {
+    return user.id;
+  }
+  if (user.ownerUserId != null && user.ownerUserId.trim().length != 0) {
+    return user.ownerUserId;
+  }
+  return user.id;
+}
+
 function can_access_job(current: map<json>? = null, job: map<json>): bool {
   if (current == null) {
     return false;
@@ -262,26 +272,23 @@ function clamp_auto_sync_interval(value: int? = null): int {
 }
 
 function normalize_sync_mode(value: string? = null, fallbackIsMaster: bool = true): string {
+  if (value == 'sync' || value == 'bidirectional' || value == 'twoWay') {
+    return 'sync';
+  }
   if (value == 'client' || value == 'download') {
-    return 'client';
+    return 'sync';
   }
   if (value == 'masterMix' || value == 'mix') {
-    return 'masterMix';
+    return 'sync';
   }
   if (value == 'master' || value == 'upload') {
-    return 'master';
+    return 'sync';
   }
-  if (fallbackIsMaster) {
-    return 'master';
-  }
-  return 'client';
+  return 'sync';
 }
 
 function direction_for_sync_mode(syncMode: string): string {
-  if (syncMode == 'client') {
-    return 'download';
-  }
-  return 'upload';
+  return 'sync';
 }
 
 function seed_admin_user(): map<json> {
@@ -377,7 +384,10 @@ function latest_active_session(): map<json>? {
     fields: ['id', 'token', 'userId', 'app', 'createdAt', 'revokedAt'],
     limit: 100
   });
-  for (const session of rows.rows) {
+  if (rows == null) {
+    return null;
+  }
+  for (const session of rows) {
     if (
       (session.app == 'web' || session.app == 'windows') &&
       (session.revokedAt == null || session.revokedAt.trim().length == 0)
@@ -405,69 +415,33 @@ function find_active_session_by_token(token: string? = null): map<json>? {
   return null;
 }
 
-function find_job_by_id(jobId: string): map<json>? {
-  const rows = db.selectMany(SyncJob, {
-    where: { id: jobId },
-    orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'snapshotId', 'snapshotCreatedAt', 'snapshotBytes', 'message', 'error', 'clientUserId', 'ownerUserId'],
-    limit: 1
-  });
-  if (rows.rows.length == 0) {
+function find_job_by_id(jobId: string? = null): map<json>? {
+  if (jobId == null || jobId.trim().length == 0) {
     return null;
   }
-  return rows.rows[0];
+  return db.selectOne(SyncJob, { id: jobId });
 }
 
 function find_upload_session_by_upload_id(uploadId: string): map<json>? {
-  const rows = db.selectMany(UploadSession, {
-    where: { uploadId },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'jobId', 'uploadId', 'table', 'rowCount', 'snapshotCreatedAt', 'snapshotBytes', 'compressedBytes', 'chunkSizeBytes', 'chunkCount', 'encoding', 'createdAt', 'updatedAt', 'chunks'],
-    limit: 1
-  });
-  if (rows.rows.length == 0) {
-    return null;
-  }
-  return rows.rows[0];
+  return db.selectOne(UploadSession, { uploadId });
 }
 
 function find_upload_session_for_job(jobId: string, uploadId: string): map<json>? {
-  const rows = db.selectMany(UploadSession, {
-    where: { jobId },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'jobId', 'uploadId', 'table', 'rowCount', 'snapshotCreatedAt', 'snapshotBytes', 'compressedBytes', 'chunkSizeBytes', 'chunkCount', 'encoding', 'createdAt', 'updatedAt', 'chunks'],
-    limit: 20
-  });
-  let best = null;
-  for (const session of rows.rows) {
-    if (session.uploadId == uploadId) {
-      return session;
-    }
-    if (best == null) {
-      best = session;
-    }
+  const session = db.selectOne(UploadSession, { uploadId });
+  if (session == null) {
+    return null;
   }
-  return best;
+  if (session.jobId != jobId) {
+    return null;
+  }
+  return session;
 }
 
 function find_active_download_session_for_job(jobId: string, snapshotId: string? = null): map<json>? {
-  let whereClause = { jobId };
   if (snapshotId != null) {
-    whereClause = {
-      jobId,
-      snapshotId
-    };
+    return db.selectOne(DownloadSession, { jobId, snapshotId });
   }
-  const rows = db.selectMany(DownloadSession, {
-    where: whereClause,
-    orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'jobId', 'snapshotId', 'table', 'chunkSizeBytes', 'chunkCount', 'compressedBytes', 'encoding', 'createdAt', 'updatedAt', 'chunks'],
-    limit: 1
-  });
-  if (rows.rows.length == 0) {
-    return null;
-  }
-  return rows.rows[0];
+  return db.selectOne(DownloadSession, { jobId });
 }
 
 function chunk_indexes(session: map<json>): array<int> {
@@ -549,16 +523,23 @@ function current_user_record(token: string? = null): map<json>? {
 }
 
 function list_user_rows(): array<json> {
-  const rows = db.selectMany(User, {
-    where: { role: { in: ['admin', 'owner', 'client'] } },
-    orderBy: { field: 'createdAt', dir: 'asc' },
+  const result = db.selectMany(User, {
+    where: { id: { gte: '0' } },
+    orderBy: { field: 'createdAt', dir: 'desc' },
     fields: ['id', 'username', 'email', 'name', 'role', 'ownerUserId', 'createdByUserId', 'password', 'createdAt'],
     limit: 1000
   });
-  if (rows == null || rows.rows == null) {
-    return [];
+  let rows = [];
+  if (result == null) {
+    return rows;
   }
-  return rows.rows;
+  for (const user of result) {
+    const role = string.from(user.role).trim();
+    if (role == 'admin' || role == 'owner' || role == 'client') {
+      rows = rows.concat([user]);
+    }
+  }
+  return rows;
 }
 
 function list_agent_rows(): array<json> {
@@ -568,10 +549,10 @@ function list_agent_rows(): array<json> {
     fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'tables', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
-  if (rows == null || rows.rows == null) {
+  if (rows == null) {
     return [];
   }
-  return rows.rows;
+  return rows;
 }
 
 function list_job_rows(): array<json> {
@@ -581,23 +562,69 @@ function list_job_rows(): array<json> {
     fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'snapshotId', 'snapshotCreatedAt', 'snapshotBytes', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
-  if (rows == null || rows.rows == null) {
+  if (rows == null) {
     return [];
   }
-  return rows.rows;
+  return rows;
 }
 
 function list_snapshot_rows(): array<json> {
   const rows = db.selectMany(SnapshotRecord, {
     where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'rows', 'previewRows', 'sourceJobId', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'previewRows', 'sourceJobId', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
-  if (rows == null || rows.rows == null) {
+  if (rows == null) {
     return [];
   }
-  return rows.rows;
+  return rows;
+}
+
+function visible_user_rows_for(current: map<json>): array<json> {
+  if (is_admin_user(current)) {
+    return list_user_rows();
+  }
+  let users = [];
+  for (const user of list_user_rows()) {
+    if (can_manage_user(current, user)) {
+      users = users.concat([user]);
+    }
+  }
+  return users;
+}
+
+function visible_agent_rows_for(current: map<json>): array<json> {
+  if (is_admin_user(current)) {
+    return list_agent_rows();
+  }
+  let agents = [];
+  for (const agent of list_agent_rows()) {
+    if (can_read_agent(current, agent.ownerUserId, agent.clientUserId)) {
+      agents = agents.concat([agent]);
+    }
+  }
+  return agents;
+}
+
+function visible_job_rows_for(current: map<json>): array<json> {
+  if (is_admin_user(current)) {
+    return list_job_rows();
+  }
+  let jobs = [];
+  for (const job of list_job_rows()) {
+    if (can_access_job(current, job)) {
+      jobs = jobs.concat([job]);
+    }
+  }
+  return jobs;
+}
+
+function visible_snapshot_rows_for(current: map<json>): array<json> {
+  if (is_admin_user(current)) {
+    return list_snapshot_rows();
+  }
+  return [];
 }
 
 function public_agent_payload(agent: map<json>): map<json> {
@@ -705,18 +732,36 @@ function sync_settings_payload(agent: map<json>): map<json> {
 
 function active_jobs_for_client(clientName: string): array<json> {
   const rows = db.selectMany(SyncJob, {
-    where: {
-      clientName,
-      status: { in: ['queued', 'snapshotting', 'uploading', 'downloading', 'applying'] }
-    },
-    orderBy: { field: 'createdAt', dir: 'desc' },
+    where: { clientName },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
     fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'snapshotId', 'snapshotCreatedAt', 'snapshotBytes', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
-  if (rows == null || rows.rows == null) {
+  if (rows == null) {
     return [];
   }
-  return rows.rows.map((job) => public_job_payload(job));
+  let jobs = [];
+  let seenTables = [];
+  for (const job of rows) {
+    let tableSeen = false;
+    for (const seenTable of seenTables) {
+      if (seenTable == job.table) {
+        tableSeen = true;
+      }
+    }
+    if (tableSeen) {
+      continue;
+    }
+
+    const status = string.from(job.status).trim();
+    if (status == 'queued' || status == 'snapshotting' || status == 'uploading' || status == 'downloading' || status == 'applying') {
+      jobs = jobs.concat([public_job_payload(job)]);
+      seenTables = seenTables.concat([job.table]);
+    } else if (status == 'completed' || status == 'failed' || status == 'cancelled') {
+      seenTables = seenTables.concat([job.table]);
+    }
+  }
+  return jobs;
 }
 
 function latest_snapshot_for(clientName: string, table: string): map<json>? {
@@ -726,10 +771,77 @@ function latest_snapshot_for(clientName: string, table: string): map<json>? {
     fields: ['id', 'clientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'rows', 'previewRows', 'sourceJobId', 'clientUserId', 'ownerUserId'],
     limit: 100
   });
-  if (rows.rows.length == 0) {
+  if (rows == null || rows.length == 0) {
     return null;
   }
-  return rows.rows[0];
+  return rows[0];
+}
+
+function row_key(row: map<json>, keyColumns: array<string>): string {
+  if (keyColumns.length == 0) {
+    return json.stringify(row);
+  }
+  let values = [];
+  for (const column of keyColumns) {
+    values = values.concat([row[column]]);
+  }
+  return json.stringify(values);
+}
+
+function merge_rows_by_key(existingRows: array<json>, incomingRows: array<json>, keyColumns: array<string>): array<json> {
+  let merged = existingRows;
+  for (const incoming of incomingRows) {
+    const incomingKey = row_key(incoming, keyColumns);
+    let replaced = false;
+    let next = [];
+    for (const current of merged) {
+      if (row_key(current, keyColumns) == incomingKey) {
+        next = next.concat([incoming]);
+        replaced = true;
+      } else {
+        next = next.concat([current]);
+      }
+    }
+    if (!replaced) {
+      next = next.concat([incoming]);
+    }
+    merged = next;
+  }
+  return merged;
+}
+
+function latest_owner_snapshot_for(ownerUserId: string, table: string): map<json>? {
+  const rows = db.selectMany(SnapshotRecord, {
+    where: { clientName: ownerUserId, ownerUserId, table },
+    orderBy: { field: 'createdAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'rows', 'previewRows', 'sourceJobId', 'clientUserId', 'ownerUserId'],
+    limit: 1
+  });
+  if (rows == null || rows.length == 0) {
+    return null;
+  }
+  return rows[0];
+}
+
+function latest_download_snapshot_for_job(job: map<json>): map<json>? {
+  if (job.ownerUserId != null && job.ownerUserId.trim().length != 0) {
+    const ownerSnapshot = latest_owner_snapshot_for(job.ownerUserId, job.table);
+    if (ownerSnapshot != null) {
+      return ownerSnapshot;
+    }
+  }
+  let source = job.clientName;
+  if (job.sourceClientName != null && job.sourceClientName.trim().length != 0) {
+    source = job.sourceClientName;
+  }
+  return latest_snapshot_for(source, job.table);
+}
+
+function normalize_key_columns(keyColumns: array<string>? = null): array<string> {
+  if (keyColumns == null) {
+    return [];
+  }
+  return keyColumns;
 }
 
 function snapshot_checksum(snapshot: map<json>): string {
@@ -755,21 +867,6 @@ function auth_login(name: string, password: string, app: string = 'web'): map<js
     user = seed_admin_user();
   } else {
     user = find_user_by_identity(name);
-  }
-  if (user == null && app == 'windows') {
-    const admin = seed_admin_user();
-    const normalized = normalize_user_name(name);
-    user = db.insert(User, {
-      id: uuid.v4(),
-      username: normalized,
-      email: '',
-      name: normalized,
-      role: 'client',
-      ownerUserId: admin.id,
-      createdByUserId: admin.id,
-      password,
-      createdAt: now_iso()
-    });
   }
   if (user == null) {
     return raw_json_error(401, 'user not found');
@@ -807,30 +904,57 @@ function users_list(token: string? = null): map<json> {
   if (!is_admin_user(current) && !is_owner_user(current)) {
     return raw_json_error(403, 'permission denied');
   }
-  const users = list_user_rows().map((user) => public_user_payload(user));
+  const users = visible_user_rows_for(current).map((user) => public_user_payload(user));
   return { users };
 }
 
 function users_create(name: string, email: string = '', password: string, role: string, ownerUserId: string? = null, token: string? = null): map<json> {
   const normalized = normalize_user_name(name);
-  const existing = find_user_by_identity(normalized);
-  if (existing != null) {
-    return raw_json_error(409, 'an account with that name already exists');
-  }
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  if (!can_manage_user(current, null)) {
+
+  let resolvedRole = role;
+  let resolvedOwnerUserId = ownerUserId;
+  if (is_owner_user(current)) {
+    if (role != 'client') {
+      return raw_json_error(403, 'owners can create client accounts only');
+    }
+    resolvedRole = 'client';
+    resolvedOwnerUserId = current.id;
+  } else if (is_admin_user(current)) {
+    if (role != 'owner' && role != 'client') {
+      return raw_json_error(403, 'admins can create owner or client accounts only');
+    }
+    if (role == 'client') {
+      const owner = find_user_by_id(ownerUserId);
+      if (owner == null || !is_owner_user(owner)) {
+        return raw_json_error(400, 'client accounts must belong to a valid owner');
+      }
+      resolvedOwnerUserId = owner.id;
+    } else {
+      resolvedOwnerUserId = null;
+    }
+  } else {
     return raw_json_error(403, 'permission denied');
   }
+
+  const existing = find_user_by_identity(normalized);
+  if (existing != null) {
+    if (!can_manage_user(current, existing)) {
+      return raw_json_error(409, 'an account with that name already exists');
+    }
+    return raw_json_success({ user: public_user_payload(existing), existed: true }, 200);
+  }
+
   const user = db.insert(User, {
     id: uuid.v4(),
     username: normalized,
     email,
     name: normalized,
-    role,
-    ownerUserId,
+    role: resolvedRole,
+    ownerUserId: resolvedOwnerUserId,
     createdByUserId: current.id,
     password,
     createdAt: now_iso()
@@ -859,9 +983,9 @@ function live_state(token: string? = null): map<json> {
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  const agents = list_agent_rows().map((agent) => public_agent_payload(agent));
-  const jobs = list_job_rows().map((job) => public_job_payload(job));
-  const snapshots = list_snapshot_rows().map((snapshot) => public_snapshot_payload(snapshot));
+  const agents = visible_agent_rows_for(current).map((agent) => public_agent_payload(agent));
+  const jobs = visible_job_rows_for(current).map((job) => public_job_payload(job));
+  const snapshots = visible_snapshot_rows_for(current).map((snapshot) => public_snapshot_payload(snapshot));
   return {
     generatedAt: now_iso(),
     agents,
@@ -890,9 +1014,8 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     return raw_json_error(403, 'permission denied');
   }
   let userId = null;
-  let ownerUserId = null;
+  let ownerUserId = owner_namespace_for_user(current);
   userId = current.id;
-  ownerUserId = current.ownerUserId;
   const agent = ensure_agent(
     resolvedClientName,
     userId,
@@ -1002,10 +1125,10 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
   }
   const createdJobsRaw = tables.map((table) => {
     let clientUserId = null;
-    let ownerId = null;
+    let ownerId = owner_namespace_for_user(current);
     if (clientUser != null) {
       clientUserId = clientUser.id;
-      ownerId = clientUser.ownerUserId;
+      ownerId = owner_namespace_for_user(clientUser);
     }
     const resolvedMode = normalize_sync_mode(syncMode, direction != 'download');
     return {
@@ -1013,7 +1136,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       clientName: resolvedClientName,
       sourceClientName,
       table,
-      direction,
+      direction: direction_for_sync_mode(resolvedMode),
       status: 'queued',
       progress: 0,
       rowCount: 0,
@@ -1024,7 +1147,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       snapshotId: null,
       snapshotCreatedAt: null,
       snapshotBytes: 0,
-      message: string.concat('Queued ', direction_for_sync_mode(resolvedMode), ' sync for ', table, '.'),
+      message: string.concat('Queued two-way sync for ', table, '.'),
       error: null,
       clientUserId,
       ownerUserId: ownerId
@@ -1526,11 +1649,7 @@ function jobs_download_snapshot(jobId: string, token: string? = null): map<json>
     return raw_json_error(403, 'permission denied');
   }
 
-  let source = job.clientName;
-  if (job.sourceClientName != null) {
-    source = job.sourceClientName;
-  }
-  const snapshot = latest_snapshot_for(source, job.table);
+  const snapshot = latest_download_snapshot_for_job(job);
   if (snapshot == null) {
     return raw_json_error(404, 'snapshot not found');
   }
@@ -1549,11 +1668,7 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
     return raw_json_error(403, 'permission denied');
   }
 
-  let source = job.clientName;
-  if (job.sourceClientName != null) {
-    source = job.sourceClientName;
-  }
-  const snapshot = latest_snapshot_for(source, job.table);
+  const snapshot = latest_download_snapshot_for_job(job);
   if (snapshot == null) {
     return raw_json_error(404, 'snapshot not found');
   }
@@ -1588,11 +1703,7 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
   if (chunkIndex == null) {
     return raw_json_error(400, 'index is required');
   }
-  let source = job.clientName;
-  if (job.sourceClientName != null) {
-    source = job.sourceClientName;
-  }
-  const snapshot = latest_snapshot_for(source, job.table);
+  const snapshot = latest_download_snapshot_for_job(job);
   if (snapshot == null) {
     return raw_json_error(404, 'snapshot not found');
   }
@@ -1630,7 +1741,7 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
   };
 }
 
-function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, table: string = '', snapshotCreatedAt: string = '', rowCount: int = 0, checksum: string = '', token: string? = null): map<json> {
+function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, table: string = '', snapshotCreatedAt: string = '', rowCount: int = 0, checksum: string = '', keyColumns: array<string>? = null, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -1663,6 +1774,7 @@ function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, t
   if (checksum.trim().length != 0) {
     snapshotChecksum = checksum;
   }
+  const normalizedKeyColumns = normalize_key_columns(keyColumns);
   let uploadClientUserId = null;
   let uploadOwnerUserId = null;
   if (job.clientUserId != null) {
@@ -1687,15 +1799,47 @@ function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, t
     ownerUserId: uploadOwnerUserId
   });
 
+  let publishedSnapshot = snapshot;
+  if (uploadOwnerUserId != null && uploadOwnerUserId.trim().length != 0) {
+    let aggregateRows = normalizedRows;
+    let aggregateColumns = normalizedColumns;
+    const existingOwnerSnapshot = latest_owner_snapshot_for(uploadOwnerUserId, normalizedTable);
+    if (existingOwnerSnapshot != null) {
+      aggregateRows = merge_rows_by_key(existingOwnerSnapshot.rows, normalizedRows, normalizedKeyColumns);
+      if (existingOwnerSnapshot.columns != null && existingOwnerSnapshot.columns.length > 0) {
+        aggregateColumns = existingOwnerSnapshot.columns;
+      }
+    }
+    const aggregatePayload = {
+      rows: aggregateRows,
+      table: normalizedTable,
+      ownerUserId: uploadOwnerUserId
+    };
+    publishedSnapshot = db.insert(SnapshotRecord, {
+      id: uuid.v4(),
+      clientName: uploadOwnerUserId,
+      table: normalizedTable,
+      rowCount: aggregateRows.length,
+      checksum: snapshot_checksum(aggregatePayload),
+      createdAt,
+      snapshotBytes: json.stringify(aggregatePayload).length,
+      columns: aggregateColumns,
+      rows: aggregateRows,
+      previewRows: snapshot_preview_rows(aggregateRows),
+      sourceJobId: jobId,
+      clientUserId: null,
+      ownerUserId: uploadOwnerUserId
+    });
+  }
+
   const updated = db.update(SyncJob, { id: jobId }, {
-    status: 'completed',
-    progress: 100,
-    rowCount: snapshot.rowCount,
-    completedAt: now_iso(),
-    snapshotId: snapshot.id,
-    snapshotCreatedAt: snapshot.createdAt,
-    snapshotBytes: snapshot.snapshotBytes,
-    message: string.concat('Snapshot uploaded with ', string.from(snapshot.rowCount), ' rows.'),
+    status: 'downloading',
+    progress: 70,
+    rowCount: publishedSnapshot.rowCount,
+    snapshotId: publishedSnapshot.id,
+    snapshotCreatedAt: publishedSnapshot.createdAt,
+    snapshotBytes: publishedSnapshot.snapshotBytes,
+    message: string.concat('Uploaded local rows and prepared owner snapshot with ', string.from(publishedSnapshot.rowCount), ' rows.'),
     error: null,
     updatedAt: now_iso()
   });
@@ -1706,7 +1850,7 @@ function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, t
   }
   return {
     job: public_job_payload(nextJob),
-    snapshot: public_snapshot_detail_payload(snapshot)
+    snapshot: public_snapshot_detail_payload(publishedSnapshot)
   };
 }
 

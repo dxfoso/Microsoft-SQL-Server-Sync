@@ -6,28 +6,33 @@ const int kMaxHistoryLimit = 100;
 const int kDefaultAutoSyncIntervalMinutes = 15;
 const int kMinAutoSyncIntervalMinutes = 1;
 const int kMaxAutoSyncIntervalMinutes = 1440;
+const String kSyncModeTwoWay = 'sync';
 const String kSyncModeMaster = 'master';
 const String kSyncModeClient = 'client';
 const String kSyncModeMasterMix = 'masterMix';
 
 String normalizeSyncMode(String? value, {bool fallbackIsMaster = true}) {
   switch ((value ?? '').trim()) {
+    case kSyncModeTwoWay:
+    case 'bidirectional':
+    case 'twoWay':
+      return kSyncModeTwoWay;
     case kSyncModeMaster:
     case 'upload':
-      return kSyncModeMaster;
+      return kSyncModeTwoWay;
     case kSyncModeClient:
     case 'download':
-      return kSyncModeClient;
+      return kSyncModeTwoWay;
     case kSyncModeMasterMix:
     case 'mix':
-      return kSyncModeMasterMix;
+      return kSyncModeTwoWay;
     default:
-      return fallbackIsMaster ? kSyncModeMaster : kSyncModeClient;
+      return kSyncModeTwoWay;
   }
 }
 
 String syncDirectionForMode(String syncMode) {
-  return normalizeSyncMode(syncMode) == kSyncModeClient ? 'download' : 'upload';
+  return 'sync';
 }
 
 class SyncHistorySnapshotData {

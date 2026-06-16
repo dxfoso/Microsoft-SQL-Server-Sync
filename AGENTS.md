@@ -2,7 +2,9 @@
 
 ## Workflow Rule
 
-- When a `.dart` file is changed in the workspace, restart the Windows Flutter app automatically using `client.ps1`.
+- Use `run.ps1` as the single local launcher for `frontend/`, `sync_windows_agent/`, `backend/`, and `business/`.
+- When a `.dart` file is changed under `frontend/` or `sync_windows_agent/`, restart the local stack automatically using `run.ps1`.
+- If both app trees change, restart both locally through the same launcher.
 - Keep the repo layout aligned to the current structure:
   - `frontend/` is the web control plane
   - `backend/` is only the `tru` submodule
@@ -11,10 +13,10 @@
 Use this from the repository root:
 
 ```powershell
-.\client.ps1 -SkipGet
+.\run.ps1 -SkipGet
 ```
 
-This ensures the app is relaunched with the updated Dart code.
+This ensures the affected app is relaunched with the updated Dart code.
 
 ## Backend Rule
 

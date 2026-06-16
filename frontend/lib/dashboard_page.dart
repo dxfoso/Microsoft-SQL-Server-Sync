@@ -72,9 +72,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Map<String, List<AdminJob>> _derivedJobsByTableClient =
       const <String, List<AdminJob>>{};
   AdminSnapshotDetail? _snapshot;
+  List<AuthenticatedUser> _visibleUsers = const <AuthenticatedUser>[];
   bool _loading = true;
+  bool _loadingUsers = false;
   bool _connected = false;
   String? _error;
+  String? _userListError;
   String? _selectedClientName;
   String? _selectedTableName;
   String? _selectedDatabaseName;
@@ -91,6 +94,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _historyLimit = _readStoredHistoryLimit();
     _syncSearchController.addListener(_handleSearchChange);
     _startRefreshPolling();
+    if (widget.authenticatedUser.canManageUsers) {
+      unawaited(_refreshVisibleUsers());
+    }
     unawaited(_refreshState());
   }
 
@@ -235,6 +241,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _error = error.toString();
       });
       _scheduleReconnectRetry();
+    }
+  }
+
+  Future<void> _refreshVisibleUsers({bool silent = false}) async {
+    if (!widget.authenticatedUser.canManageUsers) {
+      return;
+    }
+    if (!silent && mounted) {
+      setState(() {
+        _loadingUsers = true;
+        _userListError = null;
+      });
+    }
+
+    try {
+      final users = await _api.listUsers();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _visibleUsers = users;
+        _loadingUsers = false;
+        _userListError = null;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingUsers = false;
+        _userListError = error.toString();
+      });
     }
   }
 
@@ -555,10 +593,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _derivedSnapshotSourcesByTable = snapshotSources;
 
     final databaseTableSets = <String, Set<String>>{};
-    for (final summary in summaries.where(
-      (summary) =>
-          _summaryHasDataRows(summary, snapshotSources: snapshotSources),
-    )) {
+    for (final summary in summaries) {
       final database = summary.database.trim();
       if (database.isEmpty) {
         continue;
@@ -624,7 +659,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return summaries
         .where(
           (summary) =>
-              _summaryHasDataRows(summary) &&
               (databaseName == null ||
                   databaseName.isEmpty ||
                   summary.database == databaseName),
@@ -648,7 +682,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final summaries = _tableSummariesFromState(state)
         .where(
           (summary) =>
-              _summaryHasDataRows(summary) &&
               (databaseName == null ||
                   databaseName.isEmpty ||
                   summary.database == databaseName),
@@ -662,19 +695,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return _selectedTableName;
     }
     return summaries.first.table;
-  }
-
-  bool _summaryHasDataRows(
-    _TableAggregateSummary summary, {
-    Map<String, _TableSnapshotSource>? snapshotSources,
-  }) {
-    final sourceRows =
-        (snapshotSources ?? _derivedSnapshotSourcesByTable)[summary.table]
-            ?.rowCount ??
-        0;
-    return summary.latestRowCount > 0 ||
-        sourceRows > 0 ||
-        summary.clients.any((entry) => entry.tableState.rowCount > 0);
   }
 
   void _selectDatabase(String? databaseName) {
@@ -876,6 +896,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _snapshot = null;
       _detailTabIndex = 0;
     });
+  }
+
+  Future<void> _openTableFromSummary(_TableAggregateSummary summary) async {
+    _selectTable(summary.table);
+    await _openTableDataDialog(summary);
   }
 
   AdminAgent? _agentForClientName(String clientName) {
@@ -1247,13 +1272,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     List<AuthenticatedUser> users;
     try {
       users = await _api.listUsers();
+      if (mounted) {
+        setState(() {
+          _visibleUsers = users;
+          _userListError = null;
+        });
+      }
     } catch (error) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
       return;
     }
 
@@ -1305,7 +1336,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   (selectedOwnerUserId == null ||
                       selectedOwnerUserId!.trim().isEmpty)) {
                 setDialogState(() {
-                  errorText = 'Select a server for the client account.';
+                  errorText = 'Select a server user for the client account.';
                 });
                 return;
               }
@@ -1333,6 +1364,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     createdUser,
                     ...dialogUsers,
                   ];
+                  if (mounted) {
+                    setState(() {
+                      _visibleUsers = dialogUsers;
+                    });
+                  }
                   selectedRole =
                       widget.authenticatedUser.isAdmin ? 'owner' : 'client';
                   selectedOwnerUserId =
@@ -1346,9 +1382,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   passwordController.clear();
                 });
               } catch (error) {
+                final message = error.toString();
+                if (message.toLowerCase().contains('already exists')) {
+                  try {
+                    final refreshedUsers = await _api.listUsers();
+                    if (mounted) {
+                      setState(() {
+                        _visibleUsers = refreshedUsers;
+                        _userListError = null;
+                      });
+                    }
+                    setDialogState(() {
+                      dialogUsers = List<AuthenticatedUser>.from(
+                        refreshedUsers,
+                      );
+                      submitting = false;
+                      errorText =
+                          'That account already exists. The visible account list was refreshed.';
+                    });
+                    return;
+                  } catch (_) {}
+                }
                 setDialogState(() {
                   submitting = false;
-                  errorText = error.toString();
+                  errorText = message;
                 });
               }
             }
@@ -1558,8 +1615,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       const SizedBox(height: 8),
                       Text(
                         widget.authenticatedUser.isAdmin
-                            ? 'Admin can create server or client accounts. Server accounts can create client accounts only.'
-                            : 'Server accounts can create client accounts for the Windows app.',
+                            ? 'Admins can create server users or client accounts. Server users can create client accounts in their own namespace.'
+                            : 'Server users can create client accounts in their own namespace.',
                         style: const TextStyle(
                           color: Color(0xFF58656B),
                           height: 1.45,
@@ -1671,7 +1728,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               child: DropdownButtonFormField<String>(
                                 value: selectedOwnerUserId,
                                 decoration: const InputDecoration(
-                                  labelText: 'Server',
+                                  labelText: 'Server User',
                                 ),
                                 items: owners
                                     .map(
@@ -1709,7 +1766,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ],
                       const SizedBox(height: 18),
                       const Text(
-                        'Visible Users',
+                        'Visible Accounts',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
@@ -1784,7 +1841,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                             width: 180,
                                             child: Text(
                                               user.isClient
-                                                  ? 'Server: $serverLabel'
+                                                  ? 'Server user: $serverLabel'
                                                   : 'Web account',
                                               textAlign: TextAlign.right,
                                               style: const TextStyle(
@@ -2394,6 +2451,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           ],
                         ),
                         const SizedBox(height: 14),
+                        _buildTableDialogClientStatus(summary),
+                        const SizedBox(height: 12),
                         Expanded(
                           child: FutureBuilder<AdminSnapshotDetail?>(
                             future: latestSnapshotFuture,
@@ -2421,6 +2480,58 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     } finally {
       searchController.dispose();
     }
+  }
+
+  Widget _buildTableDialogClientStatus(_TableAggregateSummary summary) {
+    final clients = List<_TableClientEntry>.from(summary.clients)
+      ..sort(_compareClientEntries);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Client Sync Status',
+                  style: TextStyle(
+                    color: Color(0xFF101828),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              MetricPill(label: 'Clients', value: '${clients.length}'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (clients.isEmpty)
+            const Text(
+              'No clients expose this table yet.',
+              style: TextStyle(
+                color: Color(0xFF667085),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            )
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final entry in clients) _buildClientSyncStatusChip(entry),
+              ],
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _buildLatestSnapshotPanel({
@@ -2656,7 +2767,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     }
   }
 
@@ -2797,7 +2908,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     } finally {
       _setBackupBusy(clientName, table, false);
     }
@@ -2842,7 +2953,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     } finally {
       _setBackupBusy(clientName, table, false);
     }
@@ -2897,10 +3008,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   IconData _roleIcon(bool isMaster) =>
       isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
 
-  String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
+  String _roleLabel(bool isMaster) => 'Participant';
 
   String _roleDescription(bool isMaster) =>
-      isMaster ? 'Uploads table snapshots.' : 'Downloads from masters.';
+      'Uploads local rows and downloads missing namespace rows.';
 
   Color _userRoleColor(String role) {
     switch (role) {
@@ -2917,7 +3028,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   IconData _userRoleIcon(String role) {
     switch (role) {
       case 'owner':
-        return Icons.workspace_premium_rounded;
+        return Icons.dns_rounded;
       case 'admin':
         return Icons.admin_panel_settings_rounded;
       case 'client':
@@ -2929,7 +3040,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String _userRoleLabel(String role) {
     switch (role) {
       case 'owner':
-        return 'Server';
+        return 'Server User';
       case 'admin':
         return 'Admin';
       case 'client':
@@ -2941,12 +3052,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String _userRoleDescription(String role) {
     switch (role) {
       case 'owner':
-        return 'Manages client accounts as a server.';
+        return 'Owns one sync namespace and its client accounts.';
       case 'admin':
         return 'Full control plane access.';
       case 'client':
       default:
-        return 'Signs in from Windows.';
+        return 'Uploads local rows and receives rows from other clients.';
     }
   }
 
@@ -3380,8 +3491,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
 
     return SurfaceCard(
-      title: 'Tables',
-      subtitle: '',
+      title: widget.authenticatedUser.isOwner ? 'Server Tables' : 'Tables',
+      subtitle:
+          widget.authenticatedUser.isOwner
+              ? 'Choose a database, then open a table to inspect rows and client sync status.'
+              : 'Select a database, then open a table to see every client uploading rows and receiving copies from the server.',
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3429,7 +3543,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ? EmptyStateCard(
                       message:
                           _syncSearchController.text.trim().isEmpty
-                              ? 'No synced tables are available yet.'
+                              ? 'No tables are available yet.'
                               : 'No tables matched your search.',
                     )
                     : ListView.separated(
@@ -3457,7 +3571,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: () => _selectTable(summary.table),
+      onTap: () => unawaited(_openTableFromSummary(summary)),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         constraints: const BoxConstraints(minHeight: 58),
@@ -3471,7 +3585,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final stack = constraints.maxWidth < 560;
+            final stack = constraints.maxWidth < 720;
+            final clientStatuses = _buildTableClientStatusStrip(summary);
             final metrics = Wrap(
               spacing: 6,
               runSpacing: 6,
@@ -3545,6 +3660,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               _buildTableListTitle(summary.displayTitle),
                               const SizedBox(height: 4),
                               _buildTableListSubline(lastSync),
+                              if (clientStatuses != null) ...[
+                                const SizedBox(height: 7),
+                                clientStatuses,
+                              ],
                               const SizedBox(height: 8),
                               metrics,
                             ],
@@ -3558,11 +3677,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                     _buildTableListTitle(summary.displayTitle),
                                     const SizedBox(height: 4),
                                     _buildTableListSubline(lastSync),
+                                    if (clientStatuses != null) ...[
+                                      const SizedBox(height: 7),
+                                      clientStatuses,
+                                    ],
                                   ],
                                 ),
                               ),
                               const SizedBox(width: 10),
-                              metrics,
+                              Flexible(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: metrics,
+                                ),
+                              ),
                             ],
                           ),
                 ),
@@ -3582,6 +3710,90 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget? _buildTableClientStatusStrip(
+    _TableAggregateSummary summary, {
+    int maxVisible = 4,
+  }) {
+    if (summary.clients.isEmpty) {
+      return null;
+    }
+    final clients = List<_TableClientEntry>.from(summary.clients)
+      ..sort(_compareClientEntries);
+    final visibleClients = clients.take(maxVisible).toList(growable: false);
+    final hiddenCount = clients.length - visibleClients.length;
+    return Wrap(
+      spacing: 5,
+      runSpacing: 5,
+      children: [
+        for (final entry in visibleClients) _buildClientSyncStatusChip(entry),
+        if (hiddenCount > 0) _buildMutedCountChip('+$hiddenCount clients'),
+      ],
+    );
+  }
+
+  Widget _buildClientSyncStatusChip(_TableClientEntry entry) {
+    final color = _statusColor(entry.tableState.status);
+    final updated = _formatTimestamp(_tableTimestampToken(entry.tableState));
+    final message =
+        '${entry.agent.clientName}: ${entry.tableState.status}'
+        '${updated.isEmpty || updated == 'Never' ? '' : ' - $updated'}';
+    return Tooltip(
+      message: message,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 190, minHeight: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.18)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                '${entry.agent.clientName} ${entry.tableState.status}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMutedCountChip(String label) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF667085),
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
   Widget _buildOpenTableDataButton(_TableAggregateSummary summary) {
     return Tooltip(
       message: 'Open table rows',
@@ -3592,7 +3804,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           padding: EdgeInsets.zero,
           visualDensity: VisualDensity.compact,
           iconSize: 18,
-          onPressed: () => _openTableDataDialog(summary),
+          onPressed: () => unawaited(_openTableFromSummary(summary)),
           icon: const Icon(Icons.table_rows_outlined),
         ),
       ),
@@ -4018,28 +4230,50 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildDetailTabBar(int selectedIndex) {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF2F4F7),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildDetailTabButton(
-            label: 'Client',
-            selected: selectedIndex == 0,
-            onTap: () => _selectDetailTab(0),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fillWidth = constraints.maxWidth < 220;
+        Widget tab({
+          required String label,
+          required bool selected,
+          required VoidCallback onTap,
+        }) {
+          final button = _buildDetailTabButton(
+            label: label,
+            selected: selected,
+            onTap: onTap,
+          );
+          return fillWidth ? Expanded(child: button) : button;
+        }
+
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: Container(
+            width: fillWidth ? double.infinity : null,
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF2F4F7),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
+            ),
+            child: Row(
+              mainAxisSize: fillWidth ? MainAxisSize.max : MainAxisSize.min,
+              children: [
+                tab(
+                  label: 'Client',
+                  selected: selectedIndex == 0,
+                  onTap: () => _selectDetailTab(0),
+                ),
+                tab(
+                  label: 'All History',
+                  selected: selectedIndex == 1,
+                  onTap: () => _selectDetailTab(1),
+                ),
+              ],
+            ),
           ),
-          _buildDetailTabButton(
-            label: 'All History',
-            selected: selectedIndex == 1,
-            onTap: () => _selectDetailTab(1),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -4058,6 +4292,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
           child: Text(
             label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: TextStyle(
               color:
                   selected ? const Color(0xFF101828) : const Color(0xFF667085),
@@ -4629,11 +4866,64 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final showSync = constraints.maxWidth >= 660;
-            final showRoleLabel = constraints.maxWidth >= 430;
-            final roleColumnWidth = showRoleLabel ? 86.0 : 28.0;
-            final statusColumnWidth = 88.0;
+            final compact = constraints.maxWidth < 560;
+            final showSync = constraints.maxWidth >= 760;
+            final showRoleLabel = constraints.maxWidth >= 520;
+            final roleColumnWidth = showRoleLabel ? 112.0 : 28.0;
+            final statusColumnWidth = 96.0;
             final syncColumnWidth = showSync ? 140.0 : 0.0;
+            final detailsButton = Tooltip(
+              message: 'Open client details',
+              child: IconButton(
+                constraints: const BoxConstraints.tightFor(
+                  width: 28,
+                  height: 28,
+                ),
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed:
+                    () =>
+                        _openClientDetailDialog(summary: summary, entry: entry),
+                icon: const Icon(Icons.info_outline_rounded, size: 18),
+              ),
+            );
+
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          entry.agent.clientName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      detailsButton,
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 5,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _buildRoleBadge(entry.agent.isMaster, compact: true),
+                      StatusBadge(
+                        label: entry.tableState.status,
+                        color: _statusColor(entry.tableState.status),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            }
 
             return Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -4689,23 +4979,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                 ],
                 const SizedBox(width: 2),
-                Tooltip(
-                  message: 'Open client details',
-                  child: IconButton(
-                    constraints: const BoxConstraints.tightFor(
-                      width: 28,
-                      height: 28,
-                    ),
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    onPressed:
-                        () => _openClientDetailDialog(
-                          summary: summary,
-                          entry: entry,
-                        ),
-                    icon: const Icon(Icons.info_outline_rounded, size: 18),
-                  ),
-                ),
+                detailsButton,
               ],
             );
           },
@@ -4726,31 +5000,46 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
     final historyLabel = clientName ?? 'All clients';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final metricWidth = math.max(
+          96.0,
+          math.min(220.0, constraints.maxWidth),
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            MetricPill(label: 'Client', value: historyLabel),
-            MetricPill(label: 'Events', value: '${jobs.length}'),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: metricWidth),
+                  child: MetricPill(label: 'Client', value: historyLabel),
+                ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: metricWidth),
+                  child: MetricPill(label: 'Events', value: '${jobs.length}'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Expanded(
+              child:
+                  jobs.isEmpty
+                      ? EmptyStateCard(
+                        message: 'No history is available yet for this table.',
+                      )
+                      : ListView.separated(
+                        itemCount: jobs.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 4),
+                        itemBuilder:
+                            (context, index) => _buildJobCard(jobs[index]),
+                      ),
+            ),
           ],
-        ),
-        const SizedBox(height: 6),
-        Expanded(
-          child:
-              jobs.isEmpty
-                  ? EmptyStateCard(
-                    message: 'No history is available yet for this table.',
-                  )
-                  : ListView.separated(
-                    itemCount: jobs.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 4),
-                    itemBuilder: (context, index) => _buildJobCard(jobs[index]),
-                  ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -4872,7 +5161,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     child: Column(
                       children: [
                         _buildSnapshotStickyHeaderCell(
-                          'Masters',
+                          'Sources',
                           masterCountWidth,
                         ),
                         Expanded(
@@ -5315,7 +5604,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionLabel('Master Attempts'),
+        _buildSectionLabel('Source Attempts'),
         const SizedBox(height: 8),
         Expanded(
           child: ListView.separated(
@@ -5632,6 +5921,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildDashboardContent() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        if (widget.authenticatedUser.isAdmin) {
+          return _buildAdminUsersPage();
+        }
         final showSidebar = constraints.maxWidth >= 980;
         final content = _buildCurrentPageContent();
         if (!showSidebar) {
@@ -5650,6 +5942,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildCurrentPageContent() {
+    if (widget.authenticatedUser.isAdmin) {
+      return _buildAdminUsersPage();
+    }
     final serverItem = _selectedServerInventoryItem;
     final clientAgent = _selectedPageClientAgent;
     if (clientAgent != null) {
@@ -5661,19 +5956,296 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _buildOverviewPage();
   }
 
+  Widget _buildAdminUsersPage() {
+    final users = List<AuthenticatedUser>.from(_visibleUsers)
+      ..sort((left, right) => left.name.compareTo(right.name));
+    final admins = users.where((user) => user.isAdmin).toList(growable: false);
+    final serverUsers = users
+        .where((user) => user.isOwner)
+        .toList(growable: false);
+    final clientsByOwner = <String, List<AuthenticatedUser>>{};
+    final unassignedClients = <AuthenticatedUser>[];
+    for (final user in users.where((user) => user.isClient)) {
+      final ownerId = user.ownerUserId?.trim();
+      if (ownerId == null || ownerId.isEmpty) {
+        unassignedClients.add(user);
+        continue;
+      }
+      clientsByOwner
+          .putIfAbsent(ownerId, () => <AuthenticatedUser>[])
+          .add(user);
+    }
+    for (final clients in clientsByOwner.values) {
+      clients.sort((left, right) => left.name.compareTo(right.name));
+    }
+
+    return ListView(
+      children: [
+        SurfaceCard(
+          title: 'Users',
+          subtitle:
+              'Admins manage server users and assign clients under the correct server user.',
+          headerTrailing: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed:
+                    _loadingUsers
+                        ? null
+                        : () => unawaited(_refreshVisibleUsers()),
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Refresh'),
+              ),
+              FilledButton.icon(
+                onPressed: () => unawaited(_openUserManagementDialog()),
+                icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
+                label: const Text('Create User'),
+              ),
+            ],
+          ),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              MetricPill(label: 'Admins', value: '${admins.length}'),
+              MetricPill(label: 'Server Users', value: '${serverUsers.length}'),
+              MetricPill(
+                label: 'Clients',
+                value: '${users.where((user) => user.isClient).length}',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (_userListError != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: EmptyStateCard(message: _userListError!),
+          ),
+        SurfaceCard(
+          title: 'Server Users',
+          subtitle:
+              'Each server user owns the client accounts shown beneath it.',
+          child:
+              _loadingUsers && users.isEmpty
+                  ? const SizedBox(
+                    height: 180,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                  : serverUsers.isEmpty && unassignedClients.isEmpty
+                  ? const EmptyStateCard(
+                    message:
+                        'No server users are available yet. Create a server user, then add clients under that account.',
+                  )
+                  : Column(
+                    children: [
+                      for (
+                        var index = 0;
+                        index < serverUsers.length;
+                        index++
+                      ) ...[
+                        _buildServerUserAccountGroup(
+                          serverUsers[index],
+                          clientsByOwner[serverUsers[index].id] ??
+                              const <AuthenticatedUser>[],
+                        ),
+                        if (index != serverUsers.length - 1)
+                          const SizedBox(height: 8),
+                      ],
+                      if (unassignedClients.isNotEmpty) ...[
+                        if (serverUsers.isNotEmpty) const SizedBox(height: 8),
+                        _buildServerUserAccountGroup(null, unassignedClients),
+                      ],
+                    ],
+                  ),
+        ),
+        if (admins.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          SurfaceCard(
+            title: 'Admins',
+            subtitle: 'Full control plane accounts.',
+            child: Column(
+              children: [
+                for (var index = 0; index < admins.length; index++) ...[
+                  _buildAccountTile(admins[index], compact: true),
+                  if (index != admins.length - 1) const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildServerUserAccountGroup(
+    AuthenticatedUser? serverUser,
+    List<AuthenticatedUser> clients,
+  ) {
+    final title = serverUser == null ? 'Unassigned Clients' : serverUser.name;
+    final subtitle =
+        serverUser == null
+            ? 'Clients without a server user assignment.'
+            : _accountSubtitle(serverUser);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _buildAccountTitleBlock(
+                  title: title,
+                  subtitle: subtitle,
+                  icon: Icons.dns_rounded,
+                  color: const Color(0xFF2563EB),
+                ),
+              ),
+              StatusBadge(
+                label:
+                    serverUser == null
+                        ? '${clients.length} clients'
+                        : 'Server User',
+                color: const Color(0xFF2563EB),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (clients.isEmpty)
+            const EmptyStateCard(
+              message: 'No clients are assigned to this server user yet.',
+            )
+          else
+            Column(
+              children: [
+                for (var index = 0; index < clients.length; index++) ...[
+                  _buildAccountTile(clients[index], compact: true),
+                  if (index != clients.length - 1) const SizedBox(height: 6),
+                ],
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountTile(AuthenticatedUser user, {bool compact = false}) {
+    return Container(
+      padding: EdgeInsets.all(compact ? 10 : 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildAccountTitleBlock(
+              title: user.name,
+              subtitle: _accountSubtitle(user),
+              icon: _userRoleIcon(user.role),
+              color: _userRoleColor(user.role),
+            ),
+          ),
+          const SizedBox(width: 10),
+          StatusBadge(
+            label: _userRoleLabel(user.role),
+            color: _userRoleColor(user.role),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountTitleBlock({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.18)),
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title.trim().isEmpty ? 'Unnamed account' : title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF101828),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _accountSubtitle(AuthenticatedUser user) {
+    final parts = <String>[
+      if (user.email.trim().isNotEmpty) user.email.trim(),
+      if (user.isClient)
+        'Server user: ${user.ownerName ?? user.ownerUsername ?? user.ownerEmail ?? 'Unassigned'}',
+      if (user.createdAt.trim().isNotEmpty)
+        'Created ${_formatTimestamp(user.createdAt)}',
+    ];
+    return parts.isEmpty ? _userRoleDescription(user.role) : parts.join(' - ');
+  }
+
   Widget _buildOverviewPage() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final ownerView = widget.authenticatedUser.isOwner;
         final mobileStack = constraints.maxWidth < 760;
         final useSideBySide = constraints.maxWidth >= 1180;
         if (mobileStack) {
           return ListView(
             children: [
               _buildOverviewIntroCard(),
+              if (!ownerView) ...[
+                const SizedBox(height: 10),
+                _buildServerListCard(),
+              ],
               const SizedBox(height: 10),
-              _buildServerListCard(),
-              const SizedBox(height: 10),
-              SizedBox(height: 460, child: _buildTableListCard()),
+              SizedBox(
+                height: ownerView ? 560 : 460,
+                child: _buildTableListCard(),
+              ),
               const SizedBox(height: 10),
               SizedBox(height: 600, child: _buildDetailCard()),
             ],
@@ -5682,8 +6254,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return Column(
           children: [
             _buildOverviewIntroCard(),
-            const SizedBox(height: 10),
-            _buildServerListCard(),
+            if (!ownerView) ...[
+              const SizedBox(height: 10),
+              _buildServerListCard(),
+            ],
             const SizedBox(height: 10),
             Expanded(
               child:
@@ -5711,6 +6285,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildServerListCard() {
+    if (widget.authenticatedUser.isOwner) {
+      return _buildOwnerClientListCard();
+    }
+
     final items = _serverInventoryItems;
     return SurfaceCard(
       title: 'Servers',
@@ -5732,19 +6310,59 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildOverviewIntroCard() {
+  Widget _buildOwnerClientListCard() {
+    final agents = _clientNavigationAgents();
     return SurfaceCard(
-      title: 'Overview',
+      title: 'Clients',
+      subtitle: 'Open a client to inspect its tables and sync history.',
+      child:
+          agents.isEmpty
+              ? const EmptyStateCard(
+                message: 'No clients are connected to this server user yet.',
+              )
+              : Column(
+                children: [
+                  for (var index = 0; index < agents.length; index++) ...[
+                    _buildClientNavigationTile(
+                      agents[index],
+                      closeAfterSelection: false,
+                    ),
+                    if (index != agents.length - 1) const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+    );
+  }
+
+  Widget _buildOverviewIntroCard() {
+    final ownerView = widget.authenticatedUser.isOwner;
+    final visibleTables = _tableSummariesForDatabase(_tableSummaries).length;
+    final totalTables = _tableSummaries.length;
+    return SurfaceCard(
+      title: ownerView ? 'Server Tables' : 'Overview',
       subtitle:
-          'Use the left menu to open a server page, then drill into its tables and clients.',
+          ownerView
+              ? 'Select a database, open a table, and review every client sync state.'
+              : 'Use the left menu to open a server page, then drill into its tables and clients.',
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
         children: [
-          MetricPill(
-            label: 'Servers',
-            value: '${_serverInventoryItems.length}',
-          ),
+          if (ownerView) ...[
+            MetricPill(
+              label: 'Databases',
+              value: '${_databaseNamesFromState(_state).length}',
+            ),
+            MetricPill(label: 'Tables', value: '$visibleTables / $totalTables'),
+            MetricPill(
+              label: 'Clients',
+              value: '${_clientNavigationAgents().length}',
+            ),
+          ] else
+            MetricPill(
+              label: 'Servers',
+              value: '${_serverInventoryItems.length}',
+            ),
           MetricPill(label: 'Agents', value: '${_state?.agents.length ?? 0}'),
           MetricPill(label: 'Jobs', value: '${_jobs.length}'),
           MetricPill(
@@ -5756,7 +6374,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  List<AdminAgent> _clientNavigationAgents() {
+    final agentsByName = <String, AdminAgent>{};
+    for (final agent in _state?.agents ?? const <AdminAgent>[]) {
+      final clientName = agent.clientName.trim();
+      if (clientName.isEmpty || agentsByName.containsKey(clientName)) {
+        continue;
+      }
+      agentsByName[clientName] = agent;
+    }
+    final agents = agentsByName.values.toList(growable: false)
+      ..sort((left, right) => left.clientName.compareTo(right.clientName));
+    return agents;
+  }
+
   Widget _buildNavigationPane({bool closeAfterSelection = false}) {
+    if (widget.authenticatedUser.isOwner) {
+      return _buildClientNavigationPane(
+        closeAfterSelection: closeAfterSelection,
+      );
+    }
+
     final items = _serverInventoryItems;
     return Container(
       width: double.infinity,
@@ -5810,6 +6448,73 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     closeAfterSelection: closeAfterSelection,
                   ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientNavigationPane({required bool closeAfterSelection}) {
+    final agents = _clientNavigationAgents();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Clients',
+            style: TextStyle(
+              color: Color(0xFF101828),
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Open all tables or inspect one client.',
+            style: TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildNavigationTile(
+            icon: Icons.table_chart_outlined,
+            label: 'All Tables',
+            subtitle:
+                '${_databaseNamesFromState(_state).length} databases - ${_tableSummaries.length} tables',
+            selected:
+                _selectedServerKey == null && _selectedPageClientName == null,
+            onTap:
+                () => _handleNavigationSelection(
+                  _selectOverviewPage,
+                  closeAfterSelection: closeAfterSelection,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child:
+                agents.isEmpty
+                    ? const EmptyStateCard(
+                      message:
+                          'No clients are connected to this server user yet.',
+                    )
+                    : ListView.separated(
+                      itemCount: agents.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder:
+                          (context, index) => _buildClientNavigationTile(
+                            agents[index],
+                            closeAfterSelection: closeAfterSelection,
+                          ),
+                    ),
           ),
         ],
       ),
@@ -5901,6 +6606,34 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget _buildClientNavigationTile(
+    AdminAgent agent, {
+    required bool closeAfterSelection,
+  }) {
+    final selected = _selectedPageClientName == agent.clientName;
+    final database =
+        agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
+    final subtitle = '$database - ${agent.tables.length} tables';
+    return _buildNavigationTile(
+      icon: Icons.computer_rounded,
+      iconColor:
+          agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318),
+      label: agent.clientName,
+      subtitle: subtitle,
+      selected: selected,
+      onTap:
+          () => _handleNavigationSelection(
+            () => _openClientPage(agent.clientName),
+            closeAfterSelection: closeAfterSelection,
+          ),
+      trailing: StatusBadge(
+        label: agent.isOnline ? 'Online' : 'Offline',
+        color:
+            agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318),
+      ),
+    );
+  }
+
   Widget _buildServerNavigationTile(
     _ServerInventoryItem item, {
     required bool closeAfterSelection,
@@ -5932,33 +6665,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildServerPage(_ServerInventoryItem item) {
     final agents = List<AdminAgent>.from(item.agents)
       ..sort((left, right) => left.clientName.compareTo(right.clientName));
-    final summaries = _serverTableSummaries(item);
     return ListView(
       children: [
         _buildServerInventoryTile(item),
         const SizedBox(height: 10),
-        SurfaceCard(
-          title: 'Tables',
-          subtitle: 'Tables exposed by this server.',
-          child:
-              summaries.isEmpty
-                  ? const EmptyStateCard(
-                    message: 'No tables are exposed by this server yet.',
-                  )
-                  : Column(
-                    children: [
-                      for (
-                        var index = 0;
-                        index < summaries.length;
-                        index++
-                      ) ...[
-                        _buildServerTableTile(summaries[index]),
-                        if (index != summaries.length - 1)
-                          const SizedBox(height: 8),
-                      ],
-                    ],
-                  ),
-        ),
+        SizedBox(height: 520, child: _buildTableListCard()),
+        const SizedBox(height: 10),
+        SizedBox(height: 640, child: _buildDetailCard()),
         const SizedBox(height: 10),
         SurfaceCard(
           title: 'Clients',
@@ -5979,100 +6692,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
         ),
       ],
-    );
-  }
-
-  List<_TableAggregateSummary> _serverTableSummaries(
-    _ServerInventoryItem item,
-  ) {
-    final serverClientNames =
-        item.agents
-            .map((agent) => agent.clientName)
-            .where((clientName) => clientName.trim().isNotEmpty)
-            .toSet();
-    final summaries = _tableSummaries
-        .where(
-          (summary) => summary.clients.any(
-            (entry) => serverClientNames.contains(entry.agent.clientName),
-          ),
-        )
-        .toList(growable: false);
-    summaries.sort(_compareSummariesByActiveSort);
-    return summaries;
-  }
-
-  Widget _buildServerTableTile(_TableAggregateSummary summary) {
-    final entry = summary.clients.first;
-    final lastSync = _formatTimestamp(summary.lastSync);
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(9),
-              border: Border.all(color: const Color(0xFFDDE3EA)),
-            ),
-            child: const Icon(
-              Icons.table_rows_outlined,
-              size: 18,
-              color: Color(0xFF2563EB),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  summary.displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF101828),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '${summary.clientCount} clients - Last sync $lastSync',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          StatusBadge(
-            label: summary.masterCount > 0 ? 'Live' : 'Idle',
-            color:
-                summary.masterCount > 0
-                    ? const Color(0xFF0F766E)
-                    : const Color(0xFF667085),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Open table details',
-            onPressed:
-                () => _openClientDetailDialog(summary: summary, entry: entry),
-            icon: const Icon(Icons.open_in_new_rounded),
-          ),
-        ],
-      ),
     );
   }
 
@@ -6359,9 +6978,33 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return value.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
   }
 
+  String _compactServerMeta(_ServerInventoryItem item) {
+    final values = <String>[];
+
+    void addValue(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || trimmed == 'Not reported') {
+        return;
+      }
+      if (!values.contains(trimmed)) {
+        values.add(trimmed);
+      }
+    }
+
+    addValue(item.roleLabel);
+    addValue(item.platformLabel);
+    addValue(item.machineName);
+    if (item.serverName != item.title) {
+      addValue(item.serverName);
+    }
+    addValue(item.isLocal ? 'Local' : 'Live');
+    return values.isEmpty ? 'Server' : values.join(' - ');
+  }
+
   Widget _buildServerInventoryTile(_ServerInventoryItem item) {
     final statusColor =
         item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    final compactMeta = _compactServerMeta(item);
     final databases =
         item.databases.isEmpty ? 'None reported' : item.databases.join(', ');
     final clients =
@@ -6369,10 +7012,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ? 'None reported'
             : item.clientNames.join(', ');
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
       decoration: BoxDecoration(
         color: item.isLocal ? const Color(0xFFF8FFFC) : const Color(0xFFFCFCFD),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color:
               item.isLocal ? const Color(0xFFB7DDD7) : const Color(0xFFDDE3EA),
@@ -6385,20 +7028,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 36,
-                height: 36,
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: const Color(0xFFDDE3EA)),
                 ),
                 child: const Icon(
                   Icons.dns_rounded,
-                  size: 19,
+                  size: 17,
                   color: Color(0xFF0F766E),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -6409,18 +7052,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Color(0xFF101828),
-                        fontSize: 14,
+                        fontSize: 13.5,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 2),
                     Text(
-                      item.roleLabel,
+                      compactMeta,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Color(0xFF667085),
-                        fontSize: 12,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -6431,30 +7074,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               StatusBadge(label: item.statusLabel, color: statusColor),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
+            spacing: 5,
+            runSpacing: 5,
             children: [
-              MetricPill(label: 'Platform', value: item.platformLabel),
-              MetricPill(label: 'Machine', value: item.machineName),
-              MetricPill(label: 'Server', value: item.serverName),
               MetricPill(label: 'Clients', value: '${item.connectedClients}'),
+              MetricPill(label: 'DBs', value: '${item.databases.length}'),
               if (item.onlineClients > 0)
                 MetricPill(label: 'Online', value: '${item.onlineClients}'),
-              MetricPill(
-                label: 'Server Link',
-                value: '${item.serverConnectedClients}',
-              ),
+              if (item.serverConnectedClients > 0)
+                MetricPill(
+                  label: 'Link',
+                  value: '${item.serverConnectedClients}',
+                ),
               if (item.sqlConnectedClients > 0)
                 MetricPill(label: 'SQL', value: '${item.sqlConnectedClients}'),
-              MetricPill(
-                label: 'Scope',
-                value: item.isLocal ? 'Local' : 'Live',
-              ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           _buildServerInfoLine('Databases', databases),
           const SizedBox(height: 4),
           _buildServerInfoLine('Clients', clients),
@@ -6522,7 +7160,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final stack = constraints.maxWidth < 620;
+                final stack = constraints.maxWidth < 840;
                 final trailing = Wrap(
                   spacing: 6,
                   runSpacing: 3,
@@ -6640,7 +7278,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                     const SizedBox(width: 8),
                     SizedBox(
-                      width: 154,
+                      width: 128,
                       child: Text(
                         eventTime,
                         maxLines: 1,
@@ -6654,7 +7292,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    trailing,
+                    Flexible(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: trailing,
+                      ),
+                    ),
                   ],
                 );
               },
@@ -6692,8 +7335,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       InfoLine(label: 'Database', value: _selectedDatabaseName ?? 'None'),
       InfoLine(label: 'Shown', value: '$visibleTables / $totalTables'),
       InfoLine(label: 'Clients', value: '${summary?.clientCount ?? 0}'),
-      InfoLine(label: 'Master', value: '${summary?.masterCount ?? 0}'),
-      InfoLine(label: 'Slave', value: '${summary?.slaveCount ?? 0}'),
+      InfoLine(label: 'Sources', value: '${summary?.clientCount ?? 0}'),
+      InfoLine(label: 'Participants', value: '${summary?.clientCount ?? 0}'),
       InfoLine(label: 'Client', value: _selectedClientName ?? 'All'),
       InfoLine(label: 'Agents', value: '$totalClients'),
       InfoLine(label: 'Jobs', value: '$totalJobs'),
@@ -6796,7 +7439,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return Scaffold(
       drawer:
-          compactLayout
+          compactLayout && !widget.authenticatedUser.isAdmin
               ? Drawer(
                 child: SafeArea(
                   child: Padding(
@@ -6875,7 +7518,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             child: ListTile(
                               dense: true,
                               leading: Icon(Icons.manage_accounts_outlined),
-                              title: Text('Users'),
+                              title: Text('User Management'),
                               contentPadding: EdgeInsets.zero,
                             ),
                           ),
@@ -6951,18 +7594,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (_error != null)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: const Color(0xFFFEF3F2),
-                  border: Border.all(color: const Color(0xFFF7C9C4)),
-                ),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: Color(0xFFB42318)),
+              SelectionArea(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: const Color(0xFFFEF3F2),
+                    border: Border.all(color: const Color(0xFFF7C9C4)),
+                  ),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Color(0xFFB42318)),
+                  ),
                 ),
               ),
             Expanded(
@@ -6979,6 +7624,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   String _currentPageTitle() {
+    if (widget.authenticatedUser.isAdmin) {
+      return 'SQL Sync - Users';
+    }
     final clientAgent = _selectedPageClientAgent;
     if (clientAgent != null) {
       return 'SQL Sync - ${clientAgent.clientName}';

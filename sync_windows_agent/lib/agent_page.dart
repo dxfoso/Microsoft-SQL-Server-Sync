@@ -358,11 +358,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: enabled,
         message:
             enabled
-                ? _isMasterClient
-                    ? 'Master override sync enabled for ${widget.clientName}.'
-                    : syncMode == kSyncModeMasterMix
-                    ? 'Master merge sync enabled for ${widget.clientName}.'
-                    : 'Client sync enabled for ${widget.clientName}.'
+                ? 'Two-way sync enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
         direction: syncDirection,
         rowCount: current.rowCount,
@@ -381,13 +377,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         direction: syncDirection,
         syncMode: syncMode,
         message:
-            enabled
-                ? _isMasterClient
-                    ? 'Waiting for the next master override upload.'
-                    : syncMode == kSyncModeMasterMix
-                    ? 'Waiting for upload and merge.'
-                    : 'Waiting for the next master snapshot download.'
-                : 'Sync disabled.',
+            enabled ? 'Waiting for the next two-way sync.' : 'Sync disabled.',
         history: nextHistory,
       ),
     );
@@ -988,54 +978,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return '$day.$month.$year $hour:$minute:$second';
   }
 
-  String _roleLabel(bool isMaster) => isMaster ? 'Master' : 'Slave';
+  String _roleLabel(bool isMaster) => 'Two-way';
 
   String _syncModeLabel(String syncMode) {
-    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
-      case kSyncModeMaster:
-        return 'Master (Override)';
-      case kSyncModeMasterMix:
-        return 'Master (Merge)';
-      case kSyncModeClient:
-      default:
-        return 'Client';
-    }
+    return 'Two-way';
   }
 
   IconData _syncModeIcon(String syncMode) {
-    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
-      case kSyncModeMaster:
-        return Icons.upload_file_rounded;
-      case kSyncModeMasterMix:
-        return Icons.merge_type_rounded;
-      case kSyncModeClient:
-      default:
-        return Icons.cloud_download_rounded;
-    }
+    return Icons.sync_rounded;
   }
 
   Color _syncModeColor(String syncMode) {
-    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
-      case kSyncModeMaster:
-        return const Color(0xFF2563EB);
-      case kSyncModeMasterMix:
-        return const Color(0xFF7C3AED);
-      case kSyncModeClient:
-      default:
-        return const Color(0xFF0F766E);
-    }
+    return const Color(0xFF0F766E);
   }
 
   String _syncModeDescription(String syncMode) {
-    switch (normalizeSyncMode(syncMode, fallbackIsMaster: _isMasterClient)) {
-      case kSyncModeMaster:
-        return 'Upload and replace client rows.';
-      case kSyncModeMasterMix:
-        return 'Upload and merge rows from other masters.';
-      case kSyncModeClient:
-      default:
-        return 'Download this table from masters.';
-    }
+    return 'Upload local rows, download missing owner rows.';
   }
 
   void _updateTableSyncMode(String table, String syncMode) {
@@ -1084,7 +1042,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required String title,
     required String confirmLabel,
   }) {
-    const modes = [kSyncModeMaster, kSyncModeClient, kSyncModeMasterMix];
+    const modes = [kSyncModeTwoWay];
     var selectedMode = normalizeSyncMode(
       initialMode,
       fallbackIsMaster: _isMasterClient,
@@ -1452,7 +1410,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Set<String> _setClientRole(bool isMaster) {
     final enabledTables = <String>{};
-    final syncMode = isMaster ? kSyncModeMaster : kSyncModeClient;
+    const syncMode = kSyncModeTwoWay;
     final direction = syncDirectionForMode(syncMode);
     final nextTables = Map<String, SyncTableState>.fromEntries(
       _syncState.tables.entries.map((entry) {
@@ -1467,9 +1425,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 : tableState.status;
         final nextMessage =
             tableState.enabled
-                ? isMaster
-                    ? 'Waiting for the next master override upload.'
-                    : 'Waiting for the next master snapshot download.'
+                ? 'Waiting for the next two-way sync.'
                 : tableState.message;
         return MapEntry(
           entry.key,
@@ -1978,7 +1934,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     } finally {
       _setFileBusy(table, false);
     }
@@ -2101,7 +2057,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     } finally {
       _setFileBusy(table, false);
     }
@@ -2112,10 +2068,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
-    final activeTablesByDirection = {
-      for (final job in _activeJobs) '${job.direction}:${job.table}',
-    };
-    final dueTablesByDirection = <String, List<String>>{};
+    final activeTables = {for (final job in _activeJobs) job.table};
+    final dueTables = <String>[];
     for (final table in _tables) {
       final syncKey = _syncTableKey(table);
       final state = _syncTableState(table, syncKey: syncKey);
@@ -2127,50 +2081,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (!isDue) {
         continue;
       }
-      final syncMode = normalizeSyncMode(
-        state.syncMode,
-        fallbackIsMaster: _isMasterClient,
-      );
-      final directions =
-          syncMode == kSyncModeMasterMix
-              ? const <String>['upload', 'download']
-              : <String>[syncDirectionForMode(syncMode)];
-      for (final direction in directions) {
-        if (activeTablesByDirection.contains('$direction:$syncKey')) {
-          continue;
-        }
-        dueTablesByDirection
-            .putIfAbsent(direction, () => <String>[])
-            .add(syncKey);
+      if (activeTables.contains(syncKey)) {
+        continue;
       }
+      dueTables.add(syncKey);
     }
 
-    if (dueTablesByDirection.isEmpty) {
+    if (dueTables.isEmpty) {
       return;
     }
 
-    final queuedJobs = <RemoteSyncJob>[];
-    for (final entry in dueTablesByDirection.entries) {
-      queuedJobs.addAll(
-        await _controlPlaneClient.createJobs(
-          clientName: widget.clientName,
-          tables: entry.value,
-          direction: entry.key,
-          syncMode:
-              entry.key == 'download' &&
-                      entry.value.any(
-                        (syncKey) =>
-                            normalizeSyncMode(
-                              _syncState.tables[syncKey]?.syncMode,
-                              fallbackIsMaster: _isMasterClient,
-                            ) ==
-                            kSyncModeMasterMix,
-                      )
-                  ? kSyncModeMasterMix
-                  : null,
-        ),
-      );
-    }
+    final queuedJobs = await _controlPlaneClient.createJobs(
+      clientName: widget.clientName,
+      tables: dueTables,
+      direction: 'sync',
+      syncMode: kSyncModeTwoWay,
+    );
 
     if (!mounted) {
       return;
@@ -2317,13 +2243,34 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         throw Exception(snapshot.errorText);
       }
 
+      RemoteSnapshot? ownerSnapshotBeforeUpload;
+      try {
+        ownerSnapshotBeforeUpload = await _controlPlaneClient.downloadSnapshot(
+          job.id,
+        );
+      } catch (error) {
+        if (!_isMissingOwnerSnapshotError(error)) {
+          rethrow;
+        }
+      }
+
+      final rowsToUpload =
+          ownerSnapshotBeforeUpload == null
+              ? snapshot.rows
+              : _rowsMissingOrChangedInOwnerSnapshot(
+                localRows: snapshot.rows,
+                ownerRows: ownerSnapshotBeforeUpload.rows,
+                columns: snapshot.columns,
+                keyColumns: snapshot.keyColumns,
+              );
+
       final backupFile = _createSnapshotFileDocument(
         clientName: widget.clientName,
         table: job.table,
         createdAt: snapshot.snapshotCreatedAt,
-        rowCount: snapshot.totalRows,
+        rowCount: rowsToUpload.length,
         columns: snapshot.columns,
-        rows: snapshot.rows,
+        rows: rowsToUpload,
       );
       final backupContent = _encodeSnapshotFileDocument(backupFile);
       final backupBytes = utf8.encode(backupContent).length;
@@ -2332,30 +2279,79 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job.id,
         status: 'uploading',
         progress: 70,
-        message: 'Uploading compressed snapshot in 100 KB chunks.',
-        rowCount: snapshot.totalRows,
-        direction: 'upload',
+        message:
+            'Uploading missing or changed local rows into the owner namespace.',
+        rowCount: rowsToUpload.length,
+        direction: 'sync',
       );
       _applyRemoteJobState(activeJob);
 
-      final uploadResult = await _controlPlaneClient.uploadSnapshot(
+      final uploadResult = await _controlPlaneClient.uploadSnapshotRows(
         job.id,
         clientName: widget.clientName,
         table: job.table,
-        rowCount: snapshot.totalRows,
+        rowCount: rowsToUpload.length,
         snapshotCreatedAt: snapshot.snapshotCreatedAt,
         snapshotBytes: backupBytes,
-        snapshotJson: backupContent,
+        columns: snapshot.columns,
+        rows: rowsToUpload,
+        keyColumns: snapshot.keyColumns,
+      );
+
+      _applyRemoteJobState(uploadResult.job);
+
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'downloading',
+        progress: 80,
+        message: 'Downloading owner namespace rows.',
+        rowCount: uploadResult.snapshot.rowCount,
+        direction: 'sync',
+      );
+      _applyRemoteJobState(activeJob);
+
+      final ownerSnapshot = await _controlPlaneClient.downloadSnapshot(job.id);
+
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'applying',
+        progress: 90,
+        message: 'Merging owner namespace rows into local SQL Server.',
+        rowCount: ownerSnapshot.rowCount,
+        direction: 'sync',
+      );
+      _applyRemoteJobState(activeJob);
+
+      await _applySnapshotToTable(
+        profile: _activeProfile(),
+        database: localDatabase,
+        table: localTable,
+        snapshot: ownerSnapshot,
+        mergeRows: true,
+      );
+
+      activeJob = await _controlPlaneClient.completeJob(
+        job.id,
+        status: 'completed',
+        progress: 100,
+        message:
+            'Two-way sync completed with ${ownerSnapshot.rowCount} owner namespace rows.',
+        rowCount: ownerSnapshot.rowCount,
+        snapshotId: ownerSnapshot.id,
+        snapshotCreatedAt: ownerSnapshot.createdAt,
+        snapshotBytes: ownerSnapshot.snapshotBytes,
       );
 
       _applyRemoteJobState(
-        uploadResult.job,
+        activeJob,
         appendHistory: true,
         success: true,
-        historySnapshotCreatedAt: snapshot.snapshotCreatedAt,
+        overrideMessage:
+            'Uploaded ${rowsToUpload.length} changed local rows and merged ${ownerSnapshot.rowCount} owner namespace rows.',
+        historySnapshotCreatedAt: ownerSnapshot.createdAt,
         historySnapshotData: _createHistorySnapshotData(
-          columns: snapshot.columns,
-          rows: snapshot.rows,
+          columns: ownerSnapshot.columns,
+          rows: ownerSnapshot.rows,
         ),
       );
     } catch (error) {
@@ -2363,11 +2359,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _markControlPlaneTemporarilyUnavailable();
         return;
       }
-      await _controlPlaneClient.failJob(
-        job.id,
-        error.toString(),
-        progress: 100,
-      );
+      logStartupEvent('Upload sync job ${job.id} failed: $error');
+      await _markRemoteJobFailed(job, error);
       final failedJob = RemoteSyncJob(
         id: job.id,
         clientName: job.clientName,
@@ -2393,6 +2386,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: false,
         overrideMessage: error.toString(),
       );
+    }
+  }
+
+  Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {
+    try {
+      await _controlPlaneClient.failJob(
+        job.id,
+        error.toString(),
+        progress: 100,
+      );
+    } catch (failError) {
+      logStartupEvent('Unable to mark remote job ${job.id} failed: $failError');
     }
   }
 
@@ -2481,11 +2486,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _markControlPlaneTemporarilyUnavailable();
         return;
       }
-      await _controlPlaneClient.failJob(
-        job.id,
-        error.toString(),
-        progress: 100,
-      );
+      logStartupEvent('Download sync job ${job.id} failed: $error');
+      await _markRemoteJobFailed(job, error);
       final failedJob = RemoteSyncJob(
         id: job.id,
         clientName: job.clientName,
@@ -2554,11 +2556,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
 
-    final hasIdentity = snapshot.columns.any(
+    final writableSnapshotColumns = snapshot.columns
+        .where((column) => _isWritableSyncColumn(schemasByName[column]!))
+        .toList(growable: false);
+    if (snapshot.rows.isNotEmpty && writableSnapshotColumns.isEmpty) {
+      throw Exception(
+        'Downloaded snapshot for $table has no writable local columns. Computed, rowversion, and generated columns cannot be applied.',
+      );
+    }
+
+    final hasIdentity = writableSnapshotColumns.any(
       (column) => schemasByName[column]?.isIdentity ?? false,
     );
     final qualifiedTable = _quoteQualifiedIdentifier(table);
-    final columnList = snapshot.columns.map(_quoteIdentifier).join(', ');
+    final columnList = writableSnapshotColumns.map(_quoteIdentifier).join(', ');
     final keyColumns = _mergeKeyColumns(schemas, snapshot.columns);
     if (mergeRows && keyColumns.isEmpty) {
       throw Exception(
@@ -2575,6 +2586,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             )
             : snapshot.rows;
     final statements = <String>[
+      'SET ANSI_NULLS ON;',
+      'SET QUOTED_IDENTIFIER ON;',
+      'SET ANSI_PADDING ON;',
+      'SET ANSI_WARNINGS ON;',
+      'SET CONCAT_NULL_YIELDS_NULL ON;',
+      'SET ARITHABORT ON;',
+      'SET NUMERIC_ROUNDABORT OFF;',
       'SET NOCOUNT ON;',
       'BEGIN TRY',
       'BEGIN TRAN;',
@@ -2585,10 +2603,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     const rowsPerBatch = 100;
     for (var index = 0; index < rowsToApply.length; index += rowsPerBatch) {
       final chunk = rowsToApply.skip(index).take(rowsPerBatch);
+      final sourceColumns =
+          mergeRows ? snapshot.columns : writableSnapshotColumns;
       final values = chunk
           .map(
             (row) =>
-                '(${snapshot.columns.map((column) => _sqlLiteral(row[column])).join(', ')})',
+                '(${sourceColumns.map((column) => _sqlLiteral(row[column])).join(', ')})',
           )
           .join(', ');
       if (values.isNotEmpty) {
@@ -2596,7 +2616,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           statements.add(
             _mergeSnapshotRowsStatement(
               qualifiedTable: qualifiedTable,
-              columns: snapshot.columns,
+              sourceColumns: snapshot.columns,
+              writeColumns: writableSnapshotColumns,
               keyColumns: keyColumns,
               schemasByName: schemasByName,
               values: values,
@@ -2646,6 +2667,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return const _TableSnapshotResult(
         success: false,
         columns: [],
+        keyColumns: [],
         rows: [],
         totalRows: 0,
         snapshotCreatedAt: '',
@@ -2664,6 +2686,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return _TableSnapshotResult(
         success: false,
         columns: const [],
+        keyColumns: const [],
         rows: const [],
         totalRows: 0,
         snapshotCreatedAt: '',
@@ -2685,6 +2708,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return _TableSnapshotResult(
         success: false,
         columns: columns,
+        keyColumns: const [],
         rows: const [],
         totalRows: 0,
         snapshotCreatedAt: '',
@@ -2709,6 +2733,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return _TableSnapshotResult(
           success: false,
           columns: columns,
+          keyColumns: const [],
           rows: const [],
           totalRows: rowCountResult.value,
           snapshotCreatedAt: '',
@@ -2721,6 +2746,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return _TableSnapshotResult(
       success: true,
       columns: columns,
+      keyColumns: _mergeKeyColumns(schemaResult.values, columns),
       rows: rows,
       totalRows: rowCountResult.value,
       snapshotCreatedAt: DateTime.now().toIso8601String(),
@@ -3087,6 +3113,8 @@ SELECT
   TYPE_NAME(c.user_type_id),
   c.is_nullable,
   c.is_identity,
+  c.is_computed,
+  c.generated_always_type,
   CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS is_primary_key
 FROM ${_quoteIdentifier(database)}.sys.columns AS c
 INNER JOIN ${_quoteIdentifier(database)}.sys.tables AS t ON t.object_id = c.object_id
@@ -3131,7 +3159,7 @@ ORDER BY c.column_id;
         continue;
       }
       final parts = _splitRowValues(trimmedLine);
-      if (parts.length < 4) {
+      if (parts.length < 6) {
         continue;
       }
       values.add(
@@ -3140,9 +3168,11 @@ ORDER BY c.column_id;
           sqlType: parts[1],
           isNullable: parts[2] == '1' || parts[2].toLowerCase() == 'true',
           isIdentity: parts[3] == '1' || parts[3].toLowerCase() == 'true',
+          isComputed: parts[4] == '1' || parts[4].toLowerCase() == 'true',
+          generatedAlwaysType: int.tryParse(parts[5]) ?? 0,
           isPrimaryKey:
-              parts.length >= 5 &&
-              (parts[4] == '1' || parts[4].toLowerCase() == 'true'),
+              parts.length >= 7 &&
+              (parts[6] == '1' || parts[6].toLowerCase() == 'true'),
         ),
       );
     }
@@ -3273,10 +3303,9 @@ ORDER BY [__sync_agent_row_number];
     required String query,
   }) async {
     _lastSqlCmdLaunchError = null;
-    final normalizedQuery = query
-        .trim()
-        .replaceAll('\r\n', ' ')
-        .replaceAll('\n', ' ');
+    final rawQuery = query.trim();
+    const maxInlineQueryLength = 24000;
+    final useInputFile = rawQuery.length > maxInlineQueryLength;
     final arguments = <String>[
       '-S',
       profile.server,
@@ -3292,8 +3321,6 @@ ORDER BY [__sync_agent_row_number];
       '65001',
       '-s',
       '|',
-      '-Q',
-      normalizedQuery,
     ];
 
     if (profile.useWindowsAuth) {
@@ -3308,7 +3335,23 @@ ORDER BY [__sync_agent_row_number];
     }
 
     final executable = _sqlCmdExecutable();
+    Directory? queryDirectory;
     try {
+      if (useInputFile) {
+        queryDirectory = await Directory.systemTemp.createTemp(
+          'sync_agent_sqlcmd_',
+        );
+        final queryFile = File(
+          '${queryDirectory.path}${Platform.pathSeparator}query.sql',
+        );
+        await queryFile.writeAsString(rawQuery, encoding: utf8);
+        arguments.addAll(['-i', queryFile.path]);
+      } else {
+        final normalizedQuery = rawQuery
+            .replaceAll('\r\n', ' ')
+            .replaceAll('\n', ' ');
+        arguments.addAll(['-Q', normalizedQuery]);
+      }
       return await Process.run(
         executable,
         arguments,
@@ -3321,6 +3364,14 @@ ORDER BY [__sync_agent_row_number];
           'Unable to start sqlcmd from "$executable": ${error.message}';
       logStartupEvent(_lastSqlCmdLaunchError!);
       return null;
+    } finally {
+      if (queryDirectory != null) {
+        try {
+          await queryDirectory.delete(recursive: true);
+        } catch (_) {
+          // Best effort cleanup for a temporary sqlcmd input file.
+        }
+      }
     }
   }
 
@@ -3407,7 +3458,15 @@ ORDER BY [__sync_agent_row_number];
         )
         .map((schema) => schema.name)
         .toList(growable: false);
-    return primaryKeys;
+    return primaryKeys.isEmpty ? snapshotColumns : primaryKeys;
+  }
+
+  bool _isWritableSyncColumn(_TableColumnSchema schema) {
+    final sqlType = schema.sqlType.toLowerCase();
+    return !schema.isComputed &&
+        schema.generatedAlwaysType == 0 &&
+        sqlType != 'timestamp' &&
+        sqlType != 'rowversion';
   }
 
   String _mergeRowKey(Map<String, String?> row, List<String> keyColumns) =>
@@ -3415,6 +3474,46 @@ ORDER BY [__sync_agent_row_number];
 
   String _mergeRowSignature(Map<String, String?> row, List<String> columns) =>
       columns.map((column) => row[column] ?? '').join('\u001f');
+
+  bool _isMissingOwnerSnapshotError(Object error) {
+    if (error is! AgentControlPlaneException) {
+      return false;
+    }
+    final message = error.message.toLowerCase();
+    return message.contains('not found') ||
+        message.contains('no completed snapshot') ||
+        message.contains('snapshot is not available');
+  }
+
+  List<Map<String, String?>> _rowsMissingOrChangedInOwnerSnapshot({
+    required List<Map<String, String?>> localRows,
+    required List<Map<String, String?>> ownerRows,
+    required List<String> columns,
+    required List<String> keyColumns,
+  }) {
+    if (ownerRows.isEmpty) {
+      return localRows;
+    }
+
+    final ownerSignatureByKey = <String, String>{};
+    for (final ownerRow in ownerRows) {
+      ownerSignatureByKey[_mergeRowKey(
+        ownerRow,
+        keyColumns,
+      )] = _mergeRowSignature(ownerRow, columns);
+    }
+
+    return localRows
+        .where((localRow) {
+          final rowKey = _mergeRowKey(localRow, keyColumns);
+          final ownerSignature = ownerSignatureByKey[rowKey];
+          if (ownerSignature == null) {
+            return true;
+          }
+          return ownerSignature != _mergeRowSignature(localRow, columns);
+        })
+        .toList(growable: false);
+  }
 
   List<Map<String, String?>> _deduplicateMergeRows({
     required String table,
@@ -3473,29 +3572,30 @@ ORDER BY [__sync_agent_row_number];
 
   String _mergeSnapshotRowsStatement({
     required String qualifiedTable,
-    required List<String> columns,
+    required List<String> sourceColumns,
+    required List<String> writeColumns,
     required List<String> keyColumns,
     required Map<String, _TableColumnSchema> schemasByName,
     required String values,
   }) {
-    if (columns.isEmpty || keyColumns.isEmpty) {
+    if (sourceColumns.isEmpty || writeColumns.isEmpty || keyColumns.isEmpty) {
       return '';
     }
-    final sourceColumns = columns.map(_quoteIdentifier).join(', ');
+    final sourceColumnList = sourceColumns.map(_quoteIdentifier).join(', ');
     final matchClause = _sqlColumnEqualityClause(
       leftAlias: 'target',
       rightAlias: 'source',
       columns: keyColumns,
     );
-    final compareColumns = columns
+    final compareColumns = writeColumns
         .where(
           (column) =>
               !keyColumns.contains(column) &&
               !(schemasByName[column]?.isIdentity ?? false),
         )
         .toList(growable: false);
-    final insertColumns = columns.map(_quoteIdentifier).join(', ');
-    final insertValues = columns
+    final insertColumns = writeColumns.map(_quoteIdentifier).join(', ');
+    final insertValues = writeColumns
         .map((column) => 'source.${_quoteIdentifier(column)}')
         .join(', ');
     final duplicateSourceKeysClause = keyColumns
@@ -3512,7 +3612,7 @@ ORDER BY [__sync_agent_row_number];
     return '''
 IF EXISTS (
   SELECT 1
-  FROM (VALUES $values) AS source ($sourceColumns)
+  FROM (VALUES $values) AS source ($sourceColumnList)
   GROUP BY $duplicateSourceKeysClause
   HAVING COUNT(*) > 1
 )
@@ -3522,7 +3622,7 @@ END;
 ${differenceClause.isEmpty ? '' : '''
 IF EXISTS (
   SELECT 1
-  FROM (VALUES $values) AS source ($sourceColumns)
+  FROM (VALUES $values) AS source ($sourceColumnList)
   INNER JOIN $qualifiedTable AS target
     ON $matchClause
   WHERE $differenceClause
@@ -3532,7 +3632,7 @@ BEGIN
 END;
 '''}
 MERGE $qualifiedTable AS target
-USING (VALUES $values) AS source ($sourceColumns)
+USING (VALUES $values) AS source ($sourceColumnList)
 ON $matchClause
 WHEN NOT MATCHED BY TARGET THEN
   INSERT ($insertColumns) VALUES ($insertValues);
@@ -4567,20 +4667,9 @@ WHEN NOT MATCHED BY TARGET THEN
     final toolbarChildren = <Widget>[
       _buildSyncEnabledToolbarControl(row),
       _buildToolbarIconControl(
-        tooltip: 'Push now',
-        icon: Icons.cloud_upload_rounded,
-        onTap:
-            canRunSync
-                ? () => _triggerSyncNow(row.table, direction: 'upload')
-                : null,
-      ),
-      _buildToolbarIconControl(
-        tooltip: 'Pull now',
-        icon: Icons.cloud_download_rounded,
-        onTap:
-            canRunSync
-                ? () => _triggerSyncNow(row.table, direction: 'download')
-                : null,
+        tooltip: 'Sync now',
+        icon: Icons.sync_rounded,
+        onTap: canRunSync ? () => _triggerSyncNow(row.table) : null,
       ),
       _buildModeReadOnlyControl(row),
       _buildToolbarStat(
@@ -4907,10 +4996,7 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
-  Future<void> _triggerSyncNow(
-    String table, {
-    required String direction,
-  }) async {
+  Future<void> _triggerSyncNow(String table) async {
     if (_selectedDatabase == null) {
       return;
     }
@@ -4919,16 +5005,8 @@ WHEN NOT MATCHED BY TARGET THEN
       final queuedJobs = await _controlPlaneClient.createJobs(
         clientName: widget.clientName,
         tables: [_syncTableKey(table)],
-        direction: direction,
-        syncMode:
-            direction == 'download' &&
-                    normalizeSyncMode(
-                          _syncTableState(table).syncMode,
-                          fallbackIsMaster: _isMasterClient,
-                        ) ==
-                        kSyncModeMasterMix
-                ? kSyncModeMasterMix
-                : null,
+        direction: 'sync',
+        syncMode: kSyncModeTwoWay,
       );
 
       if (!mounted) {
@@ -4954,7 +5032,7 @@ WHEN NOT MATCHED BY TARGET THEN
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     }
   }
 
@@ -5047,7 +5125,7 @@ WHEN NOT MATCHED BY TARGET THEN
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
       return;
     }
 
@@ -5162,20 +5240,24 @@ WHEN NOT MATCHED BY TARGET THEN
                         ),
                         const SizedBox(height: 10),
                         if (_errorMessage != null)
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(10),
-                            margin: const EdgeInsets.only(bottom: 12),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              color: const Color(0xFFFEF3F2),
-                              border: Border.all(
-                                color: const Color(0xFFF7C9C4),
+                          SelectionArea(
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(10),
+                              margin: const EdgeInsets.only(bottom: 12),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                color: const Color(0xFFFEF3F2),
+                                border: Border.all(
+                                  color: const Color(0xFFF7C9C4),
+                                ),
                               ),
-                            ),
-                            child: Text(
-                              _errorMessage!,
-                              style: const TextStyle(color: Color(0xFFB42318)),
+                              child: Text(
+                                _errorMessage!,
+                                style: const TextStyle(
+                                  color: Color(0xFFB42318),
+                                ),
+                              ),
                             ),
                           ),
                         Expanded(
@@ -5431,18 +5513,20 @@ WHEN NOT MATCHED BY TARGET THEN
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_errorMessage != null)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: const Color(0xFFFEF3F2),
-              border: Border.all(color: const Color(0xFFF7C9C4)),
-            ),
-            child: Text(
-              _errorMessage!,
-              style: const TextStyle(color: Color(0xFFB42318)),
+          SelectionArea(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: const Color(0xFFFEF3F2),
+                border: Border.all(color: const Color(0xFFF7C9C4)),
+              ),
+              child: Text(
+                _errorMessage!,
+                style: const TextStyle(color: Color(0xFFB42318)),
+              ),
             ),
           ),
         Expanded(child: _buildSyncPanel()),
@@ -6196,6 +6280,7 @@ class _TableSnapshotResult {
   const _TableSnapshotResult({
     required this.success,
     required this.columns,
+    required this.keyColumns,
     required this.rows,
     required this.totalRows,
     required this.snapshotCreatedAt,
@@ -6204,6 +6289,7 @@ class _TableSnapshotResult {
 
   final bool success;
   final List<String> columns;
+  final List<String> keyColumns;
   final List<Map<String, String?>> rows;
   final int totalRows;
   final String snapshotCreatedAt;
@@ -6228,6 +6314,8 @@ class _TableColumnSchema {
     required this.sqlType,
     required this.isNullable,
     required this.isIdentity,
+    required this.isComputed,
+    required this.generatedAlwaysType,
     required this.isPrimaryKey,
   });
 
@@ -6235,6 +6323,8 @@ class _TableColumnSchema {
   final String sqlType;
   final bool isNullable;
   final bool isIdentity;
+  final bool isComputed;
+  final int generatedAlwaysType;
   final bool isPrimaryKey;
 }
 

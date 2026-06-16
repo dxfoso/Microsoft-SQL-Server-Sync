@@ -2,7 +2,7 @@ FROM ghcr.io/cirruslabs/flutter:stable AS build
 
 WORKDIR /app
 
-ARG BACKEND_BASE_URL=http://localhost:9001
+ARG BACKEND_BASE_URL=http://localhost:6006
 ARG BUILD_COMMIT_HASH=dev
 ARG BUILD_COMMIT_DATE=unknown
 ARG BUILD_RELEASE_DATE=unknown

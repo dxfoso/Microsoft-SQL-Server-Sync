@@ -23,9 +23,10 @@ class LiveSyncApiClient {
     if (trimmed.isEmpty) {
       return '/call';
     }
-    final normalized = trimmed.endsWith('/')
-        ? trimmed.substring(0, trimmed.length - 1)
-        : trimmed;
+    final normalized =
+        trimmed.endsWith('/')
+            ? trimmed.substring(0, trimmed.length - 1)
+            : trimmed;
     if (normalized == '/call') {
       return normalized;
     }
@@ -34,7 +35,7 @@ class LiveSyncApiClient {
         parsed.hasScheme &&
         parsed.host.isNotEmpty &&
         (parsed.path.isEmpty || parsed.path == '/')) {
-      return '${normalized}/call';
+      return '$normalized/call';
     }
     return normalized;
   }
@@ -89,7 +90,7 @@ class LiveSyncApiClient {
       body: jsonEncode({'name': name, 'args': payloadArgs}),
     );
 
-    if (response.statusCode != 200) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw LiveSyncApiException(_errorMessageFromResponse(response));
     }
 
@@ -103,6 +104,7 @@ class LiveSyncApiClient {
   }) async {
     final decoded = await _invokeFunction('auth_login', {
       'name': name.trim(),
+      'email': name.trim(),
       'password': password,
       'app': 'web',
     });
@@ -231,10 +233,10 @@ class LiveSyncApiClient {
     required String table,
   }) async {
     try {
-      final decoded = await _invokeFunction(
-        'snapshots_latest',
-        {'clientName': clientName, 'table': table},
-      );
+      final decoded = await _invokeFunction('snapshots_latest', {
+        'clientName': clientName,
+        'table': table,
+      });
       if (decoded is! Map) {
         throw const LiveSyncApiException('Unexpected latest snapshot payload.');
       }

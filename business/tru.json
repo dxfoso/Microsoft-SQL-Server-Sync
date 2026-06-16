@@ -1,33 +1,33 @@
 {
-  "name": "Microsoft SQL Server Sync",
-  "mode": "release",
-  "port": 9001,
-  "storageDir": "storage",
-  "truDir": ".",
-  "version": "0.3",
-  "settings": {
-    "host": "0.0.0.0",
-    "admin": {
-      "requireKey": false,
-      "primaryColor": "#0f766e"
-    },
-    "specPollMs": 1000,
-    "specCachePath": ".tru_spec_cache.sqlite",
-    "requestTimeoutMs": 10000,
-    "callConcurrency": 64
-  },
-  "db": {
-    "port": 5434,
-    "database": "microsoft_sql_server_sync",
-    "url": "postgresql://tru:tru@localhost:5434/microsoft_sql_server_sync",
-    "container": "microsoft_sql_server_sync-postgres",
-    "poolSize": 32,
-    "adminPoolSize": 8
-  },
-  "host": "127.0.0.1",
-  "admin": {
-    "requireKey": false
-  },
-  "adminRequireKey": false,
-  "callConcurrency": 64
+    "name":  "Microsoft SQL Server Sync",
+    "mode":  "release",
+    "port":  6006,
+    "storageDir":  "storage",
+    "truDir":  ".",
+    "version":  "0.3",
+    "settings":  {
+                     "host":  "0.0.0.0",
+                     "admin":  {
+                                   "requireKey":  false,
+                                   "primaryColor":  "#0f766e"
+                               },
+                     "specPollMs":  1000,
+                     "specCachePath":  ".tru_spec_cache.sqlite",
+                     "requestTimeoutMs":  10000,
+                     "callConcurrency":  64
+                 },
+    "db":  {
+               "url":  "postgresql://tru:tru@localhost:5434/microsoft_sql_server_sync",
+               "container":  "microsoft_sql_server_sync-postgres",
+               "adminPoolSize":  8,
+               "port":  5434,
+               "poolSize":  32,
+               "database":  "microsoft_sql_server_sync"
+           },
+    "host":  "127.0.0.1",
+    "admin":  {
+                  "requireKey":  false
+              },
+    "adminRequireKey":  false,
+    "callConcurrency":  64
 }
