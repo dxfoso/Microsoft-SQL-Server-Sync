@@ -751,15 +751,75 @@ function public_snapshot_detail_payload(snapshot: map<json>): map<json> {
 }
 
 function live_state_agent_limit(): int {
-  return 500;
+  return 100;
 }
 
 function live_state_job_limit(): int {
-  return 200;
+  return 50;
 }
 
 function live_state_snapshot_limit(): int {
-  return 200;
+  return 20;
+}
+
+function live_state_agent_rows_for(current: map<json>, limit: int): array<json> {
+  let where = { clientName: { gte: '' } };
+  if (is_client_user(current)) {
+    where = { clientUserId: current.id };
+  }
+  if (is_owner_user(current)) {
+    where = { ownerUserId: current.id };
+  }
+  const rows = db.selectMany(Agent, {
+    where,
+    orderBy: { field: 'clientName', dir: 'asc' },
+    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    limit: limit + 1
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
+  let where = { createdAt: { lte: now_iso() } };
+  if (is_client_user(current)) {
+    where = { clientUserId: current.id };
+  }
+  if (is_owner_user(current)) {
+    where = { ownerUserId: current.id };
+  }
+  const rows = db.selectMany(SyncJob, {
+    where,
+    orderBy: { field: 'createdAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'snapshotId', 'snapshotCreatedAt', 'snapshotBytes', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    limit: limit + 1
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function live_state_snapshot_rows_for(current: map<json>, limit: int): array<json> {
+  let where = { createdAt: { lte: now_iso() } };
+  if (is_client_user(current)) {
+    where = { clientUserId: current.id };
+  }
+  if (is_owner_user(current)) {
+    where = { ownerUserId: current.id };
+  }
+  const rows = db.selectMany(SnapshotRecord, {
+    where,
+    orderBy: { field: 'createdAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'sourceJobId', 'clientUserId', 'ownerUserId'],
+    limit: limit + 1
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
 }
 
 function bounded_public_agent_payloads(rows: array<json>, limit: int): map<json> {
@@ -1124,17 +1184,20 @@ function live_state(token: string? = null): map<json> {
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
+  const agentLimit = live_state_agent_limit();
+  const jobLimit = live_state_job_limit();
+  const snapshotLimit = live_state_snapshot_limit();
   const agentPage = bounded_public_agent_payloads(
-    visible_agent_rows_for(current),
-    live_state_agent_limit()
+    live_state_agent_rows_for(current, agentLimit),
+    agentLimit
   );
   const jobPage = bounded_public_job_payloads(
-    visible_job_rows_for(current),
-    live_state_job_limit()
+    live_state_job_rows_for(current, jobLimit),
+    jobLimit
   );
   const snapshotPage = bounded_public_snapshot_payloads(
-    visible_snapshot_rows_for(current),
-    live_state_snapshot_limit()
+    live_state_snapshot_rows_for(current, snapshotLimit),
+    snapshotLimit
   );
   return {
     generatedAt: now_iso(),
@@ -1142,9 +1205,9 @@ function live_state(token: string? = null): map<json> {
     jobs: jobPage.items,
     snapshots: snapshotPage.items,
     limits: {
-      agents: live_state_agent_limit(),
-      jobs: live_state_job_limit(),
-      snapshots: live_state_snapshot_limit()
+      agents: agentLimit,
+      jobs: jobLimit,
+      snapshots: snapshotLimit
     },
     totals: {
       agents: agentPage.total,

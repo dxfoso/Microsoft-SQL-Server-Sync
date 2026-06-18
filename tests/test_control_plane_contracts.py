@@ -22,6 +22,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("bounded_public_agent_payloads", body)
         self.assertIn("bounded_public_job_payloads", body)
         self.assertIn("bounded_public_snapshot_payloads", body)
+        self.assertIn("live_state_agent_rows_for(current, agentLimit)", body)
+        self.assertIn("live_state_job_rows_for(current, jobLimit)", body)
+        self.assertIn("live_state_snapshot_rows_for(current, snapshotLimit)", body)
+        self.assertNotIn("visible_agent_rows_for(current)", body)
+        self.assertNotIn("visible_job_rows_for(current)", body)
+        self.assertNotIn("visible_snapshot_rows_for(current)", body)
         self.assertNotIn(".map((job) => public_job_payload(job))", body)
         self.assertIn("limits:", body)
         self.assertIn("truncated:", body)
@@ -39,9 +45,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
             )
         }
 
-        self.assertEqual(limits["agent"], 500)
-        self.assertLessEqual(limits["job"], 200)
-        self.assertLessEqual(limits["snapshot"], 200)
+        self.assertEqual(limits["agent"], 100)
+        self.assertLessEqual(limits["job"], 50)
+        self.assertLessEqual(limits["snapshot"], 20)
+
+    def test_live_state_snapshot_query_omits_heavy_preview_rows(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+        snapshot_rows_match = re.search(
+            r"function live_state_snapshot_rows_for\(.*?\): array<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(snapshot_rows_match)
+        body = snapshot_rows_match.group("body")
+
+        self.assertIn("limit: limit + 1", body)
+        self.assertNotIn("previewRows", body)
+        self.assertNotIn("'rows'", body)
 
 
 if __name__ == "__main__":
