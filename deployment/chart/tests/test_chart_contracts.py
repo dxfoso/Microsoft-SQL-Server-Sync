@@ -131,9 +131,12 @@ class ChartContractsTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('truMemoryCapMb: "6144"', values_yaml)
+        self.assertIn('truWasmTimeoutMs: "30000"', values_yaml)
         self.assertIn("memory: 8Gi", values_yaml)
         self.assertIn("TRU_MEMORY_CAP_MB", backend_deployment)
         self.assertIn(".Values.backend.env.truMemoryCapMb", backend_deployment)
+        self.assertIn("TRU_WASM_TIMEOUT_MS", backend_deployment)
+        self.assertIn(".Values.backend.env.truWasmTimeoutMs", backend_deployment)
 
     def test_runtime_config_keeps_public_admin_health_ungated(self):
         tru_config = json.loads(

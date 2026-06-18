@@ -441,6 +441,10 @@ function find_upload_session_for_job(jobId: string, uploadId: string): map<json>
   return session;
 }
 
+function find_upload_session_by_job_id(jobId: string): map<json>? {
+  return db.selectOne(UploadSession, { jobId });
+}
+
 function find_active_download_session_for_job(jobId: string, snapshotId: string? = null): map<json>? {
   if (snapshotId != null) {
     return db.selectOne(DownloadSession, { jobId, snapshotId });
@@ -841,28 +845,73 @@ function row_key(row: map<json>, keyColumns: array<string>): string {
   return json.stringify(values);
 }
 
+function string_array_contains(values: array<string>, target: string): bool {
+  for (const value of values) {
+    if (value == target) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function merge_rows_by_key(existingRows: array<json>, incomingRows: array<json>, keyColumns: array<string>): array<json> {
-  let merged = existingRows;
+  if (incomingRows.length == 0) {
+    return existingRows;
+  }
+  if (existingRows.length == 0) {
+    return incomingRows;
+  }
+
+  let incomingKeys = [];
   for (const incoming of incomingRows) {
-    const incomingKey = row_key(incoming, keyColumns);
-    let replaced = false;
-    let next = [];
-    for (const current of merged) {
-      if (row_key(current, keyColumns) == incomingKey) {
-        if (!replaced) {
-          next = next.concat([incoming]);
-        }
-        replaced = true;
-      } else {
-        next = next.concat([current]);
+    incomingKeys = incomingKeys.concat([row_key(incoming, keyColumns)]);
+  }
+
+  let retained = [];
+  for (const current of existingRows) {
+    if (!string_array_contains(incomingKeys, row_key(current, keyColumns))) {
+      retained = retained.concat([current]);
+    }
+  }
+  return retained.concat(incomingRows);
+}
+
+function upload_session_matches_request(session: map<json>, table: string, rowCount: int, snapshotCreatedAt: string, snapshotBytes: int, pageCount: int, columns: array<string>, keyColumns: array<string>, checksum: string): bool {
+  if (session.table != table) {
+    return false;
+  }
+  if (session.rowCount != rowCount) {
+    return false;
+  }
+  if (session.snapshotCreatedAt != snapshotCreatedAt) {
+    return false;
+  }
+  if (session.snapshotBytes != snapshotBytes) {
+    return false;
+  }
+  if (session.chunkCount != pageCount) {
+    return false;
+  }
+
+  let sessionColumns = [];
+  let sessionKeyColumns = [];
+  let sessionChecksum = '';
+  for (const item of session.chunks) {
+    if (item.index == -1) {
+      if (item.columns != null) {
+        sessionColumns = item.columns;
+      }
+      if (item.keyColumns != null) {
+        sessionKeyColumns = item.keyColumns;
+      }
+      if (item.checksum != null) {
+        sessionChecksum = string.from(item.checksum);
       }
     }
-    if (!replaced) {
-      next = next.concat([incoming]);
-    }
-    merged = next;
   }
-  return merged;
+  return json.stringify(sessionColumns) == json.stringify(columns) &&
+      json.stringify(sessionKeyColumns) == json.stringify(keyColumns) &&
+      sessionChecksum == checksum;
 }
 
 function latest_owner_snapshot_for(ownerUserId: string, table: string): map<json>? {
@@ -1766,30 +1815,47 @@ function jobs_upload_rows_start(jobId: string, uploadId: string = '', clientName
     normalizedColumns = columns;
   }
   const normalizedKeyColumns = normalize_key_columns(keyColumns);
+  let session = find_upload_session_by_job_id(jobId);
+  if (session != null &&
+      upload_session_matches_request(
+        session,
+        resolvedTable,
+        rowCount,
+        resolvedSnapshotCreatedAt,
+        snapshotBytes,
+        resolvedPageCount,
+        normalizedColumns,
+        normalizedKeyColumns,
+        checksum
+      )) {
+    resolvedUploadId = session.uploadId;
+  } else {
+    db.delete(UploadSession, { jobId });
+    session = db.insert(UploadSession, {
+      id: uuid.v4(),
+      jobId,
+      uploadId: resolvedUploadId,
+      table: resolvedTable,
+      rowCount,
+      snapshotCreatedAt: resolvedSnapshotCreatedAt,
+      snapshotBytes,
+      compressedBytes: 0,
+      chunkSizeBytes: resolvedPageSize,
+      chunkCount: resolvedPageCount,
+      encoding: 'rows',
+      createdAt: now_iso(),
+      updatedAt: now_iso(),
+      chunks: [{
+        index: -1,
+        kind: 'rows_metadata',
+        columns: normalizedColumns,
+        keyColumns: normalizedKeyColumns,
+        checksum
+      }]
+    });
+  }
 
-  db.delete(UploadSession, { jobId });
-  const session = db.insert(UploadSession, {
-    id: uuid.v4(),
-    jobId,
-    uploadId: resolvedUploadId,
-    table: resolvedTable,
-    rowCount,
-    snapshotCreatedAt: resolvedSnapshotCreatedAt,
-    snapshotBytes,
-    compressedBytes: 0,
-    chunkSizeBytes: resolvedPageSize,
-    chunkCount: resolvedPageCount,
-    encoding: 'rows',
-    createdAt: now_iso(),
-    updatedAt: now_iso(),
-    chunks: [{
-      index: -1,
-      kind: 'rows_metadata',
-      columns: normalizedColumns,
-      keyColumns: normalizedKeyColumns,
-      checksum
-    }]
-  });
+  const receivedIndexes = chunk_indexes(session);
 
   const updated = db.update(SyncJob, { id: jobId }, {
     status: 'uploading',
@@ -1809,7 +1875,7 @@ function jobs_upload_rows_start(jobId: string, uploadId: string = '', clientName
     uploadId: session.uploadId,
     pageSize: session.chunkSizeBytes,
     pageCount: session.chunkCount,
-    receivedIndexes: []
+    receivedIndexes
   });
 }
 
@@ -1945,9 +2011,7 @@ function jobs_upload_rows_complete(jobId: string, uploadId: string, token: strin
   let normalizedRows = [];
   for (const item of session.chunks) {
     if (item.index >= 0 && item.rows != null) {
-      for (const row of item.rows) {
-        normalizedRows = normalizedRows.concat([row]);
-      }
+      normalizedRows = normalizedRows.concat(item.rows);
     }
   }
 

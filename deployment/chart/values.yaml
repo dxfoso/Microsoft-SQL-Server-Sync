@@ -58,6 +58,7 @@ backend:
     truStorageDir: /app/data/storage
     truSpecCachePath: /app/data/.tru_spec_cache.sqlite
     truMemoryCapMb: "6144"
+    truWasmTimeoutMs: "30000"
   resources:
     requests:
       cpu: 500m

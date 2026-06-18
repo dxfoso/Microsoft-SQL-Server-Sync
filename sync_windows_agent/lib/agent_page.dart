@@ -101,6 +101,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final Set<String> _processingJobIds = <String>{};
   final Set<String> _busyFileTables = <String>{};
   String? _lastSqlCmdLaunchError;
+  String? _activeUploadTable;
+  DateTime? _uploadMeterStartedAt;
+  int _uploadMeterBytesTransferred = 0;
+  double _uploadBytesPerSecond = 0;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -960,6 +964,55 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             ? 1
             : 2;
     return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
+  }
+
+  String _formatTransferRate(double bytesPerSecond) {
+    if (bytesPerSecond <= 0) {
+      return '--';
+    }
+    return '${_formatBytes(bytesPerSecond.round())}/s';
+  }
+
+  void _beginUploadMeter(String table) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _activeUploadTable = table;
+      _uploadMeterStartedAt = DateTime.now();
+      _uploadMeterBytesTransferred = 0;
+      _uploadBytesPerSecond = 0;
+    });
+  }
+
+  void _updateUploadMeter(TransferProgressSnapshot progress) {
+    if (!mounted) {
+      return;
+    }
+    final now = DateTime.now();
+    final startedAt = _uploadMeterStartedAt ?? now;
+    final elapsedSeconds =
+        math
+            .max(now.difference(startedAt).inMilliseconds / 1000, 0.001)
+            .toDouble();
+    final averageBytesPerSecond = progress.bytesTransferred / elapsedSeconds;
+    setState(() {
+      _uploadMeterStartedAt ??= startedAt;
+      _uploadMeterBytesTransferred = progress.bytesTransferred;
+      _uploadBytesPerSecond = averageBytesPerSecond;
+    });
+  }
+
+  void _endUploadMeter() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _activeUploadTable = null;
+      _uploadMeterStartedAt = null;
+      _uploadMeterBytesTransferred = 0;
+      _uploadBytesPerSecond = 0;
+    });
   }
 
   String _formatTimestamp(String raw) {
@@ -2250,6 +2303,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processUploadJob(RemoteSyncJob job) async {
     try {
+      _beginUploadMeter(job.table);
       final localDatabase = _databaseNameFromSyncKey(job.table);
       final localTable = _localTableName(job.table);
       var activeJob = await _controlPlaneClient.startJob(
@@ -2324,6 +2378,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         columns: snapshot.columns,
         rows: rowsToUpload,
         keyColumns: snapshot.keyColumns,
+        onProgress: _updateUploadMeter,
       );
 
       _applyRemoteJobState(uploadResult.job);
@@ -2382,7 +2437,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           rows: ownerSnapshot.rows,
         ),
       );
+      _endUploadMeter();
     } catch (error) {
+      _endUploadMeter();
       if (_isTemporaryControlPlaneUnavailable(error)) {
         _markControlPlaneTemporarilyUnavailable();
         return;
@@ -5837,6 +5894,12 @@ WHEN NOT MATCHED BY TARGET THEN
         label: 'Status',
         value: selectedSyncRow?.state.status ?? 'Idle',
       ),
+      if (_activeUploadTable != null)
+        _InfoLine(
+          label: 'Upload',
+          value:
+              '${_formatTransferRate(_uploadBytesPerSecond)} (${_formatBytes(_uploadMeterBytesTransferred)})',
+        ),
     ];
 
     return LayoutBuilder(

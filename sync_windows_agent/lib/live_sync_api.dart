@@ -12,8 +12,7 @@ const String _defaultControlPlaneUrl = String.fromEnvironment(
   defaultValue: 'https://sync.velvet-leaf.com/call',
 );
 const int _snapshotTransferChunkSizeBytes = 100 * 1024;
-const int _snapshotRowsDirectUploadMaxBytes = 512 * 1024;
-const int _snapshotRowsPageTargetBytes = 192 * 1024;
+const int _snapshotRowsPageTargetBytes = 100 * 1024;
 const int _snapshotRowsMaxPages = 10000;
 const int _snapshotTransferMaxAttempts = 10;
 const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
@@ -29,6 +28,19 @@ const List<Duration> _snapshotTransferRetryDelays = <Duration>[
   Duration(seconds: 60),
   Duration(seconds: 60),
 ];
+
+typedef TransferProgressCallback =
+    void Function(TransferProgressSnapshot progress);
+
+class TransferProgressSnapshot {
+  const TransferProgressSnapshot({
+    required this.bytesTransferred,
+    required this.totalBytes,
+  });
+
+  final int bytesTransferred;
+  final int totalBytes;
+}
 
 class AgentControlPlaneClient {
   AgentControlPlaneClient({http.Client? client, String? baseUrl})
@@ -119,15 +131,17 @@ class AgentControlPlaneClient {
   }
 
   int _encodedCallBytes(String functionName, Map<String, dynamic> args) {
+    return utf8.encode(_encodedCallBody(functionName, args)).length;
+  }
+
+  String _encodedCallBody(String functionName, Map<String, dynamic> args) {
     final payloadArgs = <String, dynamic>{...args};
     if (_authToken != null &&
         _authToken!.isNotEmpty &&
         functionName != 'auth_login') {
       payloadArgs['token'] = _authToken;
     }
-    return utf8
-        .encode(jsonEncode({'name': functionName, 'args': payloadArgs}))
-        .length;
+    return jsonEncode({'name': functionName, 'args': payloadArgs});
   }
 
   void setAuthToken(String? token) {
@@ -583,34 +597,8 @@ class AgentControlPlaneClient {
     required List<String> columns,
     required List<Map<String, String?>> rows,
     required List<String> keyColumns,
+    TransferProgressCallback? onProgress,
   }) async {
-    final args = <String, dynamic>{
-      'jobId': jobId,
-      'clientName': clientName,
-      'table': table,
-      'rowCount': rowCount,
-      'snapshotCreatedAt': snapshotCreatedAt,
-      'snapshotBytes': snapshotBytes,
-      'columns': columns,
-      'rows': rows,
-      'keyColumns': keyColumns,
-    };
-    if (_encodedCallBytes('jobs_upload', args) <=
-        _snapshotRowsDirectUploadMaxBytes) {
-      try {
-        final decoded = await _invokeTransferFunction(
-          'jobs_upload',
-          args,
-          'uploading snapshot rows',
-        );
-        return _parseUploadSnapshotResult(decoded);
-      } on AgentControlPlaneException catch (error) {
-        if (error.statusCode != 413) {
-          rethrow;
-        }
-      }
-    }
-
     return _uploadSnapshotRowsPaged(
       jobId,
       clientName: clientName,
@@ -621,6 +609,7 @@ class AgentControlPlaneClient {
       columns: columns,
       rows: rows,
       keyColumns: keyColumns,
+      onProgress: onProgress,
     );
   }
 
@@ -634,8 +623,35 @@ class AgentControlPlaneClient {
     required List<String> columns,
     required List<Map<String, String?>> rows,
     required List<String> keyColumns,
+    TransferProgressCallback? onProgress,
   }) async {
     final pages = _splitRowsForPagedUpload(rows);
+    final startArgs = <String, dynamic>{
+      'jobId': jobId,
+      'uploadId': '',
+      'clientName': clientName,
+      'table': table,
+      'rowCount': rowCount,
+      'snapshotCreatedAt': snapshotCreatedAt,
+      'snapshotBytes': snapshotBytes,
+      'pageSize': _snapshotRowsPageTargetBytes,
+      'pageCount': pages.length,
+      'columns': columns,
+      'keyColumns': keyColumns,
+    };
+    final completeArgs = <String, dynamic>{'jobId': jobId, 'uploadId': ''};
+    var totalBytes =
+        _encodedCallBytes('jobs_upload_rows_start', startArgs) +
+        _encodedCallBytes('jobs_upload_rows_complete', completeArgs);
+    for (var index = 0; index < pages.length; index += 1) {
+      totalBytes += _encodedCallBytes('jobs_upload_rows_page', {
+        'jobId': jobId,
+        'uploadId': '',
+        'pageIndex': index,
+        'rows': pages[index],
+      });
+    }
+    var bytesTransferred = 0;
     final uploadId =
         '$jobId-rows-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
     final startDecoded =
@@ -652,14 +668,57 @@ class AgentControlPlaneClient {
           'columns': columns,
           'keyColumns': keyColumns,
         }, 'starting paged row upload');
+    bytesTransferred += _encodedCallBytes('jobs_upload_rows_start', {
+      'jobId': jobId,
+      'uploadId': uploadId,
+      'clientName': clientName,
+      'table': table,
+      'rowCount': rowCount,
+      'snapshotCreatedAt': snapshotCreatedAt,
+      'snapshotBytes': snapshotBytes,
+      'pageSize': _snapshotRowsPageTargetBytes,
+      'pageCount': pages.length,
+      'columns': columns,
+      'keyColumns': keyColumns,
+    });
+    onProgress?.call(
+      TransferProgressSnapshot(
+        bytesTransferred: bytesTransferred,
+        totalBytes: totalBytes,
+      ),
+    );
     if (startDecoded is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected paged upload start payload.',
       );
     }
     final resolvedUploadId = startDecoded['uploadId'] as String? ?? uploadId;
+    final receivedIndexes =
+        (startDecoded['receivedIndexes'] as List<dynamic>? ?? const [])
+            .map((item) => (item as num).toInt())
+            .toSet();
+    for (final index in receivedIndexes) {
+      if (index < 0 || index >= pages.length) {
+        continue;
+      }
+      bytesTransferred += _encodedCallBytes('jobs_upload_rows_page', {
+        'jobId': jobId,
+        'uploadId': resolvedUploadId,
+        'pageIndex': index,
+        'rows': pages[index],
+      });
+    }
+    onProgress?.call(
+      TransferProgressSnapshot(
+        bytesTransferred: bytesTransferred,
+        totalBytes: totalBytes,
+      ),
+    );
 
     for (var index = 0; index < pages.length; index += 1) {
+      if (receivedIndexes.contains(index)) {
+        continue;
+      }
       final pageDecoded = await _invokeTransferFunction(
         'jobs_upload_rows_page',
         {
@@ -675,12 +734,34 @@ class AgentControlPlaneClient {
           'Unexpected paged upload payload.',
         );
       }
+      bytesTransferred += _encodedCallBytes('jobs_upload_rows_page', {
+        'jobId': jobId,
+        'uploadId': resolvedUploadId,
+        'pageIndex': index,
+        'rows': pages[index],
+      });
+      onProgress?.call(
+        TransferProgressSnapshot(
+          bytesTransferred: bytesTransferred,
+          totalBytes: totalBytes,
+        ),
+      );
     }
 
     final decoded = await _invokeTransferFunction('jobs_upload_rows_complete', {
       'jobId': jobId,
       'uploadId': resolvedUploadId,
     }, 'completing paged row upload');
+    bytesTransferred += _encodedCallBytes('jobs_upload_rows_complete', {
+      'jobId': jobId,
+      'uploadId': resolvedUploadId,
+    });
+    onProgress?.call(
+      TransferProgressSnapshot(
+        bytesTransferred: bytesTransferred,
+        totalBytes: totalBytes,
+      ),
+    );
     return _parseUploadSnapshotResult(decoded);
   }
 

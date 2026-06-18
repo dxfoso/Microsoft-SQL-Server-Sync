@@ -60,6 +60,8 @@ spec:
               value: {{ .Values.backend.env.truSpecCachePath | quote }}
             - name: TRU_MEMORY_CAP_MB
               value: {{ .Values.backend.env.truMemoryCapMb | quote }}
+            - name: TRU_WASM_TIMEOUT_MS
+              value: {{ .Values.backend.env.truWasmTimeoutMs | quote }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           volumeMounts:
