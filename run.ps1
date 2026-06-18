@@ -5,6 +5,7 @@ param(
     [string] $BusinessConfigPath = "$PSScriptRoot\business\tru.json",
     [string] $Browser = "chrome",
     [string] $DesktopDevice = "windows",
+    [string] $DesktopBackendBaseUrl = "https://sync.velvet-leaf.com/call",
     [switch] $SkipGet,
     [switch] $RestartDb,
     [bool] $AutoRestart = $true,
@@ -53,6 +54,49 @@ $script:restartWeb = $false
 $script:restartDesktop = $false
 $script:restartBackend = $false
 $script:lastChange = Get-Date
+
+function Get-FlutterAppVersion {
+    param([string]$ProjectPath)
+
+    $pubspecPath = Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml'
+    if (-not (Test-Path -LiteralPath $pubspecPath -PathType Leaf)) {
+        return "dev"
+    }
+
+    $match = Get-Content -LiteralPath $pubspecPath |
+        Select-String -Pattern '^\s*version:\s*(\S+)\s*$' |
+        Select-Object -First 1
+    if ($match) {
+        return $match.Matches[0].Groups[1].Value
+    }
+    return "dev"
+}
+
+function Get-GitCommitHash {
+    try {
+        $commit = (& git -C $repoRoot rev-parse --short=12 HEAD 2>$null).Trim()
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($commit)) {
+            return $commit
+        }
+    } catch {
+    }
+    return ""
+}
+
+function New-DartDefineArgs {
+    param(
+        [string]$ProjectPath,
+        [string]$BackendBaseUrl
+    )
+
+    $releaseDate = Get-Date -Format "yyyy-MM-dd'T'HH:mm:sszzz"
+    return @(
+        '--dart-define', "BACKEND_BASE_URL=$BackendBaseUrl",
+        '--dart-define', "APP_VERSION=$(Get-FlutterAppVersion -ProjectPath $ProjectPath)",
+        '--dart-define', "BUILD_RELEASE_DATE=$releaseDate",
+        '--dart-define', "BUILD_COMMIT_HASH=$(Get-GitCommitHash)"
+    )
+}
 
 function Get-ChildProcessIds {
     param([int]$ProcessId)
@@ -355,8 +399,8 @@ function Start-WebApp {
         }
     }
 
-    $dartDefine = "BACKEND_BASE_URL=http://127.0.0.1:$BackendPort/call"
-    $flutterArgs = @('run', '-d', $Browser, '--dart-define', $dartDefine)
+    $backendBaseUrl = "http://127.0.0.1:$BackendPort/call"
+    $flutterArgs = @('run', '-d', $Browser) + (New-DartDefineArgs -ProjectPath $FrontendPath -BackendBaseUrl $backendBaseUrl)
 
     Write-Host "Starting web app in browser: flutter run -d $Browser" -ForegroundColor Cyan
     return Start-Process -FilePath flutter `
@@ -378,10 +422,14 @@ function Start-DesktopApp {
         }
     }
 
-    $dartDefine = "BACKEND_BASE_URL=http://127.0.0.1:$BackendPort/call"
-    $flutterArgs = @('run', '-d', $DesktopDevice, '--dart-define', $dartDefine)
+    $backendBaseUrl = "http://127.0.0.1:$BackendPort/call"
+    if (-not [string]::IsNullOrWhiteSpace($DesktopBackendBaseUrl)) {
+        $backendBaseUrl = $DesktopBackendBaseUrl
+    }
+    $flutterArgs = @('run', '-d', $DesktopDevice) + (New-DartDefineArgs -ProjectPath $DesktopPath -BackendBaseUrl $backendBaseUrl)
 
     Write-Host "Starting Windows desktop client: flutter run -d $DesktopDevice" -ForegroundColor Cyan
+    Write-Host "Desktop API URL: $backendBaseUrl" -ForegroundColor Green
     return Start-Process -FilePath flutter `
         -ArgumentList $flutterArgs `
         -WorkingDirectory $DesktopPath `

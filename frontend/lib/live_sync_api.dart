@@ -187,6 +187,11 @@ class LiveSyncApiClient {
     });
   }
 
+  Future<void> deleteUser({required String userId}) async {
+    final trimmedUserId = userId.trim();
+    await _invokeFunction('user_delete', {'userId': trimmedUserId});
+  }
+
   Future<AdminLiveState> fetchLiveState() async {
     final decoded = await _invokeFunction('live_state', {});
     if (decoded is! Map) {

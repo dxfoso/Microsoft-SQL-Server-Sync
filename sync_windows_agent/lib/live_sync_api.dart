@@ -12,6 +12,9 @@ const String _defaultControlPlaneUrl = String.fromEnvironment(
   defaultValue: 'https://sync.velvet-leaf.com/call',
 );
 const int _snapshotTransferChunkSizeBytes = 100 * 1024;
+const int _snapshotRowsDirectUploadMaxBytes = 512 * 1024;
+const int _snapshotRowsPageTargetBytes = 192 * 1024;
+const int _snapshotRowsMaxPages = 10000;
 const int _snapshotTransferMaxAttempts = 10;
 const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
 const Duration _controlPlaneRequestTimeout = Duration(seconds: 10);
@@ -86,6 +89,45 @@ class AgentControlPlaneClient {
       throw _exceptionFromResponse(response);
     }
     return _unwrapApiResponse(jsonDecode(response.body));
+  }
+
+  Future<dynamic> _invokeTransferFunction(
+    String functionName,
+    Map<String, dynamic> args,
+    String phase,
+  ) async {
+    final payloadArgs = <String, dynamic>{...args};
+    if (_authToken != null &&
+        _authToken!.isNotEmpty &&
+        functionName != 'auth_login') {
+      payloadArgs['token'] = _authToken;
+    }
+
+    final response = await _transferRequestWithRetry(
+      () => _client.post(
+        _uriCall(),
+        headers: _headers(json: true),
+        body: jsonEncode({'name': functionName, 'args': payloadArgs}),
+      ),
+      phase,
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _exceptionFromResponse(response);
+    }
+    return _unwrapApiResponse(jsonDecode(response.body));
+  }
+
+  int _encodedCallBytes(String functionName, Map<String, dynamic> args) {
+    final payloadArgs = <String, dynamic>{...args};
+    if (_authToken != null &&
+        _authToken!.isNotEmpty &&
+        functionName != 'auth_login') {
+      payloadArgs['token'] = _authToken;
+    }
+    return utf8
+        .encode(jsonEncode({'name': functionName, 'args': payloadArgs}))
+        .length;
   }
 
   void setAuthToken(String? token) {
@@ -542,7 +584,7 @@ class AgentControlPlaneClient {
     required List<Map<String, String?>> rows,
     required List<String> keyColumns,
   }) async {
-    final decoded = await _invokeFunction('jobs_upload', {
+    final args = <String, dynamic>{
       'jobId': jobId,
       'clientName': clientName,
       'table': table,
@@ -552,7 +594,138 @@ class AgentControlPlaneClient {
       'columns': columns,
       'rows': rows,
       'keyColumns': keyColumns,
-    }, 'uploading snapshot rows');
+    };
+    if (_encodedCallBytes('jobs_upload', args) <=
+        _snapshotRowsDirectUploadMaxBytes) {
+      try {
+        final decoded = await _invokeTransferFunction(
+          'jobs_upload',
+          args,
+          'uploading snapshot rows',
+        );
+        return _parseUploadSnapshotResult(decoded);
+      } on AgentControlPlaneException catch (error) {
+        if (error.statusCode != 413) {
+          rethrow;
+        }
+      }
+    }
+
+    return _uploadSnapshotRowsPaged(
+      jobId,
+      clientName: clientName,
+      table: table,
+      rowCount: rowCount,
+      snapshotCreatedAt: snapshotCreatedAt,
+      snapshotBytes: snapshotBytes,
+      columns: columns,
+      rows: rows,
+      keyColumns: keyColumns,
+    );
+  }
+
+  Future<UploadSnapshotResult> _uploadSnapshotRowsPaged(
+    String jobId, {
+    required String clientName,
+    required String table,
+    required int rowCount,
+    required String snapshotCreatedAt,
+    required int snapshotBytes,
+    required List<String> columns,
+    required List<Map<String, String?>> rows,
+    required List<String> keyColumns,
+  }) async {
+    final pages = _splitRowsForPagedUpload(rows);
+    final uploadId =
+        '$jobId-rows-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+    final startDecoded =
+        await _invokeTransferFunction('jobs_upload_rows_start', {
+          'jobId': jobId,
+          'uploadId': uploadId,
+          'clientName': clientName,
+          'table': table,
+          'rowCount': rowCount,
+          'snapshotCreatedAt': snapshotCreatedAt,
+          'snapshotBytes': snapshotBytes,
+          'pageSize': _snapshotRowsPageTargetBytes,
+          'pageCount': pages.length,
+          'columns': columns,
+          'keyColumns': keyColumns,
+        }, 'starting paged row upload');
+    if (startDecoded is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected paged upload start payload.',
+      );
+    }
+    final resolvedUploadId = startDecoded['uploadId'] as String? ?? uploadId;
+
+    for (var index = 0; index < pages.length; index += 1) {
+      final pageDecoded = await _invokeTransferFunction(
+        'jobs_upload_rows_page',
+        {
+          'jobId': jobId,
+          'uploadId': resolvedUploadId,
+          'pageIndex': index,
+          'rows': pages[index],
+        },
+        'uploading row page ${index + 1} of ${pages.length}',
+      );
+      if (pageDecoded is! Map) {
+        throw const AgentControlPlaneException(
+          'Unexpected paged upload payload.',
+        );
+      }
+    }
+
+    final decoded = await _invokeTransferFunction('jobs_upload_rows_complete', {
+      'jobId': jobId,
+      'uploadId': resolvedUploadId,
+    }, 'completing paged row upload');
+    return _parseUploadSnapshotResult(decoded);
+  }
+
+  List<List<Map<String, String?>>> _splitRowsForPagedUpload(
+    List<Map<String, String?>> rows,
+  ) {
+    if (rows.isEmpty) {
+      return <List<Map<String, String?>>>[<Map<String, String?>>[]];
+    }
+
+    final pages = <List<Map<String, String?>>>[];
+    var page = <Map<String, String?>>[];
+    var pageBytes = 2;
+
+    for (final row in rows) {
+      final rowBytes = utf8.encode(jsonEncode(row)).length + 2;
+      if (page.isNotEmpty &&
+          pageBytes + rowBytes > _snapshotRowsPageTargetBytes) {
+        pages.add(List<Map<String, String?>>.from(page));
+        page = <Map<String, String?>>[];
+        pageBytes = 2;
+      }
+      page.add(row);
+      pageBytes += rowBytes;
+      if (pages.length >= _snapshotRowsMaxPages && page.isNotEmpty) {
+        throw const AgentControlPlaneException(
+          'Snapshot is too large to upload in bounded pages.',
+          statusCode: 413,
+        );
+      }
+    }
+
+    if (page.isNotEmpty) {
+      pages.add(List<Map<String, String?>>.from(page));
+    }
+    if (pages.length > _snapshotRowsMaxPages) {
+      throw const AgentControlPlaneException(
+        'Snapshot is too large to upload in bounded pages.',
+        statusCode: 413,
+      );
+    }
+    return pages;
+  }
+
+  UploadSnapshotResult _parseUploadSnapshotResult(dynamic decoded) {
     if (decoded is! Map) {
       throw const AgentControlPlaneException('Unexpected upload payload.');
     }
@@ -568,6 +741,7 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
+    Map<String, dynamic> manifestResponse;
     Map<String, dynamic> manifestDecoded;
     try {
       final manifest = await _invokeFunctionWithRetry(
@@ -580,6 +754,7 @@ class AgentControlPlaneClient {
           'Unexpected chunked download manifest payload.',
         );
       }
+      manifestResponse = Map<String, dynamic>.from(manifest);
       manifestDecoded = Map<String, dynamic>.from(manifest['manifest'] as Map);
     } catch (error) {
       if (error is AgentControlPlaneException &&
@@ -590,6 +765,12 @@ class AgentControlPlaneClient {
     }
     final transferId = manifestDecoded['id'] as String? ?? '';
     final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
+    final encoding = manifestDecoded['encoding'] as String? ?? 'gzip';
+
+    if (encoding == 'rows') {
+      return _downloadSnapshotRows(jobId, manifestResponse, manifestDecoded);
+    }
+
     final compressedBytes =
         (manifestDecoded['compressedBytes'] as num? ?? 0).round();
 
@@ -630,6 +811,52 @@ class AgentControlPlaneClient {
     }
 
     return RemoteSnapshot.fromJson(Map<String, dynamic>.from(decoded));
+  }
+
+  Future<RemoteSnapshot> _downloadSnapshotRows(
+    String jobId,
+    Map<String, dynamic> manifestResponse,
+    Map<String, dynamic> manifestDecoded,
+  ) async {
+    final transferId = manifestDecoded['id'] as String? ?? '';
+    final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
+    if (transferId.isEmpty || chunkCount < 1) {
+      throw const AgentControlPlaneException(
+        'Row download manifest is incomplete.',
+      );
+    }
+    if (manifestResponse['snapshot'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Row download manifest is missing snapshot metadata.',
+      );
+    }
+
+    final rows = <Map<String, String?>>[];
+    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      final chunkDecoded = await _invokeFunctionWithRetry(
+        'jobs_download_snapshot_chunk',
+        {'jobId': jobId, 'chunkIndex': chunkIndex},
+        'downloading row page ${chunkIndex + 1} of $chunkCount',
+      );
+      if (chunkDecoded is! Map || chunkDecoded['rows'] is! List) {
+        throw const AgentControlPlaneException('Unexpected row page payload.');
+      }
+      final pageRows = chunkDecoded['rows'] as List<dynamic>;
+      for (final row in pageRows) {
+        rows.add(
+          Map<String, String?>.fromEntries(
+            Map<String, dynamic>.from(row as Map).entries.map(
+              (entry) => MapEntry(entry.key, entry.value?.toString()),
+            ),
+          ),
+        );
+      }
+    }
+
+    return RemoteSnapshot.fromJson({
+      ...Map<String, dynamic>.from(manifestResponse['snapshot'] as Map),
+      'rows': rows,
+    });
   }
 
   Future<RemoteSnapshot> _downloadSnapshotLegacy(String jobId) async {

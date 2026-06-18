@@ -78,6 +78,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _connected = false;
   String? _error;
   String? _userListError;
+  final Set<String> _deletingClientUserIds = <String>{};
   String? _selectedClientName;
   String? _selectedTableName;
   String? _selectedDatabaseName;
@@ -273,6 +274,84 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _loadingUsers = false;
         _userListError = error.toString();
       });
+    }
+  }
+
+  Future<void> _confirmAndDeleteClientUser(AuthenticatedUser user) async {
+    if (!widget.authenticatedUser.isAdmin || !user.isClient) {
+      return;
+    }
+    if (_deletingClientUserIds.contains(user.id)) {
+      return;
+    }
+
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Delete Client ${user.name}?'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Text(
+              'This removes the client account, revokes its sessions, and removes its live client entry. Sync history is kept.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(height: 1.45),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB42318),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete Client'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _deletingClientUserIds.add(user.id);
+      _userListError = null;
+    });
+
+    try {
+      await _api.deleteUser(userId: user.id);
+      await _refreshVisibleUsers(silent: true);
+      if (!mounted) {
+        return;
+      }
+      scaffoldMessenger.showSnackBar(
+        SnackBar(content: Text('Deleted client ${user.name}.')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _userListError = error.toString();
+      });
+      scaffoldMessenger.showSnackBar(
+        SnackBar(content: SelectableText(error.toString())),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deletingClientUserIds.remove(user.id);
+        });
+      }
     }
   }
 
@@ -1301,6 +1380,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         widget.authenticatedUser.isOwner ? widget.authenticatedUser.id : null;
     String? errorText;
     bool submitting = false;
+    String? deletingUserId;
     bool showPassword = false;
 
     await showDialog<void>(
@@ -1595,6 +1675,81 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               }
             }
 
+            Future<void> openDeleteClientDialog(AuthenticatedUser user) async {
+              if (!widget.authenticatedUser.isAdmin || !user.isClient) {
+                return;
+              }
+
+              final scaffoldMessenger = ScaffoldMessenger.of(this.context);
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (context) {
+                  return AlertDialog(
+                    title: Text('Delete Client ${user.name}?'),
+                    content: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: Text(
+                        'This removes the client account, revokes its sessions, and removes its live client entry. Sync history is kept.',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(height: 1.45),
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFB42318),
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () => Navigator.of(context).pop(true),
+                        child: const Text('Delete Client'),
+                      ),
+                    ],
+                  );
+                },
+              );
+
+              if (confirmed != true) {
+                return;
+              }
+
+              setDialogState(() {
+                deletingUserId = user.id;
+                errorText = null;
+              });
+
+              try {
+                await _api.deleteUser(userId: user.id);
+                final refreshedUsers = await _api.listUsers();
+                if (!mounted) {
+                  return;
+                }
+                setState(() {
+                  _visibleUsers = refreshedUsers;
+                  _userListError = null;
+                });
+                setDialogState(() {
+                  dialogUsers = List<AuthenticatedUser>.from(refreshedUsers);
+                  deletingUserId = null;
+                });
+                scaffoldMessenger.showSnackBar(
+                  SnackBar(content: Text('Deleted client ${user.name}.')),
+                );
+              } catch (error) {
+                if (!mounted) {
+                  return;
+                }
+                setDialogState(() {
+                  deletingUserId = null;
+                  errorText = error.toString();
+                });
+              }
+            }
+
             return Dialog(
               insetPadding: const EdgeInsets.all(24),
               child: ConstrainedBox(
@@ -1791,6 +1946,109 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                         user.ownerUsername ??
                                         user.ownerEmail ??
                                         (user.isOwner ? 'Self' : 'Unassigned');
+                                    final deleting = deletingUserId == user.id;
+                                    final roleColor =
+                                        user.isAdmin
+                                            ? const Color(0xFF143842)
+                                            : user.isOwner
+                                            ? const Color(0xFF2B6F73)
+                                            : const Color(0xFFD8A23A);
+                                    final identity = Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          user.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        if (user.email.trim().isNotEmpty)
+                                          Text(
+                                            user.email,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Color(0xFF8A949A),
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                      ],
+                                    );
+                                    final accountMeta = Text(
+                                      user.isClient
+                                          ? 'Server user: $serverLabel'
+                                          : 'Web account',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.right,
+                                      style: const TextStyle(
+                                        color: Color(0xFF58656B),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    );
+                                    final trailing = Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      alignment: WrapAlignment.end,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: [
+                                        StatusBadge(
+                                          label: user.role.toUpperCase(),
+                                          color: roleColor,
+                                        ),
+                                        ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                            maxWidth: 190,
+                                          ),
+                                          child: accountMeta,
+                                        ),
+                                        if (widget.authenticatedUser.isAdmin)
+                                          OutlinedButton(
+                                            onPressed:
+                                                deleting
+                                                    ? null
+                                                    : () => unawaited(
+                                                      openResetPasswordDialog(
+                                                        user,
+                                                      ),
+                                                    ),
+                                            child: const Text('Reset Password'),
+                                          ),
+                                        if (widget.authenticatedUser.isAdmin &&
+                                            user.isClient)
+                                          OutlinedButton.icon(
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor: const Color(
+                                                0xFFB42318,
+                                              ),
+                                              side: const BorderSide(
+                                                color: Color(0xFFFDA29B),
+                                              ),
+                                            ),
+                                            onPressed:
+                                                deleting
+                                                    ? null
+                                                    : () => unawaited(
+                                                      openDeleteClientDialog(
+                                                        user,
+                                                      ),
+                                                    ),
+                                            icon: const Icon(
+                                              Icons.delete_outline_rounded,
+                                              size: 16,
+                                            ),
+                                            label: Text(
+                                              deleting
+                                                  ? 'Deleting...'
+                                                  : 'Delete',
+                                            ),
+                                          ),
+                                      ],
+                                    );
                                     return Container(
                                       padding: const EdgeInsets.all(14),
                                       decoration: BoxDecoration(
@@ -1800,73 +2058,35 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                           color: const Color(0xFFDDE3EA),
                                         ),
                                       ),
-                                      child: Row(
-                                        children: [
-                                          Expanded(
-                                            child: Column(
+                                      child: LayoutBuilder(
+                                        builder: (context, constraints) {
+                                          final stack =
+                                              constraints.maxWidth < 700;
+                                          if (stack) {
+                                            return Column(
                                               crossAxisAlignment:
                                                   CrossAxisAlignment.start,
                                               children: [
-                                                Text(
-                                                  user.name,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w800,
-                                                  ),
-                                                ),
-                                                if (user.email
-                                                    .trim()
-                                                    .isNotEmpty)
-                                                  Text(
-                                                    user.email,
-                                                    style: const TextStyle(
-                                                      color: Color(0xFF8A949A),
-                                                      fontSize: 12,
-                                                    ),
-                                                  ),
+                                                identity,
+                                                const SizedBox(height: 10),
+                                                trailing,
                                               ],
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          StatusBadge(
-                                            label: user.role.toUpperCase(),
-                                            color:
-                                                user.isAdmin
-                                                    ? const Color(0xFF143842)
-                                                    : user.isOwner
-                                                    ? const Color(0xFF2B6F73)
-                                                    : const Color(0xFFD8A23A),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          SizedBox(
-                                            width: 180,
-                                            child: Text(
-                                              user.isClient
-                                                  ? 'Server user: $serverLabel'
-                                                  : 'Web account',
-                                              textAlign: TextAlign.right,
-                                              style: const TextStyle(
-                                                color: Color(0xFF58656B),
-                                                fontWeight: FontWeight.w600,
+                                            );
+                                          }
+                                          return Row(
+                                            children: [
+                                              Expanded(child: identity),
+                                              const SizedBox(width: 12),
+                                              Flexible(
+                                                child: Align(
+                                                  alignment:
+                                                      Alignment.centerRight,
+                                                  child: trailing,
+                                                ),
                                               ),
-                                            ),
-                                          ),
-                                          if (widget
-                                              .authenticatedUser
-                                              .isAdmin) ...[
-                                            const SizedBox(width: 12),
-                                            OutlinedButton(
-                                              onPressed:
-                                                  () => unawaited(
-                                                    openResetPasswordDialog(
-                                                      user,
-                                                    ),
-                                                  ),
-                                              child: const Text(
-                                                'Reset Password',
-                                              ),
-                                            ),
-                                          ],
-                                        ],
+                                            ],
+                                          );
+                                        },
                                       ),
                                     );
                                   },
@@ -6138,6 +6358,32 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildAccountTile(AuthenticatedUser user, {bool compact = false}) {
+    final deleting = _deletingClientUserIds.contains(user.id);
+    final trailing = Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        StatusBadge(
+          label: _userRoleLabel(user.role),
+          color: _userRoleColor(user.role),
+        ),
+        if (widget.authenticatedUser.isAdmin && user.isClient)
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFB42318),
+              side: const BorderSide(color: Color(0xFFFDA29B)),
+            ),
+            onPressed:
+                deleting
+                    ? null
+                    : () => unawaited(_confirmAndDeleteClientUser(user)),
+            icon: const Icon(Icons.delete_outline_rounded, size: 16),
+            label: Text(deleting ? 'Deleting...' : 'Delete'),
+          ),
+      ],
+    );
     return Container(
       padding: EdgeInsets.all(compact ? 10 : 12),
       decoration: BoxDecoration(
@@ -6145,22 +6391,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildAccountTitleBlock(
-              title: user.name,
-              subtitle: _accountSubtitle(user),
-              icon: _userRoleIcon(user.role),
-              color: _userRoleColor(user.role),
-            ),
-          ),
-          const SizedBox(width: 10),
-          StatusBadge(
-            label: _userRoleLabel(user.role),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final titleBlock = _buildAccountTitleBlock(
+            title: user.name,
+            subtitle: _accountSubtitle(user),
+            icon: _userRoleIcon(user.role),
             color: _userRoleColor(user.role),
-          ),
-        ],
+          );
+          final stack = constraints.maxWidth < 520;
+          if (stack) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [titleBlock, const SizedBox(height: 10), trailing],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: titleBlock),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Align(alignment: Alignment.centerRight, child: trailing),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

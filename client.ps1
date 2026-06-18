@@ -1,7 +1,7 @@
 param(
     [string] $ProjectPath = "$PSScriptRoot\sync_windows_agent",
     [string] $Device = "windows",
-    [string] $BackendBaseUrl = "http://127.0.0.1:6006/call",
+    [string] $BackendBaseUrl = "https://sync.velvet-leaf.com/call",
     [switch] $SkipGet,
     [bool] $AutoRestart = $true,
     [int] $DebounceMs = 900
@@ -24,6 +24,44 @@ if (-not (Test-Path -LiteralPath $mainDart)) {
 
 $flutterProcess = $null
 $appBinaryName = "sync_windows_agent.exe"
+
+function Get-FlutterAppVersion {
+    param([string]$ProjectPath)
+
+    $pubspecPath = Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml'
+    if (-not (Test-Path -LiteralPath $pubspecPath -PathType Leaf)) {
+        return "dev"
+    }
+
+    $match = Get-Content -LiteralPath $pubspecPath |
+        Select-String -Pattern '^\s*version:\s*(\S+)\s*$' |
+        Select-Object -First 1
+    if ($match) {
+        return $match.Matches[0].Groups[1].Value
+    }
+    return "dev"
+}
+
+function Get-GitCommitHash {
+    try {
+        $commit = (& git -C $PSScriptRoot rev-parse --short=12 HEAD 2>$null).Trim()
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($commit)) {
+            return $commit
+        }
+    } catch {
+    }
+    return ""
+}
+
+function New-DartDefineArgs {
+    $releaseDate = Get-Date -Format "yyyy-MM-dd'T'HH:mm:sszzz"
+    return @(
+        "--dart-define", "BACKEND_BASE_URL=$BackendBaseUrl",
+        "--dart-define", "APP_VERSION=$(Get-FlutterAppVersion -ProjectPath $ProjectPath)",
+        "--dart-define", "BUILD_RELEASE_DATE=$releaseDate",
+        "--dart-define", "BUILD_COMMIT_HASH=$(Get-GitCommitHash)"
+    )
+}
 
 function Get-ChildProcessIds {
     param([int]$ProcessId)
@@ -64,9 +102,9 @@ function Start-App {
     Stop-OrphanedAgentProcesses
     Write-Host "Starting Windows desktop client: flutter run -d $Device"
     Write-Host "Backend URL: $BackendBaseUrl"
-    $dartDefine = "BACKEND_BASE_URL=$BackendBaseUrl"
+    $flutterArgs = @("run", "-d", $Device) + (New-DartDefineArgs)
     $script:flutterProcess = Start-Process -FilePath flutter `
-        -ArgumentList "run", "-d", $Device, "--dart-define", $dartDefine `
+        -ArgumentList $flutterArgs `
         -WorkingDirectory $ProjectPath `
         -PassThru `
         -NoNewWindow

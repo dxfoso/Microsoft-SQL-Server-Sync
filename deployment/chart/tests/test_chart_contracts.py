@@ -50,7 +50,19 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
         self.assertIn(
-            'nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "120"',
+            'nginx.ingress.kubernetes.io/proxy-body-size: "100m"',
+            values_yaml,
+        )
+        self.assertIn(
+            'nginx.ingress.kubernetes.io/proxy-read-timeout: "900"',
+            values_yaml,
+        )
+        self.assertIn(
+            'nginx.ingress.kubernetes.io/proxy-send-timeout: "900"',
+            values_yaml,
+        )
+        self.assertIn(
+            'nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "900"',
             values_yaml,
         )
 
@@ -93,6 +105,34 @@ class ChartContractsTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn(".Values.postgres.nodeSelector", postgres_deployment)
         self.assertNotIn(".Values.postgres.tolerations", postgres_deployment)
+
+    def test_backend_probes_use_tolerant_configured_thresholds(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        backend_deployment = (
+            ROOT / "templates" / "backend-deployment.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("timeoutSeconds: 5", values_yaml)
+        self.assertIn("failureThreshold: 6", values_yaml)
+        self.assertIn(
+            "timeoutSeconds: {{ .Values.backend.readinessProbe.timeoutSeconds }}",
+            backend_deployment,
+        )
+        self.assertIn(
+            "failureThreshold: {{ .Values.backend.livenessProbe.failureThreshold }}",
+            backend_deployment,
+        )
+
+    def test_backend_sets_memory_cap_below_pod_limit(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        backend_deployment = (
+            ROOT / "templates" / "backend-deployment.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('truMemoryCapMb: "6144"', values_yaml)
+        self.assertIn("memory: 8Gi", values_yaml)
+        self.assertIn("TRU_MEMORY_CAP_MB", backend_deployment)
+        self.assertIn(".Values.backend.env.truMemoryCapMb", backend_deployment)
 
     def test_runtime_config_keeps_public_admin_health_ungated(self):
         tru_config = json.loads(

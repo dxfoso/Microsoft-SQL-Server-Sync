@@ -11,6 +11,19 @@ import 'live_sync_api.dart';
 import 'sync_state.dart';
 import 'startup_log.dart';
 
+const String _agentAppVersion = String.fromEnvironment(
+  'APP_VERSION',
+  defaultValue: '1.0.0+1',
+);
+const String _agentBuildCommitHash = String.fromEnvironment(
+  'BUILD_COMMIT_HASH',
+  defaultValue: '',
+);
+const String _agentBuildReleaseDate = String.fromEnvironment(
+  'BUILD_RELEASE_DATE',
+  defaultValue: '',
+);
+
 class AgentDashboardPage extends StatefulWidget {
   const AgentDashboardPage({
     super.key,
@@ -976,6 +989,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final minute = local.minute.toString().padLeft(2, '0');
     final second = local.second.toString().padLeft(2, '0');
     return '$day.$month.$year $hour:$minute:$second';
+  }
+
+  String _buildSummaryLabel() {
+    final version =
+        _agentAppVersion.trim().isEmpty ? 'dev' : _agentAppVersion.trim();
+    final releaseDate = _agentBuildReleaseDate.trim();
+    final commitHash = _agentBuildCommitHash.trim();
+    final shortHash =
+        commitHash.length > 7 ? commitHash.substring(0, 7) : commitHash;
+    final hashSuffix = shortHash.isEmpty ? '' : ' $shortHash';
+    if (releaseDate.isEmpty) {
+      return 'v$version dev$hashSuffix';
+    }
+    return 'v$version ${_formatTimestamp(releaseDate)}$hashSuffix';
   }
 
   String _roleLabel(bool isMaster) => 'Two-way';
@@ -2262,6 +2289,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 ownerRows: ownerSnapshotBeforeUpload.rows,
                 columns: snapshot.columns,
                 keyColumns: snapshot.keyColumns,
+                signatureColumns: snapshot.signatureColumns,
               );
 
       final backupFile = _createSnapshotFileDocument(
@@ -2559,18 +2587,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final writableSnapshotColumns = snapshot.columns
         .where((column) => _isWritableSyncColumn(schemasByName[column]!))
         .toList(growable: false);
-    if (snapshot.rows.isNotEmpty && writableSnapshotColumns.isEmpty) {
+    final writeColumns =
+        mergeRows
+            ? writableSnapshotColumns
+                .where(
+                  (column) => !(schemasByName[column]?.isIdentity ?? false),
+                )
+                .toList(growable: false)
+            : writableSnapshotColumns;
+    if (snapshot.rows.isNotEmpty && writeColumns.isEmpty) {
       throw Exception(
         'Downloaded snapshot for $table has no writable local columns. Computed, rowversion, and generated columns cannot be applied.',
       );
     }
 
-    final hasIdentity = writableSnapshotColumns.any(
+    final hasIdentity = writeColumns.any(
       (column) => schemasByName[column]?.isIdentity ?? false,
     );
     final qualifiedTable = _quoteQualifiedIdentifier(table);
-    final columnList = writableSnapshotColumns.map(_quoteIdentifier).join(', ');
-    final keyColumns = _mergeKeyColumns(schemas, snapshot.columns);
+    final columnList = writeColumns.map(_quoteIdentifier).join(', ');
+    final keyColumns = _mergeKeyColumns(
+      schemas,
+      snapshot.columns,
+      mergeRows: mergeRows,
+      writableColumns: writeColumns,
+    );
     if (mergeRows && keyColumns.isEmpty) {
       throw Exception(
         'Merge sync requires a primary key on $table. No primary key columns were found in the local table schema and downloaded snapshot.',
@@ -2581,7 +2622,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             ? _deduplicateMergeRows(
               table: table,
               rows: snapshot.rows,
-              columns: snapshot.columns,
+              signatureColumns: writeColumns,
               keyColumns: keyColumns,
             )
             : snapshot.rows;
@@ -2617,9 +2658,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             _mergeSnapshotRowsStatement(
               qualifiedTable: qualifiedTable,
               sourceColumns: snapshot.columns,
-              writeColumns: writableSnapshotColumns,
+              writeColumns: writeColumns,
               keyColumns: keyColumns,
-              schemasByName: schemasByName,
               values: values,
             ),
           );
@@ -2639,7 +2679,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     statements.add('BEGIN CATCH');
     statements.add('IF @@TRANCOUNT > 0 ROLLBACK TRAN;');
     statements.add(
-      "DECLARE @errorMessage NVARCHAR(4000) = ERROR_MESSAGE(); "
+      'DECLARE @errorMessage NVARCHAR(4000); '
+      'SET @errorMessage = ERROR_MESSAGE(); '
       'RAISERROR(@errorMessage, 16, 1);',
     );
     statements.add('END CATCH;');
@@ -2668,6 +2709,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: false,
         columns: [],
         keyColumns: [],
+        signatureColumns: [],
         rows: [],
         totalRows: 0,
         snapshotCreatedAt: '',
@@ -2687,6 +2729,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: false,
         columns: const [],
         keyColumns: const [],
+        signatureColumns: const [],
         rows: const [],
         totalRows: 0,
         snapshotCreatedAt: '',
@@ -2696,6 +2739,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     final columns = schemaResult.values
         .map((schema) => schema.name)
+        .toList(growable: false);
+    final schemasByName = {
+      for (final schema in schemaResult.values) schema.name: schema,
+    };
+    final writableColumns = columns
+        .where((column) => _isWritableSyncColumn(schemasByName[column]!))
+        .toList(growable: false);
+    final signatureColumns = writableColumns
+        .where((column) => !(schemasByName[column]?.isIdentity ?? false))
         .toList(growable: false);
 
     final rowCountResult = await _queryTableRowCount(
@@ -2709,6 +2761,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: false,
         columns: columns,
         keyColumns: const [],
+        signatureColumns: const [],
         rows: const [],
         totalRows: 0,
         snapshotCreatedAt: '',
@@ -2734,6 +2787,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           success: false,
           columns: columns,
           keyColumns: const [],
+          signatureColumns: const [],
           rows: const [],
           totalRows: rowCountResult.value,
           snapshotCreatedAt: '',
@@ -2746,7 +2800,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return _TableSnapshotResult(
       success: true,
       columns: columns,
-      keyColumns: _mergeKeyColumns(schemaResult.values, columns),
+      keyColumns: _mergeKeyColumns(
+        schemaResult.values,
+        columns,
+        mergeRows: true,
+        writableColumns: writableColumns,
+      ),
+      signatureColumns: signatureColumns,
       rows: rows,
       totalRows: rowCountResult.value,
       snapshotCreatedAt: DateTime.now().toIso8601String(),
@@ -3108,27 +3168,40 @@ ORDER BY ORDINAL_POSITION;
   }) async {
     final query = '''
 SET NOCOUNT ON;
+DECLARE @schemaName sysname = N'${_escapeSqlLiteral(schema)}';
+DECLARE @tableName sysname = N'${_escapeSqlLiteral(table)}';
+DECLARE @generatedAlwaysExpression nvarchar(80) =
+  CASE
+    WHEN COL_LENGTH('sys.columns', 'generated_always_type') IS NULL THEN N'0'
+    ELSE N'c.generated_always_type'
+  END;
+DECLARE @schemaSql nvarchar(max) = N'
 SELECT
   c.name,
   TYPE_NAME(c.user_type_id),
   c.is_nullable,
   c.is_identity,
   c.is_computed,
-  c.generated_always_type,
+  ' + @generatedAlwaysExpression + N',
   CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS is_primary_key
-FROM ${_quoteIdentifier(database)}.sys.columns AS c
-INNER JOIN ${_quoteIdentifier(database)}.sys.tables AS t ON t.object_id = c.object_id
-INNER JOIN ${_quoteIdentifier(database)}.sys.schemas AS s ON s.schema_id = t.schema_id
+FROM sys.columns AS c
+INNER JOIN sys.tables AS t ON t.object_id = c.object_id
+INNER JOIN sys.schemas AS s ON s.schema_id = t.schema_id
 LEFT JOIN (
   SELECT ic.object_id, ic.column_id
-  FROM ${_quoteIdentifier(database)}.sys.indexes AS i
-  INNER JOIN ${_quoteIdentifier(database)}.sys.index_columns AS ic
+  FROM sys.indexes AS i
+  INNER JOIN sys.index_columns AS ic
     ON ic.object_id = i.object_id AND ic.index_id = i.index_id
   WHERE i.is_primary_key = 1
 ) AS pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
-WHERE s.name = '${_escapeSqlLiteral(schema)}'
-  AND t.name = '${_escapeSqlLiteral(table)}'
-ORDER BY c.column_id;
+WHERE s.name = @schemaName
+  AND t.name = @tableName
+ORDER BY c.column_id;';
+EXEC sp_executesql
+  @schemaSql,
+  N'@schemaName sysname, @tableName sysname',
+  @schemaName = @schemaName,
+  @tableName = @tableName;
 ''';
     final processResult = await _runSqlCmd(
       profile: profile,
@@ -3448,9 +3521,12 @@ ORDER BY [__sync_agent_row_number];
 
   List<String> _mergeKeyColumns(
     List<_TableColumnSchema> schemas,
-    List<String> snapshotColumns,
-  ) {
+    List<String> snapshotColumns, {
+    bool mergeRows = false,
+    List<String> writableColumns = const [],
+  }) {
     final snapshotColumnSet = snapshotColumns.toSet();
+    final schemasByName = {for (final schema in schemas) schema.name: schema};
     final primaryKeys = schemas
         .where(
           (schema) =>
@@ -3458,7 +3534,26 @@ ORDER BY [__sync_agent_row_number];
         )
         .map((schema) => schema.name)
         .toList(growable: false);
-    return primaryKeys.isEmpty ? snapshotColumns : primaryKeys;
+    if (!mergeRows) {
+      return primaryKeys.isEmpty ? snapshotColumns : primaryKeys;
+    }
+    if (primaryKeys.isNotEmpty &&
+        primaryKeys.every(
+          (column) => !(schemasByName[column]?.isIdentity ?? false),
+        )) {
+      return primaryKeys;
+    }
+
+    final nonIdentityWritableColumns = writableColumns
+        .where((column) => !(schemasByName[column]?.isIdentity ?? false))
+        .toList(growable: false);
+    if (nonIdentityWritableColumns.isNotEmpty) {
+      return nonIdentityWritableColumns;
+    }
+
+    return primaryKeys
+        .where((column) => !(schemasByName[column]?.isIdentity ?? false))
+        .toList(growable: false);
   }
 
   bool _isWritableSyncColumn(_TableColumnSchema schema) {
@@ -3490,17 +3585,20 @@ ORDER BY [__sync_agent_row_number];
     required List<Map<String, String?>> ownerRows,
     required List<String> columns,
     required List<String> keyColumns,
+    required List<String> signatureColumns,
   }) {
     if (ownerRows.isEmpty) {
       return localRows;
     }
+    final comparableColumns =
+        signatureColumns.isEmpty ? columns : signatureColumns;
 
     final ownerSignatureByKey = <String, String>{};
     for (final ownerRow in ownerRows) {
       ownerSignatureByKey[_mergeRowKey(
         ownerRow,
         keyColumns,
-      )] = _mergeRowSignature(ownerRow, columns);
+      )] = _mergeRowSignature(ownerRow, comparableColumns);
     }
 
     return localRows
@@ -3510,7 +3608,8 @@ ORDER BY [__sync_agent_row_number];
           if (ownerSignature == null) {
             return true;
           }
-          return ownerSignature != _mergeRowSignature(localRow, columns);
+          return ownerSignature !=
+              _mergeRowSignature(localRow, comparableColumns);
         })
         .toList(growable: false);
   }
@@ -3518,15 +3617,17 @@ ORDER BY [__sync_agent_row_number];
   List<Map<String, String?>> _deduplicateMergeRows({
     required String table,
     required List<Map<String, String?>> rows,
-    required List<String> columns,
+    required List<String> signatureColumns,
     required List<String> keyColumns,
   }) {
+    final comparableColumns =
+        signatureColumns.isEmpty ? keyColumns : signatureColumns;
     final rowsByKey = <String, Map<String, String?>>{};
     final signatureByKey = <String, String>{};
 
     for (final row in rows) {
       final rowKey = _mergeRowKey(row, keyColumns);
-      final rowSignature = _mergeRowSignature(row, columns);
+      final rowSignature = _mergeRowSignature(row, comparableColumns);
       final existingSignature = signatureByKey[rowKey];
       if (existingSignature == null) {
         signatureByKey[rowKey] = rowSignature;
@@ -3535,7 +3636,7 @@ ORDER BY [__sync_agent_row_number];
       }
       if (existingSignature != rowSignature) {
         throw Exception(
-          'Merge conflict detected in downloaded snapshot for $table. Multiple rows share the same primary key but contain different values.',
+          'Merge conflict detected in downloaded snapshot for $table. Multiple rows share the same merge key but contain different writable values.',
         );
       }
     }
@@ -3556,26 +3657,11 @@ ORDER BY [__sync_agent_row_number];
         .join(' AND ');
   }
 
-  String _sqlColumnDifferenceClause({
-    required String leftAlias,
-    required String rightAlias,
-    required List<String> columns,
-  }) {
-    return columns
-        .map((column) {
-          final left = '$leftAlias.${_quoteIdentifier(column)}';
-          final right = '$rightAlias.${_quoteIdentifier(column)}';
-          return '($left <> $right OR ($left IS NULL AND $right IS NOT NULL) OR ($left IS NOT NULL AND $right IS NULL))';
-        })
-        .join(' OR ');
-  }
-
   String _mergeSnapshotRowsStatement({
     required String qualifiedTable,
     required List<String> sourceColumns,
     required List<String> writeColumns,
     required List<String> keyColumns,
-    required Map<String, _TableColumnSchema> schemasByName,
     required String values,
   }) {
     if (sourceColumns.isEmpty || writeColumns.isEmpty || keyColumns.isEmpty) {
@@ -3587,13 +3673,6 @@ ORDER BY [__sync_agent_row_number];
       rightAlias: 'source',
       columns: keyColumns,
     );
-    final compareColumns = writeColumns
-        .where(
-          (column) =>
-              !keyColumns.contains(column) &&
-              !(schemasByName[column]?.isIdentity ?? false),
-        )
-        .toList(growable: false);
     final insertColumns = writeColumns.map(_quoteIdentifier).join(', ');
     final insertValues = writeColumns
         .map((column) => 'source.${_quoteIdentifier(column)}')
@@ -3601,14 +3680,6 @@ ORDER BY [__sync_agent_row_number];
     final duplicateSourceKeysClause = keyColumns
         .map((column) => 'source.${_quoteIdentifier(column)}')
         .join(', ');
-    final differenceClause =
-        compareColumns.isEmpty
-            ? ''
-            : _sqlColumnDifferenceClause(
-              leftAlias: 'target',
-              rightAlias: 'source',
-              columns: compareColumns,
-            );
     return '''
 IF EXISTS (
   SELECT 1
@@ -3617,20 +3688,8 @@ IF EXISTS (
   HAVING COUNT(*) > 1
 )
 BEGIN
-  THROW 51001, N'Downloaded snapshot contains duplicate primary keys for $qualifiedTable.', 1;
+  RAISERROR(N'Downloaded snapshot contains duplicate primary keys for $qualifiedTable.', 16, 1);
 END;
-${differenceClause.isEmpty ? '' : '''
-IF EXISTS (
-  SELECT 1
-  FROM (VALUES $values) AS source ($sourceColumnList)
-  INNER JOIN $qualifiedTable AS target
-    ON $matchClause
-  WHERE $differenceClause
-)
-BEGIN
-  THROW 51000, N'Merge conflict detected for $qualifiedTable. A row with the same primary key already exists with different values.', 1;
-END;
-'''}
 MERGE $qualifiedTable AS target
 USING (VALUES $values) AS source ($sourceColumnList)
 ON $matchClause
@@ -5292,7 +5351,15 @@ WHEN NOT MATCHED BY TARGET THEN
 
   Widget _buildSyncHistorySide(_SyncTableRowData row) {
     final historyEntries = List<SyncHistoryEntry>.from(row.state.history)
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      ..sort((a, b) {
+        final comparison = _timestampSortValue(
+          b.timestamp,
+        ).compareTo(_timestampSortValue(a.timestamp));
+        if (comparison != 0) {
+          return comparison;
+        }
+        return b.timestamp.compareTo(a.timestamp);
+      });
 
     if (historyEntries.isEmpty) {
       return const AgentEmptyStateCard(
@@ -5754,6 +5821,7 @@ WHEN NOT MATCHED BY TARGET THEN
 
     final footerItems = <Widget>[
       _InfoLine(label: 'Client', value: widget.clientName),
+      _InfoLine(label: 'Build', value: _buildSummaryLabel()),
       _InfoLine(label: 'Agent', value: agentStatus),
       _InfoLine(label: 'SQL', value: sqlStatus),
       _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
@@ -6281,6 +6349,7 @@ class _TableSnapshotResult {
     required this.success,
     required this.columns,
     required this.keyColumns,
+    required this.signatureColumns,
     required this.rows,
     required this.totalRows,
     required this.snapshotCreatedAt,
@@ -6290,6 +6359,7 @@ class _TableSnapshotResult {
   final bool success;
   final List<String> columns;
   final List<String> keyColumns;
+  final List<String> signatureColumns;
   final List<Map<String, String?>> rows;
   final int totalRows;
   final String snapshotCreatedAt;

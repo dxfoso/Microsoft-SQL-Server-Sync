@@ -170,6 +170,10 @@ function is_owner_user(user: map<json>): bool {
   return user.role == "owner";
 }
 
+function is_client_user(user: map<json>): bool {
+  return user.role == "client";
+}
+
 function can_read_agent(current: map<json>? = null, ownerUserId: string? = null, createdByUserId: string? = null): bool {
   if (current == null) {
     return false;
@@ -473,6 +477,54 @@ function chunk_data_for_index(session: map<json>, chunkIndex: int): string {
   return "";
 }
 
+function chunk_rows_for_index(session: map<json>, chunkIndex: int): array<json> {
+  for (const chunk of session.chunks) {
+    if (chunk.index == chunkIndex && chunk.rows != null) {
+      return chunk.rows;
+    }
+  }
+  return [];
+}
+
+function row_download_page_size(): int {
+  return 200;
+}
+
+function row_download_chunks(rows: array<json>, pageSize: int = 200): array<json> {
+  let resolvedPageSize = pageSize;
+  if (resolvedPageSize < 1) {
+    resolvedPageSize = row_download_page_size();
+  }
+
+  let chunks = [];
+  let page = [];
+  let pageIndex = 0;
+  let pageRows = 0;
+  for (const row of rows) {
+    page = page.concat([row]);
+    pageRows += 1;
+    if (pageRows >= resolvedPageSize) {
+      chunks = chunks.concat([{
+        index: pageIndex,
+        rows: page,
+        count: page.length
+      }]);
+      page = [];
+      pageRows = 0;
+      pageIndex += 1;
+    }
+  }
+
+  if (page.length > 0 || chunks.length == 0) {
+    chunks = chunks.concat([{
+      index: pageIndex,
+      rows: page,
+      count: page.length
+    }]);
+  }
+  return chunks;
+}
+
 function upload_session_progress(job: map<json>, session: map<json>): map<json> {
   const received = chunk_indexes(session);
   return {
@@ -491,6 +543,7 @@ function download_session_payload(session: map<json>): map<json> {
     chunkCount: session.chunkCount,
     compressedBytes: session.compressedBytes,
     chunkSizeBytes: session.chunkSizeBytes,
+    encoding: session.encoding,
     snapshotId: session.snapshotId
   };
 }
@@ -796,7 +849,9 @@ function merge_rows_by_key(existingRows: array<json>, incomingRows: array<json>,
     let next = [];
     for (const current of merged) {
       if (row_key(current, keyColumns) == incomingKey) {
-        next = next.concat([incoming]);
+        if (!replaced) {
+          next = next.concat([incoming]);
+        }
         replaced = true;
       } else {
         next = next.concat([current]);
@@ -976,6 +1031,32 @@ function user_reset_password(userId: string, password: string, token: string? = 
     return raw_json_error(404, 'user not found');
   }
   return { ok: true };
+}
+
+function user_delete(userId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const target = find_user_by_id(userId);
+  if (target == null) {
+    return raw_json_error(404, 'user not found');
+  }
+  if (!is_client_user(target)) {
+    return raw_json_error(403, 'only client accounts can be deleted');
+  }
+
+  db.updateMany(Session, { userId }, { revokedAt: now_iso() });
+  db.delete(Agent, { clientName: target.username });
+  const deleted = db.delete(User, { id: userId });
+  if (deleted == 0) {
+    return raw_json_error(404, 'user not found');
+  }
+  return { ok: true, user: public_user_payload(target) };
 }
 
 function live_state(token: string? = null): map<json> {
@@ -1513,7 +1594,13 @@ function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chu
     const receivedCount = int.from(received.length);
     const estimated = int.from((receivedCount * 25) / chunkCount);
     const candidateProgress = 70 + estimated;
-    progress = Math.min(95, Math.max(70, candidateProgress));
+    progress = candidateProgress;
+    if (progress < 70) {
+      progress = 70;
+    }
+    if (progress > 95) {
+      progress = 95;
+    }
   }
   const updatedJob = db.update(SyncJob, { id: jobId }, {
     status: 'uploading',
@@ -1640,6 +1727,340 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: stri
   });
 }
 
+function jobs_upload_rows_start(jobId: string, uploadId: string = '', clientName: string = '', table: string = '', rowCount: int = 0, snapshotCreatedAt: string = '', snapshotBytes: int = 0, pageSize: int = 200, pageCount: int = 0, columns: array<string>? = null, keyColumns: array<string>? = null, checksum: string = '', token: string? = null): map<json> {
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current_user_record(token), job)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  let resolvedPageCount = pageCount;
+  if (resolvedPageCount < 1) {
+    resolvedPageCount = 1;
+  }
+  if (resolvedPageCount > max_chunk_count()) {
+    return raw_json_error(400, 'invalid page count');
+  }
+
+  let resolvedPageSize = pageSize;
+  if (resolvedPageSize < 1) {
+    resolvedPageSize = row_download_page_size();
+  }
+
+  let resolvedUploadId = uploadId;
+  let resolvedSnapshotCreatedAt = snapshotCreatedAt;
+  if (uploadId.trim().length == 0) {
+    resolvedUploadId = uuid.v4();
+  }
+  if (snapshotCreatedAt.trim().length == 0) {
+    resolvedSnapshotCreatedAt = now_iso();
+  }
+  let resolvedTable = job.table;
+  if (table.trim().length != 0) {
+    resolvedTable = table;
+  }
+  let normalizedColumns = [];
+  if (columns != null) {
+    normalizedColumns = columns;
+  }
+  const normalizedKeyColumns = normalize_key_columns(keyColumns);
+
+  db.delete(UploadSession, { jobId });
+  const session = db.insert(UploadSession, {
+    id: uuid.v4(),
+    jobId,
+    uploadId: resolvedUploadId,
+    table: resolvedTable,
+    rowCount,
+    snapshotCreatedAt: resolvedSnapshotCreatedAt,
+    snapshotBytes,
+    compressedBytes: 0,
+    chunkSizeBytes: resolvedPageSize,
+    chunkCount: resolvedPageCount,
+    encoding: 'rows',
+    createdAt: now_iso(),
+    updatedAt: now_iso(),
+    chunks: [{
+      index: -1,
+      kind: 'rows_metadata',
+      columns: normalizedColumns,
+      keyColumns: normalizedKeyColumns,
+      checksum
+    }]
+  });
+
+  const updated = db.update(SyncJob, { id: jobId }, {
+    status: 'uploading',
+    progress: 70,
+    rowCount,
+    snapshotBytes,
+    updatedAt: now_iso(),
+    message: string.concat('Ready to receive ', string.from(resolvedPageCount), ' row upload pages.')
+  });
+
+  let nextJob = job;
+  if (updated != null) {
+    nextJob = updated;
+  }
+  return raw_json_success({
+    job: public_job_payload(nextJob),
+    uploadId: session.uploadId,
+    pageSize: session.chunkSizeBytes,
+    pageCount: session.chunkCount,
+    receivedIndexes: []
+  });
+}
+
+function jobs_upload_rows_page(jobId: string, uploadId: string, pageIndex: int, rows: array<json>? = null, token: string? = null): map<json> {
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current_user_record(token), job)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const session = find_upload_session_for_job(jobId, uploadId);
+  if (session == null) {
+    return raw_json_error(404, 'upload session not found');
+  }
+  if (pageIndex < 0 || pageIndex >= session.chunkCount) {
+    return raw_json_error(400, 'page index is out of range');
+  }
+  let normalizedRows = [];
+  if (rows != null) {
+    normalizedRows = rows;
+  }
+
+  let nextChunks = [];
+  let replaced = false;
+  for (const item of session.chunks) {
+    if (item.index == pageIndex) {
+      nextChunks = nextChunks.concat([{
+        index: pageIndex,
+        rows: normalizedRows,
+        count: normalizedRows.length
+      }]);
+      replaced = true;
+    } else {
+      nextChunks = nextChunks.concat([item]);
+    }
+  }
+  if (!replaced) {
+    nextChunks = nextChunks.concat([{
+      index: pageIndex,
+      rows: normalizedRows,
+      count: normalizedRows.length
+    }]);
+  }
+
+  const updatedSession = db.update(UploadSession, { id: session.id }, {
+    chunks: nextChunks,
+    updatedAt: now_iso()
+  });
+  let nextSession = session;
+  if (updatedSession != null) {
+    nextSession = updatedSession;
+  }
+
+  const received = chunk_indexes(nextSession);
+  let progress = 70;
+  const pageCount = session.chunkCount;
+  if (pageCount > 0) {
+    const receivedCount = int.from(received.length);
+    const estimated = int.from((receivedCount * 25) / pageCount);
+    const candidateProgress = 70 + estimated;
+    progress = candidateProgress;
+    if (progress < 70) {
+      progress = 70;
+    }
+    if (progress > 95) {
+      progress = 95;
+    }
+  }
+  const updatedJob = db.update(SyncJob, { id: jobId }, {
+    status: 'uploading',
+    progress,
+    rowCount: session.rowCount,
+    updatedAt: now_iso(),
+    message: string.concat('Received row upload page ', string.from(pageIndex + 1), '/', string.from(session.chunkCount), '.')
+  });
+
+  let nextJob = job;
+  if (updatedJob != null) {
+    nextJob = updatedJob;
+  }
+  return {
+    job: public_job_payload(nextJob),
+    uploadId: nextSession.uploadId,
+    pageCount: nextSession.chunkCount,
+    receivedIndexes: received
+  };
+}
+
+function jobs_upload_rows_complete(jobId: string, uploadId: string, token: string? = null): map<json> {
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current_user_record(token), job)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const session = find_upload_session_by_upload_id(uploadId);
+  if (session == null || session.jobId != jobId) {
+    return raw_json_error(404, 'upload session not found');
+  }
+
+  const received = chunk_indexes(session);
+  if (received.length != session.chunkCount) {
+    const progress = upload_session_progress(job, session);
+    return raw_json_success({
+      error: 'upload is missing row pages',
+      uploadId: progress.uploadId,
+      pageCount: progress.chunkCount,
+      receivedIndexes: progress.receivedIndexes,
+      receivedCount: progress.receivedCount
+    }, 409);
+  }
+
+  let normalizedColumns = [];
+  let normalizedKeyColumns = [];
+  let metadataChecksum = '';
+  for (const item of session.chunks) {
+    if (item.index == -1) {
+      if (item.columns != null) {
+        normalizedColumns = item.columns;
+      }
+      if (item.keyColumns != null) {
+        normalizedKeyColumns = item.keyColumns;
+      }
+      if (item.checksum != null) {
+        metadataChecksum = string.from(item.checksum);
+      }
+    }
+  }
+
+  let normalizedRows = [];
+  for (const item of session.chunks) {
+    if (item.index >= 0 && item.rows != null) {
+      for (const row of item.rows) {
+        normalizedRows = normalizedRows.concat([row]);
+      }
+    }
+  }
+
+  let uploadSnapshotCreatedAt = now_iso();
+  if (session.snapshotCreatedAt != null) {
+    uploadSnapshotCreatedAt = session.snapshotCreatedAt;
+  }
+  let uploadSnapshotBytes = 0;
+  if (session.snapshotBytes != null) {
+    uploadSnapshotBytes = int.from(session.snapshotBytes);
+  }
+  let uploadClientUserId = null;
+  let uploadOwnerUserId = null;
+  if (job.clientUserId != null) {
+    uploadClientUserId = job.clientUserId;
+  }
+  if (job.ownerUserId != null) {
+    uploadOwnerUserId = job.ownerUserId;
+  }
+
+  let snapshotChecksum = snapshot_checksum({ rows: normalizedRows, table: session.table });
+  if (metadataChecksum.trim().length != 0) {
+    snapshotChecksum = metadataChecksum;
+  }
+  const snapshot = db.insert(SnapshotRecord, {
+    id: uuid.v4(),
+    clientName: job.clientName,
+    table: session.table,
+    rowCount: normalizedRows.length,
+    checksum: snapshotChecksum,
+    createdAt: uploadSnapshotCreatedAt,
+    snapshotBytes: uploadSnapshotBytes,
+    columns: normalizedColumns,
+    rows: normalizedRows,
+    previewRows: snapshot_preview_rows(normalizedRows),
+    sourceJobId: jobId,
+    clientUserId: uploadClientUserId,
+    ownerUserId: uploadOwnerUserId
+  });
+
+  let publishedSnapshot = snapshot;
+  if (uploadOwnerUserId != null && uploadOwnerUserId.trim().length != 0) {
+    let aggregateRows = normalizedRows;
+    let aggregateColumns = normalizedColumns;
+    const existingOwnerSnapshot = latest_owner_snapshot_for(uploadOwnerUserId, session.table);
+    if (existingOwnerSnapshot != null) {
+      aggregateRows = merge_rows_by_key(existingOwnerSnapshot.rows, normalizedRows, normalizedKeyColumns);
+      if (existingOwnerSnapshot.columns != null && existingOwnerSnapshot.columns.length > 0) {
+        aggregateColumns = existingOwnerSnapshot.columns;
+      }
+    }
+    const aggregatePayload = {
+      rows: aggregateRows,
+      table: session.table,
+      ownerUserId: uploadOwnerUserId
+    };
+    publishedSnapshot = db.insert(SnapshotRecord, {
+      id: uuid.v4(),
+      clientName: uploadOwnerUserId,
+      table: session.table,
+      rowCount: aggregateRows.length,
+      checksum: snapshot_checksum(aggregatePayload),
+      createdAt: uploadSnapshotCreatedAt,
+      snapshotBytes: json.stringify(aggregatePayload).length,
+      columns: aggregateColumns,
+      rows: aggregateRows,
+      previewRows: snapshot_preview_rows(aggregateRows),
+      sourceJobId: jobId,
+      clientUserId: null,
+      ownerUserId: uploadOwnerUserId
+    });
+  }
+
+  db.delete(DownloadSession, { jobId });
+  const downloadChunks = row_download_chunks(publishedSnapshot.rows, row_download_page_size());
+  db.insert(DownloadSession, {
+    id: uuid.v4(),
+    jobId,
+    snapshotId: publishedSnapshot.id,
+    table: publishedSnapshot.table,
+    chunkSizeBytes: row_download_page_size(),
+    chunkCount: downloadChunks.length,
+    compressedBytes: publishedSnapshot.snapshotBytes,
+    encoding: 'rows',
+    createdAt: now_iso(),
+    updatedAt: now_iso(),
+    chunks: downloadChunks
+  });
+
+  const updated = db.update(SyncJob, { id: jobId }, {
+    status: 'downloading',
+    progress: 70,
+    rowCount: publishedSnapshot.rowCount,
+    snapshotId: publishedSnapshot.id,
+    snapshotCreatedAt: publishedSnapshot.createdAt,
+    snapshotBytes: publishedSnapshot.snapshotBytes,
+    message: string.concat('Uploaded local row pages and prepared owner snapshot with ', string.from(publishedSnapshot.rowCount), ' rows.'),
+    error: null,
+    updatedAt: now_iso()
+  });
+
+  db.delete(UploadSession, { jobId });
+
+  let nextJob = job;
+  if (updated != null) {
+    nextJob = updated;
+  }
+  return {
+    job: public_job_payload(nextJob),
+    snapshot: public_snapshot_payload(publishedSnapshot)
+  };
+}
+
 function jobs_download_snapshot(jobId: string, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -1673,12 +2094,28 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
     return raw_json_error(404, 'snapshot not found');
   }
 
-  const session = find_active_download_session_for_job(jobId, snapshot.id);
+  let session = find_active_download_session_for_job(jobId, snapshot.id);
   if (session == null) {
-    return raw_json_error(404, 'download session not found');
+    const downloadChunks = row_download_chunks(snapshot.rows, row_download_page_size());
+    session = db.insert(DownloadSession, {
+      id: uuid.v4(),
+      jobId,
+      snapshotId: snapshot.id,
+      table: snapshot.table,
+      chunkSizeBytes: row_download_page_size(),
+      chunkCount: downloadChunks.length,
+      compressedBytes: snapshot.snapshotBytes,
+      encoding: 'rows',
+      createdAt: now_iso(),
+      updatedAt: now_iso(),
+      chunks: downloadChunks
+    });
   }
 
-  const progress = Math.max(40, job.progress);
+  let progress = job.progress;
+  if (progress < 40) {
+    progress = 40;
+  }
   db.update(SyncJob, { id: jobId }, {
     status: 'downloading',
     progress,
@@ -1688,6 +2125,7 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
 
   return {
     job: public_job_payload(job),
+    snapshot: public_snapshot_payload(snapshot),
     manifest: download_session_payload(session)
   };
 }
@@ -1715,11 +2153,6 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
     return raw_json_error(400, 'index is out of range');
   }
 
-  const chunkData = chunk_data_for_index(session, chunkIndex);
-  if (chunkData.length == 0) {
-    return raw_json_error(404, 'chunk not found');
-  }
-
   let progress = 40;
   const chunkCount = session.chunkCount;
   if (chunkCount > 0) {
@@ -1732,6 +2165,23 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
     rowCount: snapshot.rowCount,
     message: string.concat('Served snapshot chunk ', string.from(chunkIndex + 1), '/', string.from(session.chunkCount), '.')
   });
+
+  if (session.encoding == 'rows') {
+    if (!has_chunk(session, chunkIndex)) {
+      return raw_json_error(404, 'chunk not found');
+    }
+    return {
+      transferId: session.id,
+      chunkIndex: chunkIndex,
+      chunkCount: session.chunkCount,
+      rows: chunk_rows_for_index(session, chunkIndex)
+    };
+  }
+
+  const chunkData = chunk_data_for_index(session, chunkIndex);
+  if (chunkData.length == 0) {
+    return raw_json_error(404, 'chunk not found');
+  }
 
   return {
     transferId: session.id,
