@@ -42,11 +42,22 @@ backend:
   secretName: sql-sync-backend
   service:
     port: 9001
+  readinessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 6
   env:
     truConfigPath: /app/business/tru.json
     postgresqlUrl: ""
     truStorageDir: /app/data/storage
     truSpecCachePath: /app/data/.tru_spec_cache.sqlite
+    truMemoryCapMb: "2048"
   resources:
     requests:
       cpu: 500m

@@ -58,6 +58,8 @@ spec:
               value: {{ .Values.backend.env.truStorageDir | quote }}
             - name: TRU_SPEC_CACHE_PATH
               value: {{ .Values.backend.env.truSpecCachePath | quote }}
+            - name: TRU_MEMORY_CAP_MB
+              value: {{ .Values.backend.env.truMemoryCapMb | quote }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           volumeMounts:
@@ -67,14 +69,18 @@ spec:
             httpGet:
               path: /ready
               port: {{ .Values.backend.service.port }}
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.backend.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.readinessProbe.failureThreshold }}
           livenessProbe:
             httpGet:
               path: /ready
               port: {{ .Values.backend.service.port }}
-            initialDelaySeconds: 30
-            periodSeconds: 20
+            initialDelaySeconds: {{ .Values.backend.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.livenessProbe.failureThreshold }}
       volumes:
         - name: backend-data
           persistentVolumeClaim:

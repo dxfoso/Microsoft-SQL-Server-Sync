@@ -88,6 +88,34 @@ class ChartContractsTests(unittest.TestCase):
             self.assertIn(".Values.tolerations", template)
             self.assertIn(".Values.affinity", template)
 
+    def test_backend_probes_use_tolerant_configured_thresholds(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        backend_deployment = (
+            ROOT / "templates" / "backend-deployment.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("timeoutSeconds: 5", values_yaml)
+        self.assertIn("failureThreshold: 6", values_yaml)
+        self.assertIn(
+            "timeoutSeconds: {{ .Values.backend.readinessProbe.timeoutSeconds }}",
+            backend_deployment,
+        )
+        self.assertIn(
+            "failureThreshold: {{ .Values.backend.livenessProbe.failureThreshold }}",
+            backend_deployment,
+        )
+
+    def test_backend_sets_memory_cap_below_pod_limit(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        backend_deployment = (
+            ROOT / "templates" / "backend-deployment.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('truMemoryCapMb: "2048"', values_yaml)
+        self.assertIn("TRU_MEMORY_CAP_MB", backend_deployment)
+        self.assertIn(".Values.backend.env.truMemoryCapMb", backend_deployment)
+
+    def test_postgres_deployment_uses_workload_specific_scheduling(self):
         postgres_deployment = (
             ROOT / "templates" / "postgres-deployment.yaml"
         ).read_text(encoding="utf-8")
