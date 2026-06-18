@@ -65,6 +65,35 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("previewRows", body)
         self.assertNotIn("'rows'", body)
 
+    def test_row_uploads_have_server_side_snapshot_bounds(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("function max_server_rows_snapshot_count(): int", source)
+        self.assertIn("return 50000;", source)
+        self.assertIn(
+            "rowCount > max_server_rows_snapshot_count()",
+            source,
+        )
+        self.assertIn(
+            "(resolvedPageCount * resolvedPageSize) > max_server_rows_snapshot_count()",
+            source,
+        )
+        self.assertIn(
+            "normalizedRows.length > session.chunkSizeBytes",
+            source,
+        )
+        self.assertIn(
+            "normalizedRows.length > max_server_rows_snapshot_count()",
+            source,
+        )
+        self.assertIn(
+            "(existingOwnerSnapshot.rows.length + normalizedRows.length) > max_server_rows_snapshot_count()",
+            source,
+        )
+        self.assertGreaterEqual(source.count("raw_json_error(413"), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

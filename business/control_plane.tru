@@ -239,6 +239,14 @@ function max_chunk_count(): int {
   return 10000;
 }
 
+function max_server_rows_snapshot_count(): int {
+  return 50000;
+}
+
+function row_snapshot_limit_error(scope: string): string {
+  return string.concat(scope, ' exceeds the server row snapshot limit of ', string.from(max_server_rows_snapshot_count()), ' rows. Split the sync into smaller table batches before retrying.');
+}
+
 function default_admin_username(): string {
   return 'dxfoso@gmail.com';
 }
@@ -1944,6 +1952,12 @@ function jobs_upload_rows_start(jobId: string, uploadId: string = '', clientName
   if (resolvedPageSize < 1) {
     resolvedPageSize = row_download_page_size();
   }
+  if (rowCount > max_server_rows_snapshot_count()) {
+    return raw_json_error(413, row_snapshot_limit_error('row upload'));
+  }
+  if ((resolvedPageCount * resolvedPageSize) > max_server_rows_snapshot_count()) {
+    return raw_json_error(413, row_snapshot_limit_error('row upload allocation'));
+  }
 
   let resolvedUploadId = uploadId;
   let resolvedSnapshotCreatedAt = snapshotCreatedAt;
@@ -2045,6 +2059,9 @@ function jobs_upload_rows_page(jobId: string, uploadId: string, pageIndex: int, 
   let normalizedRows = [];
   if (rows != null) {
     normalizedRows = rows;
+  }
+  if (normalizedRows.length > session.chunkSizeBytes) {
+    return raw_json_error(413, row_snapshot_limit_error('row upload page'));
   }
 
   let nextChunks = [];
@@ -2159,6 +2176,9 @@ function jobs_upload_rows_complete(jobId: string, uploadId: string, token: strin
   for (const item of session.chunks) {
     if (item.index >= 0 && item.rows != null) {
       normalizedRows = normalizedRows.concat(item.rows);
+      if (normalizedRows.length > max_server_rows_snapshot_count()) {
+        return raw_json_error(413, row_snapshot_limit_error('row upload'));
+      }
     }
   }
 
@@ -2205,10 +2225,16 @@ function jobs_upload_rows_complete(jobId: string, uploadId: string, token: strin
     let aggregateColumns = normalizedColumns;
     const existingOwnerSnapshot = latest_owner_snapshot_for(uploadOwnerUserId, session.table);
     if (existingOwnerSnapshot != null) {
+      if ((existingOwnerSnapshot.rows.length + normalizedRows.length) > max_server_rows_snapshot_count()) {
+        return raw_json_error(413, row_snapshot_limit_error('owner aggregate snapshot'));
+      }
       aggregateRows = merge_rows_by_key(existingOwnerSnapshot.rows, normalizedRows, normalizedKeyColumns);
       if (existingOwnerSnapshot.columns != null && existingOwnerSnapshot.columns.length > 0) {
         aggregateColumns = existingOwnerSnapshot.columns;
       }
+    }
+    if (aggregateRows.length > max_server_rows_snapshot_count()) {
+      return raw_json_error(413, row_snapshot_limit_error('owner aggregate snapshot'));
     }
     const aggregatePayload = {
       rows: aggregateRows,
@@ -2427,6 +2453,9 @@ function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, t
   if (rows != null) {
     normalizedRows = rows;
   }
+  if (normalizedRows.length > max_server_rows_snapshot_count()) {
+    return raw_json_error(413, row_snapshot_limit_error('row upload'));
+  }
   let computedRowCount = normalizedRows.length;
   if (rowCount != 0) {
     computedRowCount = rowCount;
@@ -2466,10 +2495,16 @@ function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, t
     let aggregateColumns = normalizedColumns;
     const existingOwnerSnapshot = latest_owner_snapshot_for(uploadOwnerUserId, normalizedTable);
     if (existingOwnerSnapshot != null) {
+      if ((existingOwnerSnapshot.rows.length + normalizedRows.length) > max_server_rows_snapshot_count()) {
+        return raw_json_error(413, row_snapshot_limit_error('owner aggregate snapshot'));
+      }
       aggregateRows = merge_rows_by_key(existingOwnerSnapshot.rows, normalizedRows, normalizedKeyColumns);
       if (existingOwnerSnapshot.columns != null && existingOwnerSnapshot.columns.length > 0) {
         aggregateColumns = existingOwnerSnapshot.columns;
       }
+    }
+    if (aggregateRows.length > max_server_rows_snapshot_count()) {
+      return raw_json_error(413, row_snapshot_limit_error('owner aggregate snapshot'));
     }
     const aggregatePayload = {
       rows: aggregateRows,
