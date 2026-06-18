@@ -97,6 +97,7 @@ class UploadSession {
   field chunkSizeBytes: int min=1 max=1048576
   field chunkCount: int min=1 max=10000
   field encoding: string min=1 max=16
+  field publishOwnerSnapshot: bool
   field createdAt: datetime
   field updatedAt: datetime
   field chunks: array<json>
@@ -458,6 +459,10 @@ function find_active_download_session_for_job(jobId: string, snapshotId: string?
     return db.selectOne(DownloadSession, { jobId, snapshotId });
   }
   return db.selectOne(DownloadSession, { jobId });
+}
+
+function find_download_session_for_snapshot(snapshotId: string): map<json>? {
+  return db.selectOne(DownloadSession, { snapshotId });
 }
 
 function chunk_indexes(session: map<json>): array<int> {
@@ -1667,7 +1672,7 @@ function jobs_progress(jobId: string, status: string = 'snapshotting', progress:
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: string = '', table: string = '', rowCount: int = 0, snapshotCreatedAt: string = '', snapshotBytes: int = 0, compressedBytes: int = 0, chunkSizeBytes: int = kSnapshotTransferChunkSizeBytes(), chunkCount: int = 0, encoding: string = kSnapshotTransferEncoding(), token: string? = null): map<json> {
+function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: string = '', table: string = '', rowCount: int = 0, snapshotCreatedAt: string = '', snapshotBytes: int = 0, compressedBytes: int = 0, chunkSizeBytes: int = kSnapshotTransferChunkSizeBytes(), chunkCount: int = 0, encoding: string = kSnapshotTransferEncoding(), publishOwnerSnapshot: bool = false, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -1713,6 +1718,7 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
     chunkSizeBytes,
     chunkCount,
     encoding: resolvedEncoding,
+    publishOwnerSnapshot,
     createdAt: now_iso(),
     updatedAt: now_iso(),
     chunks: []
@@ -1869,9 +1875,14 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: stri
   if (job.ownerUserId != null) {
     uploadOwnerUserId = job.ownerUserId;
   }
+  let snapshotClientName = job.clientName;
+  if (session.publishOwnerSnapshot == true && uploadOwnerUserId != null && uploadOwnerUserId.trim().length != 0) {
+    snapshotClientName = uploadOwnerUserId;
+    uploadClientUserId = null;
+  }
   const snapshot = db.insert(SnapshotRecord, {
     id: snapshotId,
-    clientName: job.clientName,
+    clientName: snapshotClientName,
     table: session.table,
     rowCount: session.rowCount,
     checksum: snapshot_checksum({ id: uploadId, sourceJobId: jobId }),
@@ -2004,6 +2015,7 @@ function jobs_upload_rows_start(jobId: string, uploadId: string = '', clientName
       chunkSizeBytes: resolvedPageSize,
       chunkCount: resolvedPageCount,
       encoding: 'rows',
+      publishOwnerSnapshot: false,
       createdAt: now_iso(),
       updatedAt: now_iso(),
       chunks: [{
@@ -2198,6 +2210,9 @@ function jobs_upload_rows_complete(jobId: string, uploadId: string, token: strin
   if (job.ownerUserId != null) {
     uploadOwnerUserId = job.ownerUserId;
   }
+  if (uploadOwnerUserId != null && uploadOwnerUserId.trim().length != 0) {
+    return raw_json_error(410, 'Owner namespace row uploads are no longer supported. Upload a complete compressed owner snapshot with jobs_upload_chunk_start(publishOwnerSnapshot: true).');
+  }
 
   let snapshotChecksum = snapshot_checksum({ rows: normalizedRows, table: session.table });
   if (metadataChecksum.trim().length != 0) {
@@ -2333,20 +2348,37 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
 
   let session = find_active_download_session_for_job(jobId, snapshot.id);
   if (session == null) {
-    const downloadChunks = row_download_chunks(snapshot.rows, row_download_page_size());
-    session = db.insert(DownloadSession, {
-      id: uuid.v4(),
-      jobId,
-      snapshotId: snapshot.id,
-      table: snapshot.table,
-      chunkSizeBytes: row_download_page_size(),
-      chunkCount: downloadChunks.length,
-      compressedBytes: snapshot.snapshotBytes,
-      encoding: 'rows',
-      createdAt: now_iso(),
-      updatedAt: now_iso(),
-      chunks: downloadChunks
-    });
+    const storedSession = find_download_session_for_snapshot(snapshot.id);
+    if (storedSession != null && storedSession.encoding != 'rows') {
+      session = db.insert(DownloadSession, {
+        id: uuid.v4(),
+        jobId,
+        snapshotId: snapshot.id,
+        table: snapshot.table,
+        chunkSizeBytes: storedSession.chunkSizeBytes,
+        chunkCount: storedSession.chunkCount,
+        compressedBytes: storedSession.compressedBytes,
+        encoding: storedSession.encoding,
+        createdAt: now_iso(),
+        updatedAt: now_iso(),
+        chunks: storedSession.chunks
+      });
+    } else {
+      const downloadChunks = row_download_chunks(snapshot.rows, row_download_page_size());
+      session = db.insert(DownloadSession, {
+        id: uuid.v4(),
+        jobId,
+        snapshotId: snapshot.id,
+        table: snapshot.table,
+        chunkSizeBytes: row_download_page_size(),
+        chunkCount: downloadChunks.length,
+        compressedBytes: snapshot.snapshotBytes,
+        encoding: 'rows',
+        createdAt: now_iso(),
+        updatedAt: now_iso(),
+        chunks: downloadChunks
+      });
+    }
   }
 
   let progress = job.progress;

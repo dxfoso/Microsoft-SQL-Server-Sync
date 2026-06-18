@@ -89,10 +89,49 @@ class ControlPlaneContractsTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            "(existingOwnerSnapshot.rows.length + normalizedRows.length) > max_server_rows_snapshot_count()",
+            "Owner namespace row uploads are no longer supported",
             source,
         )
         self.assertGreaterEqual(source.count("raw_json_error(413"), 5)
+
+    def test_owner_namespace_uploads_use_chunked_snapshots(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("field publishOwnerSnapshot: bool", source)
+        self.assertIn("publishOwnerSnapshot: bool = false", source)
+        self.assertIn("publishOwnerSnapshot,", source)
+        self.assertIn("session.publishOwnerSnapshot == true", source)
+        self.assertIn("snapshotClientName = uploadOwnerUserId", source)
+        self.assertIn("clientName: snapshotClientName", source)
+
+    def test_chunked_snapshots_can_be_downloaded_by_later_jobs(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("function find_download_session_for_snapshot", source)
+        self.assertIn("const storedSession = find_download_session_for_snapshot(snapshot.id)", source)
+        self.assertIn("storedSession.encoding != 'rows'", source)
+        self.assertIn("chunks: storedSession.chunks", source)
+
+    def test_windows_two_way_sync_uses_chunked_owner_snapshot_upload(self):
+        source = (ROOT / "sync_windows_agent" / "lib" / "agent_page.dart").read_text(
+            encoding="utf-8"
+        )
+        method_match = re.search(
+            r"Future<void> _processUploadJob\(RemoteSyncJob job\) async \{(?P<body>.*?)\n  Future<void> _markRemoteJobFailed",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(method_match)
+        body = method_match.group("body")
+
+        self.assertIn("_mergeOwnerSnapshotRows", body)
+        self.assertIn("uploadSnapshot(", body)
+        self.assertIn("publishOwnerSnapshot: true", body)
+        self.assertNotIn("uploadSnapshotRows", body)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+{
+  "name": "mig_20260618_171105",
+  "timestamp": "2026-06-18T17:11:05.817131100+00:00",
+  "objects": [
+    {
+      "object": "UploadSession",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "publishOwnerSnapshot",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "bool",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -2345,14 +2345,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 keyColumns: snapshot.keyColumns,
                 signatureColumns: snapshot.signatureColumns,
               );
+      final ownerRowsToPublish =
+          ownerSnapshotBeforeUpload == null
+              ? snapshot.rows
+              : _mergeOwnerSnapshotRows(
+                ownerRows: ownerSnapshotBeforeUpload.rows,
+                changedLocalRows: rowsToUpload,
+                keyColumns: snapshot.keyColumns,
+              );
 
       final backupFile = _createSnapshotFileDocument(
         clientName: widget.clientName,
         table: job.table,
         createdAt: snapshot.snapshotCreatedAt,
-        rowCount: rowsToUpload.length,
+        rowCount: ownerRowsToPublish.length,
         columns: snapshot.columns,
-        rows: rowsToUpload,
+        rows: ownerRowsToPublish,
       );
       final backupContent = _encodeSnapshotFileDocument(backupFile);
       final backupBytes = utf8.encode(backupContent).length;
@@ -2361,23 +2369,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job.id,
         status: 'uploading',
         progress: 70,
-        message:
-            'Uploading missing or changed local rows into the owner namespace.',
-        rowCount: rowsToUpload.length,
+        message: 'Uploading compressed owner namespace snapshot.',
+        rowCount: ownerRowsToPublish.length,
         direction: 'sync',
       );
       _applyRemoteJobState(activeJob);
 
-      final uploadResult = await _controlPlaneClient.uploadSnapshotRows(
+      final uploadResult = await _controlPlaneClient.uploadSnapshot(
         job.id,
         clientName: widget.clientName,
         table: job.table,
-        rowCount: rowsToUpload.length,
+        rowCount: ownerRowsToPublish.length,
         snapshotCreatedAt: snapshot.snapshotCreatedAt,
         snapshotBytes: backupBytes,
-        columns: snapshot.columns,
-        rows: rowsToUpload,
-        keyColumns: snapshot.keyColumns,
+        snapshotJson: backupContent,
+        publishOwnerSnapshot: true,
         onProgress: _updateUploadMeter,
       );
 
@@ -3669,6 +3675,28 @@ ORDER BY [__sync_agent_row_number];
               _mergeRowSignature(localRow, comparableColumns);
         })
         .toList(growable: false);
+  }
+
+  List<Map<String, String?>> _mergeOwnerSnapshotRows({
+    required List<Map<String, String?>> ownerRows,
+    required List<Map<String, String?>> changedLocalRows,
+    required List<String> keyColumns,
+  }) {
+    if (changedLocalRows.isEmpty) {
+      return ownerRows;
+    }
+    if (ownerRows.isEmpty) {
+      return changedLocalRows;
+    }
+
+    final incomingKeys =
+        changedLocalRows.map((row) => _mergeRowKey(row, keyColumns)).toSet();
+    return <Map<String, String?>>[
+      for (final ownerRow in ownerRows)
+        if (!incomingKeys.contains(_mergeRowKey(ownerRow, keyColumns)))
+          ownerRow,
+      ...changedLocalRows,
+    ];
   }
 
   List<Map<String, String?>> _deduplicateMergeRows({

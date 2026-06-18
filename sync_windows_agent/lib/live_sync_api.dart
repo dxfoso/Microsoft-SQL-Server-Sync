@@ -465,6 +465,8 @@ class AgentControlPlaneClient {
     required String snapshotCreatedAt,
     required int snapshotBytes,
     required String snapshotJson,
+    bool publishOwnerSnapshot = false,
+    TransferProgressCallback? onProgress,
   }) async {
     final payloadBytes = Uint8List.fromList(utf8.encode(snapshotJson));
     final compressedBytes = Uint8List.fromList(gzip.encode(payloadBytes));
@@ -492,6 +494,7 @@ class AgentControlPlaneClient {
               'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
               'chunkCount': chunkCount,
               'encoding': 'gzip',
+              'publishOwnerSnapshot': publishOwnerSnapshot,
             },
           }),
         ),
@@ -515,9 +518,17 @@ class AgentControlPlaneClient {
             ?.map((item) => (item as num).round())
             .toSet() ??
         <int>{};
+    var bytesTransferred = 0;
 
     for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
       if (receivedIndexes.contains(chunkIndex)) {
+        final skippedStart = chunkIndex * _snapshotTransferChunkSizeBytes;
+        final skippedEnd = skippedStart + _snapshotTransferChunkSizeBytes;
+        bytesTransferred +=
+            (skippedEnd > compressedBytes.length
+                ? compressedBytes.length
+                : skippedEnd) -
+            skippedStart;
         continue;
       }
 
@@ -551,6 +562,13 @@ class AgentControlPlaneClient {
         throw _exceptionFromResponse(chunkResponse);
       }
       _unwrapApiResponse(jsonDecode(chunkResponse.body));
+      bytesTransferred += chunkBytes.length;
+      onProgress?.call(
+        TransferProgressSnapshot(
+          bytesTransferred: bytesTransferred,
+          totalBytes: compressedBytes.length,
+        ),
+      );
     }
 
     final response = await _transferRequestWithRetry(
@@ -571,6 +589,12 @@ class AgentControlPlaneClient {
     if (response.statusCode != 200) {
       throw _exceptionFromResponse(response);
     }
+    onProgress?.call(
+      TransferProgressSnapshot(
+        bytesTransferred: compressedBytes.length,
+        totalBytes: compressedBytes.length,
+      ),
+    );
 
     final decoded = _unwrapApiResponse(jsonDecode(response.body));
     if (decoded is! Map) {
