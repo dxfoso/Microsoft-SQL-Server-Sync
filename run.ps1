@@ -49,6 +49,9 @@ if (-not (Test-Path -LiteralPath $postgresRun)) {
 $repoRoot = $PSScriptRoot
 $script:backendProcess = $null
 $script:webProcess = $null
+$script:webBrowserProcess = $null
+$script:webUserDataDir = Join-Path -Path $repoRoot -ChildPath '.codex-run\web-browser'
+$script:webPort = $null
 $script:desktopProcess = $null
 $script:restartWeb = $false
 $script:restartDesktop = $false
@@ -134,6 +137,22 @@ function Stop-AppProcess {
     }
 
     Stop-ProcessTree -RootProcessId $Process.Id
+}
+
+function Remove-DirectoryIfExists {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    try {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Host "Unable to remove directory ${Path}: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
 }
 
 function Stop-PortListeners {
@@ -236,6 +255,16 @@ function Test-TcpPort {
         return $false
     } finally {
         $client.Dispose()
+    }
+}
+
+function Get-FreeTcpPort {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    try {
+        $listener.Start()
+        return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    } finally {
+        $listener.Stop()
     }
 }
 
@@ -400,13 +429,120 @@ function Start-WebApp {
     }
 
     $backendBaseUrl = "http://127.0.0.1:$BackendPort/call"
-    $flutterArgs = @('run', '-d', $Browser) + (New-DartDefineArgs -ProjectPath $FrontendPath -BackendBaseUrl $backendBaseUrl)
+    $script:webPort = Get-FreeTcpPort
+    $flutterArgs = @(
+        'run',
+        '-d',
+        'web-server',
+        '--web-hostname',
+        '127.0.0.1',
+        '--web-port',
+        $script:webPort
+    ) + (New-DartDefineArgs -ProjectPath $FrontendPath -BackendBaseUrl $backendBaseUrl)
 
-    Write-Host "Starting web app in browser: flutter run -d $Browser" -ForegroundColor Cyan
+    Write-Host "Starting web app on local server: flutter run -d web-server --web-port $($script:webPort)" -ForegroundColor Cyan
     return Start-Process -FilePath flutter `
         -ArgumentList $flutterArgs `
         -WorkingDirectory $FrontendPath `
         -WindowStyle Hidden `
+        -PassThru
+}
+
+function Get-BrowserExecutablePath {
+    param([string]$BrowserName)
+
+    $normalized = $BrowserName.Trim().ToLowerInvariant()
+    $candidates = @()
+    switch ($normalized) {
+        'chrome' {
+            $candidates = @(
+                "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+                "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+                "$env:LocalAppData\Google\Chrome\Application\chrome.exe"
+            )
+        }
+        'edge' {
+            $candidates = @(
+                "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+                "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+            )
+        }
+        default {
+            $candidates = @($BrowserName)
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+        try {
+            $command = Get-Command $candidate -ErrorAction Stop
+            if ($null -ne $command.Source) {
+                return $command.Source
+            }
+        } catch {
+        }
+    }
+
+    return $null
+}
+
+function Wait-WebAppReady {
+    param(
+        [int]$Port,
+        [System.Diagnostics.Process]$Process = $null,
+        [int]$TimeoutSeconds = 180
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $url = "http://127.0.0.1:$Port"
+
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 3
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+                return $true
+            }
+        } catch {
+            if ($null -ne $Process -and $Process.HasExited) {
+                return $false
+            }
+        }
+
+        Start-Sleep -Milliseconds 1000
+    }
+
+    return $false
+}
+
+function Start-WebBrowser {
+    param([int]$Port)
+
+    $browserPath = Get-BrowserExecutablePath -BrowserName $Browser
+    if ($null -eq $browserPath) {
+        Write-Host "Could not resolve browser executable for $Browser. Skipping browser launch." -ForegroundColor DarkYellow
+        return $null
+    }
+
+    Remove-DirectoryIfExists -Path $script:webUserDataDir
+    New-Item -ItemType Directory -Path $script:webUserDataDir -Force | Out-Null
+
+    $url = "http://127.0.0.1:$Port"
+    $browserArgs = @(
+        "--user-data-dir=$script:webUserDataDir",
+        '--new-window',
+        "--app=$url"
+    )
+
+    Write-Host "Opening web app in dedicated $Browser window: $url" -ForegroundColor Green
+    return Start-Process -FilePath $browserPath `
+        -ArgumentList $browserArgs `
+        -WorkingDirectory $repoRoot `
+        -WindowStyle Normal `
         -PassThru
 }
 
@@ -464,7 +600,13 @@ function Start-Stack {
     Write-Host $script:clientUrl -ForegroundColor Green
 
     $script:webProcess = Start-WebApp -BackendPort $backendPort
-    Write-Host "Web app started in $Browser." -ForegroundColor Magenta
+    if (-not (Wait-WebAppReady -Port $script:webPort -Process $script:webProcess)) {
+        Stop-AppProcess -Process $script:webProcess
+        $script:webProcess = $null
+        throw "Web app did not become ready on port $($script:webPort)."
+    }
+    $script:webBrowserProcess = Start-WebBrowser -Port $script:webPort
+    Write-Host "Web app started on port $($script:webPort)." -ForegroundColor Magenta
 
     $script:desktopProcess = Start-DesktopApp -BackendPort $backendPort
     Write-Host "Desktop app started in $DesktopDevice." -ForegroundColor Magenta
@@ -472,9 +614,12 @@ function Start-Stack {
 
 function Restart-FullStack {
     Write-Host "Restarting full local stack..." -ForegroundColor Yellow
+    Stop-AppProcess -Process $script:webBrowserProcess
     Stop-AppProcess -Process $script:webProcess
     Stop-AppProcess -Process $script:desktopProcess
     Stop-AppProcess -Process $script:backendProcess
+    Remove-DirectoryIfExists -Path $script:webUserDataDir
+    $script:webBrowserProcess = $null
     $script:webProcess = $null
     $script:desktopProcess = $null
     $script:backendProcess = $null
@@ -486,8 +631,16 @@ function Restart-FullStack {
 
 function Restart-WebApp {
     Write-Host "Restarting web app..." -ForegroundColor Yellow
+    Stop-AppProcess -Process $script:webBrowserProcess
     Stop-AppProcess -Process $script:webProcess
+    Remove-DirectoryIfExists -Path $script:webUserDataDir
     $script:webProcess = Start-WebApp -BackendPort $script:backendPort
+    if (-not (Wait-WebAppReady -Port $script:webPort -Process $script:webProcess)) {
+        Stop-AppProcess -Process $script:webProcess
+        $script:webProcess = $null
+        throw "Web app did not become ready on port $($script:webPort)."
+    }
+    $script:webBrowserProcess = Start-WebBrowser -Port $script:webPort
     $script:restartWeb = $false
 }
 
@@ -655,9 +808,17 @@ try {
 
             if ($script:restartWeb -and $script:restartDesktop -and ((Get-Date) - $script:lastChange).TotalMilliseconds -ge $DebounceMs) {
                 Write-Host "Restarting web and desktop clients..." -ForegroundColor Yellow
+                Stop-AppProcess -Process $script:webBrowserProcess
                 Stop-AppProcess -Process $script:webProcess
                 Stop-AppProcess -Process $script:desktopProcess
+                Remove-DirectoryIfExists -Path $script:webUserDataDir
                 $script:webProcess = Start-WebApp -BackendPort $script:backendPort
+                if (-not (Wait-WebAppReady -Port $script:webPort -Process $script:webProcess)) {
+                    Stop-AppProcess -Process $script:webProcess
+                    $script:webProcess = $null
+                    throw "Web app did not become ready on port $($script:webPort)."
+                }
+                $script:webBrowserProcess = Start-WebBrowser -Port $script:webPort
                 $script:desktopProcess = Start-DesktopApp -BackendPort $script:backendPort
                 $script:restartWeb = $false
                 $script:restartDesktop = $false
@@ -687,9 +848,11 @@ try {
         }
         Remove-Event -SourceIdentifier * -ErrorAction SilentlyContinue
 
+        Stop-AppProcess -Process $script:webBrowserProcess
         Stop-AppProcess -Process $script:webProcess
         Stop-AppProcess -Process $script:desktopProcess
         Stop-AppProcess -Process $script:backendProcess
+        Remove-DirectoryIfExists -Path $script:webUserDataDir
     }
 }
 finally {

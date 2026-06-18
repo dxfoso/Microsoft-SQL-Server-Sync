@@ -401,17 +401,47 @@ class AdminSnapshotDetail {
       snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       columns: columns,
       rows: rawRows
-          .map(
-            (row) => Map<String, String?>.fromEntries(
-              columns.map((column) {
-                final value =
-                    row is Map && row.containsKey(column) ? row[column] : null;
-                return MapEntry(column, value?.toString());
-              }),
-            ),
-          )
+          .map((row) => _decodeSnapshotRow(columns, row))
           .toList(growable: false),
       sourceJobId: json['sourceJobId'] as String?,
+    );
+  }
+
+  static Map<String, String?> _decodeSnapshotRow(
+    List<String> columns,
+    dynamic row,
+  ) {
+    if (row is List) {
+      return Map<String, String?>.fromEntries(
+        columns.asMap().entries.map(
+          (entry) => MapEntry(
+            entry.value,
+            entry.key < row.length ? row[entry.key]?.toString() : null,
+          ),
+        ),
+      );
+    }
+
+    if (row is Map) {
+      final rawMap = Map<String, dynamic>.fromEntries(
+        row.entries.map((entry) => MapEntry(entry.key.toString(), entry.value)),
+      );
+      final lowerKeys = <String, dynamic>{
+        for (final entry in rawMap.entries)
+          entry.key.toLowerCase(): entry.value,
+      };
+      return Map<String, String?>.fromEntries(
+        columns.map((column) {
+          final direct = rawMap[column];
+          final fallback = lowerKeys[column.toLowerCase()];
+          final value = direct ?? fallback;
+          return MapEntry(column, value?.toString());
+        }),
+      );
+    }
+
+    return Map<String, String?>.fromEntries(
+      columns.map((column) => MapEntry(column, null)),
     );
   }
 }
