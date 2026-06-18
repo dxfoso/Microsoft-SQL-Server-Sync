@@ -100,6 +100,7 @@ class ChartContractsTests(unittest.TestCase):
             self.assertIn(".Values.tolerations", template)
             self.assertIn(".Values.affinity", template)
 
+    def test_postgres_deployment_uses_workload_specific_scheduling(self):
         postgres_deployment = (
             ROOT / "templates" / "postgres-deployment.yaml"
         ).read_text(encoding="utf-8")
