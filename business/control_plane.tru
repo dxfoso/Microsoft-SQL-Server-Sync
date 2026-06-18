@@ -750,6 +750,66 @@ function public_snapshot_detail_payload(snapshot: map<json>): map<json> {
   };
 }
 
+function live_state_agent_limit(): int {
+  return 500;
+}
+
+function live_state_job_limit(): int {
+  return 200;
+}
+
+function live_state_snapshot_limit(): int {
+  return 200;
+}
+
+function bounded_public_agent_payloads(rows: array<json>, limit: int): map<json> {
+  let items = [];
+  let seen = 0;
+  for (const row of rows) {
+    seen += 1;
+    if (items.length < limit) {
+      items = items.concat([public_agent_payload(row)]);
+    }
+  }
+  return {
+    items,
+    total: seen,
+    truncated: seen > items.length
+  };
+}
+
+function bounded_public_job_payloads(rows: array<json>, limit: int): map<json> {
+  let items = [];
+  let seen = 0;
+  for (const row of rows) {
+    seen += 1;
+    if (items.length < limit) {
+      items = items.concat([public_job_payload(row)]);
+    }
+  }
+  return {
+    items,
+    total: seen,
+    truncated: seen > items.length
+  };
+}
+
+function bounded_public_snapshot_payloads(rows: array<json>, limit: int): map<json> {
+  let items = [];
+  let seen = 0;
+  for (const row of rows) {
+    seen += 1;
+    if (items.length < limit) {
+      items = items.concat([public_snapshot_payload(row)]);
+    }
+  }
+  return {
+    items,
+    total: seen,
+    truncated: seen > items.length
+  };
+}
+
 function ensure_agent(clientName: string, clientUserId: string? = null, ownerUserId: string? = null): map<json> {
   const existing = db.selectOne(Agent, { clientName });
   if (existing != null) {
@@ -1064,14 +1124,38 @@ function live_state(token: string? = null): map<json> {
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  const agents = visible_agent_rows_for(current).map((agent) => public_agent_payload(agent));
-  const jobs = visible_job_rows_for(current).map((job) => public_job_payload(job));
-  const snapshots = visible_snapshot_rows_for(current).map((snapshot) => public_snapshot_payload(snapshot));
+  const agentPage = bounded_public_agent_payloads(
+    visible_agent_rows_for(current),
+    live_state_agent_limit()
+  );
+  const jobPage = bounded_public_job_payloads(
+    visible_job_rows_for(current),
+    live_state_job_limit()
+  );
+  const snapshotPage = bounded_public_snapshot_payloads(
+    visible_snapshot_rows_for(current),
+    live_state_snapshot_limit()
+  );
   return {
     generatedAt: now_iso(),
-    agents,
-    jobs,
-    snapshots
+    agents: agentPage.items,
+    jobs: jobPage.items,
+    snapshots: snapshotPage.items,
+    limits: {
+      agents: live_state_agent_limit(),
+      jobs: live_state_job_limit(),
+      snapshots: live_state_snapshot_limit()
+    },
+    totals: {
+      agents: agentPage.total,
+      jobs: jobPage.total,
+      snapshots: snapshotPage.total
+    },
+    truncated: {
+      agents: agentPage.truncated,
+      jobs: jobPage.truncated,
+      snapshots: snapshotPage.truncated
+    }
   };
 }
 
