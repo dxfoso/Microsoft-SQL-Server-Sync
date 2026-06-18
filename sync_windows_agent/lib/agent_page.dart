@@ -337,6 +337,36 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return syncTableKey.startsWith('$databaseName$_syncTableKeySeparator');
   }
 
+  bool _syncKeyMatchesDatabase(String syncTableKey, String database) {
+    final databaseName = database.trim();
+    if (databaseName.isEmpty ||
+        !syncTableKey.contains(_syncTableKeySeparator)) {
+      return true;
+    }
+    return syncTableKey.startsWith('$databaseName$_syncTableKeySeparator');
+  }
+
+  List<String> _stableVisibleTablesForDatabase(
+    String database,
+    Iterable<String> discoveredTables,
+  ) {
+    final visible = <String>{
+      ...discoveredTables.map(_stripDefaultSchema),
+      ..._syncState.tables.keys
+          .where((key) => _syncKeyMatchesDatabase(key, database))
+          .map(_localTableName),
+      ..._activeJobs
+          .map((job) => job.table)
+          .where((key) => _syncKeyMatchesDatabase(key, database))
+          .map(_localTableName),
+    };
+    final tables = visible.toList(growable: false);
+    tables.sort(
+      (left, right) => left.toLowerCase().compareTo(right.toLowerCase()),
+    );
+    return tables;
+  }
+
   SyncTableState _syncTableState(String table, {String? syncKey}) {
     final key = syncKey ?? _syncTableKey(table);
     final databaseName = _databaseNameFromSyncKey(key);
@@ -637,11 +667,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       selectedTable = result.values.first;
     }
 
+    final visibleTables = _stableVisibleTablesForDatabase(
+      database,
+      result.values,
+    );
+    if (selectedTable != null && !visibleTables.contains(selectedTable)) {
+      selectedTable = visibleTables.isNotEmpty ? visibleTables.first : null;
+    }
+
     setState(() {
-      _tables = result.values;
+      _tables = visibleTables;
       _selectedTable = selectedTable;
     });
-    _ensureSyncTablesLoaded(result.values);
+    _ensureSyncTablesLoaded(visibleTables);
 
     final rowCounts = await _queryTableRowCounts(
       profile: profile,
