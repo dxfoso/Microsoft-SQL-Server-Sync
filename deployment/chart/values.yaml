@@ -57,14 +57,14 @@ backend:
     postgresqlUrl: ""
     truStorageDir: /app/data/storage
     truSpecCachePath: /app/data/.tru_spec_cache.sqlite
-    truMemoryCapMb: "2048"
+    truMemoryCapMb: "4096"
   resources:
     requests:
       cpu: 500m
-      memory: 1Gi
+      memory: 2Gi
     limits:
       cpu: "2500m"
-      memory: 3Gi
+      memory: 6Gi
 
 postgres:
   enabled: true

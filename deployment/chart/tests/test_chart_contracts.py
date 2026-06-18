@@ -111,7 +111,8 @@ class ChartContractsTests(unittest.TestCase):
             ROOT / "templates" / "backend-deployment.yaml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('truMemoryCapMb: "2048"', values_yaml)
+        self.assertIn('truMemoryCapMb: "4096"', values_yaml)
+        self.assertIn("memory: 6Gi", values_yaml)
         self.assertIn("TRU_MEMORY_CAP_MB", backend_deployment)
         self.assertIn(".Values.backend.env.truMemoryCapMb", backend_deployment)
 
