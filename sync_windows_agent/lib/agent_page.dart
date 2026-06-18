@@ -1078,7 +1078,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
     final second = local.second.toString().padLeft(2, '0');
-    return '$day.$month.$year $hour:$minute:$second';
+    final timeZoneName = local.timeZoneName.trim();
+    final offset = local.timeZoneOffset;
+    final offsetSign = offset.isNegative ? '-' : '+';
+    final offsetHours = offset.inHours.abs().toString().padLeft(2, '0');
+    final offsetMinutes = (offset.inMinutes.abs() % 60).toString().padLeft(
+      2,
+      '0',
+    );
+    final offsetLabel = 'UTC$offsetSign$offsetHours:$offsetMinutes';
+    final zoneLabel =
+        timeZoneName.isEmpty || timeZoneName == offsetLabel
+            ? offsetLabel
+            : '$timeZoneName ($offsetLabel)';
+    return '$day.$month.$year $hour:$minute:$second $zoneLabel';
   }
 
   String _buildSummaryLabel() {
