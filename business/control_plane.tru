@@ -694,7 +694,13 @@ function visible_snapshot_rows_for(current: map<json>): array<json> {
   if (is_admin_user(current)) {
     return list_snapshot_rows();
   }
-  return [];
+  let snapshots = [];
+  for (const snapshot of list_snapshot_rows()) {
+    if (can_read_agent(current, snapshot.ownerUserId, snapshot.clientUserId)) {
+      snapshots = snapshots.concat([snapshot]);
+    }
+  }
+  return snapshots;
 }
 
 function public_agent_payload(agent: map<json>): map<json> {
@@ -711,7 +717,9 @@ function public_agent_payload(agent: map<json>): map<json> {
     sqlConnected: agent.sqlConnected,
     lastHeartbeat: agent.lastHeartbeat,
     selectedTable: agent.selectedTable,
-    tables: agent.tables
+    tables: agent.tables,
+    clientUserId: agent.clientUserId,
+    ownerUserId: agent.ownerUserId
   };
 }
 
@@ -741,6 +749,8 @@ function public_snapshot_payload(snapshot: map<json>): map<json> {
   return {
     id: snapshot.id,
     clientName: snapshot.clientName,
+    clientUserId: snapshot.clientUserId,
+    ownerUserId: snapshot.ownerUserId,
     table: snapshot.table,
     rowCount: snapshot.rowCount,
     checksum: snapshot.checksum,
@@ -756,6 +766,8 @@ function public_snapshot_detail_payload(snapshot: map<json>): map<json> {
   return {
     id: snapshot.id,
     clientName: snapshot.clientName,
+    clientUserId: snapshot.clientUserId,
+    ownerUserId: snapshot.ownerUserId,
     table: snapshot.table,
     rowCount: snapshot.rowCount,
     checksum: snapshot.checksum,

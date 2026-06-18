@@ -849,6 +849,44 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String _stripDefaultSchema(String table) =>
       table.trim().replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
 
+  bool _snapshotMatchesAgentNamespace(
+    AdminSnapshot snapshot,
+    AdminAgent agent,
+  ) {
+    if (snapshot.clientName == agent.clientName) {
+      return true;
+    }
+    final snapshotOwnerId = snapshot.ownerUserId?.trim() ?? '';
+    final agentOwnerId = agent.ownerUserId?.trim() ?? '';
+    if (snapshotOwnerId.isNotEmpty &&
+        agentOwnerId.isNotEmpty &&
+        snapshotOwnerId == agentOwnerId) {
+      return true;
+    }
+    return snapshot.clientName.trim().isNotEmpty &&
+        agentOwnerId.isNotEmpty &&
+        snapshot.clientName.trim() == agentOwnerId;
+  }
+
+  bool _snapshotDetailMatchesAgentNamespace(
+    AdminSnapshotDetail snapshot,
+    AdminAgent agent,
+  ) {
+    if (snapshot.clientName == agent.clientName) {
+      return true;
+    }
+    final snapshotOwnerId = snapshot.ownerUserId?.trim() ?? '';
+    final agentOwnerId = agent.ownerUserId?.trim() ?? '';
+    if (snapshotOwnerId.isNotEmpty &&
+        agentOwnerId.isNotEmpty &&
+        snapshotOwnerId == agentOwnerId) {
+      return true;
+    }
+    return snapshot.clientName.trim().isNotEmpty &&
+        agentOwnerId.isNotEmpty &&
+        snapshot.clientName.trim() == agentOwnerId;
+  }
+
   List<_TableClientEntry> _clientsForTableFromState(
     AdminLiveState? state,
     String? tableName,
@@ -5937,11 +5975,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
 
     final candidateSummaries = (state?.snapshots ?? const <AdminSnapshot>[])
-        .where(
-          (snapshot) =>
-              snapshot.table == sourceSnapshot.table &&
-              masterNames.contains(snapshot.clientName),
-        )
+        .where((snapshot) {
+          if (snapshot.table != sourceSnapshot.table) {
+            return false;
+          }
+          if (masterNames.contains(snapshot.clientName)) {
+            return true;
+          }
+          return (state?.agents ?? const <AdminAgent>[])
+              .where((agent) => agent.isMaster)
+              .any((agent) => _snapshotMatchesAgentNamespace(snapshot, agent));
+        })
         .toList(growable: false);
 
     final loadedSnapshots = await Future.wait(
@@ -6016,11 +6060,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             .map((agent) => agent.clientName)
             .toSet();
     final summaries = state.snapshots
-        .where(
-          (snapshot) =>
-              snapshot.table == table &&
-              masterNames.contains(snapshot.clientName),
-        )
+        .where((snapshot) {
+          if (snapshot.table != table) {
+            return false;
+          }
+          if (masterNames.contains(snapshot.clientName)) {
+            return true;
+          }
+          return state.agents
+              .where((agent) => agent.isMaster)
+              .any((agent) => _snapshotMatchesAgentNamespace(snapshot, agent));
+        })
         .toList(growable: false);
     final seenIds = <String>{};
     final loaded = await Future.wait(
@@ -6050,7 +6100,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final counts = <String, int>{};
     for (final snapshot in snapshots) {
       if (snapshot.table != sourceSnapshot.table ||
-          !_isMasterClientName(snapshot.clientName)) {
+          !_isMasterSnapshot(snapshot)) {
         continue;
       }
       final uniqueRowsInMaster = <String>{};
@@ -6079,6 +6129,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return false;
   }
 
+  bool _isMasterSnapshot(AdminSnapshotDetail snapshot) {
+    final state = _state;
+    if (state == null) {
+      return false;
+    }
+    for (final agent in state.agents) {
+      if (!agent.isMaster) {
+        continue;
+      }
+      if (_snapshotDetailMatchesAgentNamespace(snapshot, agent)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   List<String> _clientsUsingMasterSnapshot(AdminSnapshotDetail snapshot) {
     final state = _state;
     if (state == null) {
@@ -6096,7 +6162,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (tableState == null) {
         continue;
       }
-      if (agent.clientName == snapshot.clientName) {
+      if (_snapshotDetailMatchesAgentNamespace(snapshot, agent)) {
         clients.add(agent.clientName);
         continue;
       }

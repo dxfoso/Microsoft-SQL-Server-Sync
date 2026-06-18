@@ -108,6 +108,8 @@ class AdminLiveState {
 class AdminAgent {
   const AdminAgent({
     required this.clientName,
+    required this.clientUserId,
+    required this.ownerUserId,
     required this.machineName,
     required this.server,
     required this.database,
@@ -123,6 +125,8 @@ class AdminAgent {
   });
 
   final String clientName;
+  final String? clientUserId;
+  final String? ownerUserId;
   final String machineName;
   final String server;
   final String database;
@@ -139,6 +143,8 @@ class AdminAgent {
   factory AdminAgent.fromJson(Map<String, dynamic> json) {
     return AdminAgent(
       clientName: json['clientName'] as String? ?? '',
+      clientUserId: json['clientUserId'] as String?,
+      ownerUserId: json['ownerUserId'] as String?,
       machineName: json['machineName'] as String? ?? '',
       server: json['server'] as String? ?? '',
       database: json['database'] as String? ?? '',
@@ -296,6 +302,8 @@ class AdminSnapshot {
   const AdminSnapshot({
     required this.id,
     required this.clientName,
+    required this.clientUserId,
+    required this.ownerUserId,
     required this.table,
     required this.rowCount,
     required this.checksum,
@@ -308,6 +316,8 @@ class AdminSnapshot {
 
   final String id;
   final String clientName;
+  final String? clientUserId;
+  final String? ownerUserId;
   final String table;
   final int rowCount;
   final String checksum;
@@ -322,6 +332,8 @@ class AdminSnapshot {
     return AdminSnapshot(
       id: json['id'] as String? ?? '',
       clientName: json['clientName'] as String? ?? '',
+      clientUserId: json['clientUserId'] as String?,
+      ownerUserId: json['ownerUserId'] as String?,
       table: json['table'] as String? ?? '',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       checksum: json['checksum'] as String? ?? '',
@@ -346,6 +358,8 @@ class AdminSnapshotDetail {
   const AdminSnapshotDetail({
     required this.id,
     required this.clientName,
+    required this.clientUserId,
+    required this.ownerUserId,
     required this.table,
     required this.rowCount,
     required this.checksum,
@@ -358,6 +372,8 @@ class AdminSnapshotDetail {
 
   final String id;
   final String clientName;
+  final String? clientUserId;
+  final String? ownerUserId;
   final String table;
   final int rowCount;
   final String checksum;
@@ -376,6 +392,8 @@ class AdminSnapshotDetail {
     return AdminSnapshotDetail(
       id: json['id'] as String? ?? '',
       clientName: json['clientName'] as String? ?? '',
+      clientUserId: json['clientUserId'] as String?,
+      ownerUserId: json['ownerUserId'] as String?,
       table: json['table'] as String? ?? '',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       checksum: json['checksum'] as String? ?? '',

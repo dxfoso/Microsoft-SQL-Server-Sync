@@ -608,7 +608,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }) async {
     setState(() {
       _errorMessage = null;
-      _tables = const [];
       _selectedTable = null;
       _tableColumns = const [];
       _tableRows = const [];
@@ -1430,7 +1429,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   List<_SyncTableRowData> _syncRows() {
-    final rows = _tables
+    final visibleTables = <String>{
+      ..._tables,
+      ..._syncState.tables.keys
+          .where(_syncKeyMatchesSelectedDatabase)
+          .map(_localTableName),
+    }.toList(growable: false);
+    final rows = visibleTables
         .map((table) {
           final syncKey = _syncTableKey(table);
           return _SyncTableRowData(

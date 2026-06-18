@@ -430,6 +430,8 @@ $exeName = "$binaryName.exe"
 $exePath = Join-Path -Path $releaseDir -ChildPath $exeName
 
 New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
+Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory before build'
+Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive before build'
 
 Push-Location $ProjectPath
 try {
@@ -445,9 +447,6 @@ finally {
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Windows release build did not produce expected executable: $exePath"
 }
-
-Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory'
-Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive'
 
 New-Item -Path $portableDir -ItemType Directory -Force | Out-Null
 Get-ChildItem -LiteralPath $releaseDir -Force |
