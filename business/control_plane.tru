@@ -754,6 +754,126 @@ function public_snapshot_detail_payload(snapshot: map<json>): map<json> {
   };
 }
 
+function live_state_agent_limit(): int {
+  return 100;
+}
+
+function live_state_job_limit(): int {
+  return 50;
+}
+
+function live_state_snapshot_limit(): int {
+  return 20;
+}
+
+function live_state_agent_rows_for(current: map<json>, limit: int): array<json> {
+  let where = { clientName: { gte: '' } };
+  if (is_client_user(current)) {
+    where = { clientUserId: current.id };
+  }
+  if (is_owner_user(current)) {
+    where = { ownerUserId: current.id };
+  }
+  const rows = db.selectMany(Agent, {
+    where,
+    orderBy: { field: 'clientName', dir: 'asc' },
+    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    limit: limit + 1
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
+  let where = { createdAt: { lte: now_iso() } };
+  if (is_client_user(current)) {
+    where = { clientUserId: current.id };
+  }
+  if (is_owner_user(current)) {
+    where = { ownerUserId: current.id };
+  }
+  const rows = db.selectMany(SyncJob, {
+    where,
+    orderBy: { field: 'createdAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'snapshotId', 'snapshotCreatedAt', 'snapshotBytes', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    limit: limit + 1
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function live_state_snapshot_rows_for(current: map<json>, limit: int): array<json> {
+  let where = { createdAt: { lte: now_iso() } };
+  if (is_client_user(current)) {
+    where = { clientUserId: current.id };
+  }
+  if (is_owner_user(current)) {
+    where = { ownerUserId: current.id };
+  }
+  const rows = db.selectMany(SnapshotRecord, {
+    where,
+    orderBy: { field: 'createdAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'sourceJobId', 'clientUserId', 'ownerUserId'],
+    limit: limit + 1
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function bounded_public_agent_payloads(rows: array<json>, limit: int): map<json> {
+  let items = [];
+  let seen = 0;
+  for (const row of rows) {
+    seen += 1;
+    if (items.length < limit) {
+      items = items.concat([public_agent_payload(row)]);
+    }
+  }
+  return {
+    items,
+    total: seen,
+    truncated: seen > items.length
+  };
+}
+
+function bounded_public_job_payloads(rows: array<json>, limit: int): map<json> {
+  let items = [];
+  let seen = 0;
+  for (const row of rows) {
+    seen += 1;
+    if (items.length < limit) {
+      items = items.concat([public_job_payload(row)]);
+    }
+  }
+  return {
+    items,
+    total: seen,
+    truncated: seen > items.length
+  };
+}
+
+function bounded_public_snapshot_payloads(rows: array<json>, limit: int): map<json> {
+  let items = [];
+  let seen = 0;
+  for (const row of rows) {
+    seen += 1;
+    if (items.length < limit) {
+      items = items.concat([public_snapshot_payload(row)]);
+    }
+  }
+  return {
+    items,
+    total: seen,
+    truncated: seen > items.length
+  };
+}
+
 function ensure_agent(clientName: string, clientUserId: string? = null, ownerUserId: string? = null): map<json> {
   const existing = db.selectOne(Agent, { clientName });
   if (existing != null) {
@@ -1113,14 +1233,41 @@ function live_state(token: string? = null): map<json> {
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  const agents = visible_agent_rows_for(current).map((agent) => public_agent_payload(agent));
-  const jobs = visible_job_rows_for(current).map((job) => public_job_payload(job));
-  const snapshots = visible_snapshot_rows_for(current).map((snapshot) => public_snapshot_payload(snapshot));
+  const agentLimit = live_state_agent_limit();
+  const jobLimit = live_state_job_limit();
+  const snapshotLimit = live_state_snapshot_limit();
+  const agentPage = bounded_public_agent_payloads(
+    live_state_agent_rows_for(current, agentLimit),
+    agentLimit
+  );
+  const jobPage = bounded_public_job_payloads(
+    live_state_job_rows_for(current, jobLimit),
+    jobLimit
+  );
+  const snapshotPage = bounded_public_snapshot_payloads(
+    live_state_snapshot_rows_for(current, snapshotLimit),
+    snapshotLimit
+  );
   return {
     generatedAt: now_iso(),
-    agents,
-    jobs,
-    snapshots
+    agents: agentPage.items,
+    jobs: jobPage.items,
+    snapshots: snapshotPage.items,
+    limits: {
+      agents: agentLimit,
+      jobs: jobLimit,
+      snapshots: snapshotLimit
+    },
+    totals: {
+      agents: agentPage.total,
+      jobs: jobPage.total,
+      snapshots: snapshotPage.total
+    },
+    truncated: {
+      agents: agentPage.truncated,
+      jobs: jobPage.truncated,
+      snapshots: snapshotPage.truncated
+    }
   };
 }
 
