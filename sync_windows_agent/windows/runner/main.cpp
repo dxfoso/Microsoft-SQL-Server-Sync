@@ -10,22 +10,25 @@ namespace {
 
 using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
 
-bool IsWindows10OrGreater() {
+void LogWindowsVersion() {
   const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   if (ntdll == nullptr) {
-    return true;
+    LogStartupEvent(L"Unable to query Windows version. Continuing startup.");
+    return;
   }
 
   const auto rtl_get_version = reinterpret_cast<RtlGetVersionFn>(
       GetProcAddress(ntdll, "RtlGetVersion"));
   if (rtl_get_version == nullptr) {
-    return true;
+    LogStartupEvent(L"Unable to query Windows version. Continuing startup.");
+    return;
   }
 
   OSVERSIONINFOEXW version{};
   version.dwOSVersionInfoSize = sizeof(version);
   if (rtl_get_version(&version) != 0) {
-    return true;
+    LogStartupEvent(L"Unable to query Windows version. Continuing startup.");
+    return;
   }
 
   wchar_t version_message[128];
@@ -33,7 +36,6 @@ bool IsWindows10OrGreater() {
              version.dwMajorVersion, version.dwMinorVersion,
              version.dwBuildNumber);
   LogStartupEvent(version_message);
-  return version.dwMajorVersion >= 10;
 }
 
 }  // namespace
@@ -41,18 +43,7 @@ bool IsWindows10OrGreater() {
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   LogStartupEvent(L"Native wWinMain starting");
-  if (!IsWindows10OrGreater()) {
-    LogStartupEvent(
-        L"Unsupported Windows version detected. SQL Sync Agent requires "
-        L"Windows 10 or later.");
-    MessageBoxW(
-        nullptr,
-        L"SQL Sync Agent requires Windows 10 or later.\n\n"
-        L"This machine appears to be running Windows 8 or earlier.\n"
-        L"The app will exit now.",
-        L"SQL Sync Agent", MB_OK | MB_ICONERROR);
-    return EXIT_FAILURE;
-  }
+  LogWindowsVersion();
 
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
