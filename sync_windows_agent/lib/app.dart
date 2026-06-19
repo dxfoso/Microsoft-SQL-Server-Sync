@@ -8,6 +8,51 @@ import 'sync_state.dart';
 import 'startup_log.dart';
 import 'window_settings.dart';
 
+const List<String> _uiFontFallback = <String>[
+  'Segoe UI',
+  'Tahoma',
+  'Arial',
+  'Noto Sans Arabic',
+  'Noto Naskh Arabic',
+  'sans-serif',
+];
+
+TextTheme _withFontFallback(TextTheme theme) {
+  return theme.copyWith(
+    displayLarge: theme.displayLarge?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    displayMedium: theme.displayMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    displaySmall: theme.displaySmall?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    headlineLarge: theme.headlineLarge?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    headlineMedium: theme.headlineMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    headlineSmall: theme.headlineSmall?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    titleLarge: theme.titleLarge?.copyWith(fontFamilyFallback: _uiFontFallback),
+    titleMedium: theme.titleMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    titleSmall: theme.titleSmall?.copyWith(fontFamilyFallback: _uiFontFallback),
+    bodyLarge: theme.bodyLarge?.copyWith(fontFamilyFallback: _uiFontFallback),
+    bodyMedium: theme.bodyMedium?.copyWith(fontFamilyFallback: _uiFontFallback),
+    bodySmall: theme.bodySmall?.copyWith(fontFamilyFallback: _uiFontFallback),
+    labelLarge: theme.labelLarge?.copyWith(fontFamilyFallback: _uiFontFallback),
+    labelMedium: theme.labelMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    labelSmall: theme.labelSmall?.copyWith(fontFamilyFallback: _uiFontFallback),
+  );
+}
+
 class SyncWindowsAgentApp extends StatefulWidget {
   const SyncWindowsAgentApp({super.key, this.autoLoadOnStart = true});
 
@@ -667,6 +712,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     const border = Color(0xFFDDE3EA);
     final appTitle = _windowTitle;
 
+    final textTheme = _withFontFallback(
+      ThemeData.light().textTheme.apply(bodyColor: ink, displayColor: ink),
+    );
+
     return MaterialApp(
       title: appTitle,
       debugShowCheckedModeBanner: false,
@@ -686,10 +735,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
           surface: Colors.white,
           onSurface: ink,
         ),
-        textTheme: ThemeData.light().textTheme.apply(
-          bodyColor: ink,
-          displayColor: ink,
-        ),
+        textTheme: textTheme,
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             backgroundColor: primary,

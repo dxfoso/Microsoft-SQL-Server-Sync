@@ -389,14 +389,43 @@ class AgentControlPlaneClient {
               historyLimit: historyLimit,
               autoSyncIntervalMinutes: autoSyncIntervalMinutes,
             );
+    final tablePolicies = (decoded['tablePolicies'] as List<dynamic>? ??
+            const [])
+        .map(
+          (item) => RemoteTableSyncPolicy.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList(growable: false);
     return HeartbeatResult(
       syncSettings: syncSettings,
+      tablePolicies: tablePolicies,
       jobs: jobs
           .map(
             (item) =>
                 RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false),
+    );
+  }
+
+  Future<RemoteTableSyncPolicy> updateTableSyncPolicy({
+    required String table,
+    required bool enabled,
+    String? syncMode,
+  }) async {
+    final response = await _invokeFunction('table_sync_policy_set', {
+      'table': table,
+      'enabled': enabled,
+      if (syncMode != null && syncMode.trim().isNotEmpty) 'syncMode': syncMode,
+    }, 'updating table sync policy');
+    if (response is! Map || response['policy'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected table sync policy payload.',
+      );
+    }
+    return RemoteTableSyncPolicy.fromJson(
+      Map<String, dynamic>.from(response['policy'] as Map),
     );
   }
 
@@ -1033,10 +1062,41 @@ class AgentControlPlaneClient {
 }
 
 class HeartbeatResult {
-  const HeartbeatResult({required this.syncSettings, required this.jobs});
+  const HeartbeatResult({
+    required this.syncSettings,
+    required this.tablePolicies,
+    required this.jobs,
+  });
 
   final RemoteAgentSyncSettings syncSettings;
+  final List<RemoteTableSyncPolicy> tablePolicies;
   final List<RemoteSyncJob> jobs;
+}
+
+class RemoteTableSyncPolicy {
+  const RemoteTableSyncPolicy({
+    required this.table,
+    required this.enabled,
+    required this.syncMode,
+    required this.updatedAt,
+    required this.updatedByClientName,
+  });
+
+  final String table;
+  final bool enabled;
+  final String syncMode;
+  final String updatedAt;
+  final String updatedByClientName;
+
+  factory RemoteTableSyncPolicy.fromJson(Map<String, dynamic> json) {
+    return RemoteTableSyncPolicy(
+      table: json['table'] as String? ?? '',
+      enabled: json['enabled'] as bool? ?? false,
+      syncMode: normalizeSyncMode(json['syncMode'] as String?),
+      updatedAt: json['updatedAt'] as String? ?? '',
+      updatedByClientName: json['updatedByClientName'] as String? ?? '',
+    );
+  }
 }
 
 class RemoteAgentSyncSettings {

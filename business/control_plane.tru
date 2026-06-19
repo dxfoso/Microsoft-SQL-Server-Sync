@@ -47,6 +47,15 @@ class Agent {
   field updatedAt: datetime
 }
 
+class TableSyncPolicy {
+  field ownerUserId: string min=0 max=64
+  field table: string min=1 max=256
+  field enabled: bool
+  field syncMode: string min=1 max=32
+  field updatedAt: datetime
+  field updatedByClientName: string min=0 max=128
+}
+
 class SyncJob {
   field id: string min=1 max=64
   field clientName: string min=1 max=128
@@ -124,6 +133,7 @@ index Session_token on Session(token)
 index Session_createdAt on Session(createdAt)
 index Session_userId_createdAt on Session(userId, createdAt)
 index Agent_clientName on Agent(clientName)
+index TableSyncPolicy_ownerUserId_table on TableSyncPolicy(ownerUserId, table)
 index SyncJob_id on SyncJob(id)
 index SyncJob_clientName_createdAt on SyncJob(clientName, createdAt)
 index SyncJob_createdAt on SyncJob(createdAt)
@@ -302,6 +312,127 @@ function normalize_sync_mode(value: string? = null, fallbackIsMaster: bool = tru
 
 function direction_for_sync_mode(syncMode: string): string {
   return 'sync';
+}
+
+function table_sync_policy_scope(ownerUserId: string? = null): string {
+  if (ownerUserId == null) {
+    return '';
+  }
+  return ownerUserId.trim();
+}
+
+function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<json> {
+  const rows = db.selectMany(TableSyncPolicy, {
+    where: { ownerUserId: table_sync_policy_scope(ownerUserId) },
+    orderBy: { field: 'table', dir: 'asc' },
+    fields: ['ownerUserId', 'table', 'enabled', 'syncMode', 'updatedAt', 'updatedByClientName'],
+    limit: 1000
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function table_sync_policies_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
+  const rows = list_table_sync_policies_for_scope(ownerUserId);
+  const trimmedDatabase = database.trim();
+  if (trimmedDatabase.length == 0) {
+    return rows;
+  }
+  let policies = [];
+  const prefix = string.concat(trimmedDatabase, '::');
+  for (const row of rows) {
+    const tableName = string.from(row.table);
+    if (tableName.length >= prefix.length && tableName.slice(0, prefix.length) == prefix) {
+      policies = policies.concat([row]);
+    }
+  }
+  return policies;
+}
+
+function table_sync_policy_payload(policy: map<json>): map<json> {
+  return {
+    table: policy.table,
+    enabled: policy.enabled,
+    syncMode: normalize_sync_mode(policy.syncMode, true),
+    updatedAt: policy.updatedAt,
+    updatedByClientName: policy.updatedByClientName
+  };
+}
+
+function table_sync_policy_payloads_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
+  let payloads = [];
+  for (const policy of table_sync_policies_for_database(ownerUserId, database)) {
+    payloads = payloads.concat([table_sync_policy_payload(policy)]);
+  }
+  return payloads;
+}
+
+function upsert_table_sync_policy(ownerUserId: string? = null, table: string, enabled: bool, syncMode: string? = null, updatedByClientName: string = ''): map<json> {
+  const scope = table_sync_policy_scope(ownerUserId);
+  const normalizedMode = normalize_sync_mode(syncMode, true);
+  const existing = db.selectOne(TableSyncPolicy, {
+    ownerUserId: scope,
+    table
+  });
+  if (existing != null) {
+    const updated = db.update(TableSyncPolicy, {
+      ownerUserId: scope,
+      table
+    }, {
+      enabled,
+      syncMode: normalizedMode,
+      updatedAt: now_iso(),
+      updatedByClientName
+    });
+    if (updated != null) {
+      return updated;
+    }
+  }
+  return db.insert(TableSyncPolicy, {
+    ownerUserId: scope,
+    table,
+    enabled,
+    syncMode: normalizedMode,
+    updatedAt: now_iso(),
+    updatedByClientName
+  });
+}
+
+function apply_table_sync_policies(ownerUserId: string? = null, tables: array<json>? = null, database: string = ''): array<json> {
+  if (tables == null) {
+    return [];
+  }
+  const policies = table_sync_policies_for_database(ownerUserId, database);
+  if (policies.length == 0) {
+    return tables;
+  }
+  let nextTables = [];
+  for (const tableState of tables) {
+    let nextState = tableState;
+    for (const policy of policies) {
+      if (policy.table == tableState.table) {
+        nextState = {
+          table: tableState.table,
+          enabled: policy.enabled,
+          status: tableState.status,
+          lastSync: tableState.lastSync,
+          progress: tableState.progress,
+          direction: direction_for_sync_mode(policy.syncMode),
+          syncMode: normalize_sync_mode(policy.syncMode, true),
+          rowCount: tableState.rowCount,
+          snapshotId: tableState.snapshotId,
+          snapshotCreatedAt: tableState.snapshotCreatedAt,
+          snapshotBytes: tableState.snapshotBytes,
+          message: tableState.message,
+          history: tableState.history
+        };
+      }
+    }
+    nextTables = nextTables.concat([nextState]);
+  }
+  return nextTables;
 }
 
 function seed_admin_user(): map<json> {
@@ -753,6 +884,10 @@ function visible_snapshot_rows_for(current: map<json>): array<json> {
 }
 
 function public_agent_payload(agent: map<json>): map<json> {
+  let nextTables = [];
+  if (agent.tables != null) {
+    nextTables = apply_table_sync_policies(agent.ownerUserId, agent.tables, string.from(agent.database));
+  }
   return {
     clientName: agent.clientName,
     machineName: agent.machineName,
@@ -766,10 +901,51 @@ function public_agent_payload(agent: map<json>): map<json> {
     sqlConnected: agent.sqlConnected,
     lastHeartbeat: agent.lastHeartbeat,
     selectedTable: agent.selectedTable,
-    tables: agent.tables,
+    tables: nextTables,
     clientUserId: agent.clientUserId,
     ownerUserId: agent.ownerUserId
   };
+}
+
+function table_sync_policy_set(table: string, enabled: bool, syncMode: string? = null, clientName: string? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_client_user(current) && !is_owner_user(current) && !is_admin_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedTable = table.trim();
+  if (normalizedTable.length == 0) {
+    return raw_json_error(400, 'table is required');
+  }
+  let ownerUserId = owner_namespace_for_user(current);
+  let normalizedClientName = '';
+  if (clientName != null) {
+    normalizedClientName = string.from(clientName).trim();
+  }
+  if (normalizedClientName.length != 0) {
+    const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
+    if (targetAgent == null) {
+      return raw_json_error(404, 'client not found');
+    }
+    if (!can_read_agent(current, targetAgent.ownerUserId, targetAgent.clientUserId)) {
+      return raw_json_error(403, 'permission denied');
+    }
+    if (targetAgent.ownerUserId != null && targetAgent.ownerUserId.trim().length != 0) {
+      ownerUserId = targetAgent.ownerUserId;
+    } else if (targetAgent.clientUserId != null && targetAgent.clientUserId.trim().length != 0) {
+      ownerUserId = targetAgent.clientUserId;
+    }
+  }
+  const policy = upsert_table_sync_policy(
+    ownerUserId,
+    normalizedTable,
+    enabled,
+    syncMode,
+    current.username
+  );
+  return { ok: true, policy: table_sync_policy_payload(policy) };
 }
 
 function public_job_payload(job: map<json>): map<json> {
@@ -1400,6 +1576,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   if (tables != null) {
     nextTables = tables;
   }
+  nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);
   const updated = db.update(Agent, { clientName: resolvedClientName }, {
     machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
     server,
@@ -1425,6 +1602,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   return {
     ok: true,
     syncSettings: sync_settings_payload(nextAgent),
+    tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
     jobs: active_jobs_for_client(resolvedClientName)
   };
 }

@@ -436,23 +436,43 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _handleSyncEnabledChange(String table, bool enabled) async {
-    if (!enabled) {
-      _updateSyncEnabledTable(table, false);
-      return;
-    }
-
     final current = _syncTableState(table);
-    final selectedMode = await _openSyncModeDialog(
-      table: table,
-      initialMode: current.syncMode,
-      title: 'Start sync',
-      confirmLabel: 'Enable sync',
-    );
-    if (!mounted || selectedMode == null) {
-      return;
+    String? selectedMode = current.syncMode;
+    if (enabled) {
+      selectedMode = await _openSyncModeDialog(
+        table: table,
+        initialMode: current.syncMode,
+        title: 'Start sync',
+        confirmLabel: 'Enable sync',
+      );
+      if (!mounted || selectedMode == null) {
+        return;
+      }
     }
 
-    _updateSyncEnabledTable(table, true, selectedSyncMode: selectedMode);
+    final normalizedMode = normalizeSyncMode(
+      selectedMode,
+      fallbackIsMaster: _isMasterClient,
+    );
+    final syncKey = _syncTableKey(table);
+    try {
+      await _controlPlaneClient.updateTableSyncPolicy(
+        table: syncKey,
+        enabled: enabled,
+        syncMode: normalizedMode,
+      );
+      if (!mounted) {
+        return;
+      }
+      _updateSyncEnabledTable(table, enabled, selectedSyncMode: normalizedMode);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    }
   }
 
   SyncTableState _defaultSyncTableState(String table) {
@@ -1134,13 +1154,28 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return 'Upload local rows, download missing owner rows.';
   }
 
-  void _updateTableSyncMode(String table, String syncMode) {
+  Future<void> _updateTableSyncMode(String table, String syncMode) async {
     final normalizedMode = normalizeSyncMode(
       syncMode,
       fallbackIsMaster: _isMasterClient,
     );
     final syncKey = _syncTableKey(table);
     final current = _syncTableState(table, syncKey: syncKey);
+    try {
+      await _controlPlaneClient.updateTableSyncPolicy(
+        table: syncKey,
+        enabled: current.enabled,
+        syncMode: normalizedMode,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+      return;
+    }
     final direction = syncDirectionForMode(normalizedMode);
     _updateSyncTableState(
       syncKey,
@@ -1171,7 +1206,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
-    _updateTableSyncMode(row.table, selectedMode);
+    await _updateTableSyncMode(row.table, selectedMode);
   }
 
   Future<String?> _openSyncModeDialog({
@@ -1600,6 +1635,73 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _applyHistoryLimit(settings.historyLimit);
     _applyAutoSyncInterval(settings.autoSyncIntervalMinutes);
     return enabledTables;
+  }
+
+  Set<String> _applyRemoteTablePolicies(List<RemoteTableSyncPolicy> policies) {
+    if (policies.isEmpty) {
+      return <String>{};
+    }
+
+    final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+    final newlyEnabled = <String>{};
+    var changed = false;
+
+    for (final policy in policies) {
+      final syncKey = policy.table.trim();
+      if (syncKey.isEmpty) {
+        continue;
+      }
+      final current = _syncTableState(syncKey, syncKey: syncKey);
+      final nextStatus =
+          policy.enabled
+              ? (current.status.toLowerCase().contains('ing')
+                  ? current.status
+                  : 'Queued')
+              : 'Paused';
+      final nextMessage =
+          policy.enabled
+              ? 'Waiting for the next two-way sync.'
+              : 'Sync disabled.';
+      final nextDirection = syncDirectionForMode(policy.syncMode);
+      final nextState = current.copyWith(
+        enabled: policy.enabled,
+        syncMode: policy.syncMode,
+        direction: nextDirection,
+        status: nextStatus,
+        progress:
+            policy.enabled
+                ? (nextStatus == 'Queued' ? 0 : current.progress)
+                : current.progress,
+        message: nextMessage,
+      );
+      if (_syncTableStatesEqual(current, nextState)) {
+        continue;
+      }
+      if (!current.enabled && policy.enabled) {
+        newlyEnabled.add(syncKey);
+      }
+      nextTables[syncKey] = nextState;
+      changed = true;
+    }
+
+    if (changed) {
+      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+    }
+    return newlyEnabled;
+  }
+
+  bool _syncTableStatesEqual(SyncTableState left, SyncTableState right) {
+    return left.enabled == right.enabled &&
+        left.status == right.status &&
+        left.lastSync == right.lastSync &&
+        left.progress == right.progress &&
+        left.direction == right.direction &&
+        left.syncMode == right.syncMode &&
+        left.rowCount == right.rowCount &&
+        left.snapshotId == right.snapshotId &&
+        left.snapshotCreatedAt == right.snapshotCreatedAt &&
+        left.snapshotBytes == right.snapshotBytes &&
+        left.message == right.message;
   }
 
   Widget _buildSyncModeBadge(String syncMode, {bool showLabel = true}) {
@@ -2301,7 +2403,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return;
       }
 
-      final enabledTables = _applyRemoteSyncSettings(heartbeat.syncSettings);
+      final enabledTables = {
+        ..._applyRemoteSyncSettings(heartbeat.syncSettings),
+        ..._applyRemoteTablePolicies(heartbeat.tablePolicies),
+      };
       if (!mounted) {
         return;
       }

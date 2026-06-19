@@ -235,6 +235,25 @@ class LiveSyncApiClient {
     });
   }
 
+  Future<void> updateTableSyncPolicy({
+    required String clientName,
+    required String table,
+    required bool enabled,
+    String? syncMode,
+  }) async {
+    final trimmedTable = table.trim();
+    final trimmedClientName = clientName.trim();
+    if (trimmedTable.isEmpty) {
+      throw const LiveSyncApiException('Table is required.');
+    }
+    await _invokeFunction('table_sync_policy_set', {
+      if (trimmedClientName.isNotEmpty) 'clientName': trimmedClientName,
+      'table': trimmedTable,
+      'enabled': enabled,
+      if (syncMode != null && syncMode.trim().isNotEmpty) 'syncMode': syncMode,
+    });
+  }
+
   Future<AdminSnapshotDetail?> fetchLatestSnapshot({
     required String clientName,
     required String table,

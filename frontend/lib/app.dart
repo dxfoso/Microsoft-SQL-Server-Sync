@@ -8,6 +8,50 @@ import 'live_sync_api.dart';
 import 'models.dart';
 
 const String _websiteSessionTokenKey = 'sync_admin_web.auth_token';
+const List<String> _uiFontFallback = <String>[
+  'Segoe UI',
+  'Tahoma',
+  'Arial',
+  'Noto Sans Arabic',
+  'Noto Naskh Arabic',
+  'sans-serif',
+];
+
+TextTheme _withFontFallback(TextTheme theme) {
+  return theme.copyWith(
+    displayLarge: theme.displayLarge?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    displayMedium: theme.displayMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    displaySmall: theme.displaySmall?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    headlineLarge: theme.headlineLarge?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    headlineMedium: theme.headlineMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    headlineSmall: theme.headlineSmall?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    titleLarge: theme.titleLarge?.copyWith(fontFamilyFallback: _uiFontFallback),
+    titleMedium: theme.titleMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    titleSmall: theme.titleSmall?.copyWith(fontFamilyFallback: _uiFontFallback),
+    bodyLarge: theme.bodyLarge?.copyWith(fontFamilyFallback: _uiFontFallback),
+    bodyMedium: theme.bodyMedium?.copyWith(fontFamilyFallback: _uiFontFallback),
+    bodySmall: theme.bodySmall?.copyWith(fontFamilyFallback: _uiFontFallback),
+    labelLarge: theme.labelLarge?.copyWith(fontFamilyFallback: _uiFontFallback),
+    labelMedium: theme.labelMedium?.copyWith(
+      fontFamilyFallback: _uiFontFallback,
+    ),
+    labelSmall: theme.labelSmall?.copyWith(fontFamilyFallback: _uiFontFallback),
+  );
+}
 
 class SyncAdminApp extends StatelessWidget {
   const SyncAdminApp({super.key});
@@ -21,6 +65,10 @@ class SyncAdminApp extends StatelessWidget {
     const slate = Color(0xFF667085);
     const accent = Color(0xFFE0A32A);
     const border = Color(0xFFDDE3EA);
+
+    final textTheme = _withFontFallback(
+      ThemeData.light().textTheme.apply(bodyColor: ink, displayColor: ink),
+    );
 
     return MaterialApp(
       title: 'SQL Sync Control Plane',
@@ -49,10 +97,7 @@ class SyncAdminApp extends StatelessWidget {
             side: const BorderSide(color: border),
           ),
         ),
-        textTheme: ThemeData.light().textTheme.apply(
-          bodyColor: ink,
-          displayColor: ink,
-        ),
+        textTheme: textTheme,
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             backgroundColor: primary,

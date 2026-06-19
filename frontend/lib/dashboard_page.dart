@@ -88,6 +88,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   int _detailTabIndex = 0;
   int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyBackupKeys = <String>{};
+  final Set<String> _busyTablePolicyKeys = <String>{};
   @override
   void initState() {
     super.initState();
@@ -3031,8 +3032,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   String _backupKey(String clientName, String table) => '$clientName::$table';
 
+  String _tablePolicyBusyKey(String clientName, String table) =>
+      '$clientName::$table';
+
   bool _isBackupBusy(String clientName, String table) =>
       _busyBackupKeys.contains(_backupKey(clientName, table));
+
+  bool _isTablePolicyBusy(String clientName, String table) =>
+      _busyTablePolicyKeys.contains(_tablePolicyBusyKey(clientName, table));
 
   void _setBackupBusy(String clientName, String table, bool busy) {
     final key = _backupKey(clientName, table);
@@ -3046,6 +3053,60 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _busyBackupKeys.remove(key);
       }
     });
+  }
+
+  void _setTablePolicyBusy(String clientName, String table, bool busy) {
+    final key = _tablePolicyBusyKey(clientName, table);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (busy) {
+        _busyTablePolicyKeys.add(key);
+      } else {
+        _busyTablePolicyKeys.remove(key);
+      }
+    });
+  }
+
+  Future<void> _updateTableSyncPolicy({
+    required AdminAgent agent,
+    required AdminTableState tableState,
+    required bool enabled,
+  }) async {
+    final tableKey = _tableKeyForAgent(agent, tableState);
+    if (tableKey.trim().isEmpty) {
+      return;
+    }
+    _setTablePolicyBusy(agent.clientName, tableState.table, true);
+    try {
+      await _api.updateTableSyncPolicy(
+        clientName: agent.clientName,
+        table: tableKey,
+        enabled: enabled,
+        syncMode: tableState.syncMode,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${enabled ? 'Enabled' : 'Disabled'} shared sync for ${_displayTableName(tableState.table)}.',
+          ),
+        ),
+      );
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      _setTablePolicyBusy(agent.clientName, tableState.table, false);
+    }
   }
 
   String _formatBytes(int bytes) {
@@ -5549,6 +5610,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ),
       child: Text(
         value,
+        textDirection: directionForDisplayText(value),
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontWeight: FontWeight.w700),
       ),
@@ -5566,6 +5628,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ),
       child: Text(
         value,
+        textDirection: directionForDisplayText(value),
         textAlign: TextAlign.center,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(
@@ -5646,6 +5709,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
           child: Text(
             value == null ? '...' : '$value',
+            textDirection: directionForDisplayText(
+              value == null ? '...' : '$value',
+            ),
             textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -5850,6 +5916,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return SizedBox(
       width: width,
       child: Text.rich(
+        textDirection: directionForDisplayText('$label: $value'),
         TextSpan(
           children: [
             TextSpan(
@@ -6214,6 +6281,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ),
       child: Text(
         value,
+        textDirection: directionForDisplayText(value),
         textAlign: alignCenter ? TextAlign.center : TextAlign.start,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 13),
@@ -7204,6 +7272,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   ) {
     final summary =
         _derivedSummaryByTable[_tableKeyForAgent(agent, tableState)];
+    final policyBusy = _isTablePolicyBusy(agent.clientName, tableState.table);
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -7219,6 +7288,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               children: [
                 Text(
                   _displayTableName(tableState.table),
+                  textDirection: directionForDisplayText(
+                    _displayTableName(tableState.table),
+                  ),
                   style: const TextStyle(
                     color: Color(0xFF101828),
                     fontSize: 14,
@@ -7240,6 +7312,37 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
           ),
           const SizedBox(width: 10),
+          Tooltip(
+            message:
+                tableState.enabled
+                    ? 'Disable sync for this table on all clients'
+                    : 'Enable sync for this table on all clients',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Switch(
+                  value: tableState.enabled,
+                  onChanged:
+                      policyBusy
+                          ? null
+                          : (value) => unawaited(
+                            _updateTableSyncPolicy(
+                              agent: agent,
+                              tableState: tableState,
+                              enabled: value,
+                            ),
+                          ),
+                ),
+                if (policyBusy)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
           StatusBadge(
             label: tableState.status,
             color: _statusColor(tableState.status),

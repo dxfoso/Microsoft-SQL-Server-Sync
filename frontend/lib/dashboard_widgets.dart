@@ -1,5 +1,15 @@
 import 'package:flutter/material.dart';
 
+final RegExp _rtlScriptPattern = RegExp(
+  r'[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]',
+);
+
+TextDirection directionForDisplayText(String value) {
+  return _rtlScriptPattern.hasMatch(value)
+      ? TextDirection.rtl
+      : TextDirection.ltr;
+}
+
 class DashboardHeader extends StatelessWidget {
   const DashboardHeader({
     super.key,
@@ -162,6 +172,7 @@ class StatusBadge extends StatelessWidget {
       ),
       child: Text(
         label,
+        textDirection: directionForDisplayText(label),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
@@ -211,6 +222,7 @@ class MetricPill extends StatelessWidget {
         border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Text.rich(
+        textDirection: directionForDisplayText('$label $value'),
         TextSpan(
           children: [
             TextSpan(
@@ -246,6 +258,7 @@ class InfoLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text.rich(
+      textDirection: directionForDisplayText('$label $value'),
       TextSpan(
         children: [
           TextSpan(
@@ -287,6 +300,7 @@ class EmptyStateCard extends StatelessWidget {
       ),
       child: Text(
         message,
+        textDirection: directionForDisplayText(message),
         style: const TextStyle(height: 1.45, color: Color(0xFF667085)),
       ),
     );
@@ -311,12 +325,14 @@ class _SurfaceCardHeading extends StatelessWidget {
       children: [
         Text(
           title,
+          textDirection: directionForDisplayText(title),
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
         ),
         if (hasSubtitle) ...[
           const SizedBox(height: 2),
           Text(
             subtitle,
+            textDirection: directionForDisplayText(subtitle),
             style: const TextStyle(
               color: Color(0xFF667085),
               fontSize: 12,
@@ -351,6 +367,7 @@ class _HeaderBadge extends StatelessWidget {
       ),
       child: Text(
         label,
+        textDirection: directionForDisplayText(label),
         style: TextStyle(
           color: textColor,
           fontWeight: FontWeight.w700,
