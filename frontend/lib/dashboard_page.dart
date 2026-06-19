@@ -5341,6 +5341,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
         if (showMasterMatchColumn) {
           final stickyColumnController = ScrollController();
+          final horizontalController = ScrollController();
           return Container(
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
@@ -5352,71 +5353,79 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               child: Row(
                 children: [
                   Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: SizedBox(
-                        width: mainTableWidth,
-                        height: panelHeight,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                _buildSnapshotHeaderCell('#', rowNumberWidth),
-                                ...snapshot.columns.map(
-                                  (column) => _buildSnapshotHeaderCell(
-                                    column,
-                                    cellWidth,
+                    child: Scrollbar(
+                      controller: horizontalController,
+                      thumbVisibility: true,
+                      notificationPredicate:
+                          (notification) =>
+                              notification.metrics.axis == Axis.horizontal,
+                      child: SingleChildScrollView(
+                        controller: horizontalController,
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: mainTableWidth,
+                          height: panelHeight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  _buildSnapshotHeaderCell('#', rowNumberWidth),
+                                  ...snapshot.columns.map(
+                                    (column) => _buildSnapshotHeaderCell(
+                                      column,
+                                      cellWidth,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Expanded(
+                                child: NotificationListener<
+                                  ScrollUpdateNotification
+                                >(
+                                  onNotification: (notification) {
+                                    if (stickyColumnController.hasClients) {
+                                      final targetOffset = notification
+                                          .metrics
+                                          .pixels
+                                          .clamp(
+                                            0.0,
+                                            stickyColumnController
+                                                .position
+                                                .maxScrollExtent,
+                                          );
+                                      if ((stickyColumnController.offset -
+                                                  targetOffset)
+                                              .abs() >
+                                          0.5) {
+                                        stickyColumnController.jumpTo(
+                                          targetOffset,
+                                        );
+                                      }
+                                    }
+                                    return false;
+                                  },
+                                  child: ListView.builder(
+                                    itemCount: filteredRows.length,
+                                    itemBuilder: (context, index) {
+                                      final match = filteredRows[index];
+                                      return _buildSnapshotRow(
+                                        snapshot: snapshot,
+                                        columns: snapshot.columns,
+                                        row: match.row,
+                                        rowNumber: match.originalIndex + 1,
+                                        rowNumberWidth: rowNumberWidth,
+                                        masterCountWidth: masterCountWidth,
+                                        cellWidth: cellWidth,
+                                        alternate: index.isOdd,
+                                      );
+                                    },
                                   ),
                                 ),
-                              ],
-                            ),
-                            Expanded(
-                              child: NotificationListener<
-                                ScrollUpdateNotification
-                              >(
-                                onNotification: (notification) {
-                                  if (stickyColumnController.hasClients) {
-                                    final targetOffset = notification
-                                        .metrics
-                                        .pixels
-                                        .clamp(
-                                          0.0,
-                                          stickyColumnController
-                                              .position
-                                              .maxScrollExtent,
-                                        );
-                                    if ((stickyColumnController.offset -
-                                                targetOffset)
-                                            .abs() >
-                                        0.5) {
-                                      stickyColumnController.jumpTo(
-                                        targetOffset,
-                                      );
-                                    }
-                                  }
-                                  return false;
-                                },
-                                child: ListView.builder(
-                                  itemCount: filteredRows.length,
-                                  itemBuilder: (context, index) {
-                                    final match = filteredRows[index];
-                                    return _buildSnapshotRow(
-                                      snapshot: snapshot,
-                                      columns: snapshot.columns,
-                                      row: match.row,
-                                      rowNumber: match.originalIndex + 1,
-                                      rowNumberWidth: rowNumberWidth,
-                                      masterCountWidth: masterCountWidth,
-                                      cellWidth: cellWidth,
-                                      alternate: index.isOdd,
-                                    );
-                                  },
-                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -5467,6 +5476,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           );
         }
 
+        final horizontalController = ScrollController();
         return Container(
           decoration: BoxDecoration(
             color: const Color(0xFFF8FAFC),
@@ -5475,43 +5485,51 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: mainTableWidth,
-                height: panelHeight,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        _buildSnapshotHeaderCell('#', rowNumberWidth),
-                        ...snapshot.columns.map(
-                          (column) =>
-                              _buildSnapshotHeaderCell(column, cellWidth),
-                        ),
-                      ],
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: filteredRows.length,
-                        itemBuilder: (context, index) {
-                          final match = filteredRows[index];
-                          return _buildSnapshotRow(
-                            snapshot: snapshot,
-                            columns: snapshot.columns,
-                            row: match.row,
-                            rowNumber: match.originalIndex + 1,
-                            rowNumberWidth: rowNumberWidth,
-                            masterCountWidth: masterCountWidth,
-                            cellWidth: cellWidth,
-                            alternate: index.isOdd,
-                          );
-                        },
+            child: Scrollbar(
+              controller: horizontalController,
+              thumbVisibility: true,
+              notificationPredicate:
+                  (notification) =>
+                      notification.metrics.axis == Axis.horizontal,
+              child: SingleChildScrollView(
+                controller: horizontalController,
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: mainTableWidth,
+                  height: panelHeight,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          _buildSnapshotHeaderCell('#', rowNumberWidth),
+                          ...snapshot.columns.map(
+                            (column) =>
+                                _buildSnapshotHeaderCell(column, cellWidth),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: filteredRows.length,
+                          itemBuilder: (context, index) {
+                            final match = filteredRows[index];
+                            return _buildSnapshotRow(
+                              snapshot: snapshot,
+                              columns: snapshot.columns,
+                              row: match.row,
+                              rowNumber: match.originalIndex + 1,
+                              rowNumberWidth: rowNumberWidth,
+                              masterCountWidth: masterCountWidth,
+                              cellWidth: cellWidth,
+                              alternate: index.isOdd,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -5791,7 +5809,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     List<String> columns,
     Map<String, String?> row,
   ) {
-    final visibleColumns = columns.take(8).toList(growable: false);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -5800,40 +5817,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final itemWidth =
-              constraints.maxWidth < 620
-                  ? constraints.maxWidth
-                  : (constraints.maxWidth - 18) / 2;
-          return Wrap(
-            spacing: 18,
-            runSpacing: 6,
+      child: Scrollbar(
+        thumbVisibility: true,
+        notificationPredicate:
+            (notification) => notification.metrics.axis == Axis.horizontal,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ...visibleColumns.map(
-                (column) => _buildRowValueText(
-                  column,
-                  row[column] ?? 'NULL',
-                  width: itemWidth,
-                ),
-              ),
-              if (columns.length > visibleColumns.length)
-                SizedBox(
-                  width: itemWidth,
-                  child: Text(
-                    '+${columns.length - visibleColumns.length} more columns',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                    ),
+              for (final column in columns)
+                Padding(
+                  padding: const EdgeInsets.only(right: 18),
+                  child: _buildRowValueText(
+                    column,
+                    row[column] ?? 'NULL',
+                    width: 240,
                   ),
                 ),
             ],
-          );
-        },
+          ),
+        ),
       ),
     );
   }
