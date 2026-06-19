@@ -30,6 +30,8 @@ constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme"
 static int g_active_window_count = 0;
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
+using DwmSetWindowAttributeFn = HRESULT(WINAPI*)(
+    HWND hwnd, DWORD dwAttribute, LPCVOID pvAttribute, DWORD cbAttribute);
 
 // Scale helper to convert logical scaler values to physical using passed in
 // scale factor
@@ -51,6 +53,23 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
     enable_non_client_dpi_scaling(hwnd);
   }
   FreeLibrary(user32_module);
+}
+
+void ApplyThemeIfAvailable(HWND window, BOOL enable_dark_mode) {
+  HMODULE dwmapi_module = LoadLibraryA("Dwmapi.dll");
+  if (!dwmapi_module) {
+    return;
+  }
+
+  const auto set_window_attribute =
+      reinterpret_cast<DwmSetWindowAttributeFn>(
+          GetProcAddress(dwmapi_module, "DwmSetWindowAttribute"));
+  if (set_window_attribute != nullptr) {
+    set_window_attribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                         &enable_dark_mode, sizeof(enable_dark_mode));
+  }
+
+  FreeLibrary(dwmapi_module);
 }
 
 }  // namespace
@@ -282,7 +301,6 @@ void Win32Window::UpdateTheme(HWND const window) {
 
   if (result == ERROR_SUCCESS) {
     BOOL enable_dark_mode = light_mode == 0;
-    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                          &enable_dark_mode, sizeof(enable_dark_mode));
+    ApplyThemeIfAvailable(window, enable_dark_mode);
   }
 }
