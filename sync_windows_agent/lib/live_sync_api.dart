@@ -475,40 +475,21 @@ class AgentControlPlaneClient {
     final uploadId =
         '$jobId-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
 
-    final startResponse = await _transferRequestWithRetry(
-      () => _sendRequest(
-        _client.post(
-          _uriCall(),
-          headers: _headers(json: true),
-          body: jsonEncode({
-            'name': 'jobs_upload_chunk_start',
-            'args': {
-              'jobId': jobId,
-              'uploadId': uploadId,
-              'clientName': clientName,
-              'table': table,
-              'rowCount': rowCount,
-              'snapshotCreatedAt': snapshotCreatedAt,
-              'snapshotBytes': snapshotBytes,
-              'compressedBytes': compressedBytes.length,
-              'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
-              'chunkCount': chunkCount,
-              'encoding': 'gzip',
-              'publishOwnerSnapshot': publishOwnerSnapshot,
-              'token': _authToken,
-            },
-          }),
-        ),
-        'starting snapshot upload',
-      ),
-      'starting snapshot upload',
-    );
-
-    if (startResponse.statusCode != 200) {
-      throw _exceptionFromResponse(startResponse);
-    }
-
-    final startDecoded = _unwrapApiResponse(jsonDecode(startResponse.body));
+    final startDecoded =
+        await _invokeTransferFunction('jobs_upload_chunk_start', {
+          'jobId': jobId,
+          'uploadId': uploadId,
+          'clientName': clientName,
+          'table': table,
+          'rowCount': rowCount,
+          'snapshotCreatedAt': snapshotCreatedAt,
+          'snapshotBytes': snapshotBytes,
+          'compressedBytes': compressedBytes.length,
+          'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
+          'chunkCount': chunkCount,
+          'encoding': 'gzip',
+          'publishOwnerSnapshot': publishOwnerSnapshot,
+        }, 'starting snapshot upload');
     if (startDecoded is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected chunked upload start payload.',
@@ -539,31 +520,16 @@ class AgentControlPlaneClient {
         start,
         end > compressedBytes.length ? compressedBytes.length : end,
       );
-      final chunkResponse = await _transferRequestWithRetry(
-        () => _sendRequest(
-          _client.post(
-            _uriCall(),
-            headers: _headers(json: true),
-            body: jsonEncode({
-              'name': 'jobs_upload_chunk',
-              'args': {
-                'jobId': jobId,
-                'uploadId': uploadId,
-                'chunkIndex': chunkIndex,
-                'chunkData': base64Encode(chunkBytes),
-                'token': _authToken,
-              },
-            }),
-          ),
-          'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
-        ),
+      await _invokeTransferFunction(
+        'jobs_upload_chunk',
+        {
+          'jobId': jobId,
+          'uploadId': uploadId,
+          'chunkIndex': chunkIndex,
+          'chunkData': base64Encode(chunkBytes),
+        },
         'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
       );
-
-      if (chunkResponse.statusCode != 200) {
-        throw _exceptionFromResponse(chunkResponse);
-      }
-      _unwrapApiResponse(jsonDecode(chunkResponse.body));
       bytesTransferred += chunkBytes.length;
       onProgress?.call(
         TransferProgressSnapshot(
@@ -573,32 +539,17 @@ class AgentControlPlaneClient {
       );
     }
 
-    final response = await _transferRequestWithRetry(
-      () => _sendRequest(
-        _client.post(
-          _uriCall(),
-          headers: _headers(json: true),
-          body: jsonEncode({
-            'name': 'jobs_upload_chunk_complete',
-            'args': {'jobId': jobId, 'uploadId': uploadId, 'token': _authToken},
-          }),
-        ),
-        'completing snapshot upload',
-      ),
+    final decoded = await _invokeTransferFunction(
+      'jobs_upload_chunk_complete',
+      {'jobId': jobId, 'uploadId': uploadId},
       'completing snapshot upload',
     );
-
-    if (response.statusCode != 200) {
-      throw _exceptionFromResponse(response);
-    }
     onProgress?.call(
       TransferProgressSnapshot(
         bytesTransferred: compressedBytes.length,
         totalBytes: compressedBytes.length,
       ),
     );
-
-    final decoded = _unwrapApiResponse(jsonDecode(response.body));
     if (decoded is! Map) {
       throw const AgentControlPlaneException('Unexpected upload payload.');
     }

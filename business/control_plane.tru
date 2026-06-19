@@ -592,6 +592,55 @@ function current_user_record(token: string? = null): map<json>? {
   return null;
 }
 
+function deny_job_access(functionName: string, token: string? = null, current: map<json>? = null, job: map<json>? = null): map<json> {
+  let tokenPresent = false;
+  if (token != null && token.trim().length != 0) {
+    tokenPresent = true;
+  }
+
+  let currentId = '';
+  let currentRole = '';
+  let currentOwnerUserId = '';
+  if (current != null) {
+    currentId = string.from(current.id);
+    currentRole = string.from(current.role);
+    if (current.ownerUserId != null) {
+      currentOwnerUserId = string.from(current.ownerUserId);
+    }
+  }
+
+  let jobId = '';
+  let jobClientUserId = '';
+  let jobOwnerUserId = '';
+  let jobClientName = '';
+  let jobTable = '';
+  if (job != null) {
+    jobId = string.from(job.id);
+    jobClientName = string.from(job.clientName);
+    jobTable = string.from(job.table);
+    if (job.clientUserId != null) {
+      jobClientUserId = string.from(job.clientUserId);
+    }
+    if (job.ownerUserId != null) {
+      jobOwnerUserId = string.from(job.ownerUserId);
+    }
+  }
+
+  log.warning('job access denied', {
+    functionName,
+    tokenPresent,
+    currentId,
+    currentRole,
+    currentOwnerUserId,
+    jobId,
+    jobClientUserId,
+    jobOwnerUserId,
+    jobClientName,
+    jobTable
+  });
+  return raw_json_error(403, 'permission denied');
+}
+
 function list_user_rows(): array<json> {
   const result = db.selectMany(User, {
     where: { id: { gte: '0' } },
@@ -1726,7 +1775,7 @@ function jobs_start(jobId: string, status: string = 'snapshotting', progress: in
     return raw_json_error(404, 'job not found');
   }
   if (!can_access_job(current, job)) {
-    return raw_json_error(403, 'permission denied');
+    return deny_job_access('jobs_start', token, current, job);
   }
 
   let nextProgress = 5;
@@ -1756,7 +1805,7 @@ function jobs_progress(jobId: string, status: string = 'snapshotting', progress:
     return raw_json_error(404, 'job not found');
   }
   if (!can_access_job(current, job)) {
-    return raw_json_error(403, 'permission denied');
+    return deny_job_access('jobs_progress', token, current, job);
   }
 
   const updated = db.update(SyncJob, { id: jobId }, {
@@ -1777,12 +1826,13 @@ function jobs_progress(jobId: string, status: string = 'snapshotting', progress:
 }
 
 function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: string = '', table: string = '', rowCount: int = 0, snapshotCreatedAt: string = '', snapshotBytes: int = 0, compressedBytes: int = 0, chunkSizeBytes: int = kSnapshotTransferChunkSizeBytes(), chunkCount: int = 0, encoding: string = kSnapshotTransferEncoding(), publishOwnerSnapshot: bool = false, token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(token), job)) {
-    return raw_json_error(403, 'permission denied');
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_upload_chunk_start', token, current, job);
   }
 
   if (chunkCount < 1 || chunkCount > max_chunk_count()) {
@@ -1852,12 +1902,13 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
 }
 
 function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(token), job)) {
-    return raw_json_error(403, 'permission denied');
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_upload_chunk', token, current, job);
   }
 
   const session = find_upload_session_for_job(jobId, uploadId);
@@ -1936,12 +1987,13 @@ function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chu
 }
 
 function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(token), job)) {
-    return raw_json_error(403, 'permission denied');
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_upload_chunk_complete', token, current, job);
   }
   const session = find_upload_session_by_upload_id(uploadId);
   if (session == null || session.jobId != jobId) {
@@ -2418,12 +2470,13 @@ function jobs_upload_rows_complete(jobId: string, uploadId: string, token: strin
 }
 
 function jobs_download_snapshot(jobId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(token), job)) {
-    return raw_json_error(403, 'permission denied');
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_download_snapshot', token, current, job);
   }
 
   const snapshot = latest_download_snapshot_for_job(job);
@@ -2437,12 +2490,13 @@ function jobs_download_snapshot(jobId: string, token: string? = null): map<json>
 }
 
 function jobs_download_snapshot_manifest(jobId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(token), job)) {
-    return raw_json_error(403, 'permission denied');
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_download_snapshot_manifest', token, current, job);
   }
 
   const snapshot = latest_download_snapshot_for_job(job);
@@ -2504,12 +2558,13 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
 }
 
 function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
   }
-  if (!can_access_job(current_user_record(token), job)) {
-    return raw_json_error(403, 'permission denied');
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_download_snapshot_chunk', token, current, job);
   }
   if (chunkIndex == null) {
     return raw_json_error(400, 'index is required');
