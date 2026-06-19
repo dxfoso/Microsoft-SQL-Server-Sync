@@ -5,7 +5,6 @@ param(
     [string] $BusinessConfigPath = "$PSScriptRoot\business\tru.json",
     [string] $Browser = "chrome",
     [string] $DesktopDevice = "windows",
-    [string] $DesktopBackendBaseUrl = "https://sync.velvet-leaf.com/call",
     [switch] $SkipGet,
     [switch] $RestartDb,
     [bool] $AutoRestart = $true,
@@ -618,10 +617,7 @@ function Start-DesktopApp {
         }
     }
 
-    $backendBaseUrl = "http://127.0.0.1:$BackendPort/call"
-    if (-not [string]::IsNullOrWhiteSpace($DesktopBackendBaseUrl)) {
-        $backendBaseUrl = $DesktopBackendBaseUrl
-    }
+    $backendBaseUrl = "https://sync.velvet-leaf.com/call"
     $flutterArgs = @('run', '-d', $DesktopDevice) + (New-DartDefineArgs -ProjectPath $DesktopPath -BackendBaseUrl $backendBaseUrl)
 
     Write-Host "Starting Windows desktop client: flutter run -d $DesktopDevice" -ForegroundColor Cyan
