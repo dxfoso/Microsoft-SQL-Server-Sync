@@ -4164,6 +4164,7 @@ WHEN NOT MATCHED BY TARGET THEN
                           ? null
                           : () async {
                             final dialogProfile = readDialogProfile();
+                            final navigator = Navigator.of(context);
                             final clientName =
                                 widget.clientNameLocked
                                     ? widget.clientName
@@ -4191,7 +4192,13 @@ WHEN NOT MATCHED BY TARGET THEN
                               return;
                             }
 
-                            if (!context.mounted || !mounted) {
+                            if (!mounted) {
+                              return;
+                            }
+
+                            navigator.pop();
+
+                            if (!mounted) {
                               return;
                             }
 
@@ -4208,14 +4215,16 @@ WHEN NOT MATCHED BY TARGET THEN
                               _rowOffset = 0;
                               _errorMessage = null;
                             });
+
                             widget.onServerChanged(dialogProfile.server);
-                            Navigator.of(context).pop();
                             widget.onClientNameChanged(clientName);
 
-                            await _loadDatabases(
-                              profile: dialogProfile,
-                              loadTables: true,
-                              preserveSelection: false,
+                            unawaited(
+                              _loadDatabases(
+                                profile: dialogProfile,
+                                loadTables: true,
+                                preserveSelection: false,
+                              ),
                             );
                           },
                   child: Text(saving ? 'Saving...' : 'Save'),
