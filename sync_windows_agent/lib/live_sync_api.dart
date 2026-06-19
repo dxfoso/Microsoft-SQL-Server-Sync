@@ -36,10 +36,14 @@ class TransferProgressSnapshot {
   const TransferProgressSnapshot({
     required this.bytesTransferred,
     required this.totalBytes,
+    this.currentChunk = 0,
+    this.totalChunks = 0,
   });
 
   final int bytesTransferred;
   final int totalBytes;
+  final int currentChunk;
+  final int totalChunks;
 }
 
 class AgentControlPlaneClient {
@@ -50,6 +54,8 @@ class AgentControlPlaneClient {
   final http.Client _client;
   final String _baseUrl;
   String? _authToken;
+
+  String get baseUrl => _baseUrl;
 
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
@@ -503,6 +509,7 @@ class AgentControlPlaneClient {
     var bytesTransferred = 0;
 
     for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      final currentChunk = chunkIndex + 1;
       if (receivedIndexes.contains(chunkIndex)) {
         final skippedStart = chunkIndex * _snapshotTransferChunkSizeBytes;
         final skippedEnd = skippedStart + _snapshotTransferChunkSizeBytes;
@@ -511,6 +518,14 @@ class AgentControlPlaneClient {
                 ? compressedBytes.length
                 : skippedEnd) -
             skippedStart;
+        onProgress?.call(
+          TransferProgressSnapshot(
+            bytesTransferred: bytesTransferred,
+            totalBytes: compressedBytes.length,
+            currentChunk: currentChunk,
+            totalChunks: chunkCount,
+          ),
+        );
         continue;
       }
 
@@ -535,6 +550,8 @@ class AgentControlPlaneClient {
         TransferProgressSnapshot(
           bytesTransferred: bytesTransferred,
           totalBytes: compressedBytes.length,
+          currentChunk: currentChunk,
+          totalChunks: chunkCount,
         ),
       );
     }
@@ -548,6 +565,8 @@ class AgentControlPlaneClient {
       TransferProgressSnapshot(
         bytesTransferred: compressedBytes.length,
         totalBytes: compressedBytes.length,
+        currentChunk: chunkCount,
+        totalChunks: chunkCount,
       ),
     );
     if (decoded is! Map) {

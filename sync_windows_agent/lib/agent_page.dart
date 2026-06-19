@@ -105,6 +105,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   DateTime? _uploadMeterStartedAt;
   int _uploadMeterBytesTransferred = 0;
   double _uploadBytesPerSecond = 0;
+  int _uploadMeterCurrentChunk = 0;
+  int _uploadMeterTotalChunks = 0;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -1019,6 +1021,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _uploadMeterStartedAt = DateTime.now();
       _uploadMeterBytesTransferred = 0;
       _uploadBytesPerSecond = 0;
+      _uploadMeterCurrentChunk = 0;
+      _uploadMeterTotalChunks = 0;
     });
   }
 
@@ -1037,6 +1041,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _uploadMeterStartedAt ??= startedAt;
       _uploadMeterBytesTransferred = progress.bytesTransferred;
       _uploadBytesPerSecond = averageBytesPerSecond;
+      _uploadMeterCurrentChunk = progress.currentChunk;
+      _uploadMeterTotalChunks = progress.totalChunks;
     });
   }
 
@@ -1049,6 +1055,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _uploadMeterStartedAt = null;
       _uploadMeterBytesTransferred = 0;
       _uploadBytesPerSecond = 0;
+      _uploadMeterCurrentChunk = 0;
+      _uploadMeterTotalChunks = 0;
     });
   }
 
@@ -5979,11 +5987,7 @@ WHEN NOT MATCHED BY TARGET THEN
         value: selectedSyncRow?.state.status ?? 'Idle',
       ),
       if (_activeUploadTable != null)
-        _InfoLine(
-          label: 'Upload',
-          value:
-              '${_formatTransferRate(_uploadBytesPerSecond)} (${_formatBytes(_uploadMeterBytesTransferred)})',
-        ),
+        _InfoLine(label: 'Upload', value: _uploadFooterValue()),
     ];
 
     return LayoutBuilder(
@@ -6036,6 +6040,14 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
+  String _uploadFooterValue() {
+    final chunkLabel =
+        _uploadMeterCurrentChunk > 0 && _uploadMeterTotalChunks > 0
+            ? '[${_uploadMeterCurrentChunk.toString()}/${_uploadMeterTotalChunks.toString()}] '
+            : '';
+    return '$chunkLabel${_formatTransferRate(_uploadBytesPerSecond)} (${_formatBytes(_uploadMeterBytesTransferred)})';
+  }
+
   Widget _buildServerStatusIndicator() {
     final color =
         _checkingServerConnection
@@ -6051,8 +6063,8 @@ WHEN NOT MATCHED BY TARGET THEN
             : 'Offline';
     final tooltip =
         _lastServerCheck == null
-            ? 'Checks the control plane health every minute.'
-            : 'Last checked at ${_formatTimestamp(_lastServerCheck!.toIso8601String())}';
+            ? 'Checks the control plane health every minute.\nLive server: ${_controlPlaneClient.baseUrl}'
+            : 'Last checked at ${_formatTimestamp(_lastServerCheck!.toIso8601String())}\nLive server: ${_controlPlaneClient.baseUrl}';
 
     return Tooltip(
       message: tooltip,
