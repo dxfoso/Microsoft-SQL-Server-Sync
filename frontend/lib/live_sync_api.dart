@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
@@ -245,7 +247,13 @@ class LiveSyncApiClient {
       if (decoded is! Map) {
         throw const LiveSyncApiException('Unexpected latest snapshot payload.');
       }
-      return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
+      final detail = AdminSnapshotDetail.fromJson(
+        Map<String, dynamic>.from(decoded),
+      );
+      if (detail.rowCount > 0 && detail.rows.isEmpty) {
+        return _fetchSnapshotByIdViaChunks(detail);
+      }
+      return detail;
     } catch (error) {
       if (error is LiveSyncApiException &&
           error.message.toLowerCase().contains('not found')) {
@@ -269,7 +277,13 @@ class LiveSyncApiClient {
         throw const LiveSyncApiException('Unexpected snapshot payload.');
       }
 
-      return AdminSnapshotDetail.fromJson(Map<String, dynamic>.from(decoded));
+      final detail = AdminSnapshotDetail.fromJson(
+        Map<String, dynamic>.from(decoded),
+      );
+      if (detail.rowCount > 0 && detail.rows.isEmpty) {
+        return _fetchSnapshotByIdViaChunks(detail);
+      }
+      return detail;
     } catch (error) {
       if (error is LiveSyncApiException &&
           error.message.toLowerCase().contains('not found')) {
@@ -277,6 +291,78 @@ class LiveSyncApiClient {
       }
       rethrow;
     }
+  }
+
+  Future<AdminSnapshotDetail> _fetchSnapshotByIdViaChunks(
+    AdminSnapshotDetail fallback,
+  ) async {
+    final manifestDecoded = await _invokeFunction(
+      'snapshots_download_manifest',
+      {'snapshotId': fallback.id},
+    );
+    if (manifestDecoded is! Map || manifestDecoded['manifest'] is! Map) {
+      return fallback;
+    }
+
+    final manifest = Map<String, dynamic>.from(
+      manifestDecoded['manifest'] as Map,
+    );
+    final chunkCount = (manifest['chunkCount'] as num? ?? 0).round();
+    final encoding = manifest['encoding'] as String? ?? 'rows';
+    if (chunkCount < 1) {
+      return fallback;
+    }
+
+    if (encoding == 'rows') {
+      final rows = <dynamic>[];
+      for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+        final chunkDecoded = await _invokeFunction('snapshots_download_chunk', {
+          'snapshotId': fallback.id,
+          'chunkIndex': chunkIndex,
+        });
+        if (chunkDecoded is! Map) {
+          return fallback;
+        }
+        rows.addAll(chunkDecoded['rows'] as List<dynamic>? ?? const []);
+      }
+      return AdminSnapshotDetail.fromJson({
+        'id': fallback.id,
+        'clientName': fallback.clientName,
+        'clientUserId': fallback.clientUserId,
+        'ownerUserId': fallback.ownerUserId,
+        'table': fallback.table,
+        'rowCount': fallback.rowCount,
+        'checksum': fallback.checksum,
+        'createdAt': fallback.createdAt,
+        'snapshotBytes': fallback.snapshotBytes,
+        'columns': fallback.columns,
+        'rows': rows,
+        'sourceJobId': fallback.sourceJobId,
+      });
+    }
+
+    final buffer = BytesBuilder(copy: false);
+    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      final chunkDecoded = await _invokeFunction('snapshots_download_chunk', {
+        'snapshotId': fallback.id,
+        'chunkIndex': chunkIndex,
+      });
+      if (chunkDecoded is! Map || chunkDecoded['chunkData'] is! String) {
+        return fallback;
+      }
+      buffer.add(base64Decode(chunkDecoded['chunkData'] as String));
+    }
+
+    final decodedBytes = GZipDecoder().decodeBytes(
+      Uint8List.fromList(buffer.takeBytes()),
+    );
+    final snapshotJson = jsonDecode(utf8.decode(decodedBytes));
+    if (snapshotJson is! Map) {
+      return fallback;
+    }
+    return AdminSnapshotDetail.fromJson(
+      Map<String, dynamic>.from(snapshotJson),
+    );
   }
 
   Future<AdminSnapshotDetail> importSnapshot({

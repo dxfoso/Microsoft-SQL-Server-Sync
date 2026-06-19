@@ -779,6 +779,30 @@ function public_snapshot_detail_payload(snapshot: map<json>): map<json> {
   };
 }
 
+function snapshot_download_session_for(snapshot: map<json>): map<json> {
+  let session = find_download_session_for_snapshot(snapshot.id);
+  if (session != null) {
+    return session;
+  }
+
+  const downloadChunks = row_download_chunks(snapshot.rows, row_download_page_size());
+  const fallbackJobId = snapshot.sourceJobId ?? snapshot.id;
+  session = db.insert(DownloadSession, {
+    id: uuid.v4(),
+    jobId: fallbackJobId,
+    snapshotId: snapshot.id,
+    table: snapshot.table,
+    chunkSizeBytes: row_download_page_size(),
+    chunkCount: downloadChunks.length,
+    compressedBytes: snapshot.snapshotBytes,
+    encoding: 'rows',
+    createdAt: now_iso(),
+    updatedAt: now_iso(),
+    chunks: downloadChunks
+  });
+  return session;
+}
+
 function live_state_agent_limit(): int {
   return 100;
 }
@@ -1490,6 +1514,70 @@ function snapshots_by_id(snapshotId: string, token: string? = null): map<json> {
   return public_snapshot_detail_payload(snapshot);
 }
 
+function snapshots_download_manifest(snapshotId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const snapshot = db.selectOne(SnapshotRecord, { id: snapshotId });
+  if (snapshot == null) {
+    return raw_json_error(404, 'snapshot not found');
+  }
+  if (!can_read_agent(current, snapshot.ownerUserId, snapshot.clientUserId)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const session = snapshot_download_session_for(snapshot);
+  return {
+    snapshot: public_snapshot_payload(snapshot),
+    manifest: download_session_payload(session)
+  };
+}
+
+function snapshots_download_chunk(snapshotId: string, chunkIndex: int? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const snapshot = db.selectOne(SnapshotRecord, { id: snapshotId });
+  if (snapshot == null) {
+    return raw_json_error(404, 'snapshot not found');
+  }
+  if (!can_read_agent(current, snapshot.ownerUserId, snapshot.clientUserId)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  if (chunkIndex == null) {
+    return raw_json_error(400, 'index is required');
+  }
+  const session = snapshot_download_session_for(snapshot);
+  if (chunkIndex < 0 || chunkIndex >= session.chunkCount) {
+    return raw_json_error(400, 'index is out of range');
+  }
+
+  if (session.encoding == 'rows') {
+    if (!has_chunk(session, chunkIndex)) {
+      return raw_json_error(404, 'chunk not found');
+    }
+    return {
+      transferId: session.id,
+      chunkIndex: chunkIndex,
+      chunkCount: session.chunkCount,
+      rows: chunk_rows_for_index(session, chunkIndex)
+    };
+  }
+
+  const chunkData = chunk_data_for_index(session, chunkIndex);
+  if (chunkData.length == 0) {
+    return raw_json_error(404, 'chunk not found');
+  }
+
+  return {
+    transferId: session.id,
+    chunkIndex: chunkIndex,
+    chunkCount: session.chunkCount,
+    chunkData
+  };
+}
+
 function snapshots_import(clientName: string, table: string, snapshot: map<json>, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -1650,6 +1738,8 @@ function jobs_start(jobId: string, status: string = 'snapshotting', progress: in
     progress: nextProgress,
     message,
     startedAt: now_iso(),
+    completedAt: null,
+    error: null,
     updatedAt: now_iso()
   });
   let nextJob = job;
@@ -1675,6 +1765,8 @@ function jobs_progress(jobId: string, status: string = 'snapshotting', progress:
     message,
     rowCount,
     direction,
+    completedAt: null,
+    error: null,
     updatedAt: now_iso()
   });
   let nextJob = job;
@@ -2625,6 +2717,7 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     snapshotId: snapshot,
     snapshotCreatedAt: snapshotTime,
     snapshotBytes: bytes,
+    error: null,
     updatedAt: completedAt
   });
   let nextJob = job;
