@@ -5,6 +5,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$MinimumFlutterVersion = [version]'3.41.9'
+
 . (Join-Path -Path $PSScriptRoot -ChildPath 'windows_agent_build.ps1')
 
 function Get-FullPath {
@@ -58,6 +60,34 @@ function Invoke-NativeCommand {
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code $LASTEXITCODE`: $Description"
     }
+}
+
+function Get-FlutterVersion {
+    $versionOutput = & flutter --version 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to run flutter --version."
+    }
+
+    $firstLine = @($versionOutput | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0]
+    $match = [regex]::Match($firstLine, '^Flutter\s+([0-9]+\.[0-9]+\.[0-9]+)\b')
+    if (-not $match.Success) {
+        throw "Unable to parse Flutter version from: $firstLine"
+    }
+
+    return [pscustomobject]@{
+        Version = [version]$match.Groups[1].Value
+        Text = ($versionOutput -join "`n")
+    }
+}
+
+function Assert-FlutterVersion {
+    param([Parameter(Mandatory = $true)] $FlutterVersionInfo)
+
+    if ($FlutterVersionInfo.Version -lt $MinimumFlutterVersion) {
+        throw "Flutter $($FlutterVersionInfo.Version) is too old for the Windows portable build. Use Flutter $MinimumFlutterVersion or newer, then rebuild the portable package."
+    }
+
+    Write-Host "Flutter version: $($FlutterVersionInfo.Version)"
 }
 
 function Get-BinaryName {
@@ -237,7 +267,9 @@ function Get-PortableRequiredFiles {
 function Write-PortableManifest {
     param(
         [Parameter(Mandatory = $true)][string] $PortableDir,
-        [Parameter(Mandatory = $true)][string] $ZipPath
+        [Parameter(Mandatory = $true)][string] $ZipPath,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)] $FlutterVersionInfo
     )
 
     $manifestPath = Join-Path -Path $PortableDir -ChildPath 'portable-manifest.txt'
@@ -253,6 +285,8 @@ function Write-PortableManifest {
         "BuiltAtUtc: $([DateTime]::UtcNow.ToString('o'))",
         "PortableDir: $PortableDir",
         "ZipPath: $ZipPath",
+        "SourceCommit: $(Get-WindowsAgentGitCommitHash -RepoRoot $RepoRoot)",
+        "FlutterVersion: $($FlutterVersionInfo.Version)",
         ''
     ) + $entries
 
@@ -385,6 +419,9 @@ if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
     throw 'Flutter is not installed or not available in PATH.'
 }
 
+$flutterVersionInfo = Get-FlutterVersion
+Assert-FlutterVersion -FlutterVersionInfo $flutterVersionInfo
+
 if (-not (Test-Path -LiteralPath (Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml') -PathType Leaf)) {
     throw "Could not find Flutter pubspec.yaml in project path: $ProjectPath"
 }
@@ -427,7 +464,7 @@ Get-ChildItem -LiteralPath $releaseDir -Force |
 Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
 
 New-PortableLauncher -Destination $portableDir -ExeName $exeName
-Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath
+Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -FlutterVersionInfo $flutterVersionInfo
 Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime
 
 Write-Host "Creating zip archive..."
