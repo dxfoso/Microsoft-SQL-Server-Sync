@@ -447,7 +447,7 @@ try {
     Write-Host "Portable backend URL: $BackendBaseUrl"
     Remove-WindowsAgentBuildArtifacts -ProjectPath $ProjectPath
     $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
-    Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release @buildDartDefines }
+    Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release --no-tree-shake-icons @buildDartDefines }
 }
 finally {
     Pop-Location

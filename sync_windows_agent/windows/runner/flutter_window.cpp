@@ -201,6 +201,30 @@ void FlutterWindow::RestoreFromTray() {
   SetForegroundWindow(window_handle);
 }
 
+bool FlutterWindow::HandleCloseRequest() {
+  const auto window_handle = GetHandle();
+  if (window_handle == nullptr) {
+    return false;
+  }
+
+  LogStartupEvent(L"FlutterWindow close confirmation");
+  const int choice = MessageBoxW(
+      window_handle,
+      L"Do you want to minimize SQL Sync Agent to the tray instead of closing it?\n\n"
+      L"Yes: minimize to tray\nNo: close the app\nCancel: keep the window open",
+      L"Close SQL Sync Agent",
+      MB_ICONQUESTION | MB_YESNOCANCEL | MB_DEFBUTTON1);
+
+  if (choice == IDYES) {
+    MinimizeToTray();
+    return true;
+  }
+  if (choice == IDCANCEL) {
+    return true;
+  }
+  return false;
+}
+
 LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
@@ -220,6 +244,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       LogStartupEvent(L"FlutterWindow WM_CLOSE");
       if (!startup_ui_ready_) {
         LogStartupEvent(L"FlutterWindow ignoring startup close");
+        return 0;
+      }
+      if (HandleCloseRequest()) {
         return 0;
       }
       break;

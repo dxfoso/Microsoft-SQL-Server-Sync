@@ -30,6 +30,7 @@ class FlutterWindow : public Win32Window {
   void RemoveTrayIcon();
   void MinimizeToTray();
   void RestoreFromTray();
+  bool HandleCloseRequest();
 
   bool startup_ui_ready_ = false;
   bool allow_tray_minimize_ = false;
