@@ -18,6 +18,13 @@ Use this from the repository root:
 
 This ensures the affected app is relaunched with the updated Dart code.
 
+## Windows Client Rule
+
+- If `sync_windows_agent.exe` closes immediately, first check Windows Event Log for an `Application Error` or `Windows Error Reporting` entry for `sync_windows_agent.exe`.
+- Treat exception code `0xc0000005` with `Faulting module name: unknown` during startup as a native Windows runner crash, not a Dart/Flutter screen error.
+- Make sure the client is rebuilt from a commit that includes guarded Windows theme API handling in `sync_windows_agent/windows/runner/win32_window.cpp` (`DwmSetWindowAttribute` must be loaded dynamically and called only when available).
+- Do not validate a downloaded portable build after this crash without rebuilding or replacing it from the latest source; older portable builds can still contain the unguarded startup crash.
+
 ## Backend Rule
 
 - Run the backend from the `backend/` submodule against the root `business/tru.json` config.
