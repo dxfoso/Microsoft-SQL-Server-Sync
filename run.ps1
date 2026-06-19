@@ -57,6 +57,7 @@ $script:restartWeb = $false
 $script:restartDesktop = $false
 $script:restartBackend = $false
 $script:lastChange = Get-Date
+$script:backendUnavailableSince = $null
 
 function Get-FlutterAppVersion {
     param([string]$ProjectPath)
@@ -174,6 +175,36 @@ function Stop-PortListeners {
     }
 }
 
+function Get-RepoDesktopAppProcesses {
+    $exePath = (Join-Path $DesktopPath 'build\windows\x64\runner\Debug\sync_windows_agent.exe').ToLowerInvariant()
+    $name = 'sync_windows_agent.exe'
+
+    return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -ieq $name -and
+            $_.ExecutablePath -and
+            $_.ExecutablePath.ToLowerInvariant() -eq $exePath
+        })
+}
+
+function Get-RepoDesktopAppProcess {
+    $processes = @(Get-RepoDesktopAppProcesses)
+    if ($processes.Count -eq 0) {
+        return $null
+    }
+    return Get-Process -Id $processes[0].ProcessId -ErrorAction SilentlyContinue
+}
+
+function Stop-RepoDesktopAppProcesses {
+    foreach ($processInfo in (Get-RepoDesktopAppProcesses)) {
+        if ($null -eq $processInfo.ProcessId -or $processInfo.ProcessId -le 0) {
+            continue
+        }
+        Write-Host "Stopping stale desktop app process $($processInfo.ProcessId)..." -ForegroundColor Yellow
+        Stop-ProcessTree -RootProcessId $processInfo.ProcessId
+    }
+}
+
 function Get-ConfigPort {
     param([string]$ConfigPath)
 
@@ -258,6 +289,21 @@ function Test-TcpPort {
     }
 }
 
+function Test-BackendAvailable {
+    param([int]$Port)
+
+    if (Test-TcpPort -HostName '127.0.0.1' -Port $Port) {
+        return $true
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/admin/health" -UseBasicParsing -TimeoutSec 2
+        return $response.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
 function Get-FreeTcpPort {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
     try {
@@ -282,6 +328,20 @@ function Get-RepoBackendServerProcess {
         }
     }
 
+    return $null
+}
+
+function Wait-RepoBackendServerProcess {
+    param([int]$TimeoutSeconds = 15)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $serverProcess = Get-RepoBackendServerProcess
+        if ($null -ne $serverProcess) {
+            return $serverProcess
+        }
+        Start-Sleep -Milliseconds 250
+    }
     return $null
 }
 
@@ -566,6 +626,7 @@ function Start-DesktopApp {
 
     Write-Host "Starting Windows desktop client: flutter run -d $DesktopDevice" -ForegroundColor Cyan
     Write-Host "Desktop API URL: $backendBaseUrl" -ForegroundColor Green
+    Stop-RepoDesktopAppProcesses
     return Start-Process -FilePath flutter `
         -ArgumentList $flutterArgs `
         -WorkingDirectory $DesktopPath `
@@ -589,7 +650,7 @@ function Start-Stack {
         throw "Backend did not become healthy on port $backendPort."
     }
 
-    $serverProcess = Get-RepoBackendServerProcess
+    $serverProcess = Wait-RepoBackendServerProcess
     if ($null -ne $serverProcess) {
         $script:backendProcess = $serverProcess
     }
@@ -623,6 +684,7 @@ function Restart-FullStack {
     $script:webProcess = $null
     $script:desktopProcess = $null
     $script:backendProcess = $null
+    $script:backendUnavailableSince = $null
     $script:restartWeb = $false
     $script:restartDesktop = $false
     $script:restartBackend = $false
@@ -738,8 +800,12 @@ try {
         Write-Host "Auto-restart disabled. Press Ctrl+C to stop." -ForegroundColor Yellow
         while ($true) {
             Start-Sleep -Seconds 1
-            if ($null -ne $script:backendProcess -and $script:backendProcess.HasExited) {
+            $serverProcess = Get-RepoBackendServerProcess
+            if ($null -eq $serverProcess -and -not (Test-TcpPort -HostName '127.0.0.1' -Port $script:backendPort)) {
                 throw "Backend process exited unexpectedly."
+            }
+            if ($null -ne $serverProcess) {
+                $script:backendProcess = $serverProcess
             }
             if ($null -ne $script:webProcess -and $script:webProcess.HasExited) {
                 throw "Web process exited unexpectedly."
@@ -796,12 +862,37 @@ try {
         while ($true) {
             Start-Sleep -Milliseconds 250
 
-            if ($null -ne $script:backendProcess -and $script:backendProcess.HasExited) {
-                Restart-FullStack
+            $serverProcess = Get-RepoBackendServerProcess
+            $backendAvailable = Test-BackendAvailable -Port $script:backendPort
+            if ($null -eq $serverProcess -and -not $backendAvailable) {
+                if ($null -eq $script:backendUnavailableSince) {
+                    $script:backendUnavailableSince = Get-Date
+                }
+                if (((Get-Date) - $script:backendUnavailableSince).TotalSeconds -ge 3) {
+                    Write-Host "Restart reason: backend listener is down." -ForegroundColor Red
+                    Restart-FullStack
+                    continue
+                }
+            } else {
+                $script:backendUnavailableSince = $null
+            }
+            if ($null -ne $serverProcess) {
+                $script:backendProcess = $serverProcess
+            }
+
+            if ($null -ne $script:desktopProcess -and $script:desktopProcess.HasExited) {
+                $desktopAppProcess = Get-RepoDesktopAppProcess
+                if ($null -ne $desktopAppProcess) {
+                    $script:desktopProcess = $desktopAppProcess
+                } else {
+                    Write-Host "Restart reason: desktop launcher process exited and no desktop app process was found." -ForegroundColor Red
+                    Restart-DesktopApp
+                }
                 continue
             }
 
             if ($script:restartBackend -and ((Get-Date) - $script:lastChange).TotalMilliseconds -ge $DebounceMs) {
+                Write-Host "Restart reason: backend source change detected." -ForegroundColor Red
                 Restart-FullStack
                 continue
             }
