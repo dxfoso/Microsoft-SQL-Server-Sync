@@ -2073,8 +2073,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                                     ),
                                             child: const Text('Reset Password'),
                                           ),
-                                        if (widget.authenticatedUser.isAdmin &&
-                                            user.isClient)
+                                        if (_canDeleteClientUser(user))
                                           OutlinedButton.icon(
                                             style: OutlinedButton.styleFrom(
                                               foregroundColor: const Color(
