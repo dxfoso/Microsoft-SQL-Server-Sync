@@ -411,73 +411,96 @@ function Get-DirectorySize {
     return [long] $sum.Sum
 }
 
-$ProjectPath = Get-FullPath -Path (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent')
-$OutputRoot = Get-FullPath -Path $PSScriptRoot
-$PortableName = ''
-
-if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
-    throw 'Flutter is not installed or not available in PATH.'
-}
-
-$flutterVersionInfo = Get-FlutterVersion
-Assert-FlutterVersion -FlutterVersionInfo $flutterVersionInfo
-
-if (-not (Test-Path -LiteralPath (Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml') -PathType Leaf)) {
-    throw "Could not find Flutter pubspec.yaml in project path: $ProjectPath"
-}
-
-$binaryName = Get-BinaryName -ProjectPath $ProjectPath
-if ([string]::IsNullOrWhiteSpace($PortableName)) {
-    $PortableName = "$binaryName-windows-portable"
-}
-
-$releaseDir = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\runner\Release'
-$portableDir = Join-Path -Path $OutputRoot -ChildPath $PortableName
-$zipPath = Join-Path -Path $OutputRoot -ChildPath "$PortableName.zip"
-$exeName = "$binaryName.exe"
-$exePath = Join-Path -Path $releaseDir -ChildPath $exeName
-
-New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
-Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory before build'
-Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive before build'
-
-Push-Location $ProjectPath
+Push-Location $PSScriptRoot
 try {
-    Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & flutter pub get }
-    Write-Host "Portable backend URL: $BackendBaseUrl"
-    Remove-WindowsAgentBuildArtifacts -ProjectPath $ProjectPath
-    $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
-    Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release --no-tree-shake-icons @buildDartDefines }
+    $ProjectPath = Get-FullPath -Path (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent')
+    $OutputRoot = Get-FullPath -Path $PSScriptRoot
+    $PortableName = ''
+
+    if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
+        throw 'Flutter is not installed or not available in PATH.'
+    }
+
+    $flutterVersionInfo = Get-FlutterVersion
+    Assert-FlutterVersion -FlutterVersionInfo $flutterVersionInfo
+    Initialize-WindowsAgentBuildEnvironment
+
+    if (-not (Test-Path -LiteralPath (Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml') -PathType Leaf)) {
+        throw "Could not find Flutter pubspec.yaml in project path: $ProjectPath"
+    }
+
+    $binaryName = Get-BinaryName -ProjectPath $ProjectPath
+    if ([string]::IsNullOrWhiteSpace($PortableName)) {
+        $PortableName = "$binaryName-windows-portable"
+    }
+
+    $releaseDir = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\runner\Release'
+    $portableDir = Join-Path -Path $OutputRoot -ChildPath $PortableName
+    $zipPath = Join-Path -Path $OutputRoot -ChildPath "$PortableName.zip"
+    $exeName = "$binaryName.exe"
+    $exePath = Join-Path -Path $releaseDir -ChildPath $exeName
+
+    New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
+    Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory before build'
+    Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive before build'
+
+    Push-Location $ProjectPath
+    try {
+        Stop-WindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
+        Assert-NoWindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
+        Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & flutter pub get }
+        Write-Host "Portable backend URL: $BackendBaseUrl"
+        Remove-WindowsAgentBuildArtifacts -ProjectPath $ProjectPath
+        $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
+        try {
+            Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release --no-tree-shake-icons @buildDartDefines }
+        } catch {
+            if (-not (Test-WindowsAgentReleaseInstallRecoveryNeeded -ProjectPath $ProjectPath)) {
+                throw
+            }
+
+            $restoredAotLibrary = Restore-WindowsAgentAotLibrary -ProjectPath $ProjectPath
+            if (-not $restoredAotLibrary) {
+                throw
+            }
+
+            Write-Warning "Flutter build exited before the release install step finished. Retrying the install with the restored AOT library."
+            Invoke-WindowsAgentReleaseInstall -ProjectPath $ProjectPath
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+        throw "Windows release build did not produce expected executable: $exePath"
+    }
+
+    New-Item -Path $portableDir -ItemType Directory -Force | Out-Null
+    Get-ChildItem -LiteralPath $releaseDir -Force |
+        Copy-Item -Destination $portableDir -Recurse -Force
+
+    Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
+
+    New-PortableLauncher -Destination $portableDir -ExeName $exeName
+    Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -FlutterVersionInfo $flutterVersionInfo
+    Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime
+
+    Write-Host "Creating zip archive..."
+    Compress-Archive -LiteralPath $portableDir -DestinationPath $zipPath -Force
+    Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime
+
+    $portableSize = Get-DirectorySize -Path $portableDir
+    $zipSize = (Get-Item -LiteralPath $zipPath).Length
+
+    Write-Host ''
+    Write-Host 'Portable Windows build complete.'
+    Write-Host "Folder: $portableDir"
+    Write-Host "Zip:    $zipPath"
+    Write-Host "EXE:    $(Join-Path -Path $portableDir -ChildPath $exeName)"
+    Write-Host ("Folder size: {0:N1} MB" -f ($portableSize / 1MB))
+    Write-Host ("Zip size:    {0:N1} MB" -f ($zipSize / 1MB))
 }
 finally {
     Pop-Location
 }
-
-if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-    throw "Windows release build did not produce expected executable: $exePath"
-}
-
-New-Item -Path $portableDir -ItemType Directory -Force | Out-Null
-Get-ChildItem -LiteralPath $releaseDir -Force |
-    Copy-Item -Destination $portableDir -Recurse -Force
-
-Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
-
-New-PortableLauncher -Destination $portableDir -ExeName $exeName
-Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -FlutterVersionInfo $flutterVersionInfo
-Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime
-
-Write-Host "Creating zip archive..."
-Compress-Archive -LiteralPath $portableDir -DestinationPath $zipPath -Force
-Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime
-
-$portableSize = Get-DirectorySize -Path $portableDir
-$zipSize = (Get-Item -LiteralPath $zipPath).Length
-
-Write-Host ''
-Write-Host 'Portable Windows build complete.'
-Write-Host "Folder: $portableDir"
-Write-Host "Zip:    $zipPath"
-Write-Host "EXE:    $(Join-Path -Path $portableDir -ChildPath $exeName)"
-Write-Host ("Folder size: {0:N1} MB" -f ($portableSize / 1MB))
-Write-Host ("Zip size:    {0:N1} MB" -f ($zipSize / 1MB))

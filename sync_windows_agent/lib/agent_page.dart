@@ -88,7 +88,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _errorMessage;
   int? _sortColumnIndex;
   bool _sortAscending = true;
-  _SyncTableSortField _syncTableSortField = _SyncTableSortField.name;
+  _SyncTableSortField _syncTableSortField = _SyncTableSortField.rows;
   bool _syncTableSortAscending = true;
   String? _selectedSyncTable;
   int _totalTableRows = 0;
@@ -363,10 +363,24 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           .map(_localTableName),
     };
     final tables = visible.toList(growable: false);
-    tables.sort(
-      (left, right) => left.toLowerCase().compareTo(right.toLowerCase()),
-    );
+    tables.sort((left, right) {
+      final leftState = _syncTableState(left);
+      final rightState = _syncTableState(right);
+      final leftPriority = _isPrioritySyncTable(leftState);
+      final rightPriority = _isPrioritySyncTable(rightState);
+      if (leftPriority != rightPriority) {
+        return leftPriority ? -1 : 1;
+      }
+      return left.toLowerCase().compareTo(right.toLowerCase());
+    });
     return tables;
+  }
+
+  bool _isPrioritySyncTable(SyncTableState state) {
+    return state.enabled ||
+        state.lastSync.trim().isNotEmpty ||
+        (state.snapshotId?.trim().isNotEmpty ?? false) ||
+        (state.snapshotCreatedAt?.trim().isNotEmpty ?? false);
   }
 
   SyncTableState _syncTableState(String table, {String? syncKey}) {
@@ -815,6 +829,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     setState(() {
       _rowsLoading = false;
       _tableColumns = result.columns;
+      if (_sortColumnIndex == null && result.columns.isNotEmpty) {
+        _sortColumnIndex = 0;
+      }
       _tableRows =
           reset
               ? List<List<String>>.from(result.rows)
@@ -1547,6 +1564,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _SyncTableRowData left,
     _SyncTableRowData right,
   ) {
+    final leftPriority = _isPrioritySyncTable(left.state);
+    final rightPriority = _isPrioritySyncTable(right.state);
+    if (leftPriority != rightPriority) {
+      return leftPriority ? -1 : 1;
+    }
+
     final comparison = switch (_syncTableSortField) {
       _SyncTableSortField.name => left.table.toLowerCase().compareTo(
         right.table.toLowerCase(),
@@ -4576,7 +4599,7 @@ WHEN NOT MATCHED BY TARGET THEN
               _syncTableSortAscending = !_syncTableSortAscending;
             } else {
               _syncTableSortField = field;
-              _syncTableSortAscending = field == _SyncTableSortField.name;
+              _syncTableSortAscending = true;
             }
           });
         },
