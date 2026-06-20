@@ -282,7 +282,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Future<void> _confirmAndDeleteClientUser(AuthenticatedUser user) async {
-    if (!widget.authenticatedUser.isAdmin || !user.isClient) {
+    if (!_canDeleteClientUser(user)) {
       return;
     }
     if (_deletingClientUserIds.contains(user.id)) {
@@ -357,6 +357,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         });
       }
     }
+  }
+
+  bool _canDeleteClientUser(AuthenticatedUser user) {
+    if (!user.isClient) {
+      return false;
+    }
+    if (widget.authenticatedUser.isAdmin) {
+      return true;
+    }
+    if (!widget.authenticatedUser.isOwner) {
+      return false;
+    }
+    return user.ownerUserId == widget.authenticatedUser.id;
   }
 
   List<AdminJob> get _jobs => _state?.jobs ?? const <AdminJob>[];
@@ -1718,7 +1731,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             }
 
             Future<void> openDeleteClientDialog(AuthenticatedUser user) async {
-              if (!widget.authenticatedUser.isAdmin || !user.isClient) {
+              if (!_canDeleteClientUser(user)) {
                 return;
               }
 
@@ -6792,7 +6805,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           label: _userRoleLabel(user.role),
           color: _userRoleColor(user.role),
         ),
-        if (widget.authenticatedUser.isAdmin && user.isClient)
+        if (_canDeleteClientUser(user))
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFFB42318),

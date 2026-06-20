@@ -1750,13 +1750,12 @@ function user_delete(userId: string, token: string? = null): map<json> {
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  if (!is_admin_user(current)) {
-    return raw_json_error(403, 'permission denied');
-  }
-
   const target = find_user_by_id(userId);
   if (target == null) {
     return raw_json_error(404, 'user not found');
+  }
+  if (!can_manage_user(current, target)) {
+    return raw_json_error(403, 'permission denied');
   }
   if (!is_client_user(target)) {
     return raw_json_error(403, 'only client accounts can be deleted');
