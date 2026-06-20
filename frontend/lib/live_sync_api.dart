@@ -229,6 +229,53 @@ class LiveSyncApiClient {
     return AdminBulkSyncResult.fromJson(Map<String, dynamic>.from(decoded));
   }
 
+  Future<AdminServerResetResult> _resetServerSavedDataBatch({
+    required bool resetAgents,
+  }) async {
+    final decoded = await _invokeFunction('server_saved_data_reset', {
+      'resetAgents': resetAgents,
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException('Unexpected server reset payload.');
+    }
+    return AdminServerResetResult.fromJson(Map<String, dynamic>.from(decoded));
+  }
+
+  Future<AdminServerResetResult> resetServerSavedData() async {
+    var uploadSessionDeletedCount = 0;
+    var downloadSessionDeletedCount = 0;
+    var snapshotDeletedCount = 0;
+    var jobDeletedCount = 0;
+    var agentResetCount = 0;
+    var resetAgents = true;
+    while (true) {
+      final batch = await _resetServerSavedDataBatch(resetAgents: resetAgents);
+      uploadSessionDeletedCount += batch.uploadSessionDeletedCount;
+      downloadSessionDeletedCount += batch.downloadSessionDeletedCount;
+      snapshotDeletedCount += batch.snapshotDeletedCount;
+      jobDeletedCount += batch.jobDeletedCount;
+      if (batch.agentResetCount > agentResetCount) {
+        agentResetCount = batch.agentResetCount;
+      }
+      resetAgents = false;
+      if (!batch.hasMore) {
+        return AdminServerResetResult(
+          uploadSessionDeletedCount: uploadSessionDeletedCount,
+          downloadSessionDeletedCount: downloadSessionDeletedCount,
+          snapshotDeletedCount: snapshotDeletedCount,
+          jobDeletedCount: jobDeletedCount,
+          agentResetCount: agentResetCount,
+          hasMore: false,
+          totalDeletedCount:
+              uploadSessionDeletedCount +
+              downloadSessionDeletedCount +
+              snapshotDeletedCount +
+              jobDeletedCount,
+        );
+      }
+    }
+  }
+
   Future<AdminAgentDiagnostics> requestAgentDiagnostics({
     required String clientName,
   }) async {

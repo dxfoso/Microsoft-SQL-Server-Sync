@@ -91,6 +91,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final Set<String> _busyTablePolicyKeys = <String>{};
   final Set<String> _requestingDiagnosticsClientNames = <String>{};
   bool _bulkSyncBusy = false;
+  bool _serverResetBusy = false;
   @override
   void initState() {
     super.initState();
@@ -3068,6 +3069,120 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (mounted) {
         setState(() {
           _bulkSyncBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _confirmAndResetServerSavedData() async {
+    if (!widget.authenticatedUser.isAdmin || _serverResetBusy) {
+      return;
+    }
+
+    final confirmationController = TextEditingController();
+    var confirmed = false;
+    try {
+      final shouldReset = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final matches =
+                  confirmationController.text.trim().toUpperCase() == 'RESET';
+              return AlertDialog(
+                title: const Text('Reset Server Sync Data?'),
+                content: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'This deletes saved sync jobs, snapshots, upload/download sessions, and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(height: 1.45),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Type RESET to confirm.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFB42318),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: confirmationController,
+                        autofocus: true,
+                        onChanged: (_) => setDialogState(() {}),
+                        decoration: const InputDecoration(
+                          hintText: 'RESET',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFB42318),
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed:
+                        matches ? () => Navigator.of(context).pop(true) : null,
+                    child: const Text('Reset Server Data'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+      confirmed = shouldReset == true;
+    } finally {
+      confirmationController.dispose();
+    }
+
+    if (!confirmed) {
+      return;
+    }
+
+    setState(() {
+      _serverResetBusy = true;
+    });
+
+    try {
+      final result = await _api.resetServerSavedData();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Server sync state cleared. Deleted ${result.totalDeletedCount} records and reset ${result.agentResetCount} agents.',
+          ),
+        ),
+      );
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _serverResetBusy = false;
         });
       }
     }
@@ -8154,6 +8269,57 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
         ),
         actions: [
+          if (widget.authenticatedUser.isAdmin)
+            Padding(
+              padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
+              child:
+                  compactAppBar
+                      ? IconButton(
+                        tooltip: 'Reset saved sync data on the server',
+                        onPressed:
+                            _serverResetBusy
+                                ? null
+                                : () => unawaited(
+                                  _confirmAndResetServerSavedData(),
+                                ),
+                        icon:
+                            _serverResetBusy
+                                ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.delete_sweep_rounded),
+                      )
+                      : OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFB42318),
+                          side: const BorderSide(color: Color(0xFFF4C7C3)),
+                        ),
+                        onPressed:
+                            _serverResetBusy
+                                ? null
+                                : () => unawaited(
+                                  _confirmAndResetServerSavedData(),
+                                ),
+                        icon:
+                            _serverResetBusy
+                                ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(
+                                  Icons.delete_sweep_rounded,
+                                  size: 16,
+                                ),
+                        label: const Text('Reset Server Data'),
+                      ),
+            ),
           if (widget.authenticatedUser.canManageUsers)
             Padding(
               padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),

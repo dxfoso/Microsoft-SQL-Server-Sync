@@ -2099,6 +2099,137 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   };
 }
 
+function sync_job_reset_batch(limit: int = 200): map<json> {
+  const rows = db.selectMany(SyncJob, {
+    where: { id: { gte: '' } },
+    orderBy: { field: 'id', dir: 'asc' },
+    fields: ['id'],
+    limit
+  });
+  if (rows == null || rows.length == 0) {
+    return { deletedCount: 0, hasMore: false };
+  }
+  let ids = [];
+  for (const row of rows) {
+    ids = ids.concat([string.from(row.id)]);
+  }
+  return {
+    deletedCount: db.deleteMany(SyncJob, { id: { in: ids } }),
+    hasMore: rows.length >= limit
+  };
+}
+
+function snapshot_reset_batch(limit: int = 200): map<json> {
+  const rows = db.selectMany(SnapshotRecord, {
+    where: { id: { gte: '' } },
+    orderBy: { field: 'id', dir: 'asc' },
+    fields: ['id'],
+    limit
+  });
+  if (rows == null || rows.length == 0) {
+    return { deletedCount: 0, hasMore: false };
+  }
+  let ids = [];
+  for (const row of rows) {
+    ids = ids.concat([string.from(row.id)]);
+  }
+  return {
+    deletedCount: db.deleteMany(SnapshotRecord, { id: { in: ids } }),
+    hasMore: rows.length >= limit
+  };
+}
+
+function upload_session_reset_batch(limit: int = 200): map<json> {
+  const rows = db.selectMany(UploadSession, {
+    where: { id: { gte: '' } },
+    orderBy: { field: 'id', dir: 'asc' },
+    fields: ['id'],
+    limit
+  });
+  if (rows == null || rows.length == 0) {
+    return { deletedCount: 0, hasMore: false };
+  }
+  let ids = [];
+  for (const row of rows) {
+    ids = ids.concat([string.from(row.id)]);
+  }
+  return {
+    deletedCount: db.deleteMany(UploadSession, { id: { in: ids } }),
+    hasMore: rows.length >= limit
+  };
+}
+
+function download_session_reset_batch(limit: int = 200): map<json> {
+  const rows = db.selectMany(DownloadSession, {
+    where: { id: { gte: '' } },
+    orderBy: { field: 'id', dir: 'asc' },
+    fields: ['id'],
+    limit
+  });
+  if (rows == null || rows.length == 0) {
+    return { deletedCount: 0, hasMore: false };
+  }
+  let ids = [];
+  for (const row of rows) {
+    ids = ids.concat([string.from(row.id)]);
+  }
+  return {
+    deletedCount: db.deleteMany(DownloadSession, { id: { in: ids } }),
+    hasMore: rows.length >= limit
+  };
+}
+
+function reset_all_agent_saved_state(): int {
+  return db.updateMany(Agent, { clientName: { gte: '' } }, {
+    selectedTable: null,
+    tables: [],
+    diagnosticRequestId: null,
+    diagnosticRequestedAt: null,
+    diagnosticRequestedByUserId: null,
+    diagnosticLastRequestId: null,
+    diagnosticLastUploadedAt: null,
+    diagnosticStatus: 'idle',
+    diagnosticSummary: '',
+    diagnosticPayload: '',
+    updatedAt: now_iso()
+  });
+}
+
+function server_saved_data_reset(resetAgents: bool = true, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const uploadSessionBatch = upload_session_reset_batch();
+  const downloadSessionBatch = download_session_reset_batch();
+  const snapshotBatch = snapshot_reset_batch();
+  const syncJobBatch = sync_job_reset_batch();
+  let agentResetCount = 0;
+  if (resetAgents) {
+    agentResetCount = reset_all_agent_saved_state();
+  }
+  const uploadSessionDeletedCount = uploadSessionBatch.deletedCount;
+  const downloadSessionDeletedCount = downloadSessionBatch.deletedCount;
+  const snapshotDeletedCount = snapshotBatch.deletedCount;
+  const jobDeletedCount = syncJobBatch.deletedCount;
+  const hasMore = uploadSessionBatch.hasMore == true || downloadSessionBatch.hasMore == true || snapshotBatch.hasMore == true || syncJobBatch.hasMore == true;
+
+  return {
+    ok: true,
+    uploadSessionDeletedCount,
+    downloadSessionDeletedCount,
+    snapshotDeletedCount,
+    jobDeletedCount,
+    agentResetCount,
+    hasMore,
+    totalDeletedCount: uploadSessionDeletedCount + downloadSessionDeletedCount + snapshotDeletedCount + jobDeletedCount
+  };
+}
+
 function jobs_create(clientName: string, tables: array<string>, direction: string = 'upload', sourceClientName: string = '', syncMode: string? = null, token: string? = null): map<json> {
   if (tables.length == 0) {
     return raw_json_error(400, 'tables are required.');

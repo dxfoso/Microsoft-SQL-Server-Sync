@@ -248,6 +248,40 @@ class AdminBulkSyncResult {
   }
 }
 
+class AdminServerResetResult {
+  const AdminServerResetResult({
+    required this.uploadSessionDeletedCount,
+    required this.downloadSessionDeletedCount,
+    required this.snapshotDeletedCount,
+    required this.jobDeletedCount,
+    required this.agentResetCount,
+    required this.hasMore,
+    required this.totalDeletedCount,
+  });
+
+  final int uploadSessionDeletedCount;
+  final int downloadSessionDeletedCount;
+  final int snapshotDeletedCount;
+  final int jobDeletedCount;
+  final int agentResetCount;
+  final bool hasMore;
+  final int totalDeletedCount;
+
+  factory AdminServerResetResult.fromJson(Map<String, dynamic> json) {
+    return AdminServerResetResult(
+      uploadSessionDeletedCount:
+          (json['uploadSessionDeletedCount'] as num? ?? 0).round(),
+      downloadSessionDeletedCount:
+          (json['downloadSessionDeletedCount'] as num? ?? 0).round(),
+      snapshotDeletedCount: (json['snapshotDeletedCount'] as num? ?? 0).round(),
+      jobDeletedCount: (json['jobDeletedCount'] as num? ?? 0).round(),
+      agentResetCount: (json['agentResetCount'] as num? ?? 0).round(),
+      hasMore: json['hasMore'] as bool? ?? false,
+      totalDeletedCount: (json['totalDeletedCount'] as num? ?? 0).round(),
+    );
+  }
+}
+
 class AdminTableState {
   const AdminTableState({
     required this.table,
