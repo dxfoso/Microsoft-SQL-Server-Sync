@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 
 $MinimumFlutterVersion = [version]'3.41.9'
 
-. (Join-Path -Path $PSScriptRoot -ChildPath 'windows_agent_build.ps1')
+. (Join-Path -Path $PSScriptRoot -ChildPath 'scripts\windows_agent_build.ps1')
 
 function Get-FullPath {
     param([Parameter(Mandatory = $true)][string] $Path)

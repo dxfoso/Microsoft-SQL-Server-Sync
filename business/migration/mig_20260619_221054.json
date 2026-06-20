@@ -1,0 +1,85 @@
+{
+  "name": "mig_20260619_221054",
+  "timestamp": "2026-06-19T22:10:54.669077900+00:00",
+  "objects": [
+    {
+      "object": "TableSyncPolicy",
+      "namespace": null,
+      "action": "added",
+      "fields": [
+        {
+          "field": "ownerUserId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "table",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "enabled",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "bool",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "syncMode",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "32",
+            "default": null
+          }
+        },
+        {
+          "field": "updatedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "updatedByClientName",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "128",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}
