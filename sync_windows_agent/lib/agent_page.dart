@@ -2441,6 +2441,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _activeJobs = heartbeat.jobs;
       });
 
+      if (heartbeat.diagnostics.pending) {
+        await _uploadRequestedDiagnostics(heartbeat.diagnostics);
+      }
+
       for (final job in heartbeat.jobs) {
         _applyRemoteJobState(job);
       }
@@ -2466,6 +2470,138 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       });
     } finally {
       _syncLoopBusy = false;
+    }
+  }
+
+  Future<void> _uploadRequestedDiagnostics(
+    RemoteAgentDiagnostics diagnostics,
+  ) async {
+    final payload = _buildDiagnosticsPayload();
+    final failedTableCount =
+        _syncState.tables.values
+            .where((table) => table.status.toLowerCase() == 'failed')
+            .length;
+    final summary =
+        'Machine ${Platform.localHostname}, database ${_selectedDatabase ?? 'not selected'}, '
+        'failed tables $failedTableCount, active jobs ${_activeJobs.length}, '
+        'server connected ${_serverConnected ? 'yes' : 'no'}, sql connected ${_selectedDatabase != null ? 'yes' : 'no'}.';
+
+    await _controlPlaneClient.uploadDiagnostics(
+      clientName: widget.clientName,
+      requestId: diagnostics.requestId,
+      summary: summary,
+      payload: payload,
+    );
+    logStartupEvent(
+      'Uploaded diagnostics for ${widget.clientName} request ${diagnostics.requestId ?? 'manual'}.',
+    );
+  }
+
+  String _buildDiagnosticsPayload() {
+    final failedTables = _syncState.tables.entries
+        .where((entry) => entry.value.status.toLowerCase() == 'failed')
+        .take(25)
+        .map(
+          (entry) => {
+            'table': entry.key,
+            'status': entry.value.status,
+            'lastSync': entry.value.lastSync,
+            'progress': entry.value.progress,
+            'rowCount': entry.value.rowCount,
+            'message': entry.value.message,
+          },
+        )
+        .toList(growable: false);
+    final activeJobs = _activeJobs
+        .take(25)
+        .map(
+          (job) => {
+            'id': job.id,
+            'table': job.table,
+            'direction': job.direction,
+            'status': job.status,
+            'progress': job.progress,
+            'message': job.message,
+            'error': job.error,
+            'updatedAt': job.updatedAt,
+          },
+        )
+        .toList(growable: false);
+    final tableSummaries = _syncState.tables.entries
+        .take(50)
+        .map(
+          (entry) => {
+            'table': entry.key,
+            'enabled': entry.value.enabled,
+            'status': entry.value.status,
+            'lastSync': entry.value.lastSync,
+            'progress': entry.value.progress,
+            'rowCount': entry.value.rowCount,
+            'message': entry.value.message,
+          },
+        )
+        .toList(growable: false);
+
+    return jsonEncode({
+      'capturedAt': DateTime.now().toIso8601String(),
+      'clientName': widget.clientName,
+      'machineName': Platform.localHostname,
+      'app': {
+        'version': _agentAppVersion,
+        'buildCommitHash': _agentBuildCommitHash,
+        'buildReleaseDate': _agentBuildReleaseDate,
+      },
+      'account': {
+        'username': widget.authenticatedAccountUsername,
+        'email': widget.authenticatedAccountEmail,
+        'name': widget.authenticatedAccountName,
+      },
+      'controlPlane': {
+        'baseUrl': _controlPlaneClient.baseUrl,
+        'serverConnected': _serverConnected,
+        'checkingServerConnection': _checkingServerConnection,
+        'lastServerCheck': _lastServerCheck?.toIso8601String(),
+      },
+      'sql': {
+        'server': _serverController.text.trim(),
+        'database': _selectedDatabase,
+        'selectedTable':
+            _selectedTable == null ? null : _syncTableKey(_selectedTable!),
+        'databaseCount': _databases.length,
+        'tableCount': _tables.length,
+      },
+      'syncSettings': {
+        'isMaster': _isMasterClient,
+        'historyLimit': _syncState.historyLimit,
+        'autoSyncIntervalMinutes': _syncState.autoSyncIntervalMinutes,
+      },
+      'errors': {
+        'errorMessage': _errorMessage,
+        'lastSqlCmdLaunchError': _lastSqlCmdLaunchError,
+      },
+      'activeJobs': activeJobs,
+      'failedTables': failedTables,
+      'tableSummaries': tableSummaries,
+      'startupLogTail': _readStartupLogTail(),
+    });
+  }
+
+  String _readStartupLogTail() {
+    try {
+      final executableDirectory = File(Platform.resolvedExecutable).parent;
+      final logFile = File(
+        '${executableDirectory.path}${Platform.pathSeparator}sync_windows_agent_startup.log',
+      );
+      if (!logFile.existsSync()) {
+        return '';
+      }
+      final content = logFile.readAsStringSync();
+      if (content.length <= 12000) {
+        return content;
+      }
+      return content.substring(content.length - 12000);
+    } catch (_) {
+      return '';
     }
   }
 

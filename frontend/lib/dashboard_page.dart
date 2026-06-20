@@ -89,6 +89,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyBackupKeys = <String>{};
   final Set<String> _busyTablePolicyKeys = <String>{};
+  final Set<String> _requestingDiagnosticsClientNames = <String>{};
+  bool _bulkSyncBusy = false;
   @override
   void initState() {
     super.initState();
@@ -3020,6 +3022,161 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         SnackBar(content: Text('$action queued for $table on $clientName.')),
       );
       await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    }
+  }
+
+  Future<void> _triggerSyncAllEnabledNow() async {
+    if (_bulkSyncBusy) {
+      return;
+    }
+    setState(() {
+      _bulkSyncBusy = true;
+    });
+    try {
+      final result = await _api.triggerSyncAllEnabledNow();
+      if (!mounted) {
+        return;
+      }
+      final details = <String>[
+        'Queued ${result.queuedJobCount} jobs across ${result.queuedClientCount} clients.',
+      ];
+      if (result.skippedOfflineClients.isNotEmpty) {
+        details.add('Offline: ${result.skippedOfflineClients.join(', ')}');
+      }
+      if (result.skippedBusyTables.isNotEmpty) {
+        details.add('Busy tables skipped: ${result.skippedBusyTables.length}');
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(details.join(' '))));
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bulkSyncBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _requestAgentDiagnostics(AdminAgent agent) async {
+    if (_requestingDiagnosticsClientNames.contains(agent.clientName)) {
+      return;
+    }
+    setState(() {
+      _requestingDiagnosticsClientNames.add(agent.clientName);
+    });
+    try {
+      await _api.requestAgentDiagnostics(clientName: agent.clientName);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Diagnostics requested from ${agent.clientName}. The Windows agent will upload on its next heartbeat.',
+          ),
+        ),
+      );
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _requestingDiagnosticsClientNames.remove(agent.clientName);
+        });
+      }
+    }
+  }
+
+  Future<void> _openDiagnosticsDialog(AdminAgent agent) async {
+    try {
+      final diagnostics = await _api.fetchAgentDiagnostics(
+        clientName: agent.clientName,
+      );
+      if (!mounted) {
+        return;
+      }
+      final payload = diagnostics.payload?.trim() ?? '';
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: Text('Diagnostics: ${agent.clientName}'),
+            content: SizedBox(
+              width: 760,
+              height: 560,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Status ${diagnostics.status} • Requested ${_formatTimestamp(diagnostics.requestedAt ?? '')} • Uploaded ${_formatTimestamp(diagnostics.uploadedAt ?? '')}',
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (diagnostics.summary.trim().isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    SelectableText(diagnostics.summary),
+                  ],
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFDDE3EA)),
+                      ),
+                      child: SingleChildScrollView(
+                        child: SelectableText(
+                          payload.isEmpty
+                              ? 'No uploaded diagnostic payload is available yet.'
+                              : payload,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -7248,19 +7405,117 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildClientHeroCard(AdminAgent agent) {
     final serverItem = _serverItemForClientName(agent.clientName);
+    final diagnostics = agent.diagnostics;
+    final requestingDiagnostics = _requestingDiagnosticsClientNames.contains(
+      agent.clientName,
+    );
     return SurfaceCard(
       title: agent.clientName,
       subtitle: 'Client page for ${serverItem?.title ?? 'server'}',
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          MetricPill(label: 'Server', value: agent.server),
-          MetricPill(label: 'Machine', value: agent.machineName),
-          MetricPill(label: 'Database', value: agent.database),
-          MetricPill(label: 'Tables', value: '${agent.tables.length}'),
-          MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
-          MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              MetricPill(label: 'Server', value: agent.server),
+              MetricPill(label: 'Machine', value: agent.machineName),
+              MetricPill(label: 'Database', value: agent.database),
+              MetricPill(label: 'Tables', value: '${agent.tables.length}'),
+              MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
+              MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
+              MetricPill(label: 'Diagnostics', value: diagnostics.status),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed:
+                    requestingDiagnostics
+                        ? null
+                        : () => unawaited(_requestAgentDiagnostics(agent)),
+                icon:
+                    requestingDiagnostics
+                        ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                        : const Icon(
+                          Icons.health_and_safety_outlined,
+                          size: 16,
+                        ),
+                label: Text(
+                  diagnostics.pending
+                      ? 'Diagnostics Requested'
+                      : 'Request Diagnostics',
+                ),
+              ),
+              FilledButton.tonalIcon(
+                onPressed:
+                    diagnostics.hasReport
+                        ? () => unawaited(_openDiagnosticsDialog(agent))
+                        : null,
+                icon: const Icon(Icons.description_outlined, size: 16),
+                label: const Text('View Diagnostics'),
+              ),
+            ],
+          ),
+          if (diagnostics.pending ||
+              diagnostics.summary.trim().isNotEmpty ||
+              (diagnostics.uploadedAt?.trim().isNotEmpty ?? false)) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFDDE3EA)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    diagnostics.pending
+                        ? 'Diagnostics request pending'
+                        : 'Latest diagnostics',
+                    style: const TextStyle(
+                      color: Color(0xFF101828),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    diagnostics.summary.trim().isEmpty
+                        ? 'Requested ${_formatTimestamp(diagnostics.requestedAt ?? '')}'
+                        : diagnostics.summary,
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (diagnostics.uploadedAt?.trim().isNotEmpty ?? false) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Uploaded ${_formatTimestamp(diagnostics.uploadedAt ?? '')}',
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -7899,6 +8154,46 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
         ),
         actions: [
+          if (widget.authenticatedUser.canManageUsers)
+            Padding(
+              padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
+              child:
+                  compactAppBar
+                      ? IconButton(
+                        tooltip: 'Sync all enabled tables now',
+                        onPressed:
+                            _bulkSyncBusy
+                                ? null
+                                : () => unawaited(_triggerSyncAllEnabledNow()),
+                        icon:
+                            _bulkSyncBusy
+                                ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.sync_rounded),
+                      )
+                      : FilledButton.tonalIcon(
+                        onPressed:
+                            _bulkSyncBusy
+                                ? null
+                                : () => unawaited(_triggerSyncAllEnabledNow()),
+                        icon:
+                            _bulkSyncBusy
+                                ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.sync_rounded, size: 16),
+                        label: const Text('Sync All Now'),
+                      ),
+            ),
           Container(
             height: 36,
             margin: EdgeInsets.only(right: compactAppBar ? 4 : 8),

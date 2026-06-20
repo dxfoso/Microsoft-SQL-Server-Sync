@@ -406,6 +406,35 @@ class AgentControlPlaneClient {
                 RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false),
+      diagnostics:
+          decoded['diagnostics'] is Map
+              ? RemoteAgentDiagnostics.fromJson(
+                Map<String, dynamic>.from(decoded['diagnostics'] as Map),
+              )
+              : const RemoteAgentDiagnostics(),
+    );
+  }
+
+  Future<RemoteAgentDiagnostics> uploadDiagnostics({
+    required String clientName,
+    String? requestId,
+    required String summary,
+    required String payload,
+  }) async {
+    final response = await _invokeFunction('agent_diagnostics_upload', {
+      'clientName': clientName,
+      if (requestId != null && requestId.trim().isNotEmpty)
+        'requestId': requestId.trim(),
+      'summary': summary,
+      'payload': payload,
+    }, 'uploading diagnostics');
+    if (response is! Map || response['diagnostics'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected diagnostics upload payload.',
+      );
+    }
+    return RemoteAgentDiagnostics.fromJson(
+      Map<String, dynamic>.from(response['diagnostics'] as Map),
     );
   }
 
@@ -1066,11 +1095,13 @@ class HeartbeatResult {
     required this.syncSettings,
     required this.tablePolicies,
     required this.jobs,
+    required this.diagnostics,
   });
 
   final RemoteAgentSyncSettings syncSettings;
   final List<RemoteTableSyncPolicy> tablePolicies;
   final List<RemoteSyncJob> jobs;
+  final RemoteAgentDiagnostics diagnostics;
 }
 
 class RemoteTableSyncPolicy {
@@ -1124,6 +1155,44 @@ class RemoteAgentSyncSettings {
               .round()
               .clamp(kMinAutoSyncIntervalMinutes, kMaxAutoSyncIntervalMinutes)
               .toInt(),
+    );
+  }
+}
+
+class RemoteAgentDiagnostics {
+  const RemoteAgentDiagnostics({
+    this.pending = false,
+    this.requestId,
+    this.requestedAt,
+    this.requestedByUserId,
+    this.uploadedAt,
+    this.lastRequestId,
+    this.status = 'idle',
+    this.summary = '',
+    this.payload,
+  });
+
+  final bool pending;
+  final String? requestId;
+  final String? requestedAt;
+  final String? requestedByUserId;
+  final String? uploadedAt;
+  final String? lastRequestId;
+  final String status;
+  final String summary;
+  final String? payload;
+
+  factory RemoteAgentDiagnostics.fromJson(Map<String, dynamic> json) {
+    return RemoteAgentDiagnostics(
+      pending: json['pending'] as bool? ?? false,
+      requestId: json['requestId'] as String?,
+      requestedAt: json['requestedAt'] as String?,
+      requestedByUserId: json['requestedByUserId'] as String?,
+      uploadedAt: json['uploadedAt'] as String?,
+      lastRequestId: json['lastRequestId'] as String?,
+      status: json['status'] as String? ?? 'idle',
+      summary: json['summary'] as String? ?? '',
+      payload: json['payload'] as String?,
     );
   }
 }

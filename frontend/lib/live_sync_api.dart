@@ -221,6 +221,44 @@ class LiveSyncApiClient {
     }
   }
 
+  Future<AdminBulkSyncResult> triggerSyncAllEnabledNow() async {
+    final decoded = await _invokeFunction('jobs_create_all_enabled', {});
+    if (decoded is! Map) {
+      throw const LiveSyncApiException('Unexpected bulk sync payload.');
+    }
+    return AdminBulkSyncResult.fromJson(Map<String, dynamic>.from(decoded));
+  }
+
+  Future<AdminAgentDiagnostics> requestAgentDiagnostics({
+    required String clientName,
+  }) async {
+    final decoded = await _invokeFunction('agent_diagnostics_request', {
+      'clientName': clientName.trim(),
+    });
+    if (decoded is! Map || decoded['diagnostics'] is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected diagnostics request payload.',
+      );
+    }
+    return AdminAgentDiagnostics.fromJson(
+      Map<String, dynamic>.from(decoded['diagnostics'] as Map),
+    );
+  }
+
+  Future<AdminAgentDiagnostics> fetchAgentDiagnostics({
+    required String clientName,
+  }) async {
+    final decoded = await _invokeFunction('agent_diagnostics_get', {
+      'clientName': clientName.trim(),
+    });
+    if (decoded is! Map || decoded['diagnostics'] is! Map) {
+      throw const LiveSyncApiException('Unexpected diagnostics payload.');
+    }
+    return AdminAgentDiagnostics.fromJson(
+      Map<String, dynamic>.from(decoded['diagnostics'] as Map),
+    );
+  }
+
   Future<void> updateAgentSyncSettings({
     required String clientName,
     required bool isMaster,

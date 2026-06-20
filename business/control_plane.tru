@@ -42,6 +42,14 @@ class Agent {
   field lastHeartbeat: string min=0 max=64
   field selectedTable: string? min=0 max=256
   field tables: array<json>
+  field diagnosticRequestId: string? min=0 max=64
+  field diagnosticRequestedAt: datetime?
+  field diagnosticRequestedByUserId: string? min=0 max=64
+  field diagnosticLastRequestId: string? min=0 max=64
+  field diagnosticLastUploadedAt: datetime?
+  field diagnosticStatus: string min=0 max=32
+  field diagnosticSummary: string min=0 max=4000
+  field diagnosticPayload: string min=0 max=64000
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field updatedAt: datetime
@@ -258,6 +266,13 @@ function max_server_rows_snapshot_count(): int {
 
 function row_snapshot_limit_error(scope: string): string {
   return string.concat(scope, ' exceeds the server row snapshot limit of ', string.from(max_server_rows_snapshot_count()), ' rows. Split the sync into smaller table batches before retrying.');
+}
+
+function truncate_text(value: string, maxLength: int): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return value.slice(0, maxLength);
 }
 
 function default_admin_username(): string {
@@ -939,7 +954,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'tables', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1044,9 +1059,42 @@ function public_agent_payload(agent: map<json>): map<json> {
     sqlConnected: agent.sqlConnected,
     lastHeartbeat: agent.lastHeartbeat,
     selectedTable: agent.selectedTable,
+    diagnostics: agent_diagnostics_payload(agent),
     tables: nextTables,
     clientUserId: agent.clientUserId,
     ownerUserId: agent.ownerUserId
+  };
+}
+
+function diagnostic_request_pending(agent: map<json>): bool {
+  if (agent.diagnosticRequestId == null) {
+    return false;
+  }
+  const requestId = string.from(agent.diagnosticRequestId).trim();
+  if (requestId.length == 0) {
+    return false;
+  }
+  if (agent.diagnosticLastRequestId == null) {
+    return true;
+  }
+  return string.from(agent.diagnosticLastRequestId).trim() != requestId;
+}
+
+function agent_diagnostics_payload(agent: map<json>, includePayload: bool = false): map<json> {
+  let payload = null;
+  if (includePayload && agent.diagnosticPayload != null) {
+    payload = agent.diagnosticPayload;
+  }
+  return {
+    pending: diagnostic_request_pending(agent),
+    requestId: agent.diagnosticRequestId,
+    requestedAt: agent.diagnosticRequestedAt,
+    requestedByUserId: agent.diagnosticRequestedByUserId,
+    uploadedAt: agent.diagnosticLastUploadedAt,
+    lastRequestId: agent.diagnosticLastRequestId,
+    status: agent.diagnosticStatus,
+    summary: agent.diagnosticSummary,
+    payload: payload
   };
 }
 
@@ -1194,7 +1242,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'tables', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'isMaster', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1310,6 +1358,14 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     lastHeartbeat: '',
     selectedTable: null,
     tables: [],
+    diagnosticRequestId: null,
+    diagnosticRequestedAt: null,
+    diagnosticRequestedByUserId: null,
+    diagnosticLastRequestId: null,
+    diagnosticLastUploadedAt: null,
+    diagnosticStatus: 'idle',
+    diagnosticSummary: '',
+    diagnosticPayload: '',
     clientUserId,
     ownerUserId,
     updatedAt: now_iso()
@@ -1356,6 +1412,76 @@ function active_jobs_for_client(clientName: string): array<json> {
     }
   }
   return jobs;
+}
+
+function unique_string_values(values: array<string>): array<string> {
+  let unique = [];
+  for (const value of values) {
+    let seen = false;
+    for (const existing of unique) {
+      if (existing == value) {
+        seen = true;
+      }
+    }
+    if (!seen) {
+      unique = unique.concat([value]);
+    }
+  }
+  return unique;
+}
+
+function active_job_tables_for_client(clientName: string): array<string> {
+  const jobs = active_jobs_for_client(clientName);
+  let tables = [];
+  for (const job of jobs) {
+    tables = tables.concat([string.from(job.table)]);
+  }
+  return unique_string_values(tables);
+}
+
+function enabled_sync_tables_for_agent(agent: map<json>): array<string> {
+  let enabledTables = [];
+  let tables = [];
+  if (agent.tables != null) {
+    tables = apply_table_sync_policies(agent.ownerUserId, agent.tables, string.from(agent.database));
+  }
+  for (const tableState of tables) {
+    if (tableState.enabled == true && tableState.table != null) {
+      enabledTables = enabledTables.concat([string.from(tableState.table)]);
+    }
+  }
+  return unique_string_values(enabledTables);
+}
+
+function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sourceClientName: string = ''): array<json> {
+  if (tables.length == 0) {
+    return [];
+  }
+  const dedupedTables = unique_string_values(tables);
+  const rows = dedupedTables.map((table) => {
+    return {
+      id: uuid.v4(),
+      clientName: agent.clientName,
+      sourceClientName,
+      table,
+      direction: 'sync',
+      status: 'queued',
+      progress: 0,
+      rowCount: 0,
+      createdAt: now_iso(),
+      updatedAt: now_iso(),
+      startedAt: null,
+      completedAt: null,
+      snapshotId: null,
+      snapshotCreatedAt: null,
+      snapshotBytes: 0,
+      message: string.concat('Queued immediate sync for ', table, '.'),
+      error: null,
+      clientUserId: agent.clientUserId,
+      ownerUserId: agent.ownerUserId
+    };
+  });
+  return db.insertMany(SyncJob, rows);
 }
 
 function latest_snapshot_for(clientName: string, table: string): map<json>? {
@@ -1746,7 +1872,8 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     ok: true,
     syncSettings: sync_settings_payload(nextAgent),
     tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
-    jobs: active_jobs_for_client(resolvedClientName)
+    jobs: active_jobs_for_client(resolvedClientName),
+    diagnostics: agent_diagnostics_payload(nextAgent)
   };
 }
 
@@ -1799,6 +1926,177 @@ function agent_sync_settings_post(clientName: string, isMaster: bool = true, his
 
 function agent_jobs(clientName: string): map<json> {
   return { jobs: active_jobs_for_client(clientName) };
+}
+
+function agent_diagnostics_request(clientName: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const targetUser = find_user_by_identity(normalizedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let targetOwnerUserId = null;
+  if (targetUser != null) {
+    targetOwnerUserId = targetUser.ownerUserId;
+  }
+  let targetClientUserId = null;
+  if (targetUser != null) {
+    targetClientUserId = targetUser.id;
+  }
+  const agent = ensure_agent(normalizedClientName, targetClientUserId, targetOwnerUserId);
+  const updated = db.update(Agent, { clientName: normalizedClientName }, {
+    diagnosticRequestId: uuid.v4(),
+    diagnosticRequestedAt: now_iso(),
+    diagnosticRequestedByUserId: current.id,
+    diagnosticStatus: 'requested',
+    updatedAt: now_iso()
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: normalizedClientName,
+    diagnostics: agent_diagnostics_payload(updated)
+  };
+}
+
+function agent_diagnostics_upload(clientName: string? = null, requestId: string? = null, summary: string = '', payload: string = '', token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  let resolvedClientName = '';
+  if (clientName == null || clientName.trim().length == 0) {
+    if (current.username == null) {
+      resolvedClientName = normalize_user_name(current.name);
+    } else {
+      resolvedClientName = normalize_user_name(current.username);
+    }
+  } else {
+    resolvedClientName = normalize_user_name(clientName);
+  }
+  const targetUser = find_user_by_identity(resolvedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let targetOwnerUserId = owner_namespace_for_user(current);
+  let targetClientUserId = current.id;
+  if (targetUser != null) {
+    targetOwnerUserId = targetUser.ownerUserId;
+    targetClientUserId = targetUser.id;
+  }
+  const agent = ensure_agent(resolvedClientName, targetClientUserId, targetOwnerUserId);
+  let resolvedRequestId = '';
+  if (requestId != null) {
+    resolvedRequestId = string.from(requestId).trim();
+  }
+  if (resolvedRequestId.length == 0 && agent.diagnosticRequestId != null) {
+    resolvedRequestId = string.from(agent.diagnosticRequestId).trim();
+  }
+  let resolvedRequestIdOrNull = null;
+  if (resolvedRequestId.length != 0) {
+    resolvedRequestIdOrNull = resolvedRequestId;
+  }
+  const updated = db.update(Agent, { clientName: resolvedClientName }, {
+    diagnosticLastRequestId: resolvedRequestIdOrNull,
+    diagnosticLastUploadedAt: now_iso(),
+    diagnosticStatus: 'uploaded',
+    diagnosticSummary: truncate_text(summary, 4000),
+    diagnosticPayload: truncate_text(payload, 64000),
+    updatedAt: now_iso()
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: resolvedClientName,
+    diagnostics: agent_diagnostics_payload(updated)
+  };
+}
+
+function agent_diagnostics_get(clientName: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const agent = db.selectOne(Agent, { clientName: normalizedClientName });
+  if (agent == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  if (!can_read_agent(current, agent.ownerUserId, agent.clientUserId)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  return {
+    clientName: normalizedClientName,
+    diagnostics: agent_diagnostics_payload(agent, true)
+  };
+}
+
+function jobs_create_all_enabled(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  let createdJobs = [];
+  let queuedClientNames = [];
+  let skippedOfflineClients = [];
+  let skippedBusyTables = [];
+
+  for (const agent of visible_agent_rows_for(current)) {
+    const enabledTables = enabled_sync_tables_for_agent(agent);
+    if (enabledTables.length == 0) {
+      continue;
+    }
+    if (agent.isOnline != true || agent.serverConnected != true || agent.sqlConnected != true) {
+      skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
+      continue;
+    }
+    const activeTables = active_job_tables_for_client(agent.clientName);
+    let tablesToQueue = [];
+    for (const table of enabledTables) {
+      let busy = false;
+      for (const activeTable of activeTables) {
+        if (activeTable == table) {
+          busy = true;
+        }
+      }
+      if (busy) {
+        skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
+      } else {
+        tablesToQueue = tablesToQueue.concat([table]);
+      }
+    }
+    if (tablesToQueue.length == 0) {
+      continue;
+    }
+    const clientJobs = create_sync_jobs_for_agent(agent, tablesToQueue);
+    if (clientJobs.length > 0) {
+      createdJobs = createdJobs.concat(clientJobs);
+      queuedClientNames = queuedClientNames.concat([string.from(agent.clientName)]);
+    }
+  }
+
+  return {
+    ok: true,
+    jobs: createdJobs.map((job) => public_job_payload(job)),
+    queuedJobCount: createdJobs.length,
+    queuedClientCount: unique_string_values(queuedClientNames).length,
+    skippedOfflineClients: unique_string_values(skippedOfflineClients),
+    skippedBusyTables: unique_string_values(skippedBusyTables)
+  };
 }
 
 function jobs_create(clientName: string, tables: array<string>, direction: string = 'upload', sourceClientName: string = '', syncMode: string? = null, token: string? = null): map<json> {

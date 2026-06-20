@@ -7,3 +7,4 @@ sync_windows_agent/release/
 sync_windows_agent-windows-portable/
 sync_windows_agent-windows-portable.zip
 business/logs/
+.codex-run/

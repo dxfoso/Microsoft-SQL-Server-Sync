@@ -1,0 +1,105 @@
+{
+  "name": "mig_20260620_094500",
+  "timestamp": "2026-06-20T09:45:00.000000000+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "diagnosticRequestId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticRequestedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticRequestedByUserId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticLastRequestId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticLastUploadedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticStatus",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "32",
+            "default": ""
+          }
+        },
+        {
+          "field": "diagnosticSummary",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "4000",
+            "default": ""
+          }
+        },
+        {
+          "field": "diagnosticPayload",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "64000",
+            "default": ""
+          }
+        }
+      ]
+    }
+  ]
+}

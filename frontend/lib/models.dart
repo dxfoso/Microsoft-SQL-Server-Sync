@@ -121,6 +121,7 @@ class AdminAgent {
     required this.sqlConnected,
     required this.lastHeartbeat,
     required this.selectedTable,
+    required this.diagnostics,
     required this.tables,
   });
 
@@ -138,6 +139,7 @@ class AdminAgent {
   final bool sqlConnected;
   final String lastHeartbeat;
   final String? selectedTable;
+  final AdminAgentDiagnostics diagnostics;
   final List<AdminTableState> tables;
 
   factory AdminAgent.fromJson(Map<String, dynamic> json) {
@@ -157,12 +159,90 @@ class AdminAgent {
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
       selectedTable: json['selectedTable'] as String?,
+      diagnostics:
+          json['diagnostics'] is Map
+              ? AdminAgentDiagnostics.fromJson(
+                Map<String, dynamic>.from(json['diagnostics'] as Map),
+              )
+              : const AdminAgentDiagnostics(),
       tables: (json['tables'] as List<dynamic>? ?? const [])
           .map(
             (item) => AdminTableState.fromJson(
               Map<String, dynamic>.from(item as Map),
             ),
           )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AdminAgentDiagnostics {
+  const AdminAgentDiagnostics({
+    this.pending = false,
+    this.requestId,
+    this.requestedAt,
+    this.requestedByUserId,
+    this.uploadedAt,
+    this.lastRequestId,
+    this.status = 'idle',
+    this.summary = '',
+    this.payload,
+  });
+
+  final bool pending;
+  final String? requestId;
+  final String? requestedAt;
+  final String? requestedByUserId;
+  final String? uploadedAt;
+  final String? lastRequestId;
+  final String status;
+  final String summary;
+  final String? payload;
+
+  factory AdminAgentDiagnostics.fromJson(Map<String, dynamic> json) {
+    return AdminAgentDiagnostics(
+      pending: json['pending'] as bool? ?? false,
+      requestId: json['requestId'] as String?,
+      requestedAt: json['requestedAt'] as String?,
+      requestedByUserId: json['requestedByUserId'] as String?,
+      uploadedAt: json['uploadedAt'] as String?,
+      lastRequestId: json['lastRequestId'] as String?,
+      status: json['status'] as String? ?? 'idle',
+      summary: json['summary'] as String? ?? '',
+      payload: json['payload'] as String?,
+    );
+  }
+
+  bool get hasReport =>
+      (uploadedAt?.trim().isNotEmpty ?? false) ||
+      summary.trim().isNotEmpty ||
+      (payload?.trim().isNotEmpty ?? false);
+}
+
+class AdminBulkSyncResult {
+  const AdminBulkSyncResult({
+    required this.queuedJobCount,
+    required this.queuedClientCount,
+    required this.skippedOfflineClients,
+    required this.skippedBusyTables,
+  });
+
+  final int queuedJobCount;
+  final int queuedClientCount;
+  final List<String> skippedOfflineClients;
+  final List<String> skippedBusyTables;
+
+  factory AdminBulkSyncResult.fromJson(Map<String, dynamic> json) {
+    return AdminBulkSyncResult(
+      queuedJobCount: (json['queuedJobCount'] as num? ?? 0).round(),
+      queuedClientCount: (json['queuedClientCount'] as num? ?? 0).round(),
+      skippedOfflineClients: (json['skippedOfflineClients'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+      skippedBusyTables: (json['skippedBusyTables'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
           .toList(growable: false),
     );
   }
