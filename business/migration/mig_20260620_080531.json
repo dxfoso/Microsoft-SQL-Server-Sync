@@ -1,0 +1,25 @@
+{
+  "name": "mig_20260620_080531",
+  "timestamp": "2026-06-20T08:05:31.499385800+00:00",
+  "objects": [
+    {
+      "object": "TableSyncPolicy",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "database",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}
