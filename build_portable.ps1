@@ -1,13 +1,27 @@
 param(
-    [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call'
+    [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call',
+    [string] $FlutterVersion = '3.41.9',
+    [string] $FlutterCacheRoot = '',
+    [switch] $UseCompatibilityFlutter = $true,
+    [switch] $RequireCompatibilityFlutter
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $MinimumFlutterVersion = [version]'3.41.9'
+$FlutterReleaseIndexUrl = 'https://storage.googleapis.com/flutter_infra_release/releases/releases_windows.json'
 
 . (Join-Path -Path $PSScriptRoot -ChildPath 'scripts\windows_agent_build.ps1')
+
+function Get-DefaultFlutterCacheRoot {
+    $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+    if ([string]::IsNullOrWhiteSpace($localAppData)) {
+        throw 'Could not determine LocalApplicationData for the Flutter SDK cache.'
+    }
+
+    return Join-Path -Path $localAppData -ChildPath 'MicrosoftSqlServerSync\flutter-sdk-cache'
+}
 
 function Get-FullPath {
     param([Parameter(Mandatory = $true)][string] $Path)
@@ -63,9 +77,11 @@ function Invoke-NativeCommand {
 }
 
 function Get-FlutterVersion {
-    $versionOutput = & flutter --version 2>$null
+    param([Parameter(Mandatory = $true)][string] $FlutterCommand)
+
+    $versionOutput = & $FlutterCommand --version 2>$null
     if ($LASTEXITCODE -ne 0) {
-        throw "Unable to run flutter --version."
+        throw "Unable to run flutter --version using: $FlutterCommand"
     }
 
     $firstLine = @($versionOutput | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0]
@@ -88,6 +104,252 @@ function Assert-FlutterVersion {
     }
 
     Write-Host "Flutter version: $($FlutterVersionInfo.Version)"
+}
+
+function Get-FlutterReleaseIndex {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $FlutterReleaseIndexUrl
+    return $response.Content | ConvertFrom-Json
+}
+
+function Get-FlutterReleaseInfo {
+    param([Parameter(Mandatory = $true)][string] $Version)
+
+    $releaseIndex = Get-FlutterReleaseIndex
+    $release = @($releaseIndex.releases | Where-Object {
+            $_.channel -eq 'stable' -and
+            $_.dart_sdk_arch -eq 'x64' -and
+            $_.version -eq $Version
+        } | Select-Object -First 1)[0]
+
+    if ($null -eq $release) {
+        throw "Could not find Flutter Windows x64 stable release $Version in $FlutterReleaseIndexUrl"
+    }
+
+    return [pscustomobject]@{
+        Version = $Version
+        ArchiveUrl = ($releaseIndex.base_url.TrimEnd('/') + '/' + $release.archive.TrimStart('/'))
+        Sha256 = $release.sha256
+        Hash = $release.hash
+        ReleaseDate = $release.release_date
+    }
+}
+
+function Get-CachedFlutterCommandPath {
+    param(
+        [Parameter(Mandatory = $true)][string] $CacheRoot,
+        [Parameter(Mandatory = $true)][string] $Version
+    )
+
+    return Join-Path -Path $CacheRoot -ChildPath "$Version\flutter\bin\flutter.bat"
+}
+
+function Test-FlutterCommandAvailable {
+    param([Parameter(Mandatory = $true)][string] $FlutterCommand)
+
+    return (Test-Path -LiteralPath $FlutterCommand -PathType Leaf)
+}
+
+function Assert-FileSha256 {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $ExpectedSha256
+    )
+
+    $actualSha256 = $null
+    $attemptCount = 5
+    for ($attempt = 1; $attempt -le $attemptCount; $attempt++) {
+        try {
+            $actualSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+            break
+        } catch {
+            if ($attempt -eq $attemptCount) {
+                throw
+            }
+
+            Start-Sleep -Milliseconds (250 * $attempt)
+        }
+    }
+
+    if (-not $actualSha256.Equals($ExpectedSha256.ToLowerInvariant(), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Flutter SDK archive hash mismatch. Expected $ExpectedSha256 but got $actualSha256 for $Path"
+    }
+}
+
+function Get-VerifiedFlutterArchivePath {
+    param(
+        [Parameter(Mandatory = $true)][string] $DownloadsDir,
+        [Parameter(Mandatory = $true)] $ReleaseInfo
+    )
+
+    $zipPath = Join-Path -Path $DownloadsDir -ChildPath "flutter_windows_$($ReleaseInfo.Version)-stable.zip"
+    $downloadAttempted = $false
+
+    while ($true) {
+        if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+            Write-Host "Downloading Flutter SDK $($ReleaseInfo.Version) from $($ReleaseInfo.ArchiveUrl)"
+            Invoke-WebRequest -UseBasicParsing -Uri $ReleaseInfo.ArchiveUrl -OutFile $zipPath
+            $downloadAttempted = $true
+        } else {
+            Write-Host "Using cached Flutter SDK archive: $zipPath"
+        }
+
+        try {
+            Assert-FileSha256 -Path $zipPath -ExpectedSha256 $ReleaseInfo.Sha256
+            return $zipPath
+        } catch {
+            if ($downloadAttempted) {
+                throw
+            }
+
+            Write-Warning "Cached Flutter SDK archive failed hash verification. Removing it and downloading a fresh copy."
+            Remove-Item -LiteralPath $zipPath -Force -ErrorAction Stop
+            $downloadAttempted = $true
+        }
+    }
+}
+
+function Install-CachedFlutterSdk {
+    param(
+        [Parameter(Mandatory = $true)][string] $CacheRoot,
+        [Parameter(Mandatory = $true)][string] $Version
+    )
+
+    $flutterCommand = Get-CachedFlutterCommandPath -CacheRoot $CacheRoot -Version $Version
+    if (Test-FlutterCommandAvailable -FlutterCommand $flutterCommand) {
+        return $flutterCommand
+    }
+
+    $releaseInfo = Get-FlutterReleaseInfo -Version $Version
+    $cacheRootFull = Get-FullPath -Path $CacheRoot
+    $versionRoot = Join-Path -Path $cacheRootFull -ChildPath $Version
+    $downloadsDir = Join-Path -Path $cacheRootFull -ChildPath 'downloads'
+    $tempRoot = Join-Path -Path $cacheRootFull -ChildPath ("tmp-$Version-" + [guid]::NewGuid().ToString('N'))
+    $extractRoot = Join-Path -Path $tempRoot -ChildPath 'extract'
+
+    New-Item -ItemType Directory -Path $downloadsDir -Force | Out-Null
+    $zipPath = Get-VerifiedFlutterArchivePath -DownloadsDir $downloadsDir -ReleaseInfo $releaseInfo
+
+    New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+    try {
+        Write-Host "Extracting Flutter SDK $Version..."
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+
+        $extractedFlutterDir = Join-Path -Path $extractRoot -ChildPath 'flutter'
+        if (-not (Test-Path -LiteralPath $extractedFlutterDir -PathType Container)) {
+            throw "Flutter SDK archive did not extract the expected flutter directory: $extractedFlutterDir"
+        }
+
+        if (Test-Path -LiteralPath $versionRoot) {
+            Remove-Item -LiteralPath $versionRoot -Recurse -Force
+        }
+
+        New-Item -ItemType Directory -Path $versionRoot -Force | Out-Null
+        Move-Item -LiteralPath $extractedFlutterDir -Destination (Join-Path -Path $versionRoot -ChildPath 'flutter')
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if (-not (Test-FlutterCommandAvailable -FlutterCommand $flutterCommand)) {
+        throw "Flutter SDK $Version was extracted but flutter.bat is missing: $flutterCommand"
+    }
+
+    return $flutterCommand
+}
+
+function Resolve-FlutterToolchain {
+    param(
+        [Parameter(Mandatory = $true)][string] $Version,
+        [Parameter(Mandatory = $true)][string] $CacheRoot,
+        [switch] $UseCompatibilityFlutter,
+        [switch] $RequireCompatibilityFlutter
+    )
+
+    $currentFlutter = Get-Command flutter -ErrorAction SilentlyContinue
+    if (-not $UseCompatibilityFlutter) {
+        if ($null -eq $currentFlutter) {
+            throw 'Flutter is not installed or not available in PATH.'
+        }
+
+        $flutterCommand = $currentFlutter.Source
+        $flutterVersionInfo = Get-FlutterVersion -FlutterCommand $flutterCommand
+        Assert-FlutterVersion -FlutterVersionInfo $flutterVersionInfo
+        return [pscustomobject]@{
+            Command = $flutterCommand
+            VersionInfo = $flutterVersionInfo
+            Source = 'PATH'
+        }
+    }
+
+    if ($null -ne $currentFlutter) {
+        $currentVersionInfo = Get-FlutterVersion -FlutterCommand $currentFlutter.Source
+        if ($currentVersionInfo.Version -eq [version]$Version) {
+            Assert-FlutterVersion -FlutterVersionInfo $currentVersionInfo
+            Write-Host "Using PATH Flutter $Version for Windows compatibility."
+            return [pscustomobject]@{
+                Command = $currentFlutter.Source
+                VersionInfo = $currentVersionInfo
+                Source = 'PATH'
+            }
+        }
+    }
+
+    $cachedFlutterCommand = Get-CachedFlutterCommandPath -CacheRoot $CacheRoot -Version $Version
+    if ((-not $RequireCompatibilityFlutter) -and -not (Test-FlutterCommandAvailable -FlutterCommand $cachedFlutterCommand)) {
+        if ($null -eq $currentFlutter) {
+            throw "Compatibility Flutter $Version is not installed locally and Flutter is not available in PATH."
+        }
+
+        $fallbackVersionInfo = Get-FlutterVersion -FlutterCommand $currentFlutter.Source
+        Assert-FlutterVersion -FlutterVersionInfo $fallbackVersionInfo
+        $warningMessage = ("Falling back to PATH Flutter {0} because compatibility Flutter {1} is not installed locally. " +
+                           "Use -RequireCompatibilityFlutter to download or enforce the compatibility SDK.") -f $fallbackVersionInfo.Version, $Version
+        Write-Warning $warningMessage
+        return [pscustomobject]@{
+            Command = $currentFlutter.Source
+            VersionInfo = $fallbackVersionInfo
+            Source = 'PATH fallback'
+        }
+    }
+
+    $flutterCommand = $null
+    $flutterVersionInfo = $null
+    try {
+        $flutterCommand = Install-CachedFlutterSdk -CacheRoot $CacheRoot -Version $Version
+        $flutterVersionInfo = Get-FlutterVersion -FlutterCommand $flutterCommand
+        Assert-FlutterVersion -FlutterVersionInfo $flutterVersionInfo
+        if ($flutterVersionInfo.Version -ne [version]$Version) {
+            throw "Expected cached Flutter $Version but found $($flutterVersionInfo.Version) at $flutterCommand"
+        }
+    } catch {
+        if ($RequireCompatibilityFlutter) {
+            throw
+        }
+
+        if ($null -eq $currentFlutter) {
+            throw
+        }
+
+        $fallbackVersionInfo = Get-FlutterVersion -FlutterCommand $currentFlutter.Source
+        Assert-FlutterVersion -FlutterVersionInfo $fallbackVersionInfo
+        $warningMessage = ("Falling back to PATH Flutter {0} because compatibility Flutter {1} is not available locally. " +
+                           "Use -RequireCompatibilityFlutter to fail instead of falling back.") -f $fallbackVersionInfo.Version, $Version
+        Write-Warning $warningMessage
+        return [pscustomobject]@{
+            Command = $currentFlutter.Source
+            VersionInfo = $fallbackVersionInfo
+            Source = 'PATH fallback'
+        }
+    }
+
+    Write-Host "Using cached compatibility Flutter $Version from $flutterCommand"
+    return [pscustomobject]@{
+        Command = $flutterCommand
+        VersionInfo = $flutterVersionInfo
+        Source = 'cache'
+    }
 }
 
 function Get-BinaryName {
@@ -416,13 +678,17 @@ try {
     $ProjectPath = Get-FullPath -Path (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent')
     $OutputRoot = Get-FullPath -Path $PSScriptRoot
     $PortableName = ''
-
-    if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
-        throw 'Flutter is not installed or not available in PATH.'
+    if ([string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
+        $FlutterCacheRoot = Get-DefaultFlutterCacheRoot
     }
 
-    $flutterVersionInfo = Get-FlutterVersion
-    Assert-FlutterVersion -FlutterVersionInfo $flutterVersionInfo
+    $flutterToolchain = Resolve-FlutterToolchain `
+        -Version $FlutterVersion `
+        -CacheRoot $FlutterCacheRoot `
+        -UseCompatibilityFlutter:$UseCompatibilityFlutter `
+        -RequireCompatibilityFlutter:$RequireCompatibilityFlutter
+    $flutterCommand = $flutterToolchain.Command
+    $flutterVersionInfo = $flutterToolchain.VersionInfo
     Initialize-WindowsAgentBuildEnvironment
 
     if (-not (Test-Path -LiteralPath (Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml') -PathType Leaf)) {
@@ -448,12 +714,16 @@ try {
     try {
         Stop-WindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
         Assert-NoWindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
-        Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & flutter pub get }
+        Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & $flutterCommand pub get }
         Write-Host "Portable backend URL: $BackendBaseUrl"
         Remove-WindowsAgentBuildArtifacts -ProjectPath $ProjectPath
         $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
         try {
-            Invoke-NativeCommand -Description 'Building Windows release...' -Command { & flutter build windows --release --no-tree-shake-icons @buildDartDefines }
+            Invoke-NativeCommand -Description 'Building Windows release...' -Command {
+                Invoke-WindowsAgentVisualStudioCommand `
+                    -WorkingDirectory $ProjectPath `
+                    -Command (@($flutterCommand, 'build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines)
+            }
         } catch {
             if (-not (Test-WindowsAgentReleaseInstallRecoveryNeeded -ProjectPath $ProjectPath)) {
                 throw

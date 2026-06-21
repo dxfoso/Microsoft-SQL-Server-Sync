@@ -4,6 +4,7 @@
 #include <flutter_windows.h>
 
 #include "resource.h"
+#include "startup_log.h"
 
 namespace {
 
@@ -160,6 +161,7 @@ bool Win32Window::Create(const std::wstring& title,
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {
+    LogStartupLastError(L"Win32Window::Create CreateWindow failed");
     return false;
   }
 

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,37 @@ std::wstring FormatTimestamp() {
 
 }  // namespace
 
+std::wstring DescribeWindowsError(DWORD error_code) {
+  LPWSTR message_buffer = nullptr;
+  const DWORD flags =
+      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+      FORMAT_MESSAGE_IGNORE_INSERTS;
+  const DWORD length = FormatMessageW(
+      flags, nullptr, error_code, 0, reinterpret_cast<LPWSTR>(&message_buffer),
+      0, nullptr);
+
+  std::wstring message;
+  if (length != 0 && message_buffer != nullptr) {
+    message.assign(message_buffer, length);
+    while (!message.empty() &&
+           (message.back() == L'\r' || message.back() == L'\n' ||
+            message.back() == L' ' || message.back() == L'\t')) {
+      message.pop_back();
+    }
+  }
+
+  if (message_buffer != nullptr) {
+    LocalFree(message_buffer);
+  }
+
+  std::wstringstream builder;
+  builder << L"error=" << error_code;
+  if (!message.empty()) {
+    builder << L" (" << message << L')';
+  }
+  return builder.str();
+}
+
 void LogStartupEvent(const std::wstring& message) {
   try {
     const auto log_path = GetStartupLogPath();
@@ -79,4 +111,12 @@ void LogStartupEvent(const std::wstring& message) {
   } catch (...) {
     // Best effort only.
   }
+}
+
+void LogStartupWindowsError(const std::wstring& context, DWORD error_code) {
+  LogStartupEvent(context + L": " + DescribeWindowsError(error_code));
+}
+
+void LogStartupLastError(const std::wstring& context) {
+  LogStartupWindowsError(context, GetLastError());
 }

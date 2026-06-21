@@ -24,22 +24,66 @@ function Get-WindowsAgentVsInstallationPath {
     return [System.IO.Path]::GetFullPath($installationPath.Trim())
 }
 
-function Import-WindowsAgentVisualStudioEnvironment {
+function Get-WindowsAgentVsDevCmdPath {
     $installationPath = Get-WindowsAgentVsInstallationPath
     if ([string]::IsNullOrWhiteSpace($installationPath)) {
         throw 'Could not locate a Visual Studio installation with C++ tools. Install the Desktop development with C++ workload.'
     }
 
-    $vsDevCmdPath = Join-Path -Path $installationPath -ChildPath 'Common7\Tools\VsDevCmd.bat'
-    if (-not (Test-Path -LiteralPath $vsDevCmdPath -PathType Leaf)) {
-        throw "Could not locate VsDevCmd.bat at: $vsDevCmdPath"
+    $bootstrapCandidates = @(
+        (Join-Path -Path $installationPath -ChildPath 'VC\Auxiliary\Build\vcvars64.bat'),
+        (Join-Path -Path $installationPath -ChildPath 'VC\Auxiliary\Build\vcvarsall.bat'),
+        (Join-Path -Path $installationPath -ChildPath 'Common7\Tools\VsDevCmd.bat')
+    )
+
+    $bootstrapPath = $bootstrapCandidates |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($bootstrapPath)) {
+        throw "Could not locate a Visual Studio C++ environment bootstrap script under: $installationPath"
     }
 
-    $envDump = & cmd.exe /s /c "`"$vsDevCmdPath`" -arch=x64 -host_arch=x64 >nul && set"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to import Visual Studio build environment from: $vsDevCmdPath"
+    return [pscustomobject]@{
+        InstallationPath = $installationPath
+        VsDevCmdPath = $bootstrapPath
+    }
+}
+
+function Import-WindowsAgentVisualStudioEnvironment {
+    $vsDevCmdInfo = Get-WindowsAgentVsDevCmdPath
+    $installationPath = $vsDevCmdInfo.InstallationPath
+    $vsDevCmdPath = $vsDevCmdInfo.VsDevCmdPath
+
+    $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('windows-agent-vsenv-' + [guid]::NewGuid().ToString('N'))
+    $dumpPath = Join-Path -Path $tempRoot -ChildPath 'vsenv.txt'
+    $runnerPath = Join-Path -Path $tempRoot -ChildPath 'capture-vsenv.cmd'
+
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    try {
+        $runnerLines = @(
+            '@echo off',
+            'setlocal',
+            ('call "{0}" >nul' -f $vsDevCmdPath),
+            'if errorlevel 1 exit /b %errorlevel%',
+            ('set > "{0}"' -f $dumpPath)
+        )
+        Set-Content -LiteralPath $runnerPath -Value $runnerLines -Encoding ASCII
+
+        & cmd.exe /d /c $runnerPath
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $dumpPath -PathType Leaf)) {
+            throw "Failed to import Visual Studio C++ environment from: $vsDevCmdPath"
+        }
+
+        $envDump = Get-Content -LiteralPath $dumpPath -ErrorAction Stop
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
+    $vsEnvironment = @{}
     foreach ($line in $envDump) {
         if ([string]::IsNullOrWhiteSpace($line)) {
             continue
@@ -52,7 +96,87 @@ function Import-WindowsAgentVisualStudioEnvironment {
 
         $name = $line.Substring(0, $separatorIndex)
         $value = $line.Substring($separatorIndex + 1)
-        Set-Item -Path "Env:$name" -Value $value
+        $vsEnvironment[$name] = $value
+    }
+
+    $preservedVariables = @(
+        'DevEnvDir',
+        'ExtensionSdkDir',
+        'FrameworkDir',
+        'FrameworkVersion',
+        'INCLUDE',
+        'LIB',
+        'LIBPATH',
+        'UCRTVersion',
+        'UniversalCRTSdkDir',
+        'VCIDEInstallDir',
+        'VCINSTALLDIR',
+        'VCPKG_ROOT',
+        'VCToolsInstallDir',
+        'VCToolsRedistDir',
+        'VCToolsVersion',
+        'VisualStudioVersion',
+        'VSINSTALLDIR',
+        'WindowsLibPath'
+    )
+
+    foreach ($name in $preservedVariables) {
+        if ($vsEnvironment.ContainsKey($name)) {
+            Set-Item -Path "Env:$name" -Value $vsEnvironment[$name]
+        }
+    }
+
+    $pathComparer = [System.StringComparer]::OrdinalIgnoreCase
+    $pathEntries = [System.Collections.Generic.List[string]]::new()
+    $seenPathEntries = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+    $vsPrependedEntries = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+
+    if ($vsEnvironment.ContainsKey('Path')) {
+        $vsPathEntries = $vsEnvironment['Path'].Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+        $preInitEntries = @()
+        if ($vsEnvironment.ContainsKey('__VSCMD_PREINIT_PATH')) {
+            $preInitEntries = $vsEnvironment['__VSCMD_PREINIT_PATH'].Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+        }
+
+        $preInitSet = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+        foreach ($entry in $preInitEntries) {
+            if (-not [string]::IsNullOrWhiteSpace($entry)) {
+                [void] $preInitSet.Add($entry.Trim())
+            }
+        }
+
+        foreach ($entry in $vsPathEntries) {
+            if ([string]::IsNullOrWhiteSpace($entry)) {
+                continue
+            }
+
+            $trimmedEntry = $entry.Trim()
+            if ($preInitSet.Contains($trimmedEntry)) {
+                continue
+            }
+
+            if ($seenPathEntries.Add($trimmedEntry)) {
+                [void] $pathEntries.Add($trimmedEntry)
+            }
+        }
+    }
+
+    $currentPath = [Environment]::GetEnvironmentVariable('Path', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($currentPath)) {
+        foreach ($entry in $currentPath.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)) {
+            if ([string]::IsNullOrWhiteSpace($entry)) {
+                continue
+            }
+
+            $trimmedEntry = $entry.Trim()
+            if ($seenPathEntries.Add($trimmedEntry)) {
+                [void] $pathEntries.Add($trimmedEntry)
+            }
+        }
+    }
+
+    if ($pathEntries.Count -gt 0) {
+        Set-Item -Path Env:Path -Value ($pathEntries -join ';')
     }
 
     $clCommand = Get-Command cl.exe -ErrorAction SilentlyContinue
@@ -61,12 +185,61 @@ function Import-WindowsAgentVisualStudioEnvironment {
     }
 
     $compilerPath = $clCommand.Source
-    Set-Item -Path Env:CC -Value $compilerPath
-    Set-Item -Path Env:CXX -Value $compilerPath
-    Set-Item -Path Env:CMAKE_C_COMPILER -Value $compilerPath
-    Set-Item -Path Env:CMAKE_CXX_COMPILER -Value $compilerPath
 
     Write-Host "Using Visual Studio C++ toolchain from: $installationPath"
+}
+
+function ConvertTo-WindowsAgentCmdArgument {
+    param([Parameter(Mandatory = $true)][string] $Value)
+
+    if ($Value.Length -eq 0) {
+        return '""'
+    }
+
+    if ($Value.IndexOfAny([char[]]@(' ', "`t")) -lt 0 -and $Value.IndexOf('"') -lt 0) {
+        return $Value
+    }
+
+    return '"' + $Value.Replace('"', '""') + '"'
+}
+
+function Invoke-WindowsAgentVisualStudioCommand {
+    param(
+        [Parameter(Mandatory = $true)][string[]] $Command,
+        [string] $WorkingDirectory = (Get-Location).Path
+    )
+
+    if ($Command.Count -eq 0) {
+        throw 'Invoke-WindowsAgentVisualStudioCommand requires at least one command token.'
+    }
+
+    $vsDevCmdInfo = Get-WindowsAgentVsDevCmdPath
+    $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('windows-agent-vscmd-' + [guid]::NewGuid().ToString('N'))
+    $runnerPath = Join-Path -Path $tempRoot -ChildPath 'run-vs-command.cmd'
+    $commandText = ($Command | ForEach-Object { ConvertTo-WindowsAgentCmdArgument -Value $_ }) -join ' '
+
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    try {
+        $runnerLines = @(
+            '@echo off',
+            'setlocal',
+            ('pushd {0}' -f (ConvertTo-WindowsAgentCmdArgument -Value $WorkingDirectory)),
+            ('call {0} >nul' -f (ConvertTo-WindowsAgentCmdArgument -Value $vsDevCmdInfo.VsDevCmdPath)),
+            'if errorlevel 1 exit /b %errorlevel%',
+            ('call {0}' -f $commandText),
+            'set "EXIT_CODE=%ERRORLEVEL%"',
+            'popd',
+            'exit /b %EXIT_CODE%'
+        )
+
+        Set-Content -LiteralPath $runnerPath -Value $runnerLines -Encoding ASCII
+        & cmd.exe /d /c $runnerPath
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Get-WindowsAgentFlutterAppVersion {
@@ -175,6 +348,10 @@ function Stop-WindowsAgentBuildProcesses {
             Write-Host "Stopping process locking Windows build artifacts: $($process.Name) [$($process.ProcessId)]"
             Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
         } catch {
+            if ($_.Exception.Message -match 'Cannot find a process with the process identifier') {
+                continue
+            }
+
             throw "Failed to stop process $($process.Name) [$($process.ProcessId)] before cleaning Windows build artifacts. $($_.Exception.Message)"
         }
     }
@@ -190,6 +367,10 @@ function Stop-WindowsAgentBuildSupportProcesses {
                     Write-Host "Stopping Windows build support process: $($_.Name) [$($_.ProcessId)]"
                     Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
                 } catch {
+                    if ($_.Exception.Message -match 'Cannot find a process with the process identifier') {
+                        return
+                    }
+
                     throw "Failed to stop Windows build support process $($_.Name) [$($_.ProcessId)]. $($_.Exception.Message)"
                 }
             }
@@ -281,6 +462,10 @@ function Stop-WindowsAgentConflictingDevProcesses {
             Write-Host "Stopping conflicting Windows dev process: $($process.Name) [$($process.ProcessId)]"
             Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
         } catch {
+            if ($_.Exception.Message -match 'Cannot find a process with the process identifier') {
+                continue
+            }
+
             throw "Failed to stop conflicting Windows dev process $($process.Name) [$($process.ProcessId)]. $($_.Exception.Message)"
         }
     }
@@ -302,9 +487,12 @@ function Assert-NoWindowsAgentConflictingDevProcesses {
 }
 
 function Remove-WindowsAgentBuildPath {
-    param([Parameter(Mandatory = $true)][string] $Path)
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $ProjectPath
+    )
 
-    $attemptCount = 3
+    $attemptCount = 10
     for ($attempt = 1; $attempt -le $attemptCount; $attempt++) {
         try {
             Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
@@ -314,11 +502,10 @@ function Remove-WindowsAgentBuildPath {
                 throw
             }
 
-            if ($attempt -eq 1) {
-                Stop-WindowsAgentBuildSupportProcesses
-            }
+            Stop-WindowsAgentBuildProcesses -ProjectPath $ProjectPath
+            Stop-WindowsAgentBuildSupportProcesses
 
-            Start-Sleep -Milliseconds (250 * $attempt)
+            Start-Sleep -Milliseconds ([Math]::Min(2000, 250 * [Math]::Pow(2, $attempt - 1)))
         }
     }
 }
@@ -418,7 +605,7 @@ function Remove-WindowsAgentBuildArtifacts {
         }
 
         Write-Host "Removing stale Windows build artifacts: $path"
-        Remove-WindowsAgentBuildPath -Path $path
+        Remove-WindowsAgentBuildPath -Path $path -ProjectPath $ProjectPath
     }
 }
 

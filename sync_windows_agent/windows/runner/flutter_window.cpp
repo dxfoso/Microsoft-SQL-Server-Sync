@@ -37,23 +37,53 @@ FlutterWindow::FlutterWindow(const flutter::DartProject& project)
 FlutterWindow::~FlutterWindow() {}
 
 bool FlutterWindow::OnCreate() {
+  startup_failure_details_.clear();
   LogStartupEvent(L"FlutterWindow::OnCreate start");
   if (!Win32Window::OnCreate()) {
+    startup_failure_details_ = L"Win32Window::OnCreate returned false";
     LogStartupEvent(L"FlutterWindow::OnCreate base failed");
     return false;
   }
 
   RECT frame = GetClientArea();
+  wchar_t frame_message[160];
+  swprintf_s(frame_message,
+             L"FlutterWindow client area width=%ld height=%ld left=%ld top=%ld",
+             frame.right - frame.left, frame.bottom - frame.top, frame.left,
+             frame.top);
+  LogStartupEvent(frame_message);
 
   // The size here must match the window dimensions to avoid unnecessary surface
   // creation / destruction in the startup path.
+  SetLastError(ERROR_SUCCESS);
   flutter_controller_ = std::make_unique<flutter::FlutterViewController>(
       frame.right - frame.left, frame.bottom - frame.top, project_);
+  LogStartupLastError(L"FlutterWindow::OnCreate FlutterViewController creation last_error");
+
   // Ensure that basic setup of the controller was successful.
-  if (!flutter_controller_->engine() || !flutter_controller_->view()) {
+  if (!flutter_controller_) {
+    startup_failure_details_ = L"FlutterViewController allocation returned null";
+    LogStartupEvent(L"FlutterWindow::OnCreate FlutterViewController allocation returned null");
     return false;
   }
+
+  const bool has_engine = flutter_controller_->engine() != nullptr;
+  const bool has_view = flutter_controller_->view() != nullptr;
+  if (!has_engine || !has_view) {
+    startup_failure_details_ =
+        L"FlutterViewController initialized with missing engine/view";
+    wchar_t controller_message[160];
+    swprintf_s(controller_message,
+               L"FlutterWindow::OnCreate controller state engine=%ls view=%ls",
+               has_engine ? L"present" : L"null",
+               has_view ? L"present" : L"null");
+    LogStartupEvent(controller_message);
+    return false;
+  }
+
+  LogStartupEvent(L"FlutterWindow::OnCreate RegisterPlugins start");
   RegisterPlugins(flutter_controller_->engine());
+  LogStartupEvent(L"FlutterWindow::OnCreate RegisterPlugins complete");
   window_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           flutter_controller_->engine()->messenger(),
@@ -97,7 +127,17 @@ bool FlutterWindow::OnCreate() {
         }
         result->NotImplemented();
       });
-  SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  const auto flutter_view_window = flutter_controller_->view()->GetNativeWindow();
+  if (flutter_view_window == nullptr) {
+    startup_failure_details_ =
+        L"Flutter view native window handle is null after controller initialization";
+    LogStartupEvent(L"FlutterWindow::OnCreate Flutter view native window handle is null");
+    return false;
+  }
+
+  LogStartupEvent(L"FlutterWindow::OnCreate SetChildContent start");
+  SetChildContent(flutter_view_window);
+  LogStartupEvent(L"FlutterWindow::OnCreate SetChildContent complete");
   LogStartupEvent(L"FlutterWindow::OnCreate show window immediately");
   this->Show();
 
@@ -119,6 +159,10 @@ bool FlutterWindow::OnCreate() {
   flutter_controller_->ForceRedraw();
 
   return true;
+}
+
+const std::wstring& FlutterWindow::startup_failure_details() const {
+  return startup_failure_details_;
 }
 
 void FlutterWindow::OnDestroy() {

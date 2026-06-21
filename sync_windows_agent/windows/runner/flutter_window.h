@@ -17,6 +17,7 @@ class FlutterWindow : public Win32Window {
   // Creates a new FlutterWindow hosting a Flutter view running |project|.
   explicit FlutterWindow(const flutter::DartProject& project);
   virtual ~FlutterWindow();
+  const std::wstring& startup_failure_details() const;
 
  protected:
   // Win32Window:
@@ -46,6 +47,8 @@ class FlutterWindow : public Win32Window {
   // Native window controls exposed to Dart.
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_channel_;
+
+  std::wstring startup_failure_details_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
