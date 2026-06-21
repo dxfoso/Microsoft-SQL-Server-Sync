@@ -21,6 +21,8 @@ Future<void> writeBrowserClipboardText(String text) async {}
 
 void replaceBrowserUrl(String url) {}
 
+void openBrowserTab(String url) {}
+
 Future<BrowserPickedTextFile?> pickBrowserTextFile({
   List<String> acceptedExtensions = const <String>['json'],
 }) async {

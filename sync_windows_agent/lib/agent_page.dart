@@ -4717,12 +4717,13 @@ WHEN NOT MATCHED BY TARGET THEN
             ),
           ),
           Tooltip(
-            message: 'Save the current row counts for all visible tables',
+            message:
+                'Reset the saved row-count baseline for all visible tables',
             child: TextButton.icon(
               onPressed:
                   tableCount == 0 ? null : _saveVisibleTableRowCountBaselines,
               icon: const Icon(Icons.bookmark_add_outlined, size: 16),
-              label: const Text('Save row counts'),
+              label: const Text('Reset counters'),
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFF2563EB),
                 textStyle: const TextStyle(
@@ -5185,7 +5186,6 @@ WHEN NOT MATCHED BY TARGET THEN
         icon: Icons.sync_rounded,
         onTap: canRunSync ? () => _triggerSyncNow(row.table) : null,
       ),
-      _buildModeReadOnlyControl(row),
       _buildToolbarStat(
         tooltip:
             row.state.savedRowCount == null
@@ -5199,7 +5199,7 @@ WHEN NOT MATCHED BY TARGET THEN
         color: _savedRowCountColor(row.state),
       ),
       _buildToolbarIconControl(
-        tooltip: 'Save the current row count for this table',
+        tooltip: 'Reset the saved row-count baseline for this table',
         icon: Icons.bookmark_add_outlined,
         onTap: () => _saveTableRowCountBaseline(row.table),
       ),
@@ -5259,7 +5259,7 @@ WHEN NOT MATCHED BY TARGET THEN
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Saved current row counts for ${syncRows.length} tables.',
+          'Reset counter baselines for ${syncRows.length} tables.',
         ),
       ),
     );
@@ -5275,7 +5275,7 @@ WHEN NOT MATCHED BY TARGET THEN
 
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('Saved row count for $table.')));
+    ).showSnackBar(SnackBar(content: Text('Reset counter baseline for $table.')));
   }
 
   Color _savedRowCountColor(SyncTableState state) {
@@ -5402,10 +5402,10 @@ WHEN NOT MATCHED BY TARGET THEN
 
     return Tooltip(
       message: '${_syncModeDescription(value)} Change from the three-dot menu.',
-      child: Container(
-        height: 42,
-        constraints: const BoxConstraints(minWidth: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Container(
+        height: 36,
+        constraints: const BoxConstraints(minWidth: 96),
+        padding: const EdgeInsets.symmetric(horizontal: 9),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(8),
@@ -5415,16 +5415,16 @@ WHEN NOT MATCHED BY TARGET THEN
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(_syncModeIcon(value), size: 17, color: color),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             Text(
               _syncModeLabel(value),
               style: TextStyle(
                 color: color,
-                fontSize: 12.5,
+                fontSize: 12,
                 fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             Icon(Icons.lock_outline_rounded, size: 15, color: color),
           ],
         ),
@@ -5516,8 +5516,8 @@ WHEN NOT MATCHED BY TARGET THEN
     return Tooltip(
       message: tooltip,
       child: Container(
-        height: 42,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(8),
@@ -5526,13 +5526,13 @@ WHEN NOT MATCHED BY TARGET THEN
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 17, color: color),
-            const SizedBox(width: 6),
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 5),
             Text(
               value,
               style: TextStyle(
                 color: color,
-                fontSize: 12,
+                fontSize: 11.5,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -5557,11 +5557,11 @@ WHEN NOT MATCHED BY TARGET THEN
           borderRadius: BorderRadius.circular(8),
           onTap: onTap,
           child: SizedBox(
-            width: 42,
-            height: 42,
+            width: 36,
+            height: 36,
             child: Icon(
               icon,
-              size: 18,
+              size: 17,
               color:
                   enabled ? const Color(0xFF1D4ED8) : const Color(0xFF98A2B3),
             ),
@@ -6149,6 +6149,8 @@ WHEN NOT MATCHED BY TARGET THEN
       ),
       child: Text(
         value,
+        textDirection: directionForDisplayText(value),
+        textAlign: TextAlign.start,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 13),
       ),
@@ -6267,6 +6269,7 @@ WHEN NOT MATCHED BY TARGET THEN
       ),
       child: Text(
         value,
+        textDirection: directionForDisplayText(value),
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontWeight: FontWeight.w700),
       ),

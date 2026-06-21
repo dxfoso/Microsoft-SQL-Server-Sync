@@ -18,6 +18,7 @@ const int _maxAutoSyncIntervalMinutes = 1440;
 const Duration _dashboardRefreshInterval = Duration(seconds: 5);
 const Duration _dashboardReconnectDelay = Duration(minutes: 1);
 const String _requestAllLogsAction = 'requestAllClientLogs';
+const String _waitForLogsQueryKey = 'waitForLogs';
 const String _buildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
   defaultValue: 'd6ad13468380fff48127806b860e02c2b8cee659',
@@ -95,6 +96,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _bulkDiagnosticsBusy = false;
   bool _serverResetBusy = false;
   bool _handledLaunchAction = false;
+  String? _bulkDiagnosticsRequestId;
+  String? _bulkDiagnosticsRequestedAt;
+  List<String> _bulkDiagnosticsRequestedClientNames = const <String>[];
+  List<String> _bulkDiagnosticsCompletedClientNames = const <String>[];
+  List<String> _bulkDiagnosticsPendingClientNames = const <String>[];
+  bool _bulkDiagnosticsWaitingForUploads = false;
   @override
   void initState() {
     super.initState();
@@ -228,6 +235,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _loading = false;
         _error = null;
       });
+      _updateBulkDiagnosticsProgress(nextState);
       _reconnectTimer?.cancel();
       _reconnectTimer = null;
       _startRefreshPolling();
@@ -3210,6 +3218,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final current = Uri.base;
     final nextQuery = Map<String, String>.from(current.queryParameters);
     nextQuery['action'] = _requestAllLogsAction;
+    nextQuery[_waitForLogsQueryKey] = '1';
     return current.replace(queryParameters: nextQuery).toString();
   }
 
@@ -3219,7 +3228,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return;
     }
     final nextQuery = Map<String, String>.from(current.queryParameters)
-      ..remove('action');
+      ..remove('action')
+      ..remove(_waitForLogsQueryKey);
     final nextUrl =
         current
             .replace(queryParameters: nextQuery.isEmpty ? null : nextQuery)
@@ -3236,11 +3246,66 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     if (action != _requestAllLogsAction) {
       return;
     }
+    final shouldWaitForUploads =
+        Uri.base.queryParameters[_waitForLogsQueryKey] == '1';
     _clearLaunchActionUrl();
-    await _requestAllAgentDiagnostics(fromActionUrl: true);
+    await _requestAllAgentDiagnostics(
+      fromActionUrl: true,
+      waitForUploads: shouldWaitForUploads,
+    );
   }
 
-  Future<void> _requestAllAgentDiagnostics({bool fromActionUrl = false}) async {
+  void _openBulkDiagnosticsTab() {
+    openBrowserTab(_requestAllLogsActionUrl());
+  }
+
+  void _updateBulkDiagnosticsProgress(AdminLiveState state) {
+    final requestId = _bulkDiagnosticsRequestId?.trim() ?? '';
+    if (requestId.isEmpty || _bulkDiagnosticsRequestedClientNames.isEmpty) {
+      return;
+    }
+
+    final pending = <String>[];
+    final completed = <String>[];
+    for (final clientName in _bulkDiagnosticsRequestedClientNames) {
+      final normalized = clientName.trim();
+      AdminAgent? agent;
+      for (final item in state.agents) {
+        if (item.clientName == normalized) {
+          agent = item;
+          break;
+        }
+      }
+      final diagnostics = agent?.diagnostics;
+      final uploadedForRequest =
+          diagnostics != null &&
+          (diagnostics.lastRequestId?.trim() ?? '') == requestId &&
+          (diagnostics.uploadedAt?.trim().isNotEmpty ?? false);
+      if (uploadedForRequest) {
+        completed.add(normalized);
+      } else {
+        pending.add(normalized);
+      }
+    }
+
+    if (!mounted) {
+      _bulkDiagnosticsCompletedClientNames = List<String>.unmodifiable(completed);
+      _bulkDiagnosticsPendingClientNames = List<String>.unmodifiable(pending);
+      _bulkDiagnosticsWaitingForUploads = pending.isNotEmpty;
+      return;
+    }
+
+    setState(() {
+      _bulkDiagnosticsCompletedClientNames = List<String>.unmodifiable(completed);
+      _bulkDiagnosticsPendingClientNames = List<String>.unmodifiable(pending);
+      _bulkDiagnosticsWaitingForUploads = pending.isNotEmpty;
+    });
+  }
+
+  Future<void> _requestAllAgentDiagnostics({
+    bool fromActionUrl = false,
+    bool waitForUploads = false,
+  }) async {
     if (_bulkDiagnosticsBusy) {
       return;
     }
@@ -3252,12 +3317,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (!mounted) {
         return;
       }
-      final actionUrl = _requestAllLogsActionUrl();
-      await writeBrowserClipboardText(actionUrl);
-      if (!mounted) {
-        return;
-      }
-      final requestedNames = result.requestedClientNames;
+      final requestedNames = List<String>.unmodifiable(
+        result.requestedClientNames
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty),
+      );
+      setState(() {
+        _bulkDiagnosticsRequestId =
+            result.requestId.trim().isEmpty ? null : result.requestId.trim();
+        _bulkDiagnosticsRequestedAt =
+            result.requestedAt.trim().isEmpty ? null : result.requestedAt.trim();
+        _bulkDiagnosticsRequestedClientNames = requestedNames;
+        _bulkDiagnosticsCompletedClientNames = const <String>[];
+        _bulkDiagnosticsPendingClientNames = requestedNames;
+        _bulkDiagnosticsWaitingForUploads =
+            waitForUploads && requestedNames.isNotEmpty;
+      });
       final suffix =
           requestedNames.isEmpty
               ? 'No visible clients were available.'
@@ -3268,8 +3343,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         SnackBar(
           content: Text(
             fromActionUrl
-                ? 'Requested logs from ${result.requestedClientCount} clients from the action URL. Reusable URL copied to clipboard.$suffix'
-                : 'Requested logs from ${result.requestedClientCount} clients. Reusable URL copied to clipboard.$suffix',
+                ? waitForUploads
+                    ? 'Requested logs from ${result.requestedClientCount} clients in this tab. Waiting for uploads now.$suffix'
+                    : 'Requested logs from ${result.requestedClientCount} clients from the action URL.$suffix'
+                : 'Requested logs from ${result.requestedClientCount} clients.$suffix',
           ),
           duration: const Duration(seconds: 6),
         ),
@@ -3289,6 +3366,87 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         });
       }
     }
+  }
+
+  Widget _buildBulkDiagnosticsWaitCard() {
+    final requestId = _bulkDiagnosticsRequestId;
+    if (requestId == null || _bulkDiagnosticsRequestedClientNames.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final waiting = _bulkDiagnosticsWaitingForUploads;
+    final completedCount = _bulkDiagnosticsCompletedClientNames.length;
+    final totalCount = _bulkDiagnosticsRequestedClientNames.length;
+    final pendingNames = _bulkDiagnosticsPendingClientNames;
+    final completedNames = _bulkDiagnosticsCompletedClientNames;
+    final accentColor =
+        waiting ? const Color(0xFF2563EB) : const Color(0xFF15803D);
+    final backgroundColor =
+        waiting ? const Color(0xFFEFF6FF) : const Color(0xFFECFDF3);
+    final borderColor =
+        waiting ? const Color(0xFFD7E4FF) : const Color(0xFFABEFC6);
+    final label =
+        waiting
+            ? 'Waiting for $completedCount of $totalCount client logs'
+            : 'All $totalCount client logs uploaded';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                waiting ? Icons.hourglass_top_rounded : Icons.task_alt_rounded,
+                size: 18,
+                color: accentColor,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: accentColor,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Request ${requestId.length > 12 ? requestId.substring(0, 12) : requestId} • Started ${_formatTimestamp(_bulkDiagnosticsRequestedAt ?? '')}',
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (pendingNames.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Pending: ${pendingNames.join(', ')}',
+              style: const TextStyle(fontSize: 12.5),
+            ),
+          ],
+          if (completedNames.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Uploaded: ${completedNames.join(', ')}',
+              style: const TextStyle(fontSize: 12.5),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Future<void> _requestAgentDiagnostics(AdminAgent agent) async {
@@ -8431,11 +8589,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ? IconButton(
                         tooltip:
                             'Request logs from all visible Windows clients',
-                        onPressed:
+                          onPressed:
                             _bulkDiagnosticsBusy
                                 ? null
-                                : () =>
-                                    unawaited(_requestAllAgentDiagnostics()),
+                                : _openBulkDiagnosticsTab,
                         icon:
                             _bulkDiagnosticsBusy
                                 ? const SizedBox(
@@ -8451,8 +8608,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         onPressed:
                             _bulkDiagnosticsBusy
                                 ? null
-                                : () =>
-                                    unawaited(_requestAllAgentDiagnostics()),
+                                : _openBulkDiagnosticsTab,
                         icon:
                             _bulkDiagnosticsBusy
                                 ? const SizedBox(
@@ -8661,6 +8817,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                 ),
               ),
+            if (_bulkDiagnosticsRequestId != null &&
+                _bulkDiagnosticsRequestedClientNames.isNotEmpty)
+              _buildBulkDiagnosticsWaitCard(),
             Expanded(
               child:
                   _loading && state == null

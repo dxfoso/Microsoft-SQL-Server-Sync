@@ -83,7 +83,14 @@ INSERT INTO dbo.Orders (CustomerId, OrderDate, Status)
 SELECT
     (ABS(CHECKSUM(NEWID())) % 1000) + 1,
     DATEADD(day, - (ABS(CHECKSUM(NEWID())) % 365), SYSUTCDATETIME()),
-    CHOOSE((ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 5) + 1, 'New', 'Packed', 'Shipped', 'Delivered', 'Returned')
+    CHOOSE(
+        (ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 5) + 1,
+        N'جديد',
+        N'قيد التجهيز',
+        N'تم الشحن',
+        N'تم التسليم',
+        N'مرتجع'
+    )
 FROM (
     SELECT TOP (1000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS n
     FROM sys.all_objects a

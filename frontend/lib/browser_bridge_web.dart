@@ -32,6 +32,10 @@ void replaceBrowserUrl(String url) {
   html.window.history.replaceState(null, '', url);
 }
 
+void openBrowserTab(String url) {
+  html.window.open(url, '_blank');
+}
+
 Future<BrowserPickedTextFile?> pickBrowserTextFile({
   List<String> acceptedExtensions = const <String>['json'],
 }) async {

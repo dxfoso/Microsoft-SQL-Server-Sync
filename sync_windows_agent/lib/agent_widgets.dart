@@ -2,6 +2,16 @@ import 'package:flutter/material.dart';
 
 import 'models.dart';
 
+final RegExp _rtlScriptPattern = RegExp(
+  r'[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]',
+);
+
+TextDirection directionForDisplayText(String value) {
+  return _rtlScriptPattern.hasMatch(value)
+      ? TextDirection.rtl
+      : TextDirection.ltr;
+}
+
 class AgentHeroBanner extends StatelessWidget {
   const AgentHeroBanner({
     super.key,
