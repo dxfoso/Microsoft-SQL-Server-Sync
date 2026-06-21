@@ -17,6 +17,10 @@ void removeBrowserStorage(String key) {
   _memoryStorage.remove(key);
 }
 
+Future<void> writeBrowserClipboardText(String text) async {}
+
+void replaceBrowserUrl(String url) {}
+
 Future<BrowserPickedTextFile?> pickBrowserTextFile({
   List<String> acceptedExtensions = const <String>['json'],
 }) async {

@@ -229,6 +229,18 @@ class LiveSyncApiClient {
     return AdminBulkSyncResult.fromJson(Map<String, dynamic>.from(decoded));
   }
 
+  Future<AdminBulkDiagnosticsRequestResult> requestAllAgentDiagnostics() async {
+    final decoded = await _invokeFunction('agent_diagnostics_request_all', {});
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected bulk diagnostics request payload.',
+      );
+    }
+    return AdminBulkDiagnosticsRequestResult.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
   Future<AdminServerResetResult> _resetServerSavedDataBatch({
     required bool resetAgents,
   }) async {

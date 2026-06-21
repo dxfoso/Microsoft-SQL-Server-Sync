@@ -17,6 +17,7 @@ const int _minAutoSyncIntervalMinutes = 1;
 const int _maxAutoSyncIntervalMinutes = 1440;
 const Duration _dashboardRefreshInterval = Duration(seconds: 5);
 const Duration _dashboardReconnectDelay = Duration(minutes: 1);
+const String _requestAllLogsAction = 'requestAllClientLogs';
 const String _buildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
   defaultValue: 'd6ad13468380fff48127806b860e02c2b8cee659',
@@ -91,7 +92,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final Set<String> _busyTablePolicyKeys = <String>{};
   final Set<String> _requestingDiagnosticsClientNames = <String>{};
   bool _bulkSyncBusy = false;
+  bool _bulkDiagnosticsBusy = false;
   bool _serverResetBusy = false;
+  bool _handledLaunchAction = false;
   @override
   void initState() {
     super.initState();
@@ -103,6 +106,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       unawaited(_refreshVisibleUsers());
     }
     unawaited(_refreshState());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_handleLaunchActionUrl());
+    });
   }
 
   @override
@@ -1171,7 +1177,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         const Text('No client agents are available yet.')
                       else ...[
                         DropdownButtonFormField<String>(
-                          value: selectedClientName,
+                          initialValue: selectedClientName,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Sync Client',
@@ -1206,7 +1212,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         ),
                         const SizedBox(height: 8),
                         DropdownButtonFormField<bool>(
-                          value: isMaster,
+                          initialValue: isMaster,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Client Type',
@@ -1888,7 +1894,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           SizedBox(
                             width: 220,
                             child: DropdownButtonFormField<String>(
-                              value: selectedRole,
+                              initialValue: selectedRole,
                               decoration: const InputDecoration(
                                 labelText: 'Role',
                                 prefixIcon: Icon(
@@ -1936,7 +1942,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             SizedBox(
                               width: 220,
                               child: DropdownButtonFormField<String>(
-                                value: selectedOwnerUserId,
+                                initialValue: selectedOwnerUserId,
                                 decoration: const InputDecoration(
                                   labelText: 'Server User',
                                 ),
@@ -3200,6 +3206,91 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
+  String _requestAllLogsActionUrl() {
+    final current = Uri.base;
+    final nextQuery = Map<String, String>.from(current.queryParameters);
+    nextQuery['action'] = _requestAllLogsAction;
+    return current.replace(queryParameters: nextQuery).toString();
+  }
+
+  void _clearLaunchActionUrl() {
+    final current = Uri.base;
+    if (!current.queryParameters.containsKey('action')) {
+      return;
+    }
+    final nextQuery = Map<String, String>.from(current.queryParameters)
+      ..remove('action');
+    final nextUrl =
+        current
+            .replace(queryParameters: nextQuery.isEmpty ? null : nextQuery)
+            .toString();
+    replaceBrowserUrl(nextUrl);
+  }
+
+  Future<void> _handleLaunchActionUrl() async {
+    if (_handledLaunchAction || !widget.authenticatedUser.canManageUsers) {
+      return;
+    }
+    _handledLaunchAction = true;
+    final action = Uri.base.queryParameters['action']?.trim() ?? '';
+    if (action != _requestAllLogsAction) {
+      return;
+    }
+    _clearLaunchActionUrl();
+    await _requestAllAgentDiagnostics(fromActionUrl: true);
+  }
+
+  Future<void> _requestAllAgentDiagnostics({bool fromActionUrl = false}) async {
+    if (_bulkDiagnosticsBusy) {
+      return;
+    }
+    setState(() {
+      _bulkDiagnosticsBusy = true;
+    });
+    try {
+      final result = await _api.requestAllAgentDiagnostics();
+      if (!mounted) {
+        return;
+      }
+      final actionUrl = _requestAllLogsActionUrl();
+      await writeBrowserClipboardText(actionUrl);
+      if (!mounted) {
+        return;
+      }
+      final requestedNames = result.requestedClientNames;
+      final suffix =
+          requestedNames.isEmpty
+              ? 'No visible clients were available.'
+              : requestedNames.length <= 5
+              ? ' Clients: ${requestedNames.join(', ')}.'
+              : ' Clients: ${requestedNames.take(5).join(', ')} and ${requestedNames.length - 5} more.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            fromActionUrl
+                ? 'Requested logs from ${result.requestedClientCount} clients from the action URL. Reusable URL copied to clipboard.$suffix'
+                : 'Requested logs from ${result.requestedClientCount} clients. Reusable URL copied to clipboard.$suffix',
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bulkDiagnosticsBusy = false;
+        });
+      }
+    }
+  }
+
   Future<void> _requestAgentDiagnostics(AdminAgent agent) async {
     if (_requestingDiagnosticsClientNames.contains(agent.clientName)) {
       return;
@@ -4079,7 +4170,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             : null;
 
     return DropdownButtonFormField<String>(
-      value: selectedValue,
+      initialValue: selectedValue,
       isExpanded: true,
       decoration: const InputDecoration(
         labelText: 'Database',
@@ -8330,6 +8421,52 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   size: 16,
                                 ),
                         label: const Text('Reset Server Data'),
+                      ),
+            ),
+          if (widget.authenticatedUser.canManageUsers)
+            Padding(
+              padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
+              child:
+                  compactAppBar
+                      ? IconButton(
+                        tooltip:
+                            'Request logs from all visible Windows clients',
+                        onPressed:
+                            _bulkDiagnosticsBusy
+                                ? null
+                                : () =>
+                                    unawaited(_requestAllAgentDiagnostics()),
+                        icon:
+                            _bulkDiagnosticsBusy
+                                ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.receipt_long_rounded),
+                      )
+                      : FilledButton.tonalIcon(
+                        onPressed:
+                            _bulkDiagnosticsBusy
+                                ? null
+                                : () =>
+                                    unawaited(_requestAllAgentDiagnostics()),
+                        icon:
+                            _bulkDiagnosticsBusy
+                                ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(
+                                  Icons.receipt_long_rounded,
+                                  size: 16,
+                                ),
+                        label: const Text('Request All Logs'),
                       ),
             ),
           if (widget.authenticatedUser.canManageUsers)

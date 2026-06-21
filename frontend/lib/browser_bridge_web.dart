@@ -20,6 +20,18 @@ void removeBrowserStorage(String key) {
   html.window.localStorage.remove(key);
 }
 
+Future<void> writeBrowserClipboardText(String text) async {
+  final clipboard = html.window.navigator.clipboard;
+  if (clipboard == null) {
+    return;
+  }
+  await clipboard.writeText(text);
+}
+
+void replaceBrowserUrl(String url) {
+  html.window.history.replaceState(null, '', url);
+}
+
 Future<BrowserPickedTextFile?> pickBrowserTextFile({
   List<String> acceptedExtensions = const <String>['json'],
 }) async {

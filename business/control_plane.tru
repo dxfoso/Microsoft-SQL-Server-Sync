@@ -1966,6 +1966,64 @@ function agent_diagnostics_request(clientName: string, token: string? = null): m
   };
 }
 
+function agent_diagnostics_request_all(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const requestId = uuid.v4();
+  const requestedAt = now_iso();
+  const visibleAgents = visible_agent_rows_for(current);
+  let requestedClientNames = [];
+  for (const agent of visibleAgents) {
+    const clientName = normalize_user_name(agent.clientName);
+    if (clientName.length != 0) {
+      requestedClientNames = requestedClientNames.concat([clientName]);
+    }
+  }
+  if (requestedClientNames.length == 0) {
+    return {
+      ok: true,
+      requestId,
+      requestedAt,
+      requestedByUserId: current.id,
+      requestedClientCount: 0,
+      requestedClientNames: []
+    };
+  }
+
+  if (is_owner_user(current)) {
+    db.updateMany(Agent, { ownerUserId: current.id }, {
+      diagnosticRequestId: requestId,
+      diagnosticRequestedAt: requestedAt,
+      diagnosticRequestedByUserId: current.id,
+      diagnosticStatus: 'requested',
+      updatedAt: requestedAt
+    });
+  } else {
+    db.updateMany(Agent, { clientName: { gte: '' } }, {
+      diagnosticRequestId: requestId,
+      diagnosticRequestedAt: requestedAt,
+      diagnosticRequestedByUserId: current.id,
+      diagnosticStatus: 'requested',
+      updatedAt: requestedAt
+    });
+  }
+
+  return {
+    ok: true,
+    requestId,
+    requestedAt,
+    requestedByUserId: current.id,
+    requestedClientCount: requestedClientNames.length,
+    requestedClientNames
+  };
+}
+
 function agent_diagnostics_upload(clientName: string? = null, requestId: string? = null, summary: string = '', payload: string = '', token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {

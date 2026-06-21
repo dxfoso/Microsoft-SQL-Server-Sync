@@ -248,6 +248,37 @@ class AdminBulkSyncResult {
   }
 }
 
+class AdminBulkDiagnosticsRequestResult {
+  const AdminBulkDiagnosticsRequestResult({
+    required this.requestId,
+    required this.requestedAt,
+    required this.requestedByUserId,
+    required this.requestedClientCount,
+    required this.requestedClientNames,
+  });
+
+  final String requestId;
+  final String requestedAt;
+  final String? requestedByUserId;
+  final int requestedClientCount;
+  final List<String> requestedClientNames;
+
+  factory AdminBulkDiagnosticsRequestResult.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return AdminBulkDiagnosticsRequestResult(
+      requestId: json['requestId'] as String? ?? '',
+      requestedAt: json['requestedAt'] as String? ?? '',
+      requestedByUserId: json['requestedByUserId'] as String?,
+      requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
+      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+    );
+  }
+}
+
 class AdminServerResetResult {
   const AdminServerResetResult({
     required this.uploadSessionDeletedCount,

@@ -498,6 +498,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       direction: syncDirectionForMode(_defaultTableSyncMode),
       syncMode: _defaultTableSyncMode,
       rowCount: 0,
+      savedRowCount: null,
       snapshotId: null,
       snapshotCreatedAt: null,
       snapshotBytes: 0,
@@ -4511,7 +4512,7 @@ WHEN NOT MATCHED BY TARGET THEN
             : null;
 
     return DropdownButtonFormField<String>(
-      value: selectedValue,
+      initialValue: selectedValue,
       isExpanded: true,
       decoration: _compactInputDecoration(
         '',
@@ -4715,6 +4716,23 @@ WHEN NOT MATCHED BY TARGET THEN
               ),
             ),
           ),
+          Tooltip(
+            message: 'Save the current row counts for all visible tables',
+            child: TextButton.icon(
+              onPressed:
+                  tableCount == 0 ? null : _saveVisibleTableRowCountBaselines,
+              icon: const Icon(Icons.bookmark_add_outlined, size: 16),
+              label: const Text('Save row counts'),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF2563EB),
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
           _buildSyncTableSortMenu(),
           const SizedBox(width: 6),
           _buildSyncTableSortDirectionButton(),
@@ -4863,11 +4881,7 @@ WHEN NOT MATCHED BY TARGET THEN
               children: [
                 _buildSyncModeBadge(row.state.syncMode, showLabel: false),
                 _buildSyncStatusSymbol(row.state.status, size: 26),
-                _buildSyncTableMetric(
-                  tooltip: 'Rows',
-                  icon: Icons.format_list_numbered_rounded,
-                  value: '${row.state.rowCount}',
-                ),
+                _buildSyncTableRowCountMetric(row.state),
                 _buildFixedProgressPill(progress, statusColor),
                 _buildOpenLiveTableButton(row.table),
               ],
@@ -4999,6 +5013,8 @@ WHEN NOT MATCHED BY TARGET THEN
     required String tooltip,
     required IconData icon,
     required String value,
+    Color color = const Color(0xFF18212B),
+    Color borderColor = const Color(0xFFDDE3EA),
   }) {
     return Tooltip(
       message: tooltip,
@@ -5008,17 +5024,17 @@ WHEN NOT MATCHED BY TARGET THEN
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFDDE3EA)),
+          border: Border.all(color: borderColor),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: const Color(0xFF667085)),
+            Icon(icon, size: 14, color: color),
             const SizedBox(width: 5),
             Text(
               value,
-              style: const TextStyle(
-                color: Color(0xFF18212B),
+              style: TextStyle(
+                color: color,
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),
@@ -5026,6 +5042,23 @@ WHEN NOT MATCHED BY TARGET THEN
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSyncTableRowCountMetric(SyncTableState state) {
+    final color = _savedRowCountColor(state);
+    return _buildSyncTableMetric(
+      tooltip:
+          state.savedRowCount == null
+              ? 'Current rows'
+              : 'Current rows / saved rows',
+      icon: Icons.format_list_numbered_rounded,
+      value:
+          state.savedRowCount == null
+              ? '${state.rowCount}'
+              : '${state.rowCount} / ${state.savedRowCount}',
+      color: color,
+      borderColor: color.withValues(alpha: 0.28),
     );
   }
 
@@ -5154,9 +5187,21 @@ WHEN NOT MATCHED BY TARGET THEN
       ),
       _buildModeReadOnlyControl(row),
       _buildToolbarStat(
-        tooltip: 'Rows',
+        tooltip:
+            row.state.savedRowCount == null
+                ? 'Current rows'
+                : 'Current rows / saved rows',
         icon: Icons.format_list_numbered_rounded,
-        value: '${row.state.rowCount}',
+        value:
+            row.state.savedRowCount == null
+                ? '${row.state.rowCount}'
+                : '${row.state.rowCount} / ${row.state.savedRowCount}',
+        color: _savedRowCountColor(row.state),
+      ),
+      _buildToolbarIconControl(
+        tooltip: 'Save the current row count for this table',
+        icon: Icons.bookmark_add_outlined,
+        onTap: () => _saveTableRowCountBaseline(row.table),
       ),
       _buildToolbarStat(
         tooltip: 'Backup size',
@@ -5195,6 +5240,53 @@ WHEN NOT MATCHED BY TARGET THEN
         children: toolbarChildren,
       ),
     );
+  }
+
+  void _saveVisibleTableRowCountBaselines() {
+    final syncRows = _syncRows();
+    if (syncRows.isEmpty) {
+      return;
+    }
+
+    final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+    for (final row in syncRows) {
+      nextTables[row.syncKey] = row.state.copyWith(
+        savedRowCount: row.state.rowCount,
+      );
+    }
+    _replaceSyncState(_syncState.copyWith(tables: nextTables));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Saved current row counts for ${syncRows.length} tables.',
+        ),
+      ),
+    );
+  }
+
+  void _saveTableRowCountBaseline(String table) {
+    final syncKey = _syncTableKey(table);
+    final current = _syncTableState(table, syncKey: syncKey);
+    _updateSyncTableState(
+      syncKey,
+      current.copyWith(savedRowCount: current.rowCount),
+    );
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Saved row count for $table.')));
+  }
+
+  Color _savedRowCountColor(SyncTableState state) {
+    final savedRowCount = state.savedRowCount;
+    if (savedRowCount == null) {
+      return const Color(0xFF18212B);
+    }
+    if (savedRowCount == state.rowCount) {
+      return const Color(0xFF15803D);
+    }
+    return const Color(0xFF2563EB);
   }
 
   Widget _buildSyncEnabledToolbarControl(_SyncTableRowData row) {
@@ -5419,6 +5511,7 @@ WHEN NOT MATCHED BY TARGET THEN
     required String tooltip,
     required IconData icon,
     required String value,
+    Color color = const Color(0xFF18212B),
   }) {
     return Tooltip(
       message: tooltip,
@@ -5428,16 +5521,17 @@ WHEN NOT MATCHED BY TARGET THEN
         decoration: BoxDecoration(
           color: const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.22)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 17, color: const Color(0xFF667085)),
+            Icon(icon, size: 17, color: color),
             const SizedBox(width: 6),
             Text(
               value,
-              style: const TextStyle(
-                color: Color(0xFF18212B),
+              style: TextStyle(
+                color: color,
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
               ),

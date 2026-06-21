@@ -10,6 +10,7 @@ const String kSyncModeTwoWay = 'sync';
 const String kSyncModeMaster = 'master';
 const String kSyncModeClient = 'client';
 const String kSyncModeMasterMix = 'masterMix';
+const Object _syncTableStateUnset = Object();
 
 String normalizeSyncMode(String? value, {bool fallbackIsMaster = true}) {
   switch ((value ?? '').trim()) {
@@ -142,6 +143,7 @@ class SyncTableState {
     required this.direction,
     required this.syncMode,
     required this.rowCount,
+    required this.savedRowCount,
     required this.snapshotId,
     required this.snapshotCreatedAt,
     required this.snapshotBytes,
@@ -156,6 +158,7 @@ class SyncTableState {
   final String direction;
   final String syncMode;
   final int rowCount;
+  final int? savedRowCount;
   final String? snapshotId;
   final String? snapshotCreatedAt;
   final int snapshotBytes;
@@ -181,6 +184,7 @@ class SyncTableState {
         fallbackIsMaster: direction != 'download',
       ),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
+      savedRowCount: (json['savedRowCount'] as num?)?.round(),
       snapshotId: json['snapshotId'] as String?,
       snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
       snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
@@ -197,6 +201,7 @@ class SyncTableState {
     'direction': direction,
     'syncMode': syncMode,
     'rowCount': rowCount,
+    'savedRowCount': savedRowCount,
     'snapshotId': snapshotId,
     'snapshotCreatedAt': snapshotCreatedAt,
     'snapshotBytes': snapshotBytes,
@@ -212,6 +217,7 @@ class SyncTableState {
     String? direction,
     String? syncMode,
     int? rowCount,
+    Object? savedRowCount = _syncTableStateUnset,
     String? snapshotId,
     String? snapshotCreatedAt,
     int? snapshotBytes,
@@ -226,6 +232,10 @@ class SyncTableState {
       direction: direction ?? this.direction,
       syncMode: syncMode ?? this.syncMode,
       rowCount: rowCount ?? this.rowCount,
+      savedRowCount:
+          identical(savedRowCount, _syncTableStateUnset)
+              ? this.savedRowCount
+              : savedRowCount as int?,
       snapshotId: snapshotId ?? this.snapshotId,
       snapshotCreatedAt: snapshotCreatedAt ?? this.snapshotCreatedAt,
       snapshotBytes: snapshotBytes ?? this.snapshotBytes,
