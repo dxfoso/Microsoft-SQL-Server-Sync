@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -2869,12 +2870,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         database: localDatabase,
         table: localTable,
         snapshot: snapshot,
-        mergeRows:
-            normalizeSyncMode(
-              _syncState.tables[job.table]?.syncMode,
-              fallbackIsMaster: _isMasterClient,
-            ) ==
-            kSyncModeMasterMix,
+        mergeRows: true,
       );
 
       activeJob = await _controlPlaneClient.completeJob(
@@ -3782,6 +3778,7 @@ ORDER BY [__sync_agent_row_number];
       '-W',
       '-w',
       '32767',
+      '-u',
       '-f',
       '65001',
       '-s',
@@ -3817,12 +3814,31 @@ ORDER BY [__sync_agent_row_number];
             .replaceAll('\n', ' ');
         arguments.addAll(['-Q', normalizedQuery]);
       }
-      return await Process.run(
+      final process = await Process.start(
         executable,
         arguments,
         runInShell: false,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
+      );
+      final stdoutFuture = process.stdout
+          .fold<BytesBuilder>(BytesBuilder(copy: false), (buffer, chunk) {
+            buffer.add(chunk);
+            return buffer;
+          })
+          .then((buffer) => buffer.takeBytes());
+      final stderrFuture = process.stderr
+          .fold<BytesBuilder>(BytesBuilder(copy: false), (buffer, chunk) {
+            buffer.add(chunk);
+            return buffer;
+          })
+          .then((buffer) => buffer.takeBytes());
+      final exitCode = await process.exitCode;
+      final stdoutBytes = await stdoutFuture;
+      final stderrBytes = await stderrFuture;
+      return ProcessResult(
+        process.pid,
+        exitCode,
+        _decodeSqlCmdOutput(stdoutBytes),
+        _decodeSqlCmdOutput(stderrBytes),
       );
     } on ProcessException catch (error) {
       _lastSqlCmdLaunchError =
@@ -3838,6 +3854,55 @@ ORDER BY [__sync_agent_row_number];
         }
       }
     }
+  }
+
+  String _decodeSqlCmdOutput(List<int> bytes) {
+    if (bytes.isEmpty) {
+      return '';
+    }
+
+    final data = Uint8List.fromList(bytes);
+    if (_looksLikeUtf16Le(data)) {
+      return _decodeUtf16Le(data);
+    }
+
+    try {
+      return utf8.decode(data);
+    } on FormatException {
+      return utf8.decode(data, allowMalformed: true);
+    }
+  }
+
+  bool _looksLikeUtf16Le(Uint8List bytes) {
+    if (bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe) {
+      return true;
+    }
+    if (bytes.length < 4) {
+      return false;
+    }
+
+    var oddZeroCount = 0;
+    var sampledPairs = 0;
+    for (var index = 1; index < bytes.length && sampledPairs < 32; index += 2) {
+      sampledPairs += 1;
+      if (bytes[index] == 0) {
+        oddZeroCount += 1;
+      }
+    }
+    return sampledPairs >= 4 && oddZeroCount * 2 >= sampledPairs;
+  }
+
+  String _decodeUtf16Le(Uint8List bytes) {
+    var offset = 0;
+    if (bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe) {
+      offset = 2;
+    }
+    final usableLength = bytes.length - ((bytes.length - offset) % 2);
+    final codeUnits = <int>[];
+    for (var index = offset; index < usableLength; index += 2) {
+      codeUnits.add(bytes[index] | (bytes[index + 1] << 8));
+    }
+    return String.fromCharCodes(codeUnits);
   }
 
   String _sqlCmdUnavailableMessage(_SqlConnectionProfile profile) {
@@ -5258,9 +5323,7 @@ WHEN NOT MATCHED BY TARGET THEN
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          'Reset counter baselines for ${syncRows.length} tables.',
-        ),
+        content: Text('Reset counter baselines for ${syncRows.length} tables.'),
       ),
     );
   }
@@ -5273,9 +5336,9 @@ WHEN NOT MATCHED BY TARGET THEN
       current.copyWith(savedRowCount: current.rowCount),
     );
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('Reset counter baseline for $table.')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Reset counter baseline for $table.')),
+    );
   }
 
   Color _savedRowCountColor(SyncTableState state) {
@@ -5402,7 +5465,7 @@ WHEN NOT MATCHED BY TARGET THEN
 
     return Tooltip(
       message: '${_syncModeDescription(value)} Change from the three-dot menu.',
-        child: Container(
+      child: Container(
         height: 36,
         constraints: const BoxConstraints(minWidth: 96),
         padding: const EdgeInsets.symmetric(horizontal: 9),

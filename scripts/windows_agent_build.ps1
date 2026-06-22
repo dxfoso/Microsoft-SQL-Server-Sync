@@ -560,6 +560,7 @@ function Invoke-WindowsAgentReleaseInstall {
     param([Parameter(Mandatory = $true)][string] $ProjectPath)
 
     $cmakeInstallPath = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\cmake_install.cmake'
+    $releaseInstallPrefix = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\runner\Release'
     if (-not (Test-Path -LiteralPath $cmakeInstallPath -PathType Leaf)) {
         throw "Missing CMake install script: $cmakeInstallPath"
     }
@@ -582,20 +583,28 @@ function Invoke-WindowsAgentReleaseInstall {
         throw 'Could not locate cmake.exe for the Windows release install step.'
     }
 
-    & $cmakeExe -DBUILD_TYPE=Release -P $cmakeInstallPath
+    & $cmakeExe -DBUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$releaseInstallPrefix -P $cmakeInstallPath
     if ($LASTEXITCODE -ne 0) {
         throw "CMake release install failed with exit code $LASTEXITCODE."
     }
 }
 
 function Remove-WindowsAgentBuildArtifacts {
-    param([Parameter(Mandatory = $true)][string] $ProjectPath)
-
-    $paths = @(
-        (Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so'),
-        (Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64'),
-        (Join-Path -Path $ProjectPath -ChildPath 'windows\flutter\ephemeral')
+    param(
+        [Parameter(Mandatory = $true)][string] $ProjectPath,
+        [switch] $PreserveFlutterEphemeral,
+        [switch] $PreserveWindowsBuildTree
     )
+
+    $paths = @((Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so'))
+
+    if (-not $PreserveWindowsBuildTree) {
+        $paths += (Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64')
+    }
+
+    if (-not $PreserveFlutterEphemeral) {
+        $paths += (Join-Path -Path $ProjectPath -ChildPath 'windows\flutter\ephemeral')
+    }
 
     Stop-WindowsAgentBuildProcesses -ProjectPath $ProjectPath
 

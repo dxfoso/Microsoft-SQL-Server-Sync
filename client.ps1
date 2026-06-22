@@ -11,6 +11,8 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path -Path $PSScriptRoot -ChildPath 'scripts\windows_agent_build.ps1')
 
+Initialize-WindowsAgentBuildEnvironment
+
 if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
     throw "Flutter is not installed or not available in PATH."
 }

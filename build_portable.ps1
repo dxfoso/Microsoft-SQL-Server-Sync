@@ -1,9 +1,8 @@
 param(
     [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call',
-    [string] $FlutterVersion = '3.41.9',
+    [string] $FlutterVersion = '',
     [string] $FlutterCacheRoot = '',
-    [switch] $UseCompatibilityFlutter = $true,
-    [switch] $RequireCompatibilityFlutter
+    [switch] $RequireFlutterVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +60,35 @@ function Remove-OutputPath {
         Assert-ChildPath -ChildPath $Path -ParentPath $OutputRoot -Purpose $Purpose
         Remove-Item -LiteralPath $Path -Recurse -Force
     }
+}
+
+function Stop-ProcessesUnderPath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $targetFull = Get-FullPath -Path $Path
+    $trimChars = [char[]]@(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+    $targetPrefix = $targetFull.TrimEnd($trimChars) + [System.IO.Path]::DirectorySeparatorChar
+
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
+                return $false
+            }
+
+            $executablePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+            return $executablePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+        } |
+        ForEach-Object {
+            Write-Host "Stopping process using portable output: $($_.Name) [$($_.ProcessId)]"
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
 }
 
 function Invoke-NativeCommand {
@@ -261,57 +289,39 @@ function Install-CachedFlutterSdk {
 
 function Resolve-FlutterToolchain {
     param(
-        [Parameter(Mandatory = $true)][string] $Version,
-        [Parameter(Mandatory = $true)][string] $CacheRoot,
-        [switch] $UseCompatibilityFlutter,
-        [switch] $RequireCompatibilityFlutter
+        [string] $Version,
+        [string] $CacheRoot,
+        [switch] $RequireFlutterVersion
     )
 
     $currentFlutter = Get-Command flutter -ErrorAction SilentlyContinue
-    if (-not $UseCompatibilityFlutter) {
-        if ($null -eq $currentFlutter) {
-            throw 'Flutter is not installed or not available in PATH.'
-        }
-
-        $flutterCommand = $currentFlutter.Source
-        $flutterVersionInfo = Get-FlutterVersion -FlutterCommand $flutterCommand
-        Assert-FlutterVersion -FlutterVersionInfo $flutterVersionInfo
-        return [pscustomobject]@{
-            Command = $flutterCommand
-            VersionInfo = $flutterVersionInfo
-            Source = 'PATH'
-        }
-    }
+    $usePinnedVersion = -not [string]::IsNullOrWhiteSpace($Version)
 
     if ($null -ne $currentFlutter) {
         $currentVersionInfo = Get-FlutterVersion -FlutterCommand $currentFlutter.Source
+        if (-not $usePinnedVersion) {
+            Assert-FlutterVersion -FlutterVersionInfo $currentVersionInfo
+            Write-Host "Using PATH Flutter $($currentVersionInfo.Version) for Windows portable build."
+            return [pscustomobject]@{
+                Command = 'flutter'
+                VersionInfo = $currentVersionInfo
+                Source = 'PATH'
+            }
+        }
+
         if ($currentVersionInfo.Version -eq [version]$Version) {
             Assert-FlutterVersion -FlutterVersionInfo $currentVersionInfo
-            Write-Host "Using PATH Flutter $Version for Windows compatibility."
+            Write-Host "Using PATH Flutter $Version for Windows portable build."
             return [pscustomobject]@{
-                Command = $currentFlutter.Source
+                Command = 'flutter'
                 VersionInfo = $currentVersionInfo
                 Source = 'PATH'
             }
         }
     }
 
-    $cachedFlutterCommand = Get-CachedFlutterCommandPath -CacheRoot $CacheRoot -Version $Version
-    if ((-not $RequireCompatibilityFlutter) -and -not (Test-FlutterCommandAvailable -FlutterCommand $cachedFlutterCommand)) {
-        if ($null -eq $currentFlutter) {
-            throw "Compatibility Flutter $Version is not installed locally and Flutter is not available in PATH."
-        }
-
-        $fallbackVersionInfo = Get-FlutterVersion -FlutterCommand $currentFlutter.Source
-        Assert-FlutterVersion -FlutterVersionInfo $fallbackVersionInfo
-        $warningMessage = ("Falling back to PATH Flutter {0} because compatibility Flutter {1} is not installed locally. " +
-                           "Use -RequireCompatibilityFlutter to download or enforce the compatibility SDK.") -f $fallbackVersionInfo.Version, $Version
-        Write-Warning $warningMessage
-        return [pscustomobject]@{
-            Command = $currentFlutter.Source
-            VersionInfo = $fallbackVersionInfo
-            Source = 'PATH fallback'
-        }
+    if (-not $usePinnedVersion) {
+        throw 'Flutter is not installed or not available in PATH.'
     }
 
     $flutterCommand = $null
@@ -324,7 +334,7 @@ function Resolve-FlutterToolchain {
             throw "Expected cached Flutter $Version but found $($flutterVersionInfo.Version) at $flutterCommand"
         }
     } catch {
-        if ($RequireCompatibilityFlutter) {
+        if ($RequireFlutterVersion) {
             throw
         }
 
@@ -334,17 +344,17 @@ function Resolve-FlutterToolchain {
 
         $fallbackVersionInfo = Get-FlutterVersion -FlutterCommand $currentFlutter.Source
         Assert-FlutterVersion -FlutterVersionInfo $fallbackVersionInfo
-        $warningMessage = ("Falling back to PATH Flutter {0} because compatibility Flutter {1} is not available locally. " +
-                           "Use -RequireCompatibilityFlutter to fail instead of falling back.") -f $fallbackVersionInfo.Version, $Version
+        $warningMessage = ("Falling back to PATH Flutter {0} because Flutter {1} is not available locally. " +
+                           "Use -RequireFlutterVersion to fail instead of falling back.") -f $fallbackVersionInfo.Version, $Version
         Write-Warning $warningMessage
         return [pscustomobject]@{
-            Command = $currentFlutter.Source
+            Command = 'flutter'
             VersionInfo = $fallbackVersionInfo
             Source = 'PATH fallback'
         }
     }
 
-    Write-Host "Using cached compatibility Flutter $Version from $flutterCommand"
+    Write-Host "Using cached Flutter $Version from $flutterCommand"
     return [pscustomobject]@{
         Command = $flutterCommand
         VersionInfo = $flutterVersionInfo
@@ -379,6 +389,23 @@ function New-DartDefineArgs {
         -ProjectPath $ProjectPath `
         -BackendBaseUrl $BackendBaseUrl `
         -RepoRoot $PSScriptRoot
+}
+
+function Invoke-FlutterCommand {
+    param(
+        [Parameter(Mandatory = $true)][string] $FlutterCommand,
+        [Parameter(Mandatory = $true)][string[]] $Arguments,
+        [Parameter(Mandatory = $true)][string] $WorkingDirectory
+    )
+
+    $process = Start-Process -FilePath $FlutterCommand `
+        -ArgumentList $Arguments `
+        -WorkingDirectory $WorkingDirectory `
+        -Wait `
+        -PassThru `
+        -NoNewWindow
+
+    $script:LASTEXITCODE = $process.ExitCode
 }
 
 function Add-SearchDir {
@@ -524,6 +551,65 @@ function Get-PortableRequiredFiles {
         'flutter_windows.dll',
         'run_portable.bat'
     )
+}
+
+function Sync-WindowsReleasePayload {
+    param(
+        [Parameter(Mandatory = $true)][string] $ProjectPath,
+        [Parameter(Mandatory = $true)][string] $ReleaseDir
+    )
+
+    $releaseDataDir = Join-Path -Path $ReleaseDir -ChildPath 'data'
+    $flutterAssetsSource = Join-Path -Path $ProjectPath -ChildPath 'build\flutter_assets'
+    $flutterAssetsDestination = Join-Path -Path $releaseDataDir -ChildPath 'flutter_assets'
+    $nativeAssetsSource = Join-Path -Path $ProjectPath -ChildPath 'build\native_assets\windows'
+    $appSoSource = Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so'
+    $ephemeralDir = Join-Path -Path $ProjectPath -ChildPath 'windows\flutter\ephemeral'
+    $pluginReleaseRoot = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\plugins'
+
+    New-Item -Path $ReleaseDir -ItemType Directory -Force | Out-Null
+    New-Item -Path $releaseDataDir -ItemType Directory -Force | Out-Null
+
+    foreach ($fileName in @('flutter_windows.dll', 'icudtl.dat')) {
+        $sourcePath = Join-Path -Path $ephemeralDir -ChildPath $fileName
+        if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
+            $destinationPath = if ($fileName -eq 'icudtl.dat') {
+                Join-Path -Path $releaseDataDir -ChildPath $fileName
+            } else {
+                Join-Path -Path $ReleaseDir -ChildPath $fileName
+            }
+
+            Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+        }
+    }
+
+    if (Test-Path -LiteralPath $pluginReleaseRoot -PathType Container) {
+        Get-ChildItem -LiteralPath $pluginReleaseRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $pluginReleaseDir = Join-Path -Path $_.FullName -ChildPath 'Release'
+                if (Test-Path -LiteralPath $pluginReleaseDir -PathType Container) {
+                    Get-ChildItem -LiteralPath $pluginReleaseDir -Filter '*.dll' -File -ErrorAction SilentlyContinue |
+                        Copy-Item -Destination $ReleaseDir -Force
+                }
+            }
+    }
+
+    if (Test-Path -LiteralPath $flutterAssetsSource -PathType Container) {
+        if (Test-Path -LiteralPath $flutterAssetsDestination) {
+            Remove-Item -LiteralPath $flutterAssetsDestination -Recurse -Force
+        }
+
+        Copy-Item -LiteralPath $flutterAssetsSource -Destination $flutterAssetsDestination -Recurse -Force
+    }
+
+    if (Test-Path -LiteralPath $nativeAssetsSource -PathType Container) {
+        Get-ChildItem -LiteralPath $nativeAssetsSource -Force |
+            Copy-Item -Destination $ReleaseDir -Recurse -Force
+    }
+
+    if (Test-Path -LiteralPath $appSoSource -PathType Leaf) {
+        Copy-Item -LiteralPath $appSoSource -Destination (Join-Path -Path $releaseDataDir -ChildPath 'app.so') -Force
+    }
 }
 
 function Write-PortableManifest {
@@ -678,15 +764,14 @@ try {
     $ProjectPath = Get-FullPath -Path (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent')
     $OutputRoot = Get-FullPath -Path $PSScriptRoot
     $PortableName = ''
-    if ([string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
+    if (-not [string]::IsNullOrWhiteSpace($FlutterVersion) -and [string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
         $FlutterCacheRoot = Get-DefaultFlutterCacheRoot
     }
 
     $flutterToolchain = Resolve-FlutterToolchain `
         -Version $FlutterVersion `
         -CacheRoot $FlutterCacheRoot `
-        -UseCompatibilityFlutter:$UseCompatibilityFlutter `
-        -RequireCompatibilityFlutter:$RequireCompatibilityFlutter
+        -RequireFlutterVersion:$RequireFlutterVersion
     $flutterCommand = $flutterToolchain.Command
     $flutterVersionInfo = $flutterToolchain.VersionInfo
     Initialize-WindowsAgentBuildEnvironment
@@ -707,6 +792,7 @@ try {
     $exePath = Join-Path -Path $releaseDir -ChildPath $exeName
 
     New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
+    Stop-ProcessesUnderPath -Path $portableDir
     Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory before build'
     Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive before build'
 
@@ -714,28 +800,38 @@ try {
     try {
         Stop-WindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
         Assert-NoWindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
-        Invoke-NativeCommand -Description 'Running flutter pub get...' -Command { & $flutterCommand pub get }
+        Invoke-NativeCommand -Description 'Running flutter pub get...' -Command {
+            Invoke-FlutterCommand -FlutterCommand $flutterCommand -Arguments @('pub', 'get') -WorkingDirectory $ProjectPath
+        }
         Write-Host "Portable backend URL: $BackendBaseUrl"
-        Remove-WindowsAgentBuildArtifacts -ProjectPath $ProjectPath
+        $preserveWindowsBuildTree = $flutterToolchain.Source -eq 'PATH'
+        Remove-WindowsAgentBuildArtifacts `
+            -ProjectPath $ProjectPath `
+            -PreserveFlutterEphemeral `
+            -PreserveWindowsBuildTree:$preserveWindowsBuildTree
         $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
-        try {
-            Invoke-NativeCommand -Description 'Building Windows release...' -Command {
-                Invoke-WindowsAgentVisualStudioCommand `
-                    -WorkingDirectory $ProjectPath `
-                    -Command (@($flutterCommand, 'build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines)
-            }
-        } catch {
-            if (-not (Test-WindowsAgentReleaseInstallRecoveryNeeded -ProjectPath $ProjectPath)) {
-                throw
+        Write-Host 'Building Windows release...'
+        Invoke-FlutterCommand `
+            -FlutterCommand $flutterCommand `
+            -Arguments (@('build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines) `
+            -WorkingDirectory $ProjectPath
+
+        if ($LASTEXITCODE -ne 0) {
+            $canRecoverReleaseInstall = (Test-Path -LiteralPath $exePath -PathType Leaf) -and
+                (Test-Path -LiteralPath (Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\cmake_install.cmake') -PathType Leaf)
+
+            if (-not $canRecoverReleaseInstall) {
+                throw "Command failed with exit code $LASTEXITCODE`: Building Windows release..."
             }
 
             $restoredAotLibrary = Restore-WindowsAgentAotLibrary -ProjectPath $ProjectPath
             if (-not $restoredAotLibrary) {
-                throw
+                Write-Warning 'Flutter release install did not produce build/windows/app.so. Continuing with manual release payload staging.'
+            } else {
+                Write-Warning 'Flutter release install did not finish, but the release executable and restored AOT library are available. Continuing with manual release payload staging.'
             }
-
-            Write-Warning "Flutter build exited before the release install step finished. Retrying the install with the restored AOT library."
-            Invoke-WindowsAgentReleaseInstall -ProjectPath $ProjectPath
+        } else {
+            Write-Host 'Windows release build finished successfully.'
         }
     }
     finally {
@@ -745,6 +841,8 @@ try {
     if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
         throw "Windows release build did not produce expected executable: $exePath"
     }
+
+    Sync-WindowsReleasePayload -ProjectPath $ProjectPath -ReleaseDir $releaseDir
 
     New-Item -Path $portableDir -ItemType Directory -Force | Out-Null
     Get-ChildItem -LiteralPath $releaseDir -Force |
