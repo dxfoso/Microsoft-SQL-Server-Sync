@@ -65,6 +65,22 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("previewRows", body)
         self.assertNotIn("'rows'", body)
 
+    def test_live_state_agent_query_omits_heavy_agent_json(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+        agent_rows_match = re.search(
+            r"function live_state_agent_rows_for\(.*?\): array<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(agent_rows_match)
+        body = agent_rows_match.group("body")
+
+        self.assertIn("limit: limit + 1", body)
+        self.assertNotIn("'tables'", body)
+        self.assertNotIn("diagnosticPayload", body)
+
     def test_row_uploads_have_server_side_snapshot_bounds(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
