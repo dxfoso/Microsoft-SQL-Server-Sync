@@ -94,6 +94,40 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertGreaterEqual(source.count("raw_json_error(413"), 5)
 
+    def test_agent_payloads_bound_table_lists_before_policy_application(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("function agent_table_payload_limit(): int", source)
+        self.assertIn("return 150;", source)
+        self.assertIn("function bounded_agent_tables", source)
+        self.assertIn(
+            "apply_table_sync_policies(agent.ownerUserId, bounded_agent_tables(agent.tables, agent.selectedTable), string.from(agent.database))",
+            source,
+        )
+
+        heartbeat_match = re.search(
+            r"function agents_heartbeat\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(heartbeat_match)
+        heartbeat_body = heartbeat_match.group("body")
+
+        self.assertIn(
+            "nextTables = bounded_agent_tables(nextTables, selectedTable);",
+            heartbeat_body,
+        )
+        self.assertIn(
+            "nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);",
+            heartbeat_body,
+        )
+        self.assertLess(
+            heartbeat_body.index("bounded_agent_tables"),
+            heartbeat_body.index("apply_table_sync_policies"),
+        )
+
     def test_owner_namespace_uploads_use_chunked_snapshots(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
@@ -128,7 +162,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(method_match)
         body = method_match.group("body")
 
-        self.assertIn("_mergeOwnerSnapshotRows", body)
+        self.assertIn("_appendMissingOwnerSnapshotRows", body)
+        self.assertIn("_rowsMissingFromOwnerSnapshot", body)
+        self.assertNotIn("_rowsMissingOrChangedInOwnerSnapshot", body)
         self.assertIn("uploadSnapshot(", body)
         self.assertIn("publishOwnerSnapshot: true", body)
         self.assertNotIn("uploadSnapshotRows", body)

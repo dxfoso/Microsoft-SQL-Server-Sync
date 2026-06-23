@@ -97,6 +97,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _checkingServerConnection = false;
   DateTime? _lastServerCheck;
   bool _syncLoopBusy = false;
+  bool _markChangedTablesBusy = false;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
@@ -2668,19 +2669,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final rowsToUpload =
           ownerSnapshotBeforeUpload == null
               ? snapshot.rows
-              : _rowsMissingOrChangedInOwnerSnapshot(
+              : _rowsMissingFromOwnerSnapshot(
                 localRows: snapshot.rows,
                 ownerRows: ownerSnapshotBeforeUpload.rows,
-                columns: snapshot.columns,
                 keyColumns: snapshot.keyColumns,
-                signatureColumns: snapshot.signatureColumns,
               );
       final ownerRowsToPublish =
           ownerSnapshotBeforeUpload == null
               ? snapshot.rows
-              : _mergeOwnerSnapshotRows(
+              : _appendMissingOwnerSnapshotRows(
                 ownerRows: ownerSnapshotBeforeUpload.rows,
-                changedLocalRows: rowsToUpload,
+                missingLocalRows: rowsToUpload,
                 keyColumns: snapshot.keyColumns,
               );
 
@@ -2766,7 +2765,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         appendHistory: true,
         success: true,
         overrideMessage:
-            'Uploaded ${rowsToUpload.length} changed local rows and merged ${ownerSnapshot.rowCount} owner namespace rows.',
+            'Uploaded ${rowsToUpload.length} missing local rows and merged ${ownerSnapshot.rowCount} owner namespace rows.',
         historySnapshotCreatedAt: ownerSnapshot.createdAt,
         historySnapshotData: _createHistorySnapshotData(
           columns: ownerSnapshot.columns,
@@ -4037,59 +4036,45 @@ ORDER BY [__sync_agent_row_number];
         message.contains('snapshot is not available');
   }
 
-  List<Map<String, String?>> _rowsMissingOrChangedInOwnerSnapshot({
+  List<Map<String, String?>> _rowsMissingFromOwnerSnapshot({
     required List<Map<String, String?>> localRows,
     required List<Map<String, String?>> ownerRows,
-    required List<String> columns,
     required List<String> keyColumns,
-    required List<String> signatureColumns,
   }) {
     if (ownerRows.isEmpty) {
       return localRows;
     }
-    final comparableColumns =
-        signatureColumns.isEmpty ? columns : signatureColumns;
 
-    final ownerSignatureByKey = <String, String>{};
+    final ownerKeys = <String>{};
     for (final ownerRow in ownerRows) {
-      ownerSignatureByKey[_mergeRowKey(
-        ownerRow,
-        keyColumns,
-      )] = _mergeRowSignature(ownerRow, comparableColumns);
+      ownerKeys.add(_mergeRowKey(ownerRow, keyColumns));
     }
 
     return localRows
-        .where((localRow) {
-          final rowKey = _mergeRowKey(localRow, keyColumns);
-          final ownerSignature = ownerSignatureByKey[rowKey];
-          if (ownerSignature == null) {
-            return true;
-          }
-          return ownerSignature !=
-              _mergeRowSignature(localRow, comparableColumns);
-        })
+        .where(
+          (localRow) => !ownerKeys.contains(_mergeRowKey(localRow, keyColumns)),
+        )
         .toList(growable: false);
   }
 
-  List<Map<String, String?>> _mergeOwnerSnapshotRows({
+  List<Map<String, String?>> _appendMissingOwnerSnapshotRows({
     required List<Map<String, String?>> ownerRows,
-    required List<Map<String, String?>> changedLocalRows,
+    required List<Map<String, String?>> missingLocalRows,
     required List<String> keyColumns,
   }) {
-    if (changedLocalRows.isEmpty) {
+    if (missingLocalRows.isEmpty) {
       return ownerRows;
     }
     if (ownerRows.isEmpty) {
-      return changedLocalRows;
+      return missingLocalRows;
     }
 
-    final incomingKeys =
-        changedLocalRows.map((row) => _mergeRowKey(row, keyColumns)).toSet();
+    final ownerKeys =
+        ownerRows.map((row) => _mergeRowKey(row, keyColumns)).toSet();
     return <Map<String, String?>>[
-      for (final ownerRow in ownerRows)
-        if (!incomingKeys.contains(_mergeRowKey(ownerRow, keyColumns)))
-          ownerRow,
-      ...changedLocalRows,
+      ...ownerRows,
+      for (final localRow in missingLocalRows)
+        if (!ownerKeys.contains(_mergeRowKey(localRow, keyColumns))) localRow,
     ];
   }
 
@@ -4740,7 +4725,7 @@ WHEN NOT MATCHED BY TARGET THEN
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSyncTableSortBar(syncRows.length),
+          _buildSyncTableSortBar(syncRows, selectedRow),
           const SizedBox(height: 10),
           Expanded(
             child: ListView.separated(
@@ -4758,7 +4743,14 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
-  Widget _buildSyncTableSortBar(int tableCount) {
+  Widget _buildSyncTableSortBar(
+    List<_SyncTableRowData> syncRows,
+    _SyncTableRowData? selectedRow,
+  ) {
+    final tableCount = syncRows.length;
+    final changedCount =
+        syncRows.where((row) => _hasSavedRowCountChange(row.state)).length;
+    final selectedTable = selectedRow?.table;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(6),
@@ -4791,6 +4783,56 @@ WHEN NOT MATCHED BY TARGET THEN
               label: const Text('Reset counters'),
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFF2563EB),
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Tooltip(
+            message:
+                'Enable only visible tables whose current row count differs from the saved counter',
+            child: TextButton.icon(
+              onPressed:
+                  tableCount == 0 || _markChangedTablesBusy
+                      ? null
+                      : () =>
+                          unawaited(_markOnlyChangedCounterTables(syncRows)),
+              icon:
+                  _markChangedTablesBusy
+                      ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : const Icon(Icons.fact_check_outlined, size: 16),
+              label: Text('Mark changed ($changedCount)'),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF0F766E),
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Tooltip(
+            message:
+                selectedTable == null
+                    ? 'Select a table first'
+                    : 'Queue sync for $selectedTable only',
+            child: TextButton.icon(
+              onPressed:
+                  selectedTable == null
+                      ? null
+                      : () => unawaited(_triggerSyncNow(selectedTable)),
+              icon: const Icon(Icons.play_arrow_rounded, size: 17),
+              label: const Text('Sync selected'),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF1D4ED8),
                 textStyle: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
@@ -5352,6 +5394,80 @@ WHEN NOT MATCHED BY TARGET THEN
     return const Color(0xFF2563EB);
   }
 
+  bool _hasSavedRowCountChange(SyncTableState state) {
+    final savedRowCount = state.savedRowCount;
+    return savedRowCount != null && savedRowCount != state.rowCount;
+  }
+
+  Future<void> _markOnlyChangedCounterTables(
+    List<_SyncTableRowData> rows,
+  ) async {
+    if (_markChangedTablesBusy || rows.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _markChangedTablesBusy = true;
+    });
+
+    var changedCount = 0;
+    try {
+      for (final row in rows) {
+        final shouldEnable = _hasSavedRowCountChange(row.state);
+        if (shouldEnable) {
+          changedCount += 1;
+        }
+        await _controlPlaneClient.updateTableSyncPolicy(
+          table: row.syncKey,
+          enabled: shouldEnable,
+          syncMode: kSyncModeTwoWay,
+        );
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+      for (final row in rows) {
+        final shouldEnable = _hasSavedRowCountChange(row.state);
+        nextTables[row.syncKey] = row.state.copyWith(
+          enabled: shouldEnable,
+          status: shouldEnable ? 'Queued' : 'Paused',
+          progress: shouldEnable ? 0 : row.state.progress,
+          direction: syncDirectionForMode(kSyncModeTwoWay),
+          syncMode: kSyncModeTwoWay,
+          message:
+              shouldEnable
+                  ? 'Row counter changed. Waiting for selected sync.'
+                  : 'Counter unchanged. Sync disabled.',
+        );
+      }
+      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Marked $changedCount changed table${changedCount == 1 ? '' : 's'} from row counters.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _markChangedTablesBusy = false;
+        });
+      }
+    }
+  }
+
   Widget _buildSyncEnabledToolbarControl(_SyncTableRowData row) {
     return Tooltip(
       message: row.state.enabled ? 'Disable sync' : 'Enable sync',
@@ -5451,45 +5567,6 @@ WHEN NOT MATCHED BY TARGET THEN
             size: 20,
             color: Color(0xFF475467),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModeReadOnlyControl(_SyncTableRowData row) {
-    final value = normalizeSyncMode(
-      row.state.syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
-    final color = _syncModeColor(value);
-
-    return Tooltip(
-      message: '${_syncModeDescription(value)} Change from the three-dot menu.',
-      child: Container(
-        height: 36,
-        constraints: const BoxConstraints(minWidth: 96),
-        padding: const EdgeInsets.symmetric(horizontal: 9),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.18)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(_syncModeIcon(value), size: 17, color: color),
-            const SizedBox(width: 6),
-            Text(
-              _syncModeLabel(value),
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(Icons.lock_outline_rounded, size: 15, color: color),
-          ],
         ),
       ),
     );

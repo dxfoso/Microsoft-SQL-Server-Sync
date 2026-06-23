@@ -566,31 +566,63 @@ function apply_table_sync_policies(ownerUserId: string? = null, tables: array<js
   if (policies.length == 0) {
     return tables;
   }
-  return tables.map((tableState) => {
-    const matches = policies.filter((policy) => table_sync_policy_sync_key(policy) == tableState.table);
+  let nextTables = [];
+  for (const tableState of tables) {
     let policy = null;
-    if (matches.length != 0) {
-      policy = matches[0];
+    for (const candidate of policies) {
+      if (policy == null && table_sync_policy_sync_key(candidate) == tableState.table) {
+        policy = candidate;
+      }
     }
     if (policy == null) {
-      return tableState;
+      nextTables = nextTables.concat([tableState]);
+    } else {
+      nextTables = nextTables.concat([{
+        table: tableState.table,
+        enabled: policy.enabled,
+        status: tableState.status,
+        lastSync: tableState.lastSync,
+        progress: tableState.progress,
+        direction: direction_for_sync_mode(policy.syncMode),
+        syncMode: normalize_sync_mode(policy.syncMode, true),
+        rowCount: tableState.rowCount,
+        snapshotId: tableState.snapshotId,
+        snapshotCreatedAt: tableState.snapshotCreatedAt,
+        snapshotBytes: tableState.snapshotBytes,
+        message: tableState.message,
+        history: tableState.history
+      }]);
     }
-    return {
-      table: tableState.table,
-      enabled: policy.enabled,
-      status: tableState.status,
-      lastSync: tableState.lastSync,
-      progress: tableState.progress,
-      direction: direction_for_sync_mode(policy.syncMode),
-      syncMode: normalize_sync_mode(policy.syncMode, true),
-      rowCount: tableState.rowCount,
-      snapshotId: tableState.snapshotId,
-      snapshotCreatedAt: tableState.snapshotCreatedAt,
-      snapshotBytes: tableState.snapshotBytes,
-      message: tableState.message,
-      history: tableState.history
-    };
-  });
+  }
+  return nextTables;
+}
+
+function agent_table_payload_limit(): int {
+  return 150;
+}
+
+function bounded_agent_tables(tables: array<json>? = null, selectedTable: string? = null): array<json> {
+  if (tables == null) {
+    return [];
+  }
+  let selected = '';
+  if (selectedTable != null) {
+    selected = string.from(selectedTable).trim();
+  }
+  let result = [];
+  if (selected.length != 0) {
+    for (const tableState of tables) {
+      if (tableState.table == selected && result.length == 0) {
+        result = result.concat([tableState]);
+      }
+    }
+  }
+  for (const tableState of tables) {
+    if (result.length < agent_table_payload_limit() && tableState.table != selected) {
+      result = result.concat([tableState]);
+    }
+  }
+  return result;
 }
 
 function seed_admin_user(): map<json> {
@@ -1044,7 +1076,7 @@ function visible_snapshot_rows_for(current: map<json>): array<json> {
 function public_agent_payload(agent: map<json>): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
-    nextTables = apply_table_sync_policies(agent.ownerUserId, agent.tables, string.from(agent.database));
+    nextTables = apply_table_sync_policies(agent.ownerUserId, bounded_agent_tables(agent.tables, agent.selectedTable), string.from(agent.database));
   }
   return {
     clientName: agent.clientName,
@@ -1844,6 +1876,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   if (tables != null) {
     nextTables = tables;
   }
+  nextTables = bounded_agent_tables(nextTables, selectedTable);
   nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);
   const updated = db.update(Agent, { clientName: resolvedClientName }, {
     machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
