@@ -19,6 +19,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("DELETE FROM $qualifiedTable", agent_page)
         self.assertNotIn("TRUNCATE TABLE", agent_page)
 
+    def test_windows_merge_preserves_identity_primary_keys_for_missing_rows(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("final writeColumns = writableSnapshotColumns;", agent_page)
+        self.assertIn("if (primaryKeys.isNotEmpty) {\n      return primaryKeys;", agent_page)
+        self.assertIn("if (hasIdentity) 'SET IDENTITY_INSERT $qualifiedTable ON;'", agent_page)
+        self.assertIn("if (hasIdentity) {\n      statements.add('SET IDENTITY_INSERT $qualifiedTable OFF;');", agent_page)
+        self.assertIn("jsonEncode(keyColumns.map((column) => row[column]).toList())", agent_page)
+        self.assertNotIn("nonIdentityWritableColumns", agent_page)
+
     def test_snapshot_download_uses_bounded_manifest_only(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         control_plane = read_text("business/control_plane.tru")

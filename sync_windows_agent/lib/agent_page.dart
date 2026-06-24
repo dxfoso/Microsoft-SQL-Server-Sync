@@ -3017,14 +3017,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final writableSnapshotColumns = snapshot.columns
         .where((column) => _isWritableSyncColumn(schemasByName[column]!))
         .toList(growable: false);
-    final writeColumns =
-        mergeRows
-            ? writableSnapshotColumns
-                .where(
-                  (column) => !(schemasByName[column]?.isIdentity ?? false),
-                )
-                .toList(growable: false)
-            : writableSnapshotColumns;
+    final writeColumns = writableSnapshotColumns;
     if (snapshot.rows.isNotEmpty && writeColumns.isEmpty) {
       throw Exception(
         'Downloaded snapshot for $table has no writable local columns. Computed, rowversion, and generated columns cannot be applied.',
@@ -4094,7 +4087,6 @@ ORDER BY [__sync_agent_row_number];
     List<String> writableColumns = const [],
   }) {
     final snapshotColumnSet = snapshotColumns.toSet();
-    final schemasByName = {for (final schema in schemas) schema.name: schema};
     final primaryKeys = schemas
         .where(
           (schema) =>
@@ -4105,23 +4097,13 @@ ORDER BY [__sync_agent_row_number];
     if (!mergeRows) {
       return primaryKeys.isEmpty ? snapshotColumns : primaryKeys;
     }
-    if (primaryKeys.isNotEmpty &&
-        primaryKeys.every(
-          (column) => !(schemasByName[column]?.isIdentity ?? false),
-        )) {
+    if (primaryKeys.isNotEmpty) {
       return primaryKeys;
     }
-
-    final nonIdentityWritableColumns = writableColumns
-        .where((column) => !(schemasByName[column]?.isIdentity ?? false))
-        .toList(growable: false);
-    if (nonIdentityWritableColumns.isNotEmpty) {
-      return nonIdentityWritableColumns;
+    if (writableColumns.isNotEmpty) {
+      return writableColumns;
     }
-
-    return primaryKeys
-        .where((column) => !(schemasByName[column]?.isIdentity ?? false))
-        .toList(growable: false);
+    return [];
   }
 
   bool _isWritableSyncColumn(_TableColumnSchema schema) {
@@ -4133,10 +4115,10 @@ ORDER BY [__sync_agent_row_number];
   }
 
   String _mergeRowKey(Map<String, String?> row, List<String> keyColumns) =>
-      keyColumns.map((column) => row[column] ?? '').join('\u001f');
+      jsonEncode(keyColumns.map((column) => row[column]).toList());
 
   String _mergeRowSignature(Map<String, String?> row, List<String> columns) =>
-      columns.map((column) => row[column] ?? '').join('\u001f');
+      jsonEncode(columns.map((column) => row[column]).toList());
 
   bool _isMissingOwnerSnapshotError(Object error) {
     if (error is! AgentControlPlaneException) {
