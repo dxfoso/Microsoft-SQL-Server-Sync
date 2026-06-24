@@ -606,6 +606,22 @@ function related_table_sync_keys_for_policy(ownerUserId: string? = null, syncTab
   return state.related;
 }
 
+function expand_sync_job_tables_for_owner(ownerUserId: string? = null, tables: array<string>): array<string> {
+  let expanded = [];
+  for (const table of tables) {
+    const normalizedTable = string.from(table).trim();
+    if (normalizedTable.length == 0) {
+      continue;
+    }
+    expanded = expanded.concat([normalizedTable]);
+    const relatedTables = related_table_sync_keys_for_policy(ownerUserId, normalizedTable);
+    for (const relatedTable of relatedTables) {
+      expanded = expanded.concat([string.from(relatedTable)]);
+    }
+  }
+  return unique_string_values(expanded);
+}
+
 function table_sync_policy_for_table(ownerUserId: string? = null, database: string = '', table: string): map<json>? {
   const scope = table_sync_policy_scope(ownerUserId);
   const databaseName = database.trim();
@@ -2550,13 +2566,17 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
   if (clientUser != null && !can_manage_user(current, clientUser)) {
     return raw_json_error(403, 'permission denied');
   }
-  const createdJobsRaw = tables.map((table) => {
-    let clientUserId = null;
-    let ownerId = owner_namespace_for_user(current);
-    if (clientUser != null) {
-      clientUserId = clientUser.id;
-      ownerId = owner_namespace_for_user(clientUser);
-    }
+  let clientUserId = null;
+  let ownerId = owner_namespace_for_user(current);
+  if (clientUser != null) {
+    clientUserId = clientUser.id;
+    ownerId = owner_namespace_for_user(clientUser);
+  }
+  const expandedTables = expand_sync_job_tables_for_owner(ownerId, tables);
+  if (expandedTables.length == 0) {
+    return raw_json_error(400, 'tables are required.');
+  }
+  const createdJobsRaw = expandedTables.map((table) => {
     const resolvedMode = normalize_sync_mode(syncMode, true);
     return {
       id: uuid.v4(),

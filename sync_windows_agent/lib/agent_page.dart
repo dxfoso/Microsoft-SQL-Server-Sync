@@ -4935,7 +4935,7 @@ WHEN NOT MATCHED BY TARGET THEN
             message:
                 selectedTable == null
                     ? 'Select a table first'
-                    : 'Queue sync for $selectedTable only',
+                    : 'Queue sync for $selectedTable and related tables',
             child: TextButton.icon(
               onPressed:
                   selectedTable == null
@@ -5829,9 +5829,14 @@ WHEN NOT MATCHED BY TARGET THEN
     }
 
     try {
+      final syncKey = _syncTableKey(table);
+      final tablesToQueue = <String>{
+        syncKey,
+        ..._relatedSyncKeysFor(syncKey),
+      }.toList(growable: false);
       final queuedJobs = await _controlPlaneClient.createJobs(
         clientName: widget.clientName,
-        tables: [_syncTableKey(table)],
+        tables: tablesToQueue,
         direction: 'sync',
         syncMode: kSyncModeMerge,
       );
