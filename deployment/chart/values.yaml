@@ -12,6 +12,9 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+syncEngine:
+  mode: mergeReplication
+
 certManager:
   enabled: true
   createClusterIssuer: false
@@ -27,6 +30,7 @@ frontend:
   replicas: 2
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:latest
   backendBaseUrl: /call
+  syncEngineMode: mergeReplication
   resources:
     requests:
       cpu: 300m
@@ -53,6 +57,7 @@ backend:
     timeoutSeconds: 5
     failureThreshold: 6
   env:
+    syncEngineMode: mergeReplication
     truConfigPath: /app/business/tru.json
     postgresqlUrl: ""
     truStorageDir: /app/data/storage

@@ -66,6 +66,19 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
 
+    def test_chart_declares_merge_replication_sync_engine(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        frontend_deployment = (ROOT / "templates" / "deployment.yaml").read_text(
+            encoding="utf-8"
+        )
+        backend_deployment = (
+            ROOT / "templates" / "backend-deployment.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("syncEngine:\n  mode: mergeReplication", values_yaml)
+        self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
+        self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
+
     def test_ingress_routes_public_backend_paths_to_backend_service(self):
         ingress = (ROOT / "templates" / "ingress.yaml").read_text(encoding="utf-8")
         self.assertIn("- path: /ready", ingress)

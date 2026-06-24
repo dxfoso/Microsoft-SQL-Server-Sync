@@ -389,7 +389,7 @@ function table_sync_policy_sync_key(policy: map<json>): string {
   return string.concat(databaseName, kSyncTableKeySeparator(), localTable);
 }
 
-function maybe_upgrade_legacy_table_sync_policy(policy: map<json>): map<json> {
+function normalize_stored_table_sync_policy(policy: map<json>): map<json> {
   const databaseName = table_sync_policy_database_name(policy);
   const localTable = table_sync_policy_local_name(policy);
   const storedTable = string.from(policy.table).trim();
@@ -446,7 +446,7 @@ function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<
 }
 
 function table_sync_policies_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
-  const rows = list_table_sync_policies_for_scope(ownerUserId).map((row) => maybe_upgrade_legacy_table_sync_policy(row));
+  const rows = list_table_sync_policies_for_scope(ownerUserId).map((row) => normalize_stored_table_sync_policy(row));
   const trimmedDatabase = database.trim();
   if (trimmedDatabase.length == 0) {
     return rows;
@@ -489,7 +489,7 @@ function table_sync_policy_for_table(ownerUserId: string? = null, database: stri
       table: string.concat(databaseName, kSyncTableKeySeparator(), localTable)
     });
     if (keyed != null) {
-      return maybe_upgrade_legacy_table_sync_policy(keyed);
+      return normalize_stored_table_sync_policy(keyed);
     }
   }
   const plain = db.selectOne(TableSyncPolicy, {
@@ -497,7 +497,7 @@ function table_sync_policy_for_table(ownerUserId: string? = null, database: stri
     table: localTable
   });
   if (plain != null) {
-    return maybe_upgrade_legacy_table_sync_policy(plain);
+    return normalize_stored_table_sync_policy(plain);
   }
   return null;
 }
@@ -517,12 +517,12 @@ function find_table_sync_policy(ownerUserId: string? = null, syncTable: string):
       return exact;
     }
   }
-  const legacy = db.selectOne(TableSyncPolicy, {
+  const compatible = db.selectOne(TableSyncPolicy, {
     ownerUserId: scope,
     table: syncTable.trim()
   });
-  if (legacy != null) {
-    return maybe_upgrade_legacy_table_sync_policy(legacy);
+  if (compatible != null) {
+    return normalize_stored_table_sync_policy(compatible);
   }
   if (databaseName.length == 0 && localTable.length != 0) {
     const plain = db.selectOne(TableSyncPolicy, {
@@ -530,7 +530,7 @@ function find_table_sync_policy(ownerUserId: string? = null, syncTable: string):
       table: localTable
     });
     if (plain != null) {
-      return maybe_upgrade_legacy_table_sync_policy(plain);
+      return normalize_stored_table_sync_policy(plain);
     }
   }
   return null;
@@ -2390,7 +2390,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       snapshotId: null,
       snapshotCreatedAt: null,
       snapshotBytes: 0,
-      message: string.concat('Queued two-way sync for ', table, '.'),
+      message: string.concat('Queued merge sync for ', table, '.'),
       error: null,
       clientUserId,
       ownerUserId: ownerId
@@ -3334,26 +3334,6 @@ function jobs_upload_rows_complete(jobId: string, uploadId: string, token: strin
   return {
     job: public_job_payload(nextJob),
     snapshot: public_snapshot_payload(publishedSnapshot)
-  };
-}
-
-function jobs_download_snapshot(jobId: string, token: string? = null): map<json> {
-  const current = current_user_record(token);
-  const job = find_job_by_id(jobId);
-  if (job == null) {
-    return raw_json_error(404, 'job not found');
-  }
-  if (!can_access_job(current, job)) {
-    return deny_job_access('jobs_download_snapshot', token, current, job);
-  }
-
-  const snapshot = latest_download_snapshot_for_job(job);
-  if (snapshot == null) {
-    return raw_json_error(404, 'snapshot not found');
-  }
-  return {
-    job: public_job_payload(job),
-    snapshot: public_snapshot_detail_payload(snapshot)
   };
 }
 

@@ -43,6 +43,8 @@ spec:
           ports:
             - containerPort: {{ .Values.backend.service.port }}
           env:
+            - name: SQL_SYNC_ENGINE_MODE
+              value: {{ (.Values.backend.env.syncEngineMode | default .Values.syncEngine.mode) | quote }}
             - name: TRU_CONFIG_PATH
               value: {{ .Values.backend.env.truConfigPath | quote }}
             - name: TRU_HOST

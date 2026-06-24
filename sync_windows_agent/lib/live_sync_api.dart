@@ -876,28 +876,20 @@ class AgentControlPlaneClient {
   }
 
   Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
-    Map<String, dynamic> manifestResponse;
-    Map<String, dynamic> manifestDecoded;
-    try {
-      final manifest = await _invokeFunctionWithRetry(
-        'jobs_download_snapshot_manifest',
-        {'jobId': jobId},
-        'starting snapshot download',
+    final manifest = await _invokeFunctionWithRetry(
+      'jobs_download_snapshot_manifest',
+      {'jobId': jobId},
+      'starting snapshot download',
+    );
+    if (manifest is! Map || manifest['manifest'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected chunked download manifest payload.',
       );
-      if (manifest is! Map || manifest['manifest'] is! Map) {
-        throw const AgentControlPlaneException(
-          'Unexpected chunked download manifest payload.',
-        );
-      }
-      manifestResponse = Map<String, dynamic>.from(manifest);
-      manifestDecoded = Map<String, dynamic>.from(manifest['manifest'] as Map);
-    } catch (error) {
-      if (error is AgentControlPlaneException &&
-          error.message.toLowerCase().contains('not found')) {
-        return _downloadSnapshotLegacy(jobId);
-      }
-      rethrow;
     }
+    final manifestResponse = Map<String, dynamic>.from(manifest);
+    final manifestDecoded = Map<String, dynamic>.from(
+      manifest['manifest'] as Map,
+    );
     final transferId = manifestDecoded['id'] as String? ?? '';
     final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
     final encoding = manifestDecoded['encoding'] as String? ?? 'gzip';
@@ -992,19 +984,6 @@ class AgentControlPlaneClient {
       ...Map<String, dynamic>.from(manifestResponse['snapshot'] as Map),
       'rows': rows,
     });
-  }
-
-  Future<RemoteSnapshot> _downloadSnapshotLegacy(String jobId) async {
-    final decoded = await _invokeFunctionWithRetry('jobs_download_snapshot', {
-      'jobId': jobId,
-    }, 'downloading snapshot');
-    if (decoded is! Map) {
-      throw const AgentControlPlaneException('Unexpected download payload.');
-    }
-
-    return RemoteSnapshot.fromJson(
-      Map<String, dynamic>.from(decoded['snapshot'] as Map),
-    );
   }
 
   Future<RemoteSyncJob> completeJob(

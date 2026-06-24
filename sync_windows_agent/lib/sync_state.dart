@@ -6,29 +6,26 @@ const int kMaxHistoryLimit = 100;
 const int kDefaultAutoSyncIntervalMinutes = 15;
 const int kMinAutoSyncIntervalMinutes = 1;
 const int kMaxAutoSyncIntervalMinutes = 1440;
-const String kSyncModeTwoWay = 'sync';
-const String kSyncModeMaster = 'master';
-const String kSyncModeClient = 'client';
-const String kSyncModeMasterMix = 'masterMix';
+const String kSyncModeMerge = 'sync';
 const Object _syncTableStateUnset = Object();
 
 String normalizeSyncMode(String? value, {bool fallbackIsMaster = true}) {
   switch ((value ?? '').trim()) {
-    case kSyncModeTwoWay:
+    case kSyncModeMerge:
     case 'bidirectional':
     case 'twoWay':
-      return kSyncModeTwoWay;
-    case kSyncModeMaster:
+      return kSyncModeMerge;
+    case 'master':
     case 'upload':
-      return kSyncModeTwoWay;
-    case kSyncModeClient:
+      return kSyncModeMerge;
+    case 'client':
     case 'download':
-      return kSyncModeTwoWay;
-    case kSyncModeMasterMix:
+      return kSyncModeMerge;
+    case 'masterMix':
     case 'mix':
-      return kSyncModeTwoWay;
+      return kSyncModeMerge;
     default:
-      return kSyncModeTwoWay;
+      return kSyncModeMerge;
   }
 }
 

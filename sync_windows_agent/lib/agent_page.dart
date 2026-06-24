@@ -114,6 +114,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<String> _databases = const [];
   Map<String, int> _databaseTableCounts = const {};
   List<String> _tables = const [];
+  Map<String, Set<String>> _relatedSyncTables = const {};
   String? _selectedTable;
   List<String> _tableColumns = const [];
   List<List<String>> _tableRows = const [];
@@ -124,8 +125,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool get _isMasterClient => _syncState.isMaster;
   Duration get _autoSyncInterval =>
       Duration(minutes: _syncState.autoSyncIntervalMinutes);
-  String get _defaultTableSyncMode =>
-      _isMasterClient ? kSyncModeMaster : kSyncModeClient;
+  String get _defaultTableSyncMode => kSyncModeMerge;
 
   @override
   void initState() {
@@ -389,14 +389,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final key = syncKey ?? _syncTableKey(table);
     final databaseName = _databaseNameFromSyncKey(key);
     final localTable = _localTableName(key);
-    final legacyKey =
+    final compatibleKey =
         databaseName.isEmpty
             ? 'dbo.$localTable'
             : '$databaseName$_syncTableKeySeparator'
                 'dbo.$localTable';
     return _syncState.tables[key] ??
         _syncState.tables[table] ??
-        _syncState.tables[legacyKey] ??
+        _syncState.tables[compatibleKey] ??
         _defaultSyncTableState(key);
   }
 
@@ -423,7 +423,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: enabled,
         message:
             enabled
-                ? 'Two-way sync enabled for ${widget.clientName}.'
+                ? 'Merge replication enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
         direction: syncDirection,
         rowCount: current.rowCount,
@@ -442,12 +442,69 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         direction: syncDirection,
         syncMode: syncMode,
         message:
-            enabled ? 'Waiting for the next two-way sync.' : 'Sync disabled.',
+            enabled
+                ? 'Waiting for the next merge replication sync.'
+                : 'Sync disabled.',
         history: nextHistory,
       ),
     );
     if (enabled) {
       unawaited(_queueEnabledRoleJobs(forceTables: {syncKey}));
+    }
+  }
+
+  Set<String> _relatedSyncKeysFor(String syncKey) {
+    final pending = <String>{syncKey};
+    final related = <String>{};
+    while (pending.isNotEmpty) {
+      final current = pending.first;
+      pending.remove(current);
+      final nextRelated = _relatedSyncTables[current] ?? const <String>{};
+      for (final candidate in nextRelated) {
+        if (candidate == syncKey || related.contains(candidate)) {
+          continue;
+        }
+        related.add(candidate);
+        pending.add(candidate);
+      }
+    }
+    return related;
+  }
+
+  Future<void> _enableRelatedTablesForMergePackage({
+    required String syncKey,
+    required String syncMode,
+  }) async {
+    final related = _relatedSyncKeysFor(syncKey);
+    if (related.isEmpty) {
+      return;
+    }
+
+    final newlyEnabled = <String>{};
+    for (final relatedSyncKey in related) {
+      final current = _syncTableState(relatedSyncKey, syncKey: relatedSyncKey);
+      if (current.enabled) {
+        continue;
+      }
+      await _controlPlaneClient.updateTableSyncPolicy(
+        table: relatedSyncKey,
+        enabled: true,
+        syncMode: syncMode,
+      );
+      final localTable = _localTableName(relatedSyncKey);
+      _updateSyncEnabledTable(localTable, true, selectedSyncMode: syncMode);
+      newlyEnabled.add(relatedSyncKey);
+    }
+
+    if (newlyEnabled.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: SelectableText(
+            'Enabled ${newlyEnabled.length} related table'
+            '${newlyEnabled.length == 1 ? '' : 's'} for merge replication.',
+          ),
+        ),
+      );
     }
   }
 
@@ -458,8 +515,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       selectedMode = await _openSyncModeDialog(
         table: table,
         initialMode: current.syncMode,
-        title: 'Start sync',
-        confirmLabel: 'Enable sync',
+        title: 'Start merge replication',
+        confirmLabel: 'Enable merge',
       );
       if (!mounted || selectedMode == null) {
         return;
@@ -481,6 +538,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return;
       }
       _updateSyncEnabledTable(table, enabled, selectedSyncMode: normalizedMode);
+      if (enabled) {
+        await _enableRelatedTablesForMergePackage(
+          syncKey: syncKey,
+          syncMode: normalizedMode,
+        );
+      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -517,14 +580,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (!nextTables.containsKey(syncKey)) {
         final databaseName = _databaseNameFromSyncKey(syncKey);
         final localTable = _localTableName(syncKey);
-        final legacyKey =
+        final compatibleKey =
             databaseName.isEmpty
                 ? 'dbo.$localTable'
                 : '$databaseName$_syncTableKeySeparator'
                     'dbo.$localTable';
         nextTables[syncKey] =
             nextTables[table] ??
-            nextTables[legacyKey] ??
+            nextTables[compatibleKey] ??
             _defaultSyncTableState(syncKey);
         changed = true;
       }
@@ -717,6 +780,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     setState(() {
       _tables = visibleTables;
       _selectedTable = selectedTable;
+      _relatedSyncTables = const {};
     });
     _ensureSyncTablesLoaded(visibleTables);
 
@@ -729,6 +793,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
     _applyTableRowCounts(database: database, rowCounts: rowCounts);
+
+    final relationships = await _queryTableRelationships(
+      profile: profile,
+      database: database,
+      tables: result.values,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _relatedSyncTables = relationships;
+    });
 
     if (autoLoadRows && selectedTable != null) {
       await _loadTableRows(
@@ -759,6 +835,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _totalTableRows = 0;
       _sortColumnIndex = null;
       _errorMessage = null;
+      _relatedSyncTables = const {};
     });
 
     await _loadTables(
@@ -1156,10 +1233,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return 'v$version ${_formatTimestamp(releaseDate)}$hashSuffix';
   }
 
-  String _roleLabel(bool isMaster) => 'Two-way';
+  String _roleLabel(bool isMaster) => 'Merge';
 
   String _syncModeLabel(String syncMode) {
-    return 'Two-way';
+    return 'Merge replication';
   }
 
   IconData _syncModeIcon(String syncMode) {
@@ -1171,7 +1248,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   String _syncModeDescription(String syncMode) {
-    return 'Upload local rows, download missing owner rows.';
+    return 'Upload local rows and insert only missing cloud rows.';
   }
 
   Future<void> _updateTableSyncMode(String table, String syncMode) async {
@@ -1219,8 +1296,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final selectedMode = await _openSyncModeDialog(
       table: row.table,
       initialMode: row.state.syncMode,
-      title: 'Sync type',
-      confirmLabel: 'Apply type',
+      title: 'Merge replication',
+      confirmLabel: 'Apply',
     );
     if (!mounted || selectedMode == null) {
       return;
@@ -1235,7 +1312,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required String title,
     required String confirmLabel,
   }) {
-    const modes = [kSyncModeTwoWay];
+    const modes = [kSyncModeMerge];
     var selectedMode = normalizeSyncMode(
       initialMode,
       fallbackIsMaster: _isMasterClient,
@@ -1615,7 +1692,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Set<String> _setClientRole(bool isMaster) {
     final enabledTables = <String>{};
-    const syncMode = kSyncModeTwoWay;
+    const syncMode = kSyncModeMerge;
     final direction = syncDirectionForMode(syncMode);
     final nextTables = Map<String, SyncTableState>.fromEntries(
       _syncState.tables.entries.map((entry) {
@@ -1630,7 +1707,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 : tableState.status;
         final nextMessage =
             tableState.enabled
-                ? 'Waiting for the next two-way sync.'
+                ? 'Waiting for the next merge replication sync.'
                 : tableState.message;
         return MapEntry(
           entry.key,
@@ -1686,7 +1763,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               : 'Paused';
       final nextMessage =
           policy.enabled
-              ? 'Waiting for the next two-way sync.'
+              ? 'Waiting for the next merge replication sync.'
               : 'Sync disabled.';
       final nextDirection = syncDirectionForMode(policy.syncMode);
       final nextState = current.copyWith(
@@ -2253,6 +2330,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         database: _selectedDatabase!,
         table: table,
         snapshot: snapshot,
+        mergeRows: true,
       );
 
       final current = _syncTableState(table, syncKey: syncKey);
@@ -2367,7 +2445,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       clientName: widget.clientName,
       tables: dueTables,
       direction: 'sync',
-      syncMode: kSyncModeTwoWay,
+      syncMode: kSyncModeMerge,
     );
 
     if (!mounted) {
@@ -2753,7 +2831,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         status: 'completed',
         progress: 100,
         message:
-            'Two-way sync completed with ${ownerSnapshot.rowCount} owner namespace rows.',
+            'Merge sync completed with ${ownerSnapshot.rowCount} owner namespace rows.',
         rowCount: ownerSnapshot.rowCount,
         snapshotId: ownerSnapshot.id,
         snapshotCreatedAt: ownerSnapshot.createdAt,
@@ -2936,7 +3014,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required String database,
     required String table,
     required RemoteSnapshot snapshot,
-    bool mergeRows = false,
+    bool mergeRows = true,
   }) async {
     if (database.isEmpty) {
       throw Exception(
@@ -3024,7 +3102,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'SET NOCOUNT ON;',
       'BEGIN TRY',
       'BEGIN TRAN;',
-      if (!mergeRows) 'DELETE FROM $qualifiedTable;',
       if (hasIdentity) 'SET IDENTITY_INSERT $qualifiedTable ON;',
     ];
 
@@ -3389,6 +3466,76 @@ ORDER BY r.display_name;
     }
 
     return counts;
+  }
+
+  Future<Map<String, Set<String>>> _queryTableRelationships({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required List<String> tables,
+  }) async {
+    if (database.isEmpty || tables.isEmpty) {
+      return const <String, Set<String>>{};
+    }
+
+    final knownTables = tables.toSet();
+    final relationships = <String, Set<String>>{};
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT
+  CASE
+    WHEN child_schema.name = 'dbo' THEN child_table.name
+    ELSE child_schema.name + '.' + child_table.name
+  END AS child_table,
+  CASE
+    WHEN parent_schema.name = 'dbo' THEN parent_table.name
+    ELSE parent_schema.name + '.' + parent_table.name
+  END AS parent_table
+FROM sys.foreign_keys AS fk
+INNER JOIN sys.tables AS child_table
+  ON child_table.object_id = fk.parent_object_id
+INNER JOIN sys.schemas AS child_schema
+  ON child_schema.schema_id = child_table.schema_id
+INNER JOIN sys.tables AS parent_table
+  ON parent_table.object_id = fk.referenced_object_id
+INNER JOIN sys.schemas AS parent_schema
+  ON parent_schema.schema_id = parent_table.schema_id
+ORDER BY child_table, parent_table;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null || processResult.exitCode != 0) {
+      return const <String, Set<String>>{};
+    }
+
+    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      final parts = _splitRowValues(trimmedLine);
+      if (parts.length < 2) {
+        continue;
+      }
+      final child = parts[0].trim();
+      final parent = parts[1].trim();
+      if (child.isEmpty ||
+          parent.isEmpty ||
+          !knownTables.contains(child) ||
+          !knownTables.contains(parent)) {
+        continue;
+      }
+      final childKey = _syncTableKey(child, database: database);
+      final parentKey = _syncTableKey(parent, database: database);
+      relationships.putIfAbsent(childKey, () => <String>{}).add(parentKey);
+      relationships.putIfAbsent(parentKey, () => <String>{}).add(childKey);
+    }
+
+    return relationships;
   }
 
   Future<_TableRowsResult> _queryTableRows({
@@ -3978,7 +4125,7 @@ ORDER BY [__sync_agent_row_number];
   List<String> _mergeKeyColumns(
     List<_TableColumnSchema> schemas,
     List<String> snapshotColumns, {
-    bool mergeRows = false,
+    bool mergeRows = true,
     List<String> writableColumns = const [],
   }) {
     final snapshotColumnSet = snapshotColumns.toSet();
@@ -5420,7 +5567,7 @@ WHEN NOT MATCHED BY TARGET THEN
         await _controlPlaneClient.updateTableSyncPolicy(
           table: row.syncKey,
           enabled: shouldEnable,
-          syncMode: kSyncModeTwoWay,
+          syncMode: kSyncModeMerge,
         );
       }
 
@@ -5435,11 +5582,11 @@ WHEN NOT MATCHED BY TARGET THEN
           enabled: shouldEnable,
           status: shouldEnable ? 'Queued' : 'Paused',
           progress: shouldEnable ? 0 : row.state.progress,
-          direction: syncDirectionForMode(kSyncModeTwoWay),
-          syncMode: kSyncModeTwoWay,
+          direction: syncDirectionForMode(kSyncModeMerge),
+          syncMode: kSyncModeMerge,
           message:
               shouldEnable
-                  ? 'Row counter changed. Waiting for selected sync.'
+                  ? 'Row counter changed. Waiting for selected merge sync.'
                   : 'Counter unchanged. Sync disabled.',
         );
       }
@@ -5534,7 +5681,7 @@ WHEN NOT MATCHED BY TARGET THEN
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Text(
-                            'Change sync type',
+                            'Change merge settings',
                             style: TextStyle(fontWeight: FontWeight.w800),
                           ),
                           const SizedBox(height: 2),
@@ -5721,7 +5868,7 @@ WHEN NOT MATCHED BY TARGET THEN
         clientName: widget.clientName,
         tables: [_syncTableKey(table)],
         direction: 'sync',
-        syncMode: kSyncModeTwoWay,
+        syncMode: kSyncModeMerge,
       );
 
       if (!mounted) {
