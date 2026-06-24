@@ -78,6 +78,35 @@ class ChartContractsTests(unittest.TestCase):
         self.assertIn("syncEngine:\n  mode: mergeReplication", values_yaml)
         self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
         self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
+        self.assertNotIn("syncEngineMode", values_yaml)
+        self.assertNotIn(".Values.frontend.syncEngineMode", frontend_deployment)
+        self.assertNotIn(".Values.backend.env.syncEngineMode", backend_deployment)
+
+    def test_chart_derives_frontend_api_route_from_central_ingress(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        frontend_deployment = (ROOT / "templates" / "deployment.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("backendBaseUrl", values_yaml)
+        self.assertNotIn("apiBaseUrl", values_yaml)
+        self.assertNotIn("publicBaseUrl", values_yaml)
+        self.assertNotIn("publicHost", values_yaml)
+        self.assertIn('value: "/call"', frontend_deployment)
+        self.assertNotIn(".Values.frontend.backendBaseUrl", frontend_deployment)
+
+    def test_chart_default_images_are_not_latest(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+
+        self.assertNotIn(":latest", values_yaml)
+        self.assertIn(
+            "image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:dev",
+            values_yaml,
+        )
+        self.assertIn(
+            "image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:dev",
+            values_yaml,
+        )
 
     def test_ingress_routes_public_backend_paths_to_backend_service(self):
         ingress = (ROOT / "templates" / "ingress.yaml").read_text(encoding="utf-8")

@@ -28,9 +28,7 @@ certManager:
 
 frontend:
   replicas: 2
-  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:latest
-  backendBaseUrl: /call
-  syncEngineMode: mergeReplication
+  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:dev
   resources:
     requests:
       cpu: 300m
@@ -42,7 +40,7 @@ frontend:
 backend:
   enabled: true
   replicas: 2
-  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:latest
+  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:dev
   secretName: sql-sync-backend
   service:
     port: 9001
@@ -57,7 +55,6 @@ backend:
     timeoutSeconds: 5
     failureThreshold: 6
   env:
-    syncEngineMode: mergeReplication
     truConfigPath: /app/business/tru.json
     postgresqlUrl: ""
     truStorageDir: /app/data/storage
