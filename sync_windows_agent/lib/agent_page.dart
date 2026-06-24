@@ -2778,11 +2778,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       _processingJobIds.add(job.id);
       try {
-        if (job.direction == 'download') {
-          await _processDownloadJob(job);
-        } else {
-          await _processUploadJob(job);
-        }
+        await _processUploadJob(job);
       } finally {
         _processingJobIds.remove(job.id);
       }
@@ -2975,116 +2971,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     } catch (failError) {
       logStartupEvent('Unable to mark remote job ${job.id} failed: $failError');
-    }
-  }
-
-  Future<void> _processDownloadJob(RemoteSyncJob job) async {
-    try {
-      final localDatabase = _databaseNameFromSyncKey(job.table);
-      final localTable = _localTableName(job.table);
-      var activeJob = await _controlPlaneClient.startJob(
-        job.id,
-        status: 'snapshotting',
-        progress: 10,
-        message: 'Creating a local snapshot before download apply.',
-      );
-      _applyRemoteJobState(activeJob);
-
-      final localSnapshot = await _createTableSnapshot(
-        profile: _activeProfile(),
-        database: localDatabase,
-        table: localTable,
-      );
-      if (!localSnapshot.success) {
-        throw Exception(localSnapshot.errorText);
-      }
-
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'downloading',
-        progress: 40,
-        message: 'Downloading compressed snapshot in 100 KB chunks.',
-        rowCount: localSnapshot.totalRows,
-        direction: 'download',
-      );
-      _applyRemoteJobState(activeJob);
-
-      final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);
-
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'applying',
-        progress: 75,
-        message: 'Applying the remote snapshot to local SQL Server.',
-        rowCount: snapshot.rowCount,
-        direction: 'download',
-      );
-      _applyRemoteJobState(activeJob);
-
-      await _applySnapshotToTable(
-        profile: _activeProfile(),
-        database: localDatabase,
-        table: localTable,
-        snapshot: snapshot,
-        mergeRows: true,
-      );
-
-      activeJob = await _controlPlaneClient.completeJob(
-        job.id,
-        status: 'completed',
-        progress: 100,
-        message:
-            'Applied snapshot ${snapshot.id} with ${snapshot.rowCount} rows to local SQL Server.',
-        rowCount: snapshot.rowCount,
-        snapshotId: snapshot.id,
-        snapshotCreatedAt: snapshot.createdAt,
-        snapshotBytes: snapshot.snapshotBytes,
-      );
-
-      _applyRemoteJobState(
-        activeJob,
-        appendHistory: true,
-        success: true,
-        overrideMessage:
-            'Applied remote snapshot ${snapshot.id} with ${snapshot.rowCount} rows. Local pre-apply snapshot captured ${localSnapshot.totalRows} rows.',
-        historySnapshotCreatedAt: snapshot.createdAt,
-        historySnapshotData: _createHistorySnapshotData(
-          columns: snapshot.columns,
-          rows: snapshot.rows,
-        ),
-      );
-    } catch (error) {
-      if (_isTemporaryControlPlaneUnavailable(error)) {
-        _markControlPlaneTemporarilyUnavailable();
-        return;
-      }
-      logStartupEvent('Download sync job ${job.id} failed: $error');
-      await _markRemoteJobFailed(job, error);
-      final failedJob = RemoteSyncJob(
-        id: job.id,
-        clientName: job.clientName,
-        sourceClientName: job.sourceClientName,
-        table: job.table,
-        direction: job.direction,
-        status: 'failed',
-        progress: 100,
-        rowCount: job.rowCount,
-        createdAt: job.createdAt,
-        updatedAt: DateTime.now().toIso8601String(),
-        startedAt: job.startedAt,
-        completedAt: DateTime.now().toIso8601String(),
-        snapshotId: job.snapshotId,
-        snapshotCreatedAt: job.snapshotCreatedAt,
-        snapshotBytes: job.snapshotBytes,
-        message: error.toString(),
-        error: error.toString(),
-      );
-      _applyRemoteJobState(
-        failedJob,
-        appendHistory: true,
-        success: false,
-        overrideMessage: error.toString(),
-      );
     }
   }
 

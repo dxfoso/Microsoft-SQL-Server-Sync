@@ -206,14 +206,14 @@ class LiveSyncApiClient {
   Future<void> triggerJob({
     required String clientName,
     required String table,
-    required String direction,
     String? sourceClientName,
   }) async {
     final decoded = await _invokeFunction('jobs_create', {
       'clientName': clientName,
       if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
         'sourceClientName': sourceClientName,
-      'direction': direction,
+      'direction': 'sync',
+      'syncMode': 'sync',
       'tables': [table],
     });
     if (decoded is! Map || decoded['jobs'] is! List) {

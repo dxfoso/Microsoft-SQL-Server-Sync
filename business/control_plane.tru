@@ -2582,7 +2582,7 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
   };
 }
 
-function jobs_create(clientName: string, tables: array<string>, direction: string = 'upload', sourceClientName: string = '', syncMode: string? = null, token: string? = null): map<json> {
+function jobs_create(clientName: string, tables: array<string>, direction: string = 'sync', sourceClientName: string = '', syncMode: string? = null, token: string? = null): map<json> {
   if (tables.length == 0) {
     return raw_json_error(400, 'tables are required.');
   }
@@ -2796,13 +2796,13 @@ function snapshots_import(clientName: string, table: string, snapshot: map<json>
     let replaced = false;
     for (const tableState of existingAgent.tables) {
       if (tableState.table == table) {
-        let direction = 'upload';
+        let direction = 'sync';
         if (tableState.direction != null) {
-          direction = tableState.direction;
+          direction = direction_for_sync_mode(string.from(tableState.direction));
         }
-        let syncMode = 'master';
+        let syncMode = 'sync';
         if (tableState.syncMode != null) {
-          syncMode = tableState.syncMode;
+          syncMode = normalize_sync_mode(string.from(tableState.syncMode), true);
         }
         let history = [];
         if (tableState.history != null) {
@@ -2835,8 +2835,8 @@ function snapshots_import(clientName: string, table: string, snapshot: map<json>
         status: 'Completed',
         lastSync: createdAt,
         progress: 100,
-        direction: 'upload',
-        syncMode: 'master',
+        direction: 'sync',
+        syncMode: 'sync',
         rowCount: record.rowCount,
         snapshotId: record.id,
         snapshotCreatedAt: record.createdAt,

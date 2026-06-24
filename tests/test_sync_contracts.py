@@ -1,0 +1,78 @@
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read_text(relative_path: str) -> str:
+    return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+class SyncContractsTests(unittest.TestCase):
+    def test_windows_agent_applies_merge_only_without_destructive_table_clear(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("MERGE $qualifiedTable AS target", agent_page)
+        self.assertIn("WHEN NOT MATCHED BY TARGET THEN", agent_page)
+        self.assertNotIn("WHEN MATCHED", agent_page)
+        self.assertNotIn("DELETE FROM $qualifiedTable", agent_page)
+        self.assertNotIn("TRUNCATE TABLE", agent_page)
+
+    def test_snapshot_download_uses_bounded_manifest_only(self):
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        control_plane = read_text("business/control_plane.tru")
+
+        self.assertIn("jobs_download_snapshot_manifest", client_api)
+        self.assertIn("jobs_download_snapshot_chunk", client_api)
+        self.assertNotIn("_downloadSnapshotLegacy", client_api)
+        self.assertNotIn("function jobs_download_snapshot(", control_plane)
+
+    def test_control_plane_defaults_to_merge_sync_jobs(self):
+        control_plane = read_text("business/control_plane.tru")
+
+        self.assertIn(
+            "function jobs_create(clientName: string, tables: array<string>, direction: string = 'sync'",
+            control_plane,
+        )
+        self.assertIn("direction: direction_for_sync_mode(resolvedMode)", control_plane)
+        self.assertIn("message: string.concat('Queued merge sync for ', table, '.')", control_plane)
+
+    def test_related_table_metadata_stays_in_app_state(self):
+        control_plane = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+
+        self.assertIn("field tableRelationships: array<json>", control_plane)
+        self.assertIn("table_dependency_policy_set", control_plane)
+        self.assertIn("tableDependencies: table_dependency_payloads_for_database", control_plane)
+        self.assertIn("tableRelationships: _tableRelationshipsPayload()", agent_page)
+        self.assertIn("RemoteTableDependency", client_api)
+
+    def test_web_dashboard_exposes_merge_sync_not_push_pull_jobs(self):
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        web_api = read_text("frontend/lib/live_sync_api.dart")
+        models = read_text("frontend/lib/models.dart")
+
+        self.assertIn("label: 'Sync'", dashboard)
+        self.assertIn("Merge sync queued", dashboard)
+        self.assertIn("'direction': 'sync'", web_api)
+        self.assertIn("'syncMode': 'sync'", web_api)
+        self.assertIn("syncMode: json['syncMode'] as String? ?? 'sync'", models)
+        self.assertNotIn("label: 'Push'", dashboard)
+        self.assertNotIn("label: 'Pull'", dashboard)
+        self.assertNotIn("direction: 'upload'", dashboard)
+        self.assertNotIn("direction: 'download'", dashboard)
+
+    def test_helm_declares_merge_replication_mode_for_central_server(self):
+        values = read_text("deployment/chart/values.yaml")
+        backend_deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
+        frontend_deployment = read_text("deployment/chart/templates/deployment.yaml")
+
+        self.assertIn("syncEngine:\n  mode: mergeReplication", values)
+        self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
+        self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
+
+
+if __name__ == "__main__":
+    unittest.main()

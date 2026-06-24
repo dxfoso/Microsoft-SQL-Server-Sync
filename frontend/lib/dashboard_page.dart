@@ -2576,20 +2576,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                 clientName: entry.agent.clientName,
                                 table: summary.table,
                               ),
-                          onPush:
+                          onSync:
                               entry.tableState.enabled
                                   ? () => _triggerJob(
                                     clientName: entry.agent.clientName,
                                     table: summary.table,
-                                    direction: 'upload',
-                                  )
-                                  : null,
-                          onPull:
-                              entry.tableState.enabled
-                                  ? () => _triggerJob(
-                                    clientName: entry.agent.clientName,
-                                    table: summary.table,
-                                    direction: 'download',
                                   )
                                   : null,
                           onOpenHistory:
@@ -3033,20 +3024,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Future<void> _triggerJob({
     required String clientName,
     required String table,
-    required String direction,
   }) async {
     try {
-      await _api.triggerJob(
-        clientName: clientName,
-        table: table,
-        direction: direction,
-      );
+      await _api.triggerJob(clientName: clientName, table: table);
       if (!mounted) {
         return;
       }
-      final action = direction == 'download' ? 'Pull' : 'Push';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$action queued for $table on $clientName.')),
+        SnackBar(content: Text('Merge sync queued for $table on $clientName.')),
       );
       await _refreshState(silent: true);
     } catch (error) {
@@ -3227,9 +3212,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     if (!current.queryParameters.containsKey('action')) {
       return;
     }
-    final nextQuery = Map<String, String>.from(current.queryParameters)
-      ..remove('action')
-      ..remove(_waitForLogsQueryKey);
+    final nextQuery =
+        Map<String, String>.from(current.queryParameters)
+          ..remove('action')
+          ..remove(_waitForLogsQueryKey);
     final nextUrl =
         current
             .replace(queryParameters: nextQuery.isEmpty ? null : nextQuery)
@@ -3289,14 +3275,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
 
     if (!mounted) {
-      _bulkDiagnosticsCompletedClientNames = List<String>.unmodifiable(completed);
+      _bulkDiagnosticsCompletedClientNames = List<String>.unmodifiable(
+        completed,
+      );
       _bulkDiagnosticsPendingClientNames = List<String>.unmodifiable(pending);
       _bulkDiagnosticsWaitingForUploads = pending.isNotEmpty;
       return;
     }
 
     setState(() {
-      _bulkDiagnosticsCompletedClientNames = List<String>.unmodifiable(completed);
+      _bulkDiagnosticsCompletedClientNames = List<String>.unmodifiable(
+        completed,
+      );
       _bulkDiagnosticsPendingClientNames = List<String>.unmodifiable(pending);
       _bulkDiagnosticsWaitingForUploads = pending.isNotEmpty;
     });
@@ -3326,7 +3316,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _bulkDiagnosticsRequestId =
             result.requestId.trim().isEmpty ? null : result.requestId.trim();
         _bulkDiagnosticsRequestedAt =
-            result.requestedAt.trim().isEmpty ? null : result.requestedAt.trim();
+            result.requestedAt.trim().isEmpty
+                ? null
+                : result.requestedAt.trim();
         _bulkDiagnosticsRequestedClientNames = requestedNames;
         _bulkDiagnosticsCompletedClientNames = const <String>[];
         _bulkDiagnosticsPendingClientNames = requestedNames;
@@ -3870,13 +3862,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Color _roleColor(bool isMaster) =>
       isMaster ? const Color(0xFF2563EB) : const Color(0xFF0F766E);
 
-  IconData _roleIcon(bool isMaster) =>
-      isMaster ? Icons.upload_rounded : Icons.download_done_rounded;
+  IconData _roleIcon(bool isMaster) => Icons.sync_rounded;
 
   String _roleLabel(bool isMaster) => 'Participant';
 
   String _roleDescription(bool isMaster) =>
       'Uploads local rows and downloads missing namespace rows.';
+
+  String _syncModeDisplay(String syncMode) => 'MERGE REPLICATION';
+
+  String _syncDirectionDisplay(String direction) => 'SYNC';
 
   Color _userRoleColor(String role) {
     switch (role) {
@@ -4270,8 +4265,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   bool _tableStateHasMerged(AdminTableState tableState) {
     return tableState.mergedSnapshotSources.isNotEmpty ||
-        (tableState.syncMode == 'masterMix' &&
-            _tableStateHasSynced(tableState));
+        _tableStateHasSynced(tableState);
   }
 
   Widget _buildSearchField({
@@ -4861,7 +4855,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             ? 'Merged mode with synced table data'
                             : 'Merged from ${sources.join(', ')}',
                     detail:
-                        'Mode ${entry.tableState.syncMode.toUpperCase()} - ${entry.tableState.status}',
+                        '${_syncModeDisplay(entry.tableState.syncMode)} - ${entry.tableState.status}',
                     active: entry.agent.isOnline,
                   );
                 })
@@ -4908,7 +4902,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   subtitle:
                       '${jobs.length} sync ${jobs.length == 1 ? 'attempt' : 'attempts'}',
                   detail:
-                      'Last ${latest.direction.toUpperCase()} - ${latest.status.toUpperCase()} - ${_formatTimestamp(latest.completedAt ?? latest.updatedAt)}',
+                      'Last ${_syncDirectionDisplay(latest.direction)} - ${latest.status.toUpperCase()} - ${_formatTimestamp(latest.completedAt ?? latest.updatedAt)}',
                   active: agent?.agent.isOnline ?? false,
                 );
               }).toList()
@@ -5208,8 +5202,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required int totalHistoryCount,
     required VoidCallback onDownload,
     required VoidCallback onUpload,
-    required VoidCallback? onPush,
-    required VoidCallback? onPull,
+    required VoidCallback? onSync,
     required VoidCallback onOpenHistory,
   }) {
     if (selectedClient == null) {
@@ -5244,12 +5237,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           MapEntry('Role', _roleLabel(agent.isMaster)),
           MapEntry(
             'Flow',
-            tableState.enabled
-                ? (agent.isMaster ? 'Push source' : 'Pull target')
-                : 'Disabled',
+            tableState.enabled ? 'Merge participant' : 'Disabled',
           ),
-          MapEntry('Mode', tableState.syncMode.toUpperCase()),
-          MapEntry('Direction', tableState.direction.toUpperCase()),
+          const MapEntry('Mode', 'MERGE REPLICATION'),
+          const MapEntry('Direction', 'SYNC'),
           MapEntry('Database', agent.database),
           MapEntry(
             'Last Sync',
@@ -5271,14 +5262,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             onPressed: busy ? null : onUpload,
           ),
           _buildDetailActionButton(
-            label: 'Push',
-            icon: Icons.north_rounded,
-            onPressed: onPush,
-          ),
-          _buildDetailActionButton(
-            label: 'Pull',
-            icon: Icons.south_rounded,
-            onPressed: onPull,
+            label: 'Sync',
+            icon: Icons.sync_rounded,
+            onPressed: onSync,
           ),
           _buildDetailActionButton(
             label: 'History',
@@ -8022,7 +8008,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${job.direction.toUpperCase()} - ${_formatTimestamp(job.updatedAt)}',
+                  '${_syncDirectionDisplay(job.direction)} - ${_formatTimestamp(job.updatedAt)}',
                   style: const TextStyle(
                     color: Color(0xFF667085),
                     fontSize: 12,
@@ -8291,7 +8277,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             color: _statusColor(job.status),
                           ),
                           Text(
-                            job.direction.toUpperCase(),
+                            _syncDirectionDisplay(job.direction),
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                               fontSize: 11.5,
@@ -8331,7 +8317,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     SizedBox(
                       width: 84,
                       child: Text(
-                        job.direction.toUpperCase(),
+                        _syncDirectionDisplay(job.direction),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -8589,7 +8575,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ? IconButton(
                         tooltip:
                             'Request logs from all visible Windows clients',
-                          onPressed:
+                        onPressed:
                             _bulkDiagnosticsBusy
                                 ? null
                                 : _openBulkDiagnosticsTab,

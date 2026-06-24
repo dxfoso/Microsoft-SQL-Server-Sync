@@ -71,7 +71,7 @@ class SyncHistoryEntry {
     required this.status,
     required this.success,
     required this.message,
-    this.direction = 'upload',
+    this.direction = 'sync',
     this.rowCount = 0,
     this.progress = 0,
     this.snapshotId,
@@ -100,7 +100,7 @@ class SyncHistoryEntry {
       status: json['status'] as String? ?? '',
       success: json['success'] as bool? ?? false,
       message: json['message'] as String? ?? '',
-      direction: json['direction'] as String? ?? 'upload',
+      direction: json['direction'] as String? ?? 'sync',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       progress: (json['progress'] as num? ?? 0).round(),
       snapshotId: json['snapshotId'] as String?,
@@ -169,7 +169,7 @@ class SyncTableState {
               SyncHistoryEntry.fromJson(Map<String, dynamic>.from(item as Map)),
         )
         .toList(growable: false);
-    final direction = json['direction'] as String? ?? 'upload';
+    final direction = json['direction'] as String? ?? 'sync';
     return SyncTableState(
       enabled: json['enabled'] as bool? ?? false,
       status: json['status'] as String? ?? 'Paused',

@@ -1286,7 +1286,7 @@ class RemoteSyncJob {
       clientName: json['clientName'] as String? ?? '',
       sourceClientName: json['sourceClientName'] as String? ?? '',
       table: json['table'] as String? ?? '',
-      direction: json['direction'] as String? ?? 'upload',
+      direction: json['direction'] as String? ?? 'sync',
       status: json['status'] as String? ?? 'queued',
       progress: (json['progress'] as num? ?? 0).round(),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
