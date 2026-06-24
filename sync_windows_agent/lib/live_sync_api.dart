@@ -356,6 +356,7 @@ class AgentControlPlaneClient {
     required bool sqlConnected,
     required String? selectedTable,
     required Map<String, SyncTableState> tables,
+    required List<Map<String, String>> tableRelationships,
   }) async {
     final response = await _invokeFunction('agents_heartbeat', {
       'clientName': clientName,
@@ -371,6 +372,7 @@ class AgentControlPlaneClient {
       'tables': tables.entries
           .map((entry) => {'table': entry.key, ...entry.value.toJson()})
           .toList(growable: false),
+      'tableRelationships': tableRelationships,
     }, 'sending heartbeat');
 
     if (response is! Map) {
@@ -397,9 +399,18 @@ class AgentControlPlaneClient {
           ),
         )
         .toList(growable: false);
+    final tableDependencies = (decoded['tableDependencies'] as List<dynamic>? ??
+            const [])
+        .map(
+          (item) => RemoteTableDependency.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList(growable: false);
     return HeartbeatResult(
       syncSettings: syncSettings,
       tablePolicies: tablePolicies,
+      tableDependencies: tableDependencies,
       jobs: jobs
           .map(
             (item) =>
@@ -1073,14 +1084,42 @@ class HeartbeatResult {
   const HeartbeatResult({
     required this.syncSettings,
     required this.tablePolicies,
+    required this.tableDependencies,
     required this.jobs,
     required this.diagnostics,
   });
 
   final RemoteAgentSyncSettings syncSettings;
   final List<RemoteTableSyncPolicy> tablePolicies;
+  final List<RemoteTableDependency> tableDependencies;
   final List<RemoteSyncJob> jobs;
   final RemoteAgentDiagnostics diagnostics;
+}
+
+class RemoteTableDependency {
+  const RemoteTableDependency({
+    required this.table,
+    required this.relatedTable,
+    required this.relationshipType,
+    required this.updatedAt,
+    required this.updatedByClientName,
+  });
+
+  final String table;
+  final String relatedTable;
+  final String relationshipType;
+  final String updatedAt;
+  final String updatedByClientName;
+
+  factory RemoteTableDependency.fromJson(Map<String, dynamic> json) {
+    return RemoteTableDependency(
+      table: json['table'] as String? ?? '',
+      relatedTable: json['relatedTable'] as String? ?? '',
+      relationshipType: json['relationshipType'] as String? ?? 'business',
+      updatedAt: json['updatedAt'] as String? ?? '',
+      updatedByClientName: json['updatedByClientName'] as String? ?? '',
+    );
+  }
 }
 
 class RemoteTableSyncPolicy {

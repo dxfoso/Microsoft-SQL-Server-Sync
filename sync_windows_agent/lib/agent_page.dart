@@ -114,6 +114,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<String> _databases = const [];
   Map<String, int> _databaseTableCounts = const {};
   List<String> _tables = const [];
+  Map<String, Set<String>> _localRelatedSyncTables = const {};
   Map<String, Set<String>> _relatedSyncTables = const {};
   String? _selectedTable;
   List<String> _tableColumns = const [];
@@ -780,6 +781,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     setState(() {
       _tables = visibleTables;
       _selectedTable = selectedTable;
+      _localRelatedSyncTables = const {};
       _relatedSyncTables = const {};
     });
     _ensureSyncTablesLoaded(visibleTables);
@@ -803,7 +805,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
     setState(() {
-      _relatedSyncTables = relationships;
+      _localRelatedSyncTables = relationships;
+      _relatedSyncTables = _mergeRelationshipGraphs([relationships]);
     });
 
     if (autoLoadRows && selectedTable != null) {
@@ -835,6 +838,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _totalTableRows = 0;
       _sortColumnIndex = null;
       _errorMessage = null;
+      _localRelatedSyncTables = const {};
       _relatedSyncTables = const {};
     });
 
@@ -998,6 +1002,73 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         );
       }),
     );
+  }
+
+  List<Map<String, String>> _tableRelationshipsPayload() {
+    final relationships = <Map<String, String>>[];
+    final seen = <String>{};
+    for (final entry in _localRelatedSyncTables.entries) {
+      final table = entry.key.trim();
+      if (table.isEmpty) {
+        continue;
+      }
+      for (final relatedTable in entry.value) {
+        final related = relatedTable.trim();
+        if (related.isEmpty || related == table) {
+          continue;
+        }
+        final parts = [table, related]..sort();
+        final signature = '${parts[0]}\u0000${parts[1]}';
+        if (!seen.add(signature)) {
+          continue;
+        }
+        relationships.add({
+          'table': table,
+          'relatedTable': related,
+          'relationshipType': 'foreignKey',
+        });
+      }
+    }
+    return relationships;
+  }
+
+  Map<String, Set<String>> _mergeRelationshipGraphs(
+    Iterable<Map<String, Set<String>>> graphs,
+  ) {
+    final merged = <String, Set<String>>{};
+    for (final graph in graphs) {
+      for (final entry in graph.entries) {
+        final table = entry.key.trim();
+        if (table.isEmpty) {
+          continue;
+        }
+        for (final relatedTable in entry.value) {
+          final related = relatedTable.trim();
+          if (related.isEmpty || related == table) {
+            continue;
+          }
+          merged.putIfAbsent(table, () => <String>{}).add(related);
+          merged.putIfAbsent(related, () => <String>{}).add(table);
+        }
+      }
+    }
+    return merged;
+  }
+
+  Map<String, Set<String>> _relationshipGraphFromRemoteDependencies(
+    List<RemoteTableDependency> dependencies,
+  ) {
+    final graph = <String, Set<String>>{};
+    for (final dependency in dependencies) {
+      final table = dependency.table.trim();
+      final related = dependency.relatedTable.trim();
+      if (table.isEmpty || related.isEmpty || table == related) {
+        continue;
+      }
+      graph.putIfAbsent(table, () => <String>{}).add(related);
+      graph.putIfAbsent(related, () => <String>{}).add(table);
+    }
+    return graph;
   }
 
   String _displayStatus(String status) {
@@ -2501,12 +2572,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         selectedTable:
             _selectedTable == null ? null : _syncTableKey(_selectedTable!),
         tables: _heartbeatTablesPayload(),
+        tableRelationships: _tableRelationshipsPayload(),
       );
 
       if (!mounted) {
         return;
       }
 
+      final remoteRelationships = _relationshipGraphFromRemoteDependencies(
+        heartbeat.tableDependencies,
+      );
       final enabledTables = {
         ..._applyRemoteSyncSettings(heartbeat.syncSettings),
         ..._applyRemoteTablePolicies(heartbeat.tablePolicies),
@@ -2519,6 +2594,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _serverConnected = true;
         _checkingServerConnection = false;
         _lastServerCheck = DateTime.now();
+        _relatedSyncTables = _mergeRelationshipGraphs([
+          _localRelatedSyncTables,
+          remoteRelationships,
+        ]);
         _activeJobs = heartbeat.jobs;
       });
 

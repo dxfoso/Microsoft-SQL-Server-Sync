@@ -42,6 +42,7 @@ class Agent {
   field lastHeartbeat: string min=0 max=64
   field selectedTable: string? min=0 max=256
   field tables: array<json>
+  field tableRelationships: array<json>
   field diagnosticRequestId: string? min=0 max=64
   field diagnosticRequestedAt: datetime?
   field diagnosticRequestedByUserId: string? min=0 max=64
@@ -466,6 +467,155 @@ function table_sync_policy_payload(policy: map<json>): map<json> {
 
 function table_sync_policy_payloads_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
   return table_sync_policies_for_database(ownerUserId, database).map((policy) => table_sync_policy_payload(policy));
+}
+
+function table_dependency_sync_key(database: string, table: string): string {
+  const databaseName = database.trim();
+  const localTable = table.trim();
+  if (databaseName.length == 0 || localTable.length == 0) {
+    return localTable;
+  }
+  return string.concat(databaseName, kSyncTableKeySeparator(), localTable);
+}
+
+function normalized_table_dependency_payload(database: string = '', table: string, relatedTable: string, relationshipType: string = 'business', updatedByClientName: string = ''): map<json>? {
+  const databaseName = database.trim();
+  const tableRef = sync_table_reference(table);
+  const relatedRef = sync_table_reference(relatedTable);
+  let resolvedDatabase = databaseName;
+  if (resolvedDatabase.length == 0 && string.from(tableRef.database).trim().length != 0) {
+    resolvedDatabase = string.from(tableRef.database).trim();
+  }
+  if (resolvedDatabase.length == 0 && string.from(relatedRef.database).trim().length != 0) {
+    resolvedDatabase = string.from(relatedRef.database).trim();
+  }
+  const tableName = string.from(tableRef.table).trim();
+  const relatedTableName = string.from(relatedRef.table).trim();
+  if (tableName.length == 0 || relatedTableName.length == 0 || tableName == relatedTableName) {
+    return null;
+  }
+  const normalizedType = relationshipType.trim().length == 0 ? 'business' : relationshipType.trim();
+  return {
+    table: table_dependency_sync_key(resolvedDatabase, tableName),
+    relatedTable: table_dependency_sync_key(resolvedDatabase, relatedTableName),
+    relationshipType: normalizedType,
+    updatedAt: now_iso(),
+    updatedByClientName
+  };
+}
+
+function bounded_table_relationships(database: string = '', relationships: array<json>? = null, updatedByClientName: string = ''): array<json> {
+  if (relationships == null || relationships.length == 0) {
+    return [];
+  }
+  let result = [];
+  let processed = 0;
+  for (const relationship of relationships) {
+    if (processed >= 1000) {
+      return result;
+    }
+    processed = processed + 1;
+    const tableName = string.from(relationship.table ?? '').trim();
+    const relatedTableName = string.from(relationship.relatedTable ?? '').trim();
+    const relationshipType = string.from(relationship.relationshipType ?? 'business').trim();
+    if (tableName.length == 0 || relatedTableName.length == 0 || tableName == relatedTableName) {
+      continue;
+    }
+    const normalized = normalized_table_dependency_payload(
+      database,
+      tableName,
+      relatedTableName,
+      relationshipType.length == 0 ? 'business' : relationshipType,
+      updatedByClientName
+    );
+    if (normalized != null) {
+      result = result.concat([normalized]);
+    }
+  }
+  return result;
+}
+
+function table_dependency_payloads_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
+  const trimmedDatabase = database.trim();
+  let result = [];
+  for (const agent of list_agent_rows()) {
+    if (agent.ownerUserId != ownerUserId && agent.clientUserId != ownerUserId) {
+      continue;
+    }
+    const relationships = agent.tableRelationships ?? [];
+    for (const relationship of relationships) {
+      const tableRef = sync_table_reference(string.from(relationship.table));
+      const relationshipDatabase = string.from(tableRef.database).trim();
+      if (trimmedDatabase.length != 0 && relationshipDatabase != trimmedDatabase) {
+        continue;
+      }
+      if (result.length >= 1000) {
+        return result;
+      }
+      result = result.concat([relationship]);
+    }
+  }
+  return result;
+}
+
+function expand_related_table_sync_keys_once(dependencies: array<json>, databaseName: string, visited: array<string>, related: array<string>): map<json> {
+  let nextVisited = visited;
+  let nextRelated = related;
+  for (const dependency of dependencies) {
+    const dependencyTable = string.from(sync_table_reference(string.from(dependency.table)).table).trim();
+    let sourceSeen = false;
+    for (const source of nextVisited) {
+      if (string.from(source) == dependencyTable) {
+        sourceSeen = true;
+      }
+    }
+    if (!sourceSeen) {
+      continue;
+    }
+    const candidate = string.from(sync_table_reference(string.from(dependency.relatedTable)).table).trim();
+    if (candidate.length == 0) {
+      continue;
+    }
+    let seen = false;
+    for (const value of nextVisited) {
+      if (string.from(value) == candidate) {
+        seen = true;
+      }
+    }
+    if (seen) {
+      continue;
+    }
+    nextVisited = nextVisited.concat([candidate]);
+    nextRelated = nextRelated.concat([table_dependency_sync_key(databaseName, candidate)]);
+  }
+  return {
+    visited: nextVisited,
+    related: nextRelated
+  };
+}
+
+function related_table_sync_keys_for_policy(ownerUserId: string? = null, syncTable: string): array<string> {
+  const scope = table_sync_policy_scope(ownerUserId);
+  const reference = sync_table_reference(syncTable);
+  const databaseName = string.from(reference.database).trim();
+  const rootLocalTable = string.from(reference.table).trim();
+  if (rootLocalTable.length == 0) {
+    return [];
+  }
+  const dependencies = table_dependency_payloads_for_database(scope, databaseName);
+  let state = {
+    visited: [rootLocalTable],
+    related: []
+  };
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  return state.related;
 }
 
 function table_sync_policy_for_table(ownerUserId: string? = null, database: string = '', table: string): map<json>? {
@@ -1196,7 +1346,87 @@ function table_sync_policy_set(table: string, enabled: bool, syncMode: string? =
     syncMode,
     current.username
   );
+  if (enabled) {
+    const relatedTables = related_table_sync_keys_for_policy(ownerUserId, normalizedTable);
+    for (const relatedTable of relatedTables) {
+      upsert_table_sync_policy(
+        ownerUserId,
+        string.from(relatedTable),
+        true,
+        syncMode,
+        current.username
+      );
+    }
+  }
   return { ok: true, policy: table_sync_policy_payload(policy) };
+}
+
+function table_dependency_policy_set(table: string, relatedTable: string, relationshipType: string = 'business', database: string = '', clientName: string? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_client_user(current) && !is_owner_user(current) && !is_admin_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedTable = table.trim();
+  const normalizedRelatedTable = relatedTable.trim();
+  if (normalizedTable.length == 0 || normalizedRelatedTable.length == 0) {
+    return raw_json_error(400, 'table and relatedTable are required');
+  }
+  let ownerUserId = owner_namespace_for_user(current);
+  let normalizedClientName = '';
+  if (clientName != null) {
+    normalizedClientName = string.from(clientName).trim();
+  }
+  if (normalizedClientName.length != 0) {
+    const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
+    if (targetAgent == null) {
+      return raw_json_error(404, 'client not found');
+    }
+    if (!can_read_agent(current, targetAgent.ownerUserId, targetAgent.clientUserId)) {
+      return raw_json_error(403, 'permission denied');
+    }
+    if (targetAgent.ownerUserId != null && targetAgent.ownerUserId.trim().length != 0) {
+      ownerUserId = targetAgent.ownerUserId;
+    } else if (targetAgent.clientUserId != null && targetAgent.clientUserId.trim().length != 0) {
+      ownerUserId = targetAgent.clientUserId;
+    }
+  }
+  const dependency = normalized_table_dependency_payload(
+    database,
+    normalizedTable,
+    normalizedRelatedTable,
+    relationshipType,
+    current.username
+  );
+  if (dependency == null) {
+    return raw_json_error(400, 'valid related tables are required');
+  }
+  const reverseDependency = normalized_table_dependency_payload(
+    database,
+    normalizedRelatedTable,
+    normalizedTable,
+    relationshipType,
+    current.username
+  );
+  let relationshipRows = [dependency];
+  if (reverseDependency != null) {
+    relationshipRows = relationshipRows.concat([reverseDependency]);
+  }
+  let targetClientName = normalizedClientName;
+  if (targetClientName.length == 0) {
+    targetClientName = current.username;
+  }
+  const agent = ensure_agent(targetClientName, current.id, ownerUserId);
+  db.update(Agent, { clientName: agent.clientName }, {
+    tableRelationships: bounded_table_relationships(database, (agent.tableRelationships ?? []).concat(relationshipRows), current.username),
+    updatedAt: now_iso()
+  });
+  return {
+    ok: true,
+    dependencies: table_dependency_payloads_for_database(ownerUserId, database)
+  };
 }
 
 function public_job_payload(job: map<json>): map<json> {
@@ -1418,6 +1648,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     lastHeartbeat: '',
     selectedTable: null,
     tables: [],
+    tableRelationships: [],
     diagnosticRequestId: null,
     diagnosticRequestedAt: null,
     diagnosticRequestedByUserId: null,
@@ -1873,7 +2104,7 @@ function live_state(token: string? = null): map<json> {
   };
 }
 
-function agents_heartbeat(clientName: string? = null, machineName: string = '', isMaster: bool = true, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, token: string? = null): map<json> {
+function agents_heartbeat(clientName: string? = null, machineName: string = '', isMaster: bool = true, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, token: string? = null): map<json> {
   let resolvedClientName = '';
   const current = current_user_record(token);
   if (current == null) {
@@ -1904,6 +2135,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   if (tables != null) {
     nextTables = tables;
   }
+  const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
   nextTables = bounded_agent_tables(nextTables, selectedTable);
   nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);
   const updated = db.update(Agent, { clientName: resolvedClientName }, {
@@ -1919,6 +2151,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     lastHeartbeat: now_iso(),
     selectedTable,
     tables: nextTables,
+    tableRelationships: nextTableRelationships,
     updatedAt: now_iso()
   });
   let nextAgent = agent;
@@ -1932,6 +2165,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     ok: true,
     syncSettings: sync_settings_payload(nextAgent),
     tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
+    tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),
     jobs: active_jobs_for_client(resolvedClientName),
     diagnostics: agent_diagnostics_payload(nextAgent)
   };
