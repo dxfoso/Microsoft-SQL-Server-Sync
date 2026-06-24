@@ -38,6 +38,34 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("direction: direction_for_sync_mode(resolvedMode)", control_plane)
         self.assertIn("message: string.concat('Queued merge sync for ', table, '.')", control_plane)
 
+    def test_legacy_sync_modes_and_direct_upload_endpoint_are_removed(self):
+        control_plane = read_text("business/control_plane.tru")
+        sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
+
+        self.assertNotIn("function jobs_upload(", control_plane)
+        for legacy_alias in (
+            "'bidirectional'",
+            "'twoWay'",
+            "'masterMix'",
+            "'mix'",
+            "'master'",
+            "'upload'",
+            "'client'",
+            "'download'",
+        ):
+            self.assertNotIn(legacy_alias, sync_state)
+        for legacy_condition in (
+            "value == 'bidirectional'",
+            "value == 'twoWay'",
+            "value == 'masterMix'",
+            "value == 'mix'",
+            "value == 'master'",
+            "value == 'upload'",
+            "value == 'client'",
+            "value == 'download'",
+        ):
+            self.assertNotIn(legacy_condition, control_plane)
+
     def test_related_table_metadata_stays_in_app_state(self):
         control_plane = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

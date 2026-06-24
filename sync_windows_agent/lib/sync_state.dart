@@ -10,23 +10,7 @@ const String kSyncModeMerge = 'sync';
 const Object _syncTableStateUnset = Object();
 
 String normalizeSyncMode(String? value, {bool fallbackIsMaster = true}) {
-  switch ((value ?? '').trim()) {
-    case kSyncModeMerge:
-    case 'bidirectional':
-    case 'twoWay':
-      return kSyncModeMerge;
-    case 'master':
-    case 'upload':
-      return kSyncModeMerge;
-    case 'client':
-    case 'download':
-      return kSyncModeMerge;
-    case 'masterMix':
-    case 'mix':
-      return kSyncModeMerge;
-    default:
-      return kSyncModeMerge;
-  }
+  return kSyncModeMerge;
 }
 
 String syncDirectionForMode(String syncMode) {
@@ -169,17 +153,13 @@ class SyncTableState {
               SyncHistoryEntry.fromJson(Map<String, dynamic>.from(item as Map)),
         )
         .toList(growable: false);
-    final direction = json['direction'] as String? ?? 'sync';
     return SyncTableState(
       enabled: json['enabled'] as bool? ?? false,
       status: json['status'] as String? ?? 'Paused',
       lastSync: json['lastSync'] as String? ?? '--',
       progress: (json['progress'] as num? ?? 0).round(),
-      direction: direction,
-      syncMode: normalizeSyncMode(
-        json['syncMode'] as String?,
-        fallbackIsMaster: direction != 'download',
-      ),
+      direction: json['direction'] as String? ?? 'sync',
+      syncMode: normalizeSyncMode(json['syncMode'] as String?),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       savedRowCount: (json['savedRowCount'] as num?)?.round(),
       snapshotId: json['snapshotId'] as String?,

@@ -313,18 +313,6 @@ function clamp_auto_sync_interval(value: int? = null): int {
 }
 
 function normalize_sync_mode(value: string? = null, fallbackIsMaster: bool = true): string {
-  if (value == 'sync' || value == 'bidirectional' || value == 'twoWay') {
-    return 'sync';
-  }
-  if (value == 'client' || value == 'download') {
-    return 'sync';
-  }
-  if (value == 'masterMix' || value == 'mix') {
-    return 'sync';
-  }
-  if (value == 'master' || value == 'upload') {
-    return 'sync';
-  }
   return 'sync';
 }
 
@@ -2607,7 +2595,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       clientUserId = clientUser.id;
       ownerId = owner_namespace_for_user(clientUser);
     }
-    const resolvedMode = normalize_sync_mode(syncMode, direction != 'download');
+    const resolvedMode = normalize_sync_mode(syncMode, true);
     return {
       id: uuid.v4(),
       clientName: resolvedClientName,
@@ -3698,128 +3686,6 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
     chunkIndex: chunkIndex,
     chunkCount: session.chunkCount,
     chunkData
-  };
-}
-
-function jobs_upload(jobId: string, columns: array<string>, rows: array<json>, table: string = '', snapshotCreatedAt: string = '', rowCount: int = 0, checksum: string = '', keyColumns: array<string>? = null, token: string? = null): map<json> {
-  const job = find_job_by_id(jobId);
-  if (job == null) {
-    return raw_json_error(404, 'job not found');
-  }
-  if (!can_access_job(current_user_record(token), job)) {
-    return raw_json_error(403, 'permission denied');
-  }
-
-  let normalizedTable = job.table;
-  if (table.trim().length != 0) {
-    normalizedTable = table;
-  }
-  let createdAt = now_iso();
-  if (snapshotCreatedAt.trim().length != 0) {
-    createdAt = snapshotCreatedAt;
-  }
-  let normalizedColumns = [];
-  if (columns != null) {
-    normalizedColumns = columns;
-  }
-  let normalizedRows = [];
-  if (rows != null) {
-    normalizedRows = rows;
-  }
-  if (normalizedRows.length > max_server_rows_snapshot_count()) {
-    return raw_json_error(413, row_snapshot_limit_error('row upload'));
-  }
-  let computedRowCount = normalizedRows.length;
-  if (rowCount != 0) {
-    computedRowCount = rowCount;
-  }
-  let snapshotChecksum = snapshot_checksum({ rows: normalizedRows, table: normalizedTable });
-  if (checksum.trim().length != 0) {
-    snapshotChecksum = checksum;
-  }
-  const normalizedKeyColumns = normalize_key_columns(keyColumns);
-  let uploadClientUserId = null;
-  let uploadOwnerUserId = null;
-  if (job.clientUserId != null) {
-    uploadClientUserId = job.clientUserId;
-  }
-  if (job.ownerUserId != null) {
-    uploadOwnerUserId = job.ownerUserId;
-  }
-  const snapshot = db.insert(SnapshotRecord, {
-    id: uuid.v4(),
-    clientName: job.clientName,
-    table: normalizedTable,
-    rowCount: computedRowCount,
-    checksum: snapshotChecksum,
-    createdAt,
-    snapshotBytes: json.stringify({ rows: normalizedRows }).length,
-    columns: normalizedColumns,
-    rows: normalizedRows,
-    previewRows: snapshot_preview_rows(normalizedRows),
-    sourceJobId: jobId,
-    clientUserId: uploadClientUserId,
-    ownerUserId: uploadOwnerUserId
-  });
-
-  let publishedSnapshot = snapshot;
-  if (uploadOwnerUserId != null && uploadOwnerUserId.trim().length != 0) {
-    let aggregateRows = normalizedRows;
-    let aggregateColumns = normalizedColumns;
-    const existingOwnerSnapshot = latest_owner_snapshot_for(uploadOwnerUserId, normalizedTable);
-    if (existingOwnerSnapshot != null) {
-      if ((existingOwnerSnapshot.rows.length + normalizedRows.length) > max_server_rows_snapshot_count()) {
-        return raw_json_error(413, row_snapshot_limit_error('owner aggregate snapshot'));
-      }
-      aggregateRows = merge_rows_by_key(existingOwnerSnapshot.rows, normalizedRows, normalizedKeyColumns);
-      if (existingOwnerSnapshot.columns != null && existingOwnerSnapshot.columns.length > 0) {
-        aggregateColumns = existingOwnerSnapshot.columns;
-      }
-    }
-    if (aggregateRows.length > max_server_rows_snapshot_count()) {
-      return raw_json_error(413, row_snapshot_limit_error('owner aggregate snapshot'));
-    }
-    const aggregatePayload = {
-      rows: aggregateRows,
-      table: normalizedTable,
-      ownerUserId: uploadOwnerUserId
-    };
-    publishedSnapshot = db.insert(SnapshotRecord, {
-      id: uuid.v4(),
-      clientName: uploadOwnerUserId,
-      table: normalizedTable,
-      rowCount: aggregateRows.length,
-      checksum: snapshot_checksum(aggregatePayload),
-      createdAt,
-      snapshotBytes: json.stringify(aggregatePayload).length,
-      columns: aggregateColumns,
-      rows: aggregateRows,
-      previewRows: snapshot_preview_rows(aggregateRows),
-      sourceJobId: jobId,
-      clientUserId: null,
-      ownerUserId: uploadOwnerUserId
-    });
-  }
-
-  const updated = db.update(SyncJob, { id: jobId }, {
-    status: 'downloading',
-    progress: 70,
-    rowCount: publishedSnapshot.rowCount,
-    snapshotId: publishedSnapshot.id,
-    snapshotCreatedAt: publishedSnapshot.createdAt,
-    snapshotBytes: publishedSnapshot.snapshotBytes,
-    message: string.concat('Uploaded local rows and prepared owner snapshot with ', string.from(publishedSnapshot.rowCount), ' rows.'),
-    error: null,
-    updatedAt: now_iso()
-  });
-
-  let nextJob = job;
-  if (updated != null) {
-    nextJob = updated;
-  }
-  return {
-    job: public_job_payload(nextJob),
-    snapshot: public_snapshot_detail_payload(publishedSnapshot)
   };
 }
 
