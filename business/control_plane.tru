@@ -468,6 +468,40 @@ function table_sync_policy_payloads_for_database(ownerUserId: string? = null, da
   return table_sync_policies_for_database(ownerUserId, database).map((policy) => table_sync_policy_payload(policy));
 }
 
+function table_sync_policy_for_table(ownerUserId: string? = null, database: string = '', table: string): map<json>? {
+  const scope = table_sync_policy_scope(ownerUserId);
+  const databaseName = database.trim();
+  const localTable = table.trim();
+  if (localTable.length == 0) {
+    return null;
+  }
+  if (databaseName.length != 0) {
+    const exact = db.selectOne(TableSyncPolicy, {
+      ownerUserId: scope,
+      database: databaseName,
+      table: localTable
+    });
+    if (exact != null) {
+      return exact;
+    }
+    const keyed = db.selectOne(TableSyncPolicy, {
+      ownerUserId: scope,
+      table: string.concat(databaseName, kSyncTableKeySeparator(), localTable)
+    });
+    if (keyed != null) {
+      return maybe_upgrade_legacy_table_sync_policy(keyed);
+    }
+  }
+  const plain = db.selectOne(TableSyncPolicy, {
+    ownerUserId: scope,
+    table: localTable
+  });
+  if (plain != null) {
+    return maybe_upgrade_legacy_table_sync_policy(plain);
+  }
+  return null;
+}
+
 function find_table_sync_policy(ownerUserId: string? = null, syncTable: string): map<json>? {
   const scope = table_sync_policy_scope(ownerUserId);
   const reference = sync_table_reference(syncTable);
@@ -562,18 +596,12 @@ function apply_table_sync_policies(ownerUserId: string? = null, tables: array<js
   if (tables == null) {
     return [];
   }
-  const policies = table_sync_policies_for_database(ownerUserId, database);
-  if (policies.length == 0) {
+  if (tables.length == 0) {
     return tables;
   }
   let nextTables = [];
   for (const tableState of tables) {
-    let policy = null;
-    for (const candidate of policies) {
-      if (policy == null && table_sync_policy_sync_key(candidate) == tableState.table) {
-        policy = candidate;
-      }
-    }
+    const policy = table_sync_policy_for_table(ownerUserId, database, string.from(tableState.table));
     if (policy == null) {
       nextTables = nextTables.concat([tableState]);
     } else {
