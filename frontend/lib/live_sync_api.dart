@@ -320,13 +320,11 @@ class LiveSyncApiClient {
 
   Future<void> updateAgentSyncSettings({
     required String clientName,
-    required bool isMaster,
     required int historyLimit,
     required int autoSyncIntervalMinutes,
   }) async {
     await _invokeFunction('agent_sync_settings_post', {
       'clientName': clientName,
-      'isMaster': isMaster,
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
     });

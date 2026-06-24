@@ -123,7 +123,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String _tableSearchQuery = '';
   final ScrollController _tableHorizontalScrollController = ScrollController();
 
-  bool get _isMasterClient => _syncState.isMaster;
   Duration get _autoSyncInterval =>
       Duration(minutes: _syncState.autoSyncIntervalMinutes);
   String get _defaultTableSyncMode => kSyncModeMerge;
@@ -410,10 +409,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final current = _syncTableState(table, syncKey: syncKey);
     final now = DateTime.now().toIso8601String();
     final nextStatus = enabled ? 'Queued' : 'Paused';
-    final syncMode = normalizeSyncMode(
-      selectedSyncMode ?? current.syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
+    final syncMode = normalizeSyncMode(selectedSyncMode ?? current.syncMode);
     final syncDirection = syncDirectionForMode(syncMode);
     final nextHistory = _appendHistory(
       current.history,
@@ -524,10 +520,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
     }
 
-    final normalizedMode = normalizeSyncMode(
-      selectedMode,
-      fallbackIsMaster: _isMasterClient,
-    );
+    final normalizedMode = normalizeSyncMode(selectedMode);
     final syncKey = _syncTableKey(table);
     try {
       await _controlPlaneClient.updateTableSyncPolicy(
@@ -1304,8 +1297,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return 'v$version ${_formatTimestamp(releaseDate)}$hashSuffix';
   }
 
-  String _roleLabel(bool isMaster) => 'Merge';
-
   String _syncModeLabel(String syncMode) {
     return 'Merge replication';
   }
@@ -1323,10 +1314,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _updateTableSyncMode(String table, String syncMode) async {
-    final normalizedMode = normalizeSyncMode(
-      syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
+    final normalizedMode = normalizeSyncMode(syncMode);
     final syncKey = _syncTableKey(table);
     final current = _syncTableState(table, syncKey: syncKey);
     try {
@@ -1384,10 +1372,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required String confirmLabel,
   }) {
     const modes = [kSyncModeMerge];
-    var selectedMode = normalizeSyncMode(
-      initialMode,
-      fallbackIsMaster: _isMasterClient,
-    );
+    var selectedMode = normalizeSyncMode(initialMode);
 
     return showDialog<String>(
       context: context,
@@ -1761,54 +1746,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return syncRows.isEmpty ? null : syncRows.first;
   }
 
-  Set<String> _setClientRole(bool isMaster) {
-    final enabledTables = <String>{};
-    const syncMode = kSyncModeMerge;
-    final direction = syncDirectionForMode(syncMode);
-    final nextTables = Map<String, SyncTableState>.fromEntries(
-      _syncState.tables.entries.map((entry) {
-        final tableState = entry.value;
-        if (tableState.enabled) {
-          enabledTables.add(entry.key);
-        }
-        final nextStatus =
-            tableState.enabled &&
-                    !tableState.status.toLowerCase().contains('ing')
-                ? 'Queued'
-                : tableState.status;
-        final nextMessage =
-            tableState.enabled
-                ? 'Waiting for the next merge replication sync.'
-                : tableState.message;
-        return MapEntry(
-          entry.key,
-          tableState.copyWith(
-            direction: direction,
-            syncMode: syncMode,
-            status: nextStatus,
-            progress:
-                tableState.enabled && nextStatus == 'Queued'
-                    ? 0
-                    : tableState.progress,
-            message: nextMessage,
-          ),
-        );
-      }),
-    );
-    _replaceSyncState(
-      _syncState.copyWith(isMaster: isMaster, tables: nextTables),
-    );
-    return enabledTables;
-  }
-
   Set<String> _applyRemoteSyncSettings(RemoteAgentSyncSettings settings) {
-    final enabledTables =
-        settings.isMaster == _isMasterClient
-            ? <String>{}
-            : _setClientRole(settings.isMaster);
     _applyHistoryLimit(settings.historyLimit);
     _applyAutoSyncInterval(settings.autoSyncIntervalMinutes);
-    return enabledTables;
+    return <String>{};
   }
 
   Set<String> _applyRemoteTablePolicies(List<RemoteTableSyncPolicy> policies) {
@@ -1879,10 +1820,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Widget _buildSyncModeBadge(String syncMode, {bool showLabel = true}) {
-    final normalizedMode = normalizeSyncMode(
-      syncMode,
-      fallbackIsMaster: _isMasterClient,
-    );
+    final normalizedMode = normalizeSyncMode(syncMode);
     final color = _syncModeColor(normalizedMode);
     return Container(
       padding: EdgeInsets.symmetric(
@@ -2562,7 +2500,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final heartbeat = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
-        isMaster: _isMasterClient,
         historyLimit: _syncState.historyLimit,
         autoSyncIntervalMinutes: _syncState.autoSyncIntervalMinutes,
         server: _serverController.text.trim(),
@@ -2731,7 +2668,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'tableCount': _tables.length,
       },
       'syncSettings': {
-        'isMaster': _isMasterClient,
         'historyLimit': _syncState.historyLimit,
         'autoSyncIntervalMinutes': _syncState.autoSyncIntervalMinutes,
       },
@@ -6583,7 +6519,6 @@ WHEN NOT MATCHED BY TARGET THEN
       _InfoLine(label: 'Agent', value: agentStatus),
       _InfoLine(label: 'SQL', value: sqlStatus),
       _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
-      _InfoLine(label: 'Role', value: _roleLabel(_isMasterClient)),
       _InfoLine(label: 'Tables', value: syncRows.length.toString()),
       _InfoLine(
         label: 'Interval',

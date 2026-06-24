@@ -51,6 +51,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_legacy_sync_modes_and_direct_upload_endpoint_are_removed(self):
         control_plane = read_text("business/control_plane.tru")
         sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
+        node_server = read_text("frontend/server.js")
 
         self.assertNotIn("function jobs_upload(", control_plane)
         for legacy_alias in (
@@ -75,6 +76,32 @@ class SyncContractsTests(unittest.TestCase):
             "value == 'download'",
         ):
             self.assertNotIn(legacy_condition, control_plane)
+        self.assertIn(
+            'function normalizeSyncMode(_value) {\n  return "sync";',
+            node_server,
+        )
+        self.assertIn(
+            'function directionForSyncMode(_syncMode) {\n  return "sync";',
+            node_server,
+        )
+        self.assertIn(
+            "publishOwnerSnapshot: Boolean(body.publishOwnerSnapshot)",
+            node_server,
+        )
+        self.assertIn(
+            "function latestNamespaceSnapshotForTable(ownerUserId, clientName, table)",
+            node_server,
+        )
+        self.assertIn(
+            "function resolveSyncSourceSnapshot(",
+            node_server,
+        )
+        self.assertIn(
+            'clientName:\n      session.publishOwnerSnapshot && job.ownerUserId\n        ? job.ownerUserId\n        : job.clientName,',
+            node_server,
+        )
+        self.assertNotIn('action === "upload"', node_server)
+        self.assertNotIn('action === "download-snapshot"', node_server)
 
     def test_related_table_metadata_stays_in_app_state(self):
         control_plane = read_text("business/control_plane.tru")

@@ -114,7 +114,6 @@ class AdminAgent {
     required this.server,
     required this.database,
     required this.isOnline,
-    required this.isMaster,
     required this.historyLimit,
     required this.autoSyncIntervalMinutes,
     required this.serverConnected,
@@ -132,7 +131,6 @@ class AdminAgent {
   final String server;
   final String database;
   final bool isOnline;
-  final bool isMaster;
   final int historyLimit;
   final int autoSyncIntervalMinutes;
   final bool serverConnected;
@@ -151,7 +149,6 @@ class AdminAgent {
       server: json['server'] as String? ?? '',
       database: json['database'] as String? ?? '',
       isOnline: json['isOnline'] as bool? ?? false,
-      isMaster: json['isMaster'] as bool? ?? true,
       historyLimit: (json['historyLimit'] as num? ?? 5).round(),
       autoSyncIntervalMinutes:
           (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),

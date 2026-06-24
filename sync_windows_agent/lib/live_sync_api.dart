@@ -331,7 +331,6 @@ class AgentControlPlaneClient {
   Future<HeartbeatResult> heartbeat({
     required String clientName,
     required String machineName,
-    required bool isMaster,
     required int historyLimit,
     required int autoSyncIntervalMinutes,
     required String server,
@@ -345,7 +344,6 @@ class AgentControlPlaneClient {
     final response = await _invokeFunction('agents_heartbeat', {
       'clientName': clientName,
       'machineName': machineName,
-      'isMaster': isMaster,
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
       'server': server,
@@ -371,7 +369,6 @@ class AgentControlPlaneClient {
               Map<String, dynamic>.from(decoded['syncSettings'] as Map),
             )
             : RemoteAgentSyncSettings(
-              isMaster: isMaster,
               historyLimit: historyLimit,
               autoSyncIntervalMinutes: autoSyncIntervalMinutes,
             );
@@ -900,18 +897,15 @@ class RemoteTableSyncPolicy {
 
 class RemoteAgentSyncSettings {
   const RemoteAgentSyncSettings({
-    required this.isMaster,
     required this.historyLimit,
     required this.autoSyncIntervalMinutes,
   });
 
-  final bool isMaster;
   final int historyLimit;
   final int autoSyncIntervalMinutes;
 
   factory RemoteAgentSyncSettings.fromJson(Map<String, dynamic> json) {
     return RemoteAgentSyncSettings(
-      isMaster: json['isMaster'] as bool? ?? true,
       historyLimit:
           (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
               .round()

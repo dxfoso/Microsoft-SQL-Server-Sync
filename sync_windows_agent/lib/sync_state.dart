@@ -9,7 +9,7 @@ const int kMaxAutoSyncIntervalMinutes = 1440;
 const String kSyncModeMerge = 'sync';
 const Object _syncTableStateUnset = Object();
 
-String normalizeSyncMode(String? value, {bool fallbackIsMaster = true}) {
+String normalizeSyncMode(String? value) {
   return kSyncModeMerge;
 }
 
@@ -224,13 +224,11 @@ class SyncTableState {
 
 class SyncClientState {
   const SyncClientState({
-    required this.isMaster,
     required this.tables,
     this.historyLimit = kDefaultHistoryLimit,
     this.autoSyncIntervalMinutes = kDefaultAutoSyncIntervalMinutes,
   });
 
-  final bool isMaster;
   final Map<String, SyncTableState> tables;
   final int historyLimit;
   final int autoSyncIntervalMinutes;
@@ -240,7 +238,6 @@ class SyncClientState {
       json['tables'] as Map? ?? const {},
     );
     return SyncClientState(
-      isMaster: json['isMaster'] as bool? ?? true,
       historyLimit:
           (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
               .round()
@@ -262,20 +259,17 @@ class SyncClientState {
   }
 
   Map<String, dynamic> toJson() => {
-    'isMaster': isMaster,
     'historyLimit': historyLimit,
     'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
     'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
   };
 
   SyncClientState copyWith({
-    bool? isMaster,
     Map<String, SyncTableState>? tables,
     int? historyLimit,
     int? autoSyncIntervalMinutes,
   }) {
     return SyncClientState(
-      isMaster: isMaster ?? this.isMaster,
       historyLimit: historyLimit ?? this.historyLimit,
       autoSyncIntervalMinutes:
           autoSyncIntervalMinutes ?? this.autoSyncIntervalMinutes,

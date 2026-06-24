@@ -641,8 +641,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           table: entry.key,
           lastSync: _tableTimestampToken(latestClient.tableState),
           clientCount: clients.length,
-          masterCount: clients.where((item) => item.agent.isMaster).length,
-          slaveCount: clients.where((item) => !item.agent.isMaster).length,
           latestRowCount: latestClient.tableState.rowCount,
           latestSnapshotBytes: latestClient.tableState.snapshotBytes,
           sourceClientName: latestClient.agent.clientName,
@@ -930,13 +928,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   int _compareClientEntries(_TableClientEntry left, _TableClientEntry right) {
-    final byRole = (right.agent.isMaster ? 1 : 0).compareTo(
-      left.agent.isMaster ? 1 : 0,
-    );
-    if (byRole != 0) {
-      return byRole;
-    }
-
     final byTimestamp = _compareTimestamps(
       _tableTimestampToken(right.tableState),
       _tableTimestampToken(left.tableState),
@@ -1132,7 +1123,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   _defaultAutoSyncIntervalMinutes)
               .toString(),
     );
-    var isMaster = selectedAgent?.isMaster ?? true;
     var saving = false;
     String? webHistoryError;
     String? agentHistoryError;
@@ -1145,7 +1135,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       agentHistoryController.text = agent.historyLimit.toString();
       autoSyncIntervalController.text =
           agent.autoSyncIntervalMinutes.toString();
-      isMaster = agent.isMaster;
       agentHistoryError = null;
       autoSyncIntervalError = null;
       saveError = null;
@@ -1215,42 +1204,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             }
                             setDialogState(() {
                               selectAgent(agent);
-                            });
-                          },
-                        ),
-                        const SizedBox(height: 8),
-                        DropdownButtonFormField<bool>(
-                          initialValue: isMaster,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Client Type',
-                            prefixIcon: Icon(Icons.sync_alt_rounded),
-                          ),
-                          selectedItemBuilder:
-                              (context) => const [true, false]
-                                  .map(
-                                    (value) => _buildSyncRoleDropdownOption(
-                                      value,
-                                      selected: true,
-                                    ),
-                                  )
-                                  .toList(growable: false),
-                          items: [
-                            DropdownMenuItem<bool>(
-                              value: true,
-                              child: _buildSyncRoleDropdownOption(true),
-                            ),
-                            DropdownMenuItem<bool>(
-                              value: false,
-                              child: _buildSyncRoleDropdownOption(false),
-                            ),
-                          ],
-                          onChanged: (value) {
-                            if (value == null) {
-                              return;
-                            }
-                            setDialogState(() {
-                              isMaster = value;
                             });
                           },
                         ),
@@ -1368,7 +1321,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   nextAutoSyncInterval != null) {
                                 await _api.updateAgentSyncSettings(
                                   clientName: selectedClientName!,
-                                  isMaster: isMaster,
                                   historyLimit: nextAgentHistoryLimit,
                                   autoSyncIntervalMinutes: nextAutoSyncInterval,
                                 );
@@ -3859,15 +3811,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
-  Color _roleColor(bool isMaster) =>
-      isMaster ? const Color(0xFF2563EB) : const Color(0xFF0F766E);
+  Color _roleColor() => const Color(0xFF0F766E);
 
-  IconData _roleIcon(bool isMaster) => Icons.sync_rounded;
+  IconData _roleIcon() => Icons.sync_rounded;
 
-  String _roleLabel(bool isMaster) => 'Participant';
-
-  String _roleDescription(bool isMaster) =>
-      'Uploads local rows and downloads missing namespace rows.';
+  String _roleLabel() => 'Participant';
 
   String _syncModeDisplay(String syncMode) => 'MERGE REPLICATION';
 
@@ -3977,16 +3925,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildSyncRoleDropdownOption(bool isMaster, {bool selected = false}) {
-    return _buildIconDropdownOption(
-      icon: _roleIcon(isMaster),
-      label: _roleLabel(isMaster),
-      description: _roleDescription(isMaster),
-      color: _roleColor(isMaster),
-      selected: selected,
-    );
-  }
-
   Widget _buildUserRoleDropdownOption(String role, {bool selected = false}) {
     return _buildIconDropdownOption(
       icon: _userRoleIcon(role),
@@ -3999,20 +3937,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildAgentDropdownOption(AdminAgent agent, {bool selected = false}) {
     return _buildIconDropdownOption(
-      icon:
-          agent.isMaster
-              ? Icons.cloud_upload_rounded
-              : Icons.cloud_done_rounded,
+      icon: Icons.sync_rounded,
       label: agent.clientName,
-      description:
-          '${_roleLabel(agent.isMaster)} - ${agent.isOnline ? 'Online' : 'Offline'}',
-      color: _roleColor(agent.isMaster),
+      description: '${_roleLabel()} - ${agent.isOnline ? 'Online' : 'Offline'}',
+      color: _roleColor(),
       selected: selected,
     );
   }
 
-  Widget _buildRoleBadge(bool isMaster, {bool compact = false}) {
-    final color = _roleColor(isMaster);
+  Widget _buildRoleBadge({bool compact = false}) {
+    final color = _roleColor();
     return Container(
       constraints: BoxConstraints(minHeight: compact ? 24 : 26),
       padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 8, vertical: 4),
@@ -4026,10 +3960,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(_roleIcon(isMaster), size: compact ? 14 : 16, color: color),
+          Icon(_roleIcon(), size: compact ? 14 : 16, color: color),
           const SizedBox(width: 5),
           Text(
-            _roleLabel(isMaster),
+            _roleLabel(),
             style: TextStyle(
               color: color,
               fontWeight: FontWeight.w700,
@@ -4132,13 +4066,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               summary.sourceClientName,
               _formatTimestamp(summary.lastSync),
               '${summary.clientCount}',
-              '${summary.masterCount}',
-              '${summary.slaveCount}',
               ...summary.clients.map((entry) {
                 return [
                   entry.agent.clientName,
                   entry.agent.machineName,
-                  _roleLabel(entry.agent.isMaster),
+                  _roleLabel(),
                   _tableKeyForAgent(entry.agent, entry.tableState),
                   entry.tableState.status,
                   entry.tableState.message,
@@ -5234,7 +5166,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 : MediaQuery.sizeOf(context).width;
         final stackIdentity = width < 760;
         final footerItems = <MapEntry<String, String>>[
-          MapEntry('Role', _roleLabel(agent.isMaster)),
+          MapEntry('Role', _roleLabel()),
           MapEntry(
             'Flow',
             tableState.enabled ? 'Merge participant' : 'Disabled',
@@ -5765,7 +5697,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     runSpacing: 5,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _buildRoleBadge(entry.agent.isMaster, compact: true),
+                      _buildRoleBadge(compact: true),
                       StatusBadge(
                         label: entry.tableState.status,
                         color: _statusColor(entry.tableState.status),
@@ -5795,10 +5727,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   width: roleColumnWidth,
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: _buildRoleBadge(
-                      entry.agent.isMaster,
-                      compact: !showRoleLabel,
-                    ),
+                    child: _buildRoleBadge(compact: !showRoleLabel),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -6568,13 +6497,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }) async {
     final state = _state;
     final signature = _snapshotRowSignature(sourceSnapshot.columns, row);
-    final masterNames =
+    final namespaceNames =
         (state?.agents ?? const <AdminAgent>[])
-            .where((agent) => agent.isMaster)
             .map((agent) => agent.clientName)
             .toSet();
     if (sourceSnapshot.clientName.trim().isNotEmpty) {
-      masterNames.add(sourceSnapshot.clientName);
+      namespaceNames.add(sourceSnapshot.clientName);
     }
 
     final candidateSummaries = (state?.snapshots ?? const <AdminSnapshot>[])
@@ -6582,11 +6510,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           if (snapshot.table != sourceSnapshot.table) {
             return false;
           }
-          if (masterNames.contains(snapshot.clientName)) {
+          if (namespaceNames.contains(snapshot.clientName)) {
             return true;
           }
           return (state?.agents ?? const <AdminAgent>[])
-              .where((agent) => agent.isMaster)
               .any((agent) => _snapshotMatchesAgentNamespace(snapshot, agent));
         })
         .toList(growable: false);
@@ -6657,21 +6584,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return const [];
     }
 
-    final masterNames =
-        state.agents
-            .where((agent) => agent.isMaster)
-            .map((agent) => agent.clientName)
-            .toSet();
+    final namespaceNames =
+        state.agents.map((agent) => agent.clientName).toSet();
     final summaries = state.snapshots
         .where((snapshot) {
           if (snapshot.table != table) {
             return false;
           }
-          if (masterNames.contains(snapshot.clientName)) {
+          if (namespaceNames.contains(snapshot.clientName)) {
             return true;
           }
           return state.agents
-              .where((agent) => agent.isMaster)
               .any((agent) => _snapshotMatchesAgentNamespace(snapshot, agent));
         })
         .toList(growable: false);
@@ -6695,7 +6618,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     List<AdminSnapshotDetail> masterSnapshots,
   ) {
     final snapshots = <AdminSnapshotDetail>[...masterSnapshots];
-    if (_isMasterClientName(sourceSnapshot.clientName) &&
+    if (_isNamespaceClientName(sourceSnapshot.clientName) &&
         !snapshots.any((snapshot) => snapshot.id == sourceSnapshot.id)) {
       snapshots.add(sourceSnapshot);
     }
@@ -6703,7 +6626,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final counts = <String, int>{};
     for (final snapshot in snapshots) {
       if (snapshot.table != sourceSnapshot.table ||
-          !_isMasterSnapshot(snapshot)) {
+          !_isNamespaceSnapshot(snapshot)) {
         continue;
       }
       final uniqueRowsInMaster = <String>{};
@@ -6719,28 +6642,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return counts;
   }
 
-  bool _isMasterClientName(String clientName) {
+  bool _isNamespaceClientName(String clientName) {
     final state = _state;
     if (state == null) {
       return false;
     }
     for (final agent in state.agents) {
       if (agent.clientName == clientName) {
-        return agent.isMaster;
+        return true;
       }
     }
     return false;
   }
 
-  bool _isMasterSnapshot(AdminSnapshotDetail snapshot) {
+  bool _isNamespaceSnapshot(AdminSnapshotDetail snapshot) {
     final state = _state;
     if (state == null) {
       return false;
     }
     for (final agent in state.agents) {
-      if (!agent.isMaster) {
-        continue;
-      }
       if (_snapshotDetailMatchesAgentNamespace(snapshot, agent)) {
         return true;
       }
@@ -7676,7 +7596,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    _buildRoleBadge(agent.isMaster),
+                    _buildRoleBadge(),
                     StatusBadge(
                       label: agent.isOnline ? 'Online' : 'Offline',
                       color: statusColor,
@@ -7785,7 +7705,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               MetricPill(label: 'Machine', value: agent.machineName),
               MetricPill(label: 'Database', value: agent.database),
               MetricPill(label: 'Tables', value: '${agent.tables.length}'),
-              MetricPill(label: 'Role', value: _roleLabel(agent.isMaster)),
+              MetricPill(label: 'Role', value: _roleLabel()),
               MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
               MetricPill(label: 'Diagnostics', value: diagnostics.status),
             ],
@@ -8843,8 +8763,6 @@ class _TableAggregateSummary {
     required this.table,
     required this.lastSync,
     required this.clientCount,
-    required this.masterCount,
-    required this.slaveCount,
     required this.latestRowCount,
     required this.latestSnapshotBytes,
     required this.sourceClientName,
@@ -8854,8 +8772,6 @@ class _TableAggregateSummary {
   final String table;
   final String lastSync;
   final int clientCount;
-  final int masterCount;
-  final int slaveCount;
   final int latestRowCount;
   final int latestSnapshotBytes;
   final String sourceClientName;
