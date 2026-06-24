@@ -102,6 +102,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
         self.assertIn("tables: tablesToQueue", agent_page)
         self.assertIn("Queue sync for $selectedTable and related tables", agent_page)
+        self.assertIn("for (const dependency of dependencies)", control_plane)
+        self.assertIn("state.related.length == previousRelatedCount", control_plane)
+        self.assertNotIn(
+            "state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
+            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
+            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
+            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
+            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
+            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
+            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
+            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);",
+            control_plane,
+        )
 
     def test_web_dashboard_exposes_merge_sync_not_push_pull_jobs(self):
         dashboard = read_text("frontend/lib/dashboard_page.dart")

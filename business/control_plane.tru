@@ -595,14 +595,14 @@ function related_table_sync_keys_for_policy(ownerUserId: string? = null, syncTab
     visited: [rootLocalTable],
     related: []
   };
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
-  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  let previousRelatedCount = -1;
+  for (const dependency of dependencies) {
+    if (state.related.length == previousRelatedCount) {
+      return state.related;
+    }
+    previousRelatedCount = state.related.length;
+    state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);
+  }
   return state.related;
 }
 
