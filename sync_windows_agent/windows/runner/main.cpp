@@ -10,6 +10,24 @@ namespace {
 
 using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
 
+bool HasEnvironmentVariable(const wchar_t* name) {
+  const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
+  return size != 0 || GetLastError() != ERROR_ENVVAR_NOT_FOUND;
+}
+
+void EnableSoftwareRenderingByDefault() {
+  if (HasEnvironmentVariable(L"FLUTTER_ENGINE_SWITCHES")) {
+    LogStartupEvent(
+        L"Flutter engine switches already supplied. Keeping existing values.");
+    return;
+  }
+
+  SetEnvironmentVariableW(L"FLUTTER_ENGINE_SWITCHES", L"1");
+  SetEnvironmentVariableW(L"FLUTTER_ENGINE_SWITCH_1",
+                          L"enable-software-rendering=true");
+  LogStartupEvent(L"Enabled Flutter software rendering compatibility mode");
+}
+
 void LogWindowsVersion() {
   const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   if (ntdll == nullptr) {
@@ -44,6 +62,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   LogStartupEvent(L"Native wWinMain starting");
   LogWindowsVersion();
+  EnableSoftwareRenderingByDefault();
 
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
