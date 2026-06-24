@@ -118,6 +118,24 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("direction: 'upload'", dashboard)
         self.assertNotIn("direction: 'download'", dashboard)
 
+    def test_visible_sync_copy_uses_merge_namespace_terms(self):
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        sample_data = read_text("sync_windows_agent/lib/sample_data.dart")
+        visible_copy = dashboard + sample_data
+
+        self.assertIn("cloud namespace snapshot sources", dashboard)
+        self.assertIn("Uploaded by namespace source", dashboard)
+        self.assertIn("Orders and Inventory rows were merged through the cloud namespace.", sample_data)
+        for legacy_text in (
+            "finance-master",
+            "sink agents",
+            "batches pushed",
+            "Uploaded by master",
+            "master snapshot",
+            "merged this master",
+        ):
+            self.assertNotIn(legacy_text, visible_copy)
+
     def test_helm_declares_merge_replication_mode_for_central_server(self):
         values = read_text("deployment/chart/values.yaml")
         backend_deployment = read_text("deployment/chart/templates/backend-deployment.yaml")

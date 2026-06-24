@@ -4867,7 +4867,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: Icons.merge_type_rounded,
           countText: '${clients.length}',
           meaning:
-              'This number counts clients whose table data has merged master snapshot sources, or clients in merge mode that already synced this table.',
+              'This number counts clients whose table data has merged cloud namespace snapshot sources, or clients in merge mode that already synced this table.',
           emptyMessage: 'No client has merged data for this table yet.',
           clients: clients,
         );
@@ -6275,7 +6275,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Uploaded by master: ${snapshot.clientName}',
+                    'Uploaded by namespace source: ${snapshot.clientName}',
                     style: const TextStyle(
                       color: Color(0xFF0F172A),
                       fontSize: 13,
@@ -6306,7 +6306,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         if (attempts.isEmpty) {
                           return const EmptyStateCard(
                             message:
-                                'No master snapshot contains this same row value yet.',
+                                'No cloud namespace snapshot contains this same row value yet.',
                           );
                         }
                         return _buildMasterRowAttemptList(attempts);
@@ -6482,12 +6482,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildMasterRowAttemptTile(_MasterRowAttempt attempt) {
     final usedByText =
         attempt.usedByClients.isEmpty
-            ? 'No client has merged this master yet'
+            ? 'No client has merged this namespace source yet'
             : 'Used by ${attempt.usedByClients.join(', ')}';
     final statusText =
         attempt.isSelectedSource
             ? 'Current uploaded row value'
-            : 'Same row value found in this master snapshot';
+            : 'Same row value found in this namespace snapshot';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),

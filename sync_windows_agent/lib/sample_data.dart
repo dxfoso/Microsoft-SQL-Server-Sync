@@ -44,14 +44,14 @@ const recentEvents = <AgentEvent>[
     time: '10:00',
     title: 'Plan received from domain',
     message:
-        'finance-master-sync was refreshed and scheduled for every 5 minutes.',
+        'finance-merge-sync was refreshed and scheduled for every 5 minutes.',
     level: AgentEventLevel.info,
   ),
   AgentEvent(
     time: '09:55',
-    title: 'Delta sync completed',
+    title: 'Merge sync completed',
     message:
-        'Orders and Inventory batches pushed to 2 sink agents successfully.',
+        'Orders and Inventory rows were merged through the cloud namespace.',
     level: AgentEventLevel.info,
   ),
   AgentEvent(
