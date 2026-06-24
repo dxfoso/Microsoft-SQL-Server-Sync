@@ -1752,8 +1752,24 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
   if (tables.length == 0) {
     return [];
   }
-  const dedupedTables = unique_string_values(tables);
-  const rows = dedupedTables.map((table) => {
+  const activeTables = active_job_tables_for_client(agent.clientName);
+  const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables);
+  let tablesToCreate = [];
+  for (const table of expandedTables) {
+    let busy = false;
+    for (const activeTable of activeTables) {
+      if (activeTable == table) {
+        busy = true;
+      }
+    }
+    if (!busy) {
+      tablesToCreate = tablesToCreate.concat([table]);
+    }
+  }
+  if (tablesToCreate.length == 0) {
+    return [];
+  }
+  const rows = tablesToCreate.map((table) => {
     return {
       id: uuid.v4(),
       clientName: agent.clientName,
@@ -2576,7 +2592,23 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
   if (expandedTables.length == 0) {
     return raw_json_error(400, 'tables are required.');
   }
-  const createdJobsRaw = expandedTables.map((table) => {
+  const activeTables = active_job_tables_for_client(resolvedClientName);
+  let tablesToCreate = [];
+  for (const table of expandedTables) {
+    let busy = false;
+    for (const activeTable of activeTables) {
+      if (activeTable == table) {
+        busy = true;
+      }
+    }
+    if (!busy) {
+      tablesToCreate = tablesToCreate.concat([table]);
+    }
+  }
+  if (tablesToCreate.length == 0) {
+    return raw_json_success({ jobs: [] }, 201);
+  }
+  const createdJobsRaw = tablesToCreate.map((table) => {
     const resolvedMode = normalize_sync_mode(syncMode, true);
     return {
       id: uuid.v4(),

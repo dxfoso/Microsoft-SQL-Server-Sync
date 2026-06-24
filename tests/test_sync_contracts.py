@@ -93,8 +93,11 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("function expand_sync_job_tables_for_owner", control_plane)
         self.assertIn("related_table_sync_keys_for_policy(ownerUserId, normalizedTable)", control_plane)
+        self.assertIn("const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables)", control_plane)
+        self.assertIn("const rows = tablesToCreate.map((table) =>", control_plane)
         self.assertIn("const expandedTables = expand_sync_job_tables_for_owner(ownerId, tables)", control_plane)
-        self.assertIn("const createdJobsRaw = expandedTables.map((table) =>", control_plane)
+        self.assertIn("const createdJobsRaw = tablesToCreate.map((table) =>", control_plane)
+        self.assertIn("return raw_json_success({ jobs: [] }, 201);", control_plane)
         self.assertIn("final tablesToQueue = <String>{", agent_page)
         self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
         self.assertIn("tables: tablesToQueue", agent_page)
