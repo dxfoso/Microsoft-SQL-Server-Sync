@@ -81,34 +81,29 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("'tables'", body)
         self.assertNotIn("diagnosticPayload", body)
 
-    def test_row_uploads_have_server_side_snapshot_bounds(self):
+    def test_sync_uploads_use_chunked_owner_snapshots_only(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
         )
+        client_api = (
+            ROOT / "sync_windows_agent" / "lib" / "live_sync_api.dart"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("function max_server_rows_snapshot_count(): int", source)
         self.assertIn("return 50000;", source)
+        self.assertIn("function jobs_upload_chunk_start", source)
+        self.assertIn("function jobs_upload_chunk_complete", source)
         self.assertIn(
-            "rowCount > max_server_rows_snapshot_count()",
+            "chunkCount < 1 || chunkCount > max_chunk_count()",
             source,
         )
-        self.assertIn(
-            "(resolvedPageCount * resolvedPageSize) > max_server_rows_snapshot_count()",
-            source,
-        )
-        self.assertIn(
-            "normalizedRows.length > session.chunkSizeBytes",
-            source,
-        )
-        self.assertIn(
-            "normalizedRows.length > max_server_rows_snapshot_count()",
-            source,
-        )
-        self.assertIn(
-            "Owner namespace row uploads are no longer supported",
-            source,
-        )
-        self.assertGreaterEqual(source.count("raw_json_error(413"), 5)
+        self.assertIn("session.publishOwnerSnapshot == true", source)
+        self.assertIn("snapshotClientName = uploadOwnerUserId", source)
+        self.assertIn("jobs_upload_chunk_start", client_api)
+        self.assertIn("jobs_upload_chunk_complete", client_api)
+        self.assertNotIn("jobs_upload_rows_", source)
+        self.assertNotIn("jobs_upload_rows_", client_api)
+        self.assertNotIn("uploadSnapshotRows", client_api)
 
     def test_agent_payloads_bound_table_lists_before_policy_application(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
