@@ -150,11 +150,15 @@ try {
         & scp $latestManifest $versionedZip $latestZip $publishedUpdater "$SshTarget`:$remoteStage/"
     }
 
-    $podOutput = & ssh $SshTarget "kubectl get pods -n '$Namespace' -l app.kubernetes.io/component=frontend -o jsonpath='{range .items[*]}{.metadata.name}{\"\n\"}{end}'"
+    $podOutput = & ssh $SshTarget "kubectl get pods -n '$Namespace' -l app.kubernetes.io/component=frontend -o name"
     if ($LASTEXITCODE -ne 0) {
         throw "Could not list frontend pods in namespace $Namespace"
     }
-    $pods = @($podOutput -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $pods = @(
+        $podOutput -split "`n" |
+            ForEach-Object { $_.Trim() -replace '^pod/', '' } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
     if ($pods.Count -eq 0) {
         throw "No frontend pods found in namespace $Namespace"
     }
