@@ -73,17 +73,17 @@ if ([string]::IsNullOrWhiteSpace($Namespace)) {
 }
 
 if (-not $SkipBuild) {
-    $buildArgs = @(
-        '-BackendBaseUrl', $BackendBaseUrl
-    )
+    $buildArgs = @{
+        BackendBaseUrl = $BackendBaseUrl
+    }
     if (-not [string]::IsNullOrWhiteSpace($FlutterVersion)) {
-        $buildArgs += @('-FlutterVersion', $FlutterVersion)
+        $buildArgs.FlutterVersion = $FlutterVersion
     }
     if (-not [string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
-        $buildArgs += @('-FlutterCacheRoot', $FlutterCacheRoot)
+        $buildArgs.FlutterCacheRoot = $FlutterCacheRoot
     }
     if ($RequireFlutterVersion) {
-        $buildArgs += '-RequireFlutterVersion'
+        $buildArgs.RequireFlutterVersion = $true
     }
     Write-Host 'Building Windows portable client...'
     & (Join-Path -Path $RepoRoot -ChildPath 'build_portable.ps1') @buildArgs
