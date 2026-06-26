@@ -85,8 +85,10 @@ if (-not $SkipBuild) {
     if ($RequireFlutterVersion) {
         $buildArgs += '-RequireFlutterVersion'
     }
-    Invoke-CheckedNative -Description 'Building Windows portable client...' -Command {
-        & (Join-Path -Path $RepoRoot -ChildPath 'build_portable.ps1') @buildArgs
+    Write-Host 'Building Windows portable client...'
+    & (Join-Path -Path $RepoRoot -ChildPath 'build_portable.ps1') @buildArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code $LASTEXITCODE`: Building Windows portable client..."
     }
 }
 
