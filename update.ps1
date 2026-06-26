@@ -26,10 +26,22 @@ function Resolve-UpdateUrl {
 }
 
 function Stop-AgentProcesses {
-    Get-Process -Name 'sync_windows_agent' -ErrorAction SilentlyContinue |
+    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+
+    $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
+    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
+
+    Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
+                return $false
+            }
+            $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+            return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+        } |
         ForEach-Object {
-            Write-Host "Stopping sync_windows_agent.exe [$($_.Id)]"
-            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "Stopping sync_windows_agent.exe [$($_.ProcessId)]"
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
         }
 }
 
@@ -73,9 +85,10 @@ try {
         throw "Downloaded package does not contain sync_windows_agent.exe at the expected path: $payloadExe"
     }
 
-    Stop-AgentProcesses
+    Stop-AgentProcesses -TargetInstallDir $InstallDir
     New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path -Path $payloadDir -ChildPath '*') -Destination $InstallDir -Recurse -Force
+    Get-ChildItem -LiteralPath $payloadDir -Force |
+        Copy-Item -Destination $InstallDir -Recurse -Force
 
     $installedExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
     if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
