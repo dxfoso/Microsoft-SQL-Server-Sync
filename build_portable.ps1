@@ -549,7 +549,8 @@ function Get-PortableRequiredFiles {
     return @(
         $ExeName,
         'flutter_windows.dll',
-        'run_portable.bat'
+        'run_portable.bat',
+        'update.ps1'
     )
 }
 
@@ -730,6 +731,7 @@ function Assert-PortableZipContents {
             "$PortableName/$ExeName",
             "$PortableName/flutter_windows.dll",
             "$PortableName/run_portable.bat",
+            "$PortableName/update.ps1",
             "$PortableName/portable-manifest.txt"
         )
         if ($RequireVCRuntime) {
@@ -851,6 +853,7 @@ try {
     Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
 
     New-PortableLauncher -Destination $portableDir -ExeName $exeName
+    Copy-Item -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'update.ps1') -Destination (Join-Path -Path $portableDir -ChildPath 'update.ps1') -Force
     Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -FlutterVersionInfo $flutterVersionInfo
     Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime
 

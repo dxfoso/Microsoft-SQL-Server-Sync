@@ -44,6 +44,38 @@ class TransferProgressSnapshot {
   final int totalChunks;
 }
 
+class ClientUpdateInfo {
+  const ClientUpdateInfo({
+    required this.version,
+    required this.commit,
+    required this.releaseDate,
+    required this.zipUrl,
+    required this.updateScriptUrl,
+    required this.sha256,
+    required this.sizeBytes,
+  });
+
+  final String version;
+  final String commit;
+  final String releaseDate;
+  final String zipUrl;
+  final String updateScriptUrl;
+  final String sha256;
+  final int sizeBytes;
+
+  factory ClientUpdateInfo.fromJson(Map<String, dynamic> json) {
+    return ClientUpdateInfo(
+      version: json['version'] as String? ?? '',
+      commit: json['commit'] as String? ?? '',
+      releaseDate: json['releaseDate'] as String? ?? '',
+      zipUrl: json['zipUrl'] as String? ?? '',
+      updateScriptUrl: json['updateScriptUrl'] as String? ?? '',
+      sha256: json['sha256'] as String? ?? '',
+      sizeBytes: json['sizeBytes'] is int ? json['sizeBytes'] as int : 0,
+    );
+  }
+}
+
 class AgentControlPlaneClient {
   AgentControlPlaneClient({http.Client? client, String? baseUrl})
     : _client = client ?? http.Client(),
@@ -67,6 +99,11 @@ class AgentControlPlaneClient {
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
   Uri _uriCall() => Uri.parse(_baseUrl);
+
+  Uri _originUri(String path) {
+    final base = Uri.parse(_baseUrl);
+    return base.replace(path: path, query: null, fragment: null);
+  }
 
   dynamic _unwrapApiResponse(dynamic decoded) {
     if (decoded is! Map<String, dynamic>) {
@@ -234,6 +271,26 @@ class AgentControlPlaneClient {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<ClientUpdateInfo?> fetchClientUpdateInfo() async {
+    final response = await _sendRequest(
+      _client.get(_originUri('/client/latest.json')),
+      'checking client update manifest',
+    );
+    if (response.statusCode == 404) {
+      return null;
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _exceptionFromResponse(response);
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const AgentControlPlaneException(
+        'Unexpected client update manifest payload.',
+      );
+    }
+    return ClientUpdateInfo.fromJson(decoded);
   }
 
   bool _isRetryableTransferStatus(int statusCode) {

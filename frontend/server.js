@@ -12,6 +12,9 @@ const STATE_FILE =
 const UPLOADS_DIR =
   process.env.UPLOADS_DIR ||
   path.join(path.dirname(STATE_FILE), "upload-chunks");
+const CLIENT_UPDATES_DIR =
+  process.env.CLIENT_UPDATES_DIR ||
+  path.join(path.dirname(STATE_FILE), "client-updates");
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), "public");
 const MAX_BODY_SIZE = 100 * 1024 * 1024;
 const SNAPSHOT_TRANSFER_CHUNK_SIZE = 100 * 1024;
@@ -50,9 +53,11 @@ const MIME_TYPES = {
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
   ".png": "image/png",
+  ".ps1": "text/plain; charset=utf-8",
   ".svg": "image/svg+xml",
   ".txt": "text/plain; charset=utf-8",
   ".wasm": "application/wasm",
+  ".zip": "application/zip",
 };
 
 let state = createDefaultState();
@@ -1718,6 +1723,46 @@ async function tryServeStatic(pathname, res) {
   }
 }
 
+async function tryServeClientUpdate(pathname, res) {
+  if (pathname !== "/client" && !pathname.startsWith("/client/")) {
+    return false;
+  }
+
+  const requestedPath =
+    pathname === "/client" ? "latest.json" : decodeURIComponent(pathname.substring("/client/".length));
+  const safeRelativePath = requestedPath.replace(/^\/+/, "");
+  let candidatePath = path.normalize(path.join(CLIENT_UPDATES_DIR, safeRelativePath));
+  const normalizedRoot = path.normalize(CLIENT_UPDATES_DIR);
+  const rootPrefix = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`;
+
+  if (
+    candidatePath !== normalizedRoot &&
+    !candidatePath.startsWith(rootPrefix)
+  ) {
+    sendJson(res, 403, { error: "forbidden" });
+    return true;
+  }
+
+  try {
+    const stat = await fs.stat(candidatePath);
+    if (!stat.isFile()) {
+      sendJson(res, 404, { error: "client update artifact not found" });
+      return true;
+    }
+    const buffer = await fs.readFile(candidatePath);
+    const contentType =
+      MIME_TYPES[path.extname(candidatePath).toLowerCase()] ||
+      "application/octet-stream";
+    sendBuffer(res, 200, buffer, contentType);
+    return true;
+  } catch {
+    sendJson(res, 404, { error: "client update artifact not found" });
+    return true;
+  }
+}
+
 async function handleRequest(req, res) {
   withCorsHeaders(res);
   if (req.method === "OPTIONS") {
@@ -2652,6 +2697,11 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === "GET") {
+    const servedUpdate = await tryServeClientUpdate(pathname, res);
+    if (servedUpdate) {
+      return;
+    }
+
     const served = await tryServeStatic(pathname, res);
     if (served) {
       return;

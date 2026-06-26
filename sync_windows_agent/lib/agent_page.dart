@@ -6,6 +6,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/services.dart';
 
 import 'agent_widgets.dart';
 import 'live_sync_api.dart';
@@ -14,7 +15,7 @@ import 'startup_log.dart';
 
 const String _agentAppVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '1.0.0+1',
+  defaultValue: '1.0.0+2',
 );
 const String _agentBuildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
@@ -82,6 +83,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   late SyncClientState _syncState;
   Timer? _connectionCheckTimer;
   Timer? _syncPollTimer;
+  Timer? _clientUpdateCheckTimer;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -109,6 +111,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   double _uploadBytesPerSecond = 0;
   int _uploadMeterCurrentChunk = 0;
   int _uploadMeterTotalChunks = 0;
+  ClientUpdateInfo? _clientUpdateInfo;
+  String? _clientUpdateError;
+  bool _checkingClientUpdate = false;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -147,6 +152,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _syncPollInterval,
       (_) => unawaited(_syncWithControlPlane()),
     );
+    _clientUpdateCheckTimer = Timer.periodic(
+      const Duration(minutes: 30),
+      (_) => unawaited(_checkClientUpdate()),
+    );
     if (widget.autoLoadOnStart) {
       logStartupEvent('AgentDashboardPage autoLoadOnStart scheduled');
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -163,6 +172,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         unawaited(_checkServerConnection());
         logStartupEvent('AgentDashboardPage initial sync sync');
         unawaited(_syncWithControlPlane());
+        unawaited(_checkClientUpdate());
       }
     });
   }
@@ -171,6 +181,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   void dispose() {
     _connectionCheckTimer?.cancel();
     _syncPollTimer?.cancel();
+    _clientUpdateCheckTimer?.cancel();
     _controlPlaneClient.dispose();
     _serverController.dispose();
     _userController.dispose();
@@ -199,6 +210,41 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _checkingServerConnection = false;
       _lastServerCheck = DateTime.now();
     });
+  }
+
+  Future<void> _checkClientUpdate({bool showErrors = false}) async {
+    if (!mounted || _checkingClientUpdate) {
+      return;
+    }
+
+    setState(() {
+      _checkingClientUpdate = true;
+      _clientUpdateError = null;
+    });
+
+    try {
+      final updateInfo = await _controlPlaneClient.fetchClientUpdateInfo();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _clientUpdateInfo = updateInfo;
+        _checkingClientUpdate = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _clientUpdateError = error.toString();
+        _checkingClientUpdate = false;
+      });
+      if (showErrors) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+      }
+    }
   }
 
   void _updateSyncTableState(String table, SyncTableState state) {
@@ -1313,6 +1359,104 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return 'v$version dev$hashSuffix';
     }
     return 'v$version ${_formatTimestamp(releaseDate)}$hashSuffix';
+  }
+
+  bool get _hasClientUpdate {
+    final updateInfo = _clientUpdateInfo;
+    if (updateInfo == null) {
+      return false;
+    }
+    final currentVersion = _agentAppVersion.trim();
+    final latestVersion = updateInfo.version.trim();
+    final currentCommit = _agentBuildCommitHash.trim().toLowerCase();
+    final latestCommit = updateInfo.commit.trim().toLowerCase();
+    if (latestCommit.isNotEmpty && currentCommit.isNotEmpty) {
+      return latestCommit != currentCommit;
+    }
+    return latestVersion.isNotEmpty && latestVersion != currentVersion;
+  }
+
+  String _clientUpdateLabel() {
+    final updateInfo = _clientUpdateInfo;
+    if (_checkingClientUpdate) {
+      return 'Checking';
+    }
+    if (_hasClientUpdate && updateInfo != null) {
+      return 'Available v${updateInfo.version}';
+    }
+    if (_clientUpdateError != null) {
+      return 'Check failed';
+    }
+    return 'Current';
+  }
+
+  String _clientUpdateCommand(ClientUpdateInfo updateInfo) {
+    final scriptUrl = updateInfo.updateScriptUrl.trim();
+    final manifestUrl = _controlPlaneClient.baseUrl.replaceFirst(
+      RegExp(r'/call/?$'),
+      '/client/latest.json',
+    );
+    final url =
+        scriptUrl.isEmpty
+            ? manifestUrl.replaceFirst('/latest.json', '/update.ps1')
+            : scriptUrl;
+    return "powershell -ExecutionPolicy Bypass -NoProfile -Command \"iex ((New-Object Net.WebClient).DownloadString('$url'))\"";
+  }
+
+  Future<void> _showClientUpdateDialog() async {
+    final updateInfo = _clientUpdateInfo;
+    if (updateInfo == null) {
+      await _checkClientUpdate(showErrors: true);
+      return;
+    }
+    final command = _clientUpdateCommand(updateInfo);
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Text(
+              _hasClientUpdate
+                  ? 'Client update available'
+                  : 'Client is current',
+            ),
+            content: SelectableText(
+              [
+                'Current: ${_buildSummaryLabel()}',
+                'Latest: v${updateInfo.version} ${updateInfo.commit}',
+                if (updateInfo.releaseDate.trim().isNotEmpty)
+                  'Released: ${_formatTimestamp(updateInfo.releaseDate)}',
+                if (updateInfo.sizeBytes > 0)
+                  'Download: ${_formatBytes(updateInfo.sizeBytes)}',
+                '',
+                'Run this command on the client machine:',
+                command,
+              ].join('\n'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: command));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Update command copied.')),
+                  );
+                },
+                child: const Text('Copy command'),
+              ),
+              FilledButton(
+                onPressed:
+                    () => unawaited(_checkClientUpdate(showErrors: true)),
+                child: const Text('Check again'),
+              ),
+            ],
+          ),
+    );
   }
 
   String _syncModeLabel(String syncMode) {
@@ -6587,6 +6731,7 @@ WHEN NOT MATCHED BY TARGET THEN
     final footerItems = <Widget>[
       _InfoLine(label: 'Client', value: widget.clientName),
       _InfoLine(label: 'Build', value: _buildSummaryLabel()),
+      _buildClientUpdateIndicator(),
       _InfoLine(label: 'Agent', value: agentStatus),
       _InfoLine(label: 'SQL', value: sqlStatus),
       _InfoLine(label: 'Database', value: _selectedDatabase ?? 'None'),
@@ -6690,6 +6835,61 @@ WHEN NOT MATCHED BY TARGET THEN
           const SizedBox(width: 8),
           Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildClientUpdateIndicator() {
+    final hasUpdate = _hasClientUpdate;
+    final color =
+        hasUpdate
+            ? const Color(0xFFB45309)
+            : _clientUpdateError != null
+            ? const Color(0xFFB42318)
+            : const Color(0xFF0F766E);
+    final tooltip =
+        hasUpdate
+            ? 'A newer Windows client is available. Click for the update command.'
+            : _clientUpdateError != null
+            ? 'Could not check for a client update: $_clientUpdateError'
+            : 'Windows client update status.';
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: _showClientUpdateDialog,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                hasUpdate
+                    ? Icons.system_update_alt_rounded
+                    : _clientUpdateError != null
+                    ? Icons.warning_amber_rounded
+                    : Icons.verified_rounded,
+                size: 16,
+                color: color,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Update: ${_clientUpdateLabel()}',
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
