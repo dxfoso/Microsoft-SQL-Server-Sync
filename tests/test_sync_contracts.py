@@ -143,6 +143,27 @@ class SyncContractsTests(unittest.TestCase):
             control_plane,
         )
 
+    def test_windows_agent_normalizes_database_qualified_table_names(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("String _stripKnownDatabaseAndDefaultSchema(", agent_page)
+        self.assertIn("final databasePrefix = '$databaseName.';", agent_page)
+        self.assertIn("tableName = tableName.substring(databasePrefix.length);", agent_page)
+        self.assertIn(
+            "_stripKnownDatabaseAndDefaultSchema(\n      table,\n      database: databaseName,",
+            agent_page,
+        )
+        self.assertNotIn("velvet::velvet.dbo", agent_page)
+
+    def test_windows_agent_uses_unique_index_as_merge_key_without_primary_key(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("CASE WHEN uk.column_id IS NULL THEN 0 ELSE 1 END AS is_unique_key", agent_page)
+        self.assertIn("ROW_NUMBER() OVER", agent_page)
+        self.assertIn("PARTITION BY i.object_id", agent_page)
+        self.assertIn("schema.isUniqueKey && snapshotColumnSet.contains(schema.name)", agent_page)
+        self.assertIn("uniqueKeyOrdinal", agent_page)
+
     def test_web_dashboard_exposes_merge_sync_not_push_pull_jobs(self):
         dashboard = read_text("frontend/lib/dashboard_page.dart")
         web_api = read_text("frontend/lib/live_sync_api.dart")
@@ -161,12 +182,17 @@ class SyncContractsTests(unittest.TestCase):
     def test_visible_sync_copy_uses_merge_namespace_terms(self):
         dashboard = read_text("frontend/lib/dashboard_page.dart")
         sample_data = read_text("sync_windows_agent/lib/sample_data.dart")
-        visible_copy = dashboard + sample_data
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        visible_copy = dashboard + sample_data + agent_page
 
         self.assertIn("cloud namespace snapshot sources", dashboard)
         self.assertIn("Uploaded by namespace source", dashboard)
+        self.assertIn("POSTGRES CUSTOM SYNC", dashboard)
         self.assertIn("Orders and Inventory rows were merged through the cloud namespace.", sample_data)
         for legacy_text in (
+            "MERGE REPLICATION",
+            "Merge replication",
+            "merge replication",
             "finance-master",
             "sink agents",
             "batches pushed",
@@ -176,14 +202,21 @@ class SyncContractsTests(unittest.TestCase):
         ):
             self.assertNotIn(legacy_text, visible_copy)
 
-    def test_helm_declares_merge_replication_mode_for_central_server(self):
+    def test_helm_declares_free_postgres_custom_sync_mode_for_central_server(self):
         values = read_text("deployment/chart/values.yaml")
         backend_deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
         frontend_deployment = read_text("deployment/chart/templates/deployment.yaml")
+        control_plane = read_text("business/control_plane.tru")
 
-        self.assertIn("syncEngine:\n  mode: mergeReplication", values)
+        self.assertIn("syncEngine:\n  mode: postgresCustomSync", values)
+        self.assertNotIn("mergeReplication", values)
         self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
         self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
+        self.assertIn("function sync_engine_metadata(): map<json>", control_plane)
+        self.assertIn("mode: 'postgresCustomSync'", control_plane)
+        self.assertIn("centralStore: 'postgresql'", control_plane)
+        self.assertIn("sqlServerMergeReplication: false", control_plane)
+        self.assertIn("syncEngine: sync_engine_metadata()", control_plane)
 
 
 if __name__ == "__main__":

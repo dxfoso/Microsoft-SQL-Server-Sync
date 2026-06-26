@@ -36,6 +36,10 @@ sql-sync
 {{- include "sync-admin-web.componentFullname" (list . "postgres-data") -}}
 {{- end -}}
 
+{{- define "sync-admin-web.postgresSecretName" -}}
+{{ .Values.postgres.secretName | default (printf "%s-postgres" (include "sync-admin-web.fullname" .)) }}
+{{- end -}}
+
 {{- define "sync-admin-web.labels" -}}
 app.kubernetes.io/name: {{ include "sync-admin-web.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -52,7 +56,7 @@ app.kubernetes.io/managed-by: Helm
 {{- end -}}
 
 {{- define "sync-admin-web.imagePullPolicy" -}}
-Always
+{{ .Values.imagePullPolicy | default "Always" }}
 {{- end -}}
 
 {{- define "sync-admin-web.usesImagePullSecret" -}}
@@ -65,10 +69,6 @@ Always
 
 {{- define "sync-admin-web.backendSecretName" -}}
 {{ .Values.backend.secretName | default (printf "%s-backend" (include "sync-admin-web.fullname" .)) }}
-{{- end -}}
-
-{{- define "sync-admin-web.adminSecretName" -}}
-{{ .Values.admin.secretName | default (printf "%s-admin" (include "sync-admin-web.fullname" .)) }}
 {{- end -}}
 
 {{- define "sync-admin-web.certManagerAnnotationKey" -}}

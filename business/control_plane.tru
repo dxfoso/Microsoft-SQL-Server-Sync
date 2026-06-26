@@ -175,6 +175,16 @@ function raw_json_error(status: int, message: string): json {
   });
 }
 
+function sync_engine_metadata(): map<json> {
+  return {
+    mode: 'postgresCustomSync',
+    centralStore: 'postgresql',
+    sqlServerMergeReplication: false,
+    legacySnapshotCompatibility: true,
+    conflictPolicy: 'owner-namespace-merge'
+  };
+}
+
 function raw_json_success(payload: map<json>, status: int = 200): json {
   return response.raw({
     status: status,
@@ -1632,9 +1642,30 @@ function bounded_public_snapshot_payloads(rows: array<json>, limit: int): map<js
 }
 
 function ensure_agent(clientName: string, clientUserId: string? = null, ownerUserId: string? = null): map<json> {
-  const existing = db.selectOne(Agent, { clientName });
-  if (existing != null) {
-    return existing;
+  try {
+    const existing = db.selectOne(Agent, { clientName });
+    if (existing != null) {
+      return existing;
+    }
+  } catch (err) {
+    const repaired = db.update(Agent, { clientName }, {
+      tableRelationships: [],
+      diagnosticRequestId: null,
+      diagnosticRequestedAt: null,
+      diagnosticRequestedByUserId: null,
+      diagnosticLastRequestId: null,
+      diagnosticLastUploadedAt: null,
+      diagnosticStatus: 'idle',
+      diagnosticSummary: '',
+      diagnosticPayload: '',
+      clientUserId,
+      ownerUserId,
+      updatedAt: now_iso()
+    });
+    if (repaired != null) {
+      return repaired;
+    }
+    db.delete(Agent, { clientName });
   }
   return db.insert(Agent, {
     clientName,
@@ -2061,6 +2092,7 @@ function live_state(token: string? = null): map<json> {
   );
   return {
     generatedAt: now_iso(),
+    syncEngine: sync_engine_metadata(),
     agents: agentPage.items,
     jobs: jobPage.items,
     snapshots: snapshotPage.items,
@@ -2140,6 +2172,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   }
   return {
     ok: true,
+    syncEngine: sync_engine_metadata(),
     syncSettings: sync_settings_payload(nextAgent),
     tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
     tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),

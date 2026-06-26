@@ -1,0 +1,1 @@
+select id, username, email, role, "ownerUserId", "createdByUserId" from users where username = 'client1' or email = 'client1';

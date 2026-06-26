@@ -7,13 +7,14 @@ dockerPassword: ""
 dockerEmail: ""
 imagePullSecretName: regcred
 createImagePullSecret: true
+imagePullPolicy: Always
 
 nodeSelector: {}
 tolerations: []
 affinity: {}
 
 syncEngine:
-  mode: mergeReplication
+  mode: postgresCustomSync
 
 certManager:
   enabled: true
@@ -71,7 +72,8 @@ backend:
 
 postgres:
   enabled: true
-  image: postgres:16-alpine
+  image: docker.io/library/postgres:16-alpine
+  secretName: sql-sync-postgres
   database: sqlsync
   username: tru
   password: tru

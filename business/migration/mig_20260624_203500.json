@@ -1,0 +1,25 @@
+{
+  "name": "mig_20260624_203500",
+  "timestamp": "2026-06-24T20:35:00.000000000+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "isMaster",
+          "action": "removed",
+          "before": {
+            "ty": "bool",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        }
+      ]
+    }
+  ]
+}

@@ -44,7 +44,10 @@ spec:
             - name: POSTGRES_USER
               value: {{ .Values.postgres.username | quote }}
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.postgres.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sync-admin-web.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data

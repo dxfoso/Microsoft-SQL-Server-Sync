@@ -2607,7 +2607,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       clientName: clientName,
       table: summary.table,
     );
-    final masterSnapshotsFuture = _loadLatestMasterSnapshotsForTable(
+    final namespaceSnapshotsFuture = _loadLatestNamespaceSnapshotsForTable(
       summary.table,
     );
 
@@ -2694,8 +2694,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                       searchController: searchController,
                                       onSearchChanged:
                                           () => setDialogState(() {}),
-                                      rowMasterSnapshotsFuture:
-                                          masterSnapshotsFuture,
+                                      rowNamespaceSnapshotsFuture:
+                                          namespaceSnapshotsFuture,
                                     ),
                           ),
                         ),
@@ -2769,7 +2769,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required AsyncSnapshot<AdminSnapshotDetail?> snapshotState,
     required TextEditingController searchController,
     required VoidCallback onSearchChanged,
-    Future<List<AdminSnapshotDetail>>? rowMasterSnapshotsFuture,
+    Future<List<AdminSnapshotDetail>>? rowNamespaceSnapshotsFuture,
   }) {
     final snapshot = snapshotState.data;
     final filteredRows =
@@ -2842,23 +2842,23 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             ? 'This snapshot has no rows.'
                             : 'No rows matched your search. Try a broader term or clear the search box.',
                   )
-                  : rowMasterSnapshotsFuture == null
+                  : rowNamespaceSnapshotsFuture == null
                   ? _buildSnapshotGrid(snapshot, filteredRows)
                   : FutureBuilder<List<AdminSnapshotDetail>>(
-                    future: rowMasterSnapshotsFuture,
-                    builder: (context, masterState) {
-                      final rowMasterCounts =
-                          masterState.hasData
-                              ? _masterRowCountsForSnapshot(
+                    future: rowNamespaceSnapshotsFuture,
+                    builder: (context, namespaceState) {
+                      final rowSourceCounts =
+                          namespaceState.hasData
+                              ? _namespaceRowCountsForSnapshot(
                                 snapshot,
-                                masterState.data!,
+                                namespaceState.data!,
                               )
                               : null;
                       return _buildSnapshotGrid(
                         snapshot,
                         filteredRows,
-                        showMasterMatchColumn: true,
-                        rowMasterCounts: rowMasterCounts,
+                        showNamespaceMatchColumn: true,
+                        rowSourceCounts: rowSourceCounts,
                       );
                     },
                   ),
@@ -3817,7 +3817,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   String _roleLabel() => 'Participant';
 
-  String _syncModeDisplay(String syncMode) => 'MERGE REPLICATION';
+  String _syncModeDisplay(String syncMode) => 'POSTGRES CUSTOM SYNC';
 
   String _syncDirectionDisplay(String direction) => 'SYNC';
 
@@ -5171,7 +5171,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             'Flow',
             tableState.enabled ? 'Merge participant' : 'Disabled',
           ),
-          const MapEntry('Mode', 'MERGE REPLICATION'),
+          const MapEntry('Mode', 'POSTGRES CUSTOM SYNC'),
           const MapEntry('Direction', 'SYNC'),
           MapEntry('Database', agent.database),
           MapEntry(
@@ -5826,11 +5826,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildSnapshotGrid(
     AdminSnapshotDetail snapshot,
     List<_ScoredSnapshotRow> filteredRows, {
-    bool showMasterMatchColumn = false,
-    Map<String, int>? rowMasterCounts,
+    bool showNamespaceMatchColumn = false,
+    Map<String, int>? rowSourceCounts,
   }) {
     const rowNumberWidth = 72.0;
-    const masterCountWidth = 104.0;
+    const sourceCountWidth = 104.0;
     const cellWidth = 220.0;
 
     return LayoutBuilder(
@@ -5848,7 +5848,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 ? constraints.maxHeight
                 : MediaQuery.sizeOf(context).height * 0.65;
 
-        if (showMasterMatchColumn) {
+        if (showNamespaceMatchColumn) {
           final stickyColumnController = ScrollController();
           final horizontalController = ScrollController();
           return Container(
@@ -5925,7 +5925,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                         row: match.row,
                                         rowNumber: match.originalIndex + 1,
                                         rowNumberWidth: rowNumberWidth,
-                                        masterCountWidth: masterCountWidth,
+                                        sourceCountWidth: sourceCountWidth,
                                         cellWidth: cellWidth,
                                         alternate: index.isOdd,
                                       );
@@ -5940,7 +5940,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                   Container(
-                    width: masterCountWidth,
+                    width: sourceCountWidth,
                     decoration: const BoxDecoration(
                       color: Color(0xFFF5F3FF),
                       border: Border(
@@ -5951,7 +5951,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       children: [
                         _buildSnapshotStickyHeaderCell(
                           'Sources',
-                          masterCountWidth,
+                          sourceCountWidth,
                         ),
                         Expanded(
                           child: ListView.builder(
@@ -5961,14 +5961,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             itemBuilder: (context, index) {
                               final match = filteredRows[index];
                               final rowNumber = match.originalIndex + 1;
-                              return _buildSnapshotStickyMasterCell(
+                              return _buildSnapshotStickySourceCell(
                                 snapshot: snapshot,
                                 row: match.row,
                                 rowNumber: rowNumber,
-                                width: masterCountWidth,
+                                width: sourceCountWidth,
                                 alternate: index.isOdd,
                                 value:
-                                    rowMasterCounts?[_snapshotRowSignature(
+                                    rowSourceCounts?[_snapshotRowSignature(
                                       snapshot.columns,
                                       match.row,
                                     )],
@@ -6030,7 +6030,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               row: match.row,
                               rowNumber: match.originalIndex + 1,
                               rowNumberWidth: rowNumberWidth,
-                              masterCountWidth: masterCountWidth,
+                              sourceCountWidth: sourceCountWidth,
                               cellWidth: cellWidth,
                               alternate: index.isOdd,
                             );
@@ -6093,7 +6093,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required Map<String, String?> row,
     required int rowNumber,
     required double rowNumberWidth,
-    required double masterCountWidth,
+    required double sourceCountWidth,
     required double cellWidth,
     required bool alternate,
   }) {
@@ -6129,7 +6129,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildSnapshotStickyMasterCell({
+  Widget _buildSnapshotStickySourceCell({
     required AdminSnapshotDetail snapshot,
     required Map<String, String?> row,
     required int rowNumber,
@@ -6178,7 +6178,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required Map<String, String?> row,
     required int rowNumber,
   }) async {
-    final attemptsFuture = _loadMasterRowAttempts(
+    final attemptsFuture = _loadNamespaceRowAttempts(
       sourceSnapshot: snapshot,
       row: row,
     );
@@ -6215,7 +6215,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   _buildSnapshotRowValuePreview(snapshot.columns, row),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: FutureBuilder<List<_MasterRowAttempt>>(
+                    child: FutureBuilder<List<_NamespaceRowAttempt>>(
                       future: attemptsFuture,
                       builder: (context, attemptState) {
                         if (attemptState.connectionState ==
@@ -6231,14 +6231,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           );
                         }
                         final attempts =
-                            attemptState.data ?? const <_MasterRowAttempt>[];
+                            attemptState.data ?? const <_NamespaceRowAttempt>[];
                         if (attempts.isEmpty) {
                           return const EmptyStateCard(
                             message:
                                 'No cloud namespace snapshot contains this same row value yet.',
                           );
                         }
-                        return _buildMasterRowAttemptList(attempts);
+                        return _buildNamespaceRowAttemptList(attempts);
                       },
                     ),
                   ),
@@ -6390,7 +6390,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildMasterRowAttemptList(List<_MasterRowAttempt> attempts) {
+  Widget _buildNamespaceRowAttemptList(List<_NamespaceRowAttempt> attempts) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -6401,14 +6401,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             itemCount: attempts.length,
             separatorBuilder: (_, _) => const SizedBox(height: 6),
             itemBuilder:
-                (context, index) => _buildMasterRowAttemptTile(attempts[index]),
+                (context, index) =>
+                    _buildNamespaceRowAttemptTile(attempts[index]),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildMasterRowAttemptTile(_MasterRowAttempt attempt) {
+  Widget _buildNamespaceRowAttemptTile(_NamespaceRowAttempt attempt) {
     final usedByText =
         attempt.usedByClients.isEmpty
             ? 'No client has merged this namespace source yet'
@@ -6452,7 +6453,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  attempt.masterName,
+                  attempt.sourceName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -6491,7 +6492,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Future<List<_MasterRowAttempt>> _loadMasterRowAttempts({
+  Future<List<_NamespaceRowAttempt>> _loadNamespaceRowAttempts({
     required AdminSnapshotDetail sourceSnapshot,
     required Map<String, String?> row,
   }) async {
@@ -6513,8 +6514,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           if (namespaceNames.contains(snapshot.clientName)) {
             return true;
           }
-          return (state?.agents ?? const <AdminAgent>[])
-              .any((agent) => _snapshotMatchesAgentNamespace(snapshot, agent));
+          return (state?.agents ?? const <AdminAgent>[]).any(
+            (agent) => _snapshotMatchesAgentNamespace(snapshot, agent),
+          );
         })
         .toList(growable: false);
 
@@ -6531,7 +6533,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       }),
     );
 
-    final attempts = <_MasterRowAttempt>[];
+    final attempts = <_NamespaceRowAttempt>[];
     var sourceAdded = false;
     for (final snapshot in loadedSnapshots.whereType<AdminSnapshotDetail>()) {
       final isSelectedSource = snapshot.id == sourceSnapshot.id;
@@ -6547,22 +6549,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         sourceAdded = true;
       }
       attempts.add(
-        _MasterRowAttempt(
-          masterName: snapshot.clientName,
+        _NamespaceRowAttempt(
+          sourceName: snapshot.clientName,
           snapshot: snapshot,
           isSelectedSource: isSelectedSource,
-          usedByClients: _clientsUsingMasterSnapshot(snapshot),
+          usedByClients: _clientsUsingNamespaceSnapshot(snapshot),
         ),
       );
     }
 
     if (!sourceAdded) {
       attempts.add(
-        _MasterRowAttempt(
-          masterName: sourceSnapshot.clientName,
+        _NamespaceRowAttempt(
+          sourceName: sourceSnapshot.clientName,
           snapshot: sourceSnapshot,
           isSelectedSource: true,
-          usedByClients: _clientsUsingMasterSnapshot(sourceSnapshot),
+          usedByClients: _clientsUsingNamespaceSnapshot(sourceSnapshot),
         ),
       );
     }
@@ -6576,7 +6578,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return attempts;
   }
 
-  Future<List<AdminSnapshotDetail>> _loadLatestMasterSnapshotsForTable(
+  Future<List<AdminSnapshotDetail>> _loadLatestNamespaceSnapshotsForTable(
     String table,
   ) async {
     final state = _state;
@@ -6594,8 +6596,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           if (namespaceNames.contains(snapshot.clientName)) {
             return true;
           }
-          return state.agents
-              .any((agent) => _snapshotMatchesAgentNamespace(snapshot, agent));
+          return state.agents.any(
+            (agent) => _snapshotMatchesAgentNamespace(snapshot, agent),
+          );
         })
         .toList(growable: false);
     final seenIds = <String>{};
@@ -6613,11 +6616,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return loaded.whereType<AdminSnapshotDetail>().toList(growable: false);
   }
 
-  Map<String, int> _masterRowCountsForSnapshot(
+  Map<String, int> _namespaceRowCountsForSnapshot(
     AdminSnapshotDetail sourceSnapshot,
-    List<AdminSnapshotDetail> masterSnapshots,
+    List<AdminSnapshotDetail> namespaceSnapshots,
   ) {
-    final snapshots = <AdminSnapshotDetail>[...masterSnapshots];
+    final snapshots = <AdminSnapshotDetail>[...namespaceSnapshots];
     if (_isNamespaceClientName(sourceSnapshot.clientName) &&
         !snapshots.any((snapshot) => snapshot.id == sourceSnapshot.id)) {
       snapshots.add(sourceSnapshot);
@@ -6629,13 +6632,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           !_isNamespaceSnapshot(snapshot)) {
         continue;
       }
-      final uniqueRowsInMaster = <String>{};
+      final uniqueRowsInSource = <String>{};
       for (final row in snapshot.rows) {
-        uniqueRowsInMaster.add(
+        uniqueRowsInSource.add(
           _snapshotRowSignature(sourceSnapshot.columns, row),
         );
       }
-      for (final signature in uniqueRowsInMaster) {
+      for (final signature in uniqueRowsInSource) {
         counts[signature] = (counts[signature] ?? 0) + 1;
       }
     }
@@ -6668,7 +6671,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return false;
   }
 
-  List<String> _clientsUsingMasterSnapshot(AdminSnapshotDetail snapshot) {
+  List<String> _clientsUsingNamespaceSnapshot(AdminSnapshotDetail snapshot) {
     final state = _state;
     if (state == null) {
       return const [];
@@ -8914,15 +8917,15 @@ class _ScoredSnapshotRow {
   final double score;
 }
 
-class _MasterRowAttempt {
-  const _MasterRowAttempt({
-    required this.masterName,
+class _NamespaceRowAttempt {
+  const _NamespaceRowAttempt({
+    required this.sourceName,
     required this.snapshot,
     required this.isSelectedSource,
     required this.usedByClients,
   });
 
-  final String masterName;
+  final String sourceName;
   final AdminSnapshotDetail snapshot;
   final bool isSelectedSource;
   final List<String> usedByClients;

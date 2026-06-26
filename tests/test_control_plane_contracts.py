@@ -151,6 +151,27 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("snapshotClientName = uploadOwnerUserId", source)
         self.assertIn("clientName: snapshotClientName", source)
 
+    def test_ensure_agent_repairs_stale_rows_before_recreating_them(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+        ensure_agent_match = re.search(
+            r"function ensure_agent\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(ensure_agent_match)
+        body = ensure_agent_match.group("body")
+
+        self.assertIn("try {", body)
+        self.assertIn("const existing = db.selectOne(Agent, { clientName });", body)
+        self.assertIn("} catch (err) {", body)
+        self.assertIn("const repaired = db.update(Agent, { clientName }, {", body)
+        self.assertIn("tableRelationships: [],", body)
+        self.assertIn("diagnosticStatus: 'idle',", body)
+        self.assertIn("db.delete(Agent, { clientName });", body)
+        self.assertIn("return db.insert(Agent, {", body)
+
     def test_chunked_snapshots_can_be_downloaded_by_later_jobs(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
@@ -179,6 +200,18 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("uploadSnapshot(", body)
         self.assertIn("publishOwnerSnapshot: true", body)
         self.assertNotIn("uploadSnapshotRows", body)
+
+    def test_control_plane_advertises_postgres_custom_sync_engine(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("function sync_engine_metadata(): map<json>", source)
+        self.assertIn("mode: 'postgresCustomSync'", source)
+        self.assertIn("centralStore: 'postgresql'", source)
+        self.assertIn("sqlServerMergeReplication: false", source)
+        self.assertIn("legacySnapshotCompatibility: true", source)
+        self.assertIn("syncEngine: sync_engine_metadata()", source)
 
 
 if __name__ == "__main__":

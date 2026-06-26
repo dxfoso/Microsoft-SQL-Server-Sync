@@ -588,7 +588,7 @@ function Start-DesktopApp {
         }
     }
 
-    $backendBaseUrl = "https://sync.velvet-leaf.com/call"
+    $backendBaseUrl = "http://127.0.0.1:$BackendPort/call"
     $flutterArgs = @('run', '-d', $DesktopDevice) + (New-DartDefineArgs -ProjectPath $DesktopPath -BackendBaseUrl $backendBaseUrl)
 
     Write-Host "Starting Windows desktop client: flutter run -d $DesktopDevice" -ForegroundColor Cyan

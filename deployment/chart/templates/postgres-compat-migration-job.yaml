@@ -1,0 +1,43 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "sync-admin-web.fullname" . }}-postgres-compat-migration
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-compat-migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "sync-admin-web.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-compat-migration
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: postgres-compat-migration
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sync-admin-web.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              psql \
+                -h {{ include "sync-admin-web.postgresFullname" . | quote }} \
+                -U {{ .Values.postgres.username | quote }} \
+                -d {{ .Values.postgres.database | quote }} \
+                -v ON_ERROR_STOP=1 \
+                -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'agents' AND column_name = 'isMaster') THEN ALTER TABLE agents ALTER COLUMN \"isMaster\" DROP NOT NULL; ALTER TABLE agents ALTER COLUMN \"isMaster\" SET DEFAULT false; END IF; END \$\$;"
+{{- end }}

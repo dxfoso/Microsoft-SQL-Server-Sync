@@ -66,7 +66,7 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
 
-    def test_chart_declares_merge_replication_sync_engine(self):
+    def test_chart_declares_free_postgres_custom_sync_engine(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
         frontend_deployment = (ROOT / "templates" / "deployment.yaml").read_text(
             encoding="utf-8"
@@ -75,7 +75,8 @@ class ChartContractsTests(unittest.TestCase):
             ROOT / "templates" / "backend-deployment.yaml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("syncEngine:\n  mode: mergeReplication", values_yaml)
+        self.assertIn("syncEngine:\n  mode: postgresCustomSync", values_yaml)
+        self.assertNotIn("mergeReplication", values_yaml)
         self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
         self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
         self.assertNotIn("syncEngineMode", values_yaml)
@@ -99,6 +100,7 @@ class ChartContractsTests(unittest.TestCase):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
 
         self.assertNotIn(":latest", values_yaml)
+        self.assertNotIn("image: postgres:16-alpine", values_yaml)
         self.assertIn(
             "image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:dev",
             values_yaml,
@@ -107,6 +109,39 @@ class ChartContractsTests(unittest.TestCase):
             "image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:dev",
             values_yaml,
         )
+        self.assertIn("image: docker.io/library/postgres:16-alpine", values_yaml)
+
+    def test_postgres_password_is_secret_backed(self):
+        postgres_deployment = (
+            ROOT / "templates" / "postgres-deployment.yaml"
+        ).read_text(encoding="utf-8")
+        postgres_secret = (ROOT / "templates" / "postgres-secret.yaml").read_text(
+            encoding="utf-8"
+        )
+        helpers = (ROOT / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
+
+        self.assertIn("valueFrom:", postgres_deployment)
+        self.assertIn("secretKeyRef:", postgres_deployment)
+        self.assertIn("include \"sync-admin-web.postgresSecretName\"", postgres_deployment)
+        self.assertNotIn("value: {{ .Values.postgres.password", postgres_deployment)
+        self.assertIn("kind: Secret", postgres_secret)
+        self.assertIn("POSTGRES_PASSWORD", postgres_secret)
+        self.assertIn("sync-admin-web.postgresSecretName", helpers)
+        self.assertNotIn("sync-admin-web.adminSecretName", helpers)
+
+    def test_postgres_compat_migration_relaxes_removed_legacy_agent_columns(self):
+        migration_job = (
+            ROOT / "templates" / "postgres-compat-migration-job.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("kind: Job", migration_job)
+        self.assertIn('"helm.sh/hook": post-install,post-upgrade', migration_job)
+        self.assertIn("secretKeyRef:", migration_job)
+        self.assertIn("include \"sync-admin-web.postgresSecretName\"", migration_job)
+        self.assertIn("information_schema.columns", migration_job)
+        self.assertIn("column_name = 'isMaster'", migration_job)
+        self.assertIn('ALTER TABLE agents ALTER COLUMN \\"isMaster\\" DROP NOT NULL', migration_job)
+        self.assertIn('ALTER TABLE agents ALTER COLUMN \\"isMaster\\" SET DEFAULT false', migration_job)
 
     def test_ingress_routes_public_backend_paths_to_backend_service(self):
         ingress = (ROOT / "templates" / "ingress.yaml").read_text(encoding="utf-8")

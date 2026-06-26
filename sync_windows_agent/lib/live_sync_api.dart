@@ -695,7 +695,24 @@ class AgentControlPlaneClient {
       );
     }
 
-    return RemoteSnapshot.fromJson(Map<String, dynamic>.from(decoded));
+    if (manifestResponse['snapshot'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Chunked download manifest is missing snapshot metadata.',
+      );
+    }
+
+    final snapshotMetadata = Map<String, dynamic>.from(
+      manifestResponse['snapshot'] as Map,
+    );
+    final snapshotPayload = Map<String, dynamic>.from(decoded);
+    return RemoteSnapshot.fromJson({
+      ...snapshotPayload,
+      ...snapshotMetadata,
+      'columns': snapshotPayload['columns'] ?? snapshotMetadata['columns'],
+      'rows': snapshotPayload['rows'] ?? const [],
+      'sourceJobId':
+          snapshotPayload['sourceJobId'] ?? snapshotMetadata['sourceJobId'],
+    });
   }
 
   Future<RemoteSnapshot> _downloadSnapshotRows(

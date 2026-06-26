@@ -304,7 +304,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   String _syncTableKey(String table, {String? database}) {
     final databaseName = (database ?? _selectedDatabase ?? '').trim();
-    final tableName = _stripDefaultSchema(table);
+    final tableName = _stripKnownDatabaseAndDefaultSchema(
+      table,
+      database: databaseName,
+    );
     if (databaseName.isEmpty) {
       return tableName;
     }
@@ -314,15 +317,29 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String _localTableName(String syncTableKey) {
     final separatorIndex = syncTableKey.indexOf(_syncTableKeySeparator);
     if (separatorIndex < 0) {
-      return _stripDefaultSchema(syncTableKey);
+      return _stripKnownDatabaseAndDefaultSchema(syncTableKey);
     }
-    return _stripDefaultSchema(
+    final databaseName = syncTableKey.substring(0, separatorIndex);
+    return _stripKnownDatabaseAndDefaultSchema(
       syncTableKey.substring(separatorIndex + _syncTableKeySeparator.length),
+      database: databaseName,
     );
   }
 
   String _stripDefaultSchema(String table) =>
       table.trim().replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
+
+  String _stripKnownDatabaseAndDefaultSchema(String table, {String? database}) {
+    var tableName = table.trim();
+    final databaseName = (database ?? _selectedDatabase ?? '').trim();
+    if (databaseName.isNotEmpty) {
+      final databasePrefix = '$databaseName.';
+      if (tableName.toLowerCase().startsWith(databasePrefix.toLowerCase())) {
+        tableName = tableName.substring(databasePrefix.length);
+      }
+    }
+    return _stripDefaultSchema(tableName);
+  }
 
   String _databaseNameFromSyncKey(String syncTableKey) {
     final separatorIndex = syncTableKey.indexOf(_syncTableKeySeparator);
@@ -355,7 +372,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     Iterable<String> discoveredTables,
   ) {
     final visible = <String>{
-      ...discoveredTables.map(_stripDefaultSchema),
+      ...discoveredTables.map(
+        (table) =>
+            _stripKnownDatabaseAndDefaultSchema(table, database: database),
+      ),
       ..._syncState.tables.keys
           .where((key) => _syncKeyMatchesDatabase(key, database))
           .map(_localTableName),
@@ -420,7 +440,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: enabled,
         message:
             enabled
-                ? 'Merge replication enabled for ${widget.clientName}.'
+                ? 'Custom sync enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
         direction: syncDirection,
         rowCount: current.rowCount,
@@ -439,9 +459,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         direction: syncDirection,
         syncMode: syncMode,
         message:
-            enabled
-                ? 'Waiting for the next merge replication sync.'
-                : 'Sync disabled.',
+            enabled ? 'Waiting for the next custom sync.' : 'Sync disabled.',
         history: nextHistory,
       ),
     );
@@ -468,7 +486,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return related;
   }
 
-  Future<void> _enableRelatedTablesForMergePackage({
+  Future<void> _enableRelatedTablesForCustomSyncPackage({
     required String syncKey,
     required String syncMode,
   }) async {
@@ -498,7 +516,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         SnackBar(
           content: SelectableText(
             'Enabled ${newlyEnabled.length} related table'
-            '${newlyEnabled.length == 1 ? '' : 's'} for merge replication.',
+            '${newlyEnabled.length == 1 ? '' : 's'} for custom sync.',
           ),
         ),
       );
@@ -512,8 +530,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       selectedMode = await _openSyncModeDialog(
         table: table,
         initialMode: current.syncMode,
-        title: 'Start merge replication',
-        confirmLabel: 'Enable merge',
+        title: 'Start custom sync',
+        confirmLabel: 'Enable sync',
       );
       if (!mounted || selectedMode == null) {
         return;
@@ -533,7 +551,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       _updateSyncEnabledTable(table, enabled, selectedSyncMode: normalizedMode);
       if (enabled) {
-        await _enableRelatedTablesForMergePackage(
+        await _enableRelatedTablesForCustomSyncPackage(
           syncKey: syncKey,
           syncMode: normalizedMode,
         );
@@ -1298,7 +1316,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   String _syncModeLabel(String syncMode) {
-    return 'Merge replication';
+    return 'Custom sync';
   }
 
   IconData _syncModeIcon(String syncMode) {
@@ -1355,7 +1373,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final selectedMode = await _openSyncModeDialog(
       table: row.table,
       initialMode: row.state.syncMode,
-      title: 'Merge replication',
+      title: 'Custom sync',
       confirmLabel: 'Apply',
     );
     if (!mounted || selectedMode == null) {
@@ -1775,7 +1793,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               : 'Paused';
       final nextMessage =
           policy.enabled
-              ? 'Waiting for the next merge replication sync.'
+              ? 'Waiting for the next custom sync.'
               : 'Sync disabled.';
       final nextDirection = syncDirectionForMode(policy.syncMode);
       final nextState = current.copyWith(
@@ -3611,7 +3629,9 @@ SELECT
   c.is_identity,
   c.is_computed,
   ' + @generatedAlwaysExpression + N',
-  CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS is_primary_key
+  CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS is_primary_key,
+  CASE WHEN uk.column_id IS NULL THEN 0 ELSE 1 END AS is_unique_key,
+  COALESCE(uk.key_ordinal, 0) AS unique_key_ordinal
 FROM sys.columns AS c
 INNER JOIN sys.tables AS t ON t.object_id = c.object_id
 INNER JOIN sys.schemas AS s ON s.schema_id = t.schema_id
@@ -3622,6 +3642,36 @@ LEFT JOIN (
     ON ic.object_id = i.object_id AND ic.index_id = i.index_id
   WHERE i.is_primary_key = 1
 ) AS pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
+LEFT JOIN (
+  SELECT ic.object_id, ic.column_id, ic.key_ordinal
+  FROM sys.index_columns AS ic
+  INNER JOIN (
+    SELECT ranked.object_id, ranked.index_id
+    FROM (
+      SELECT
+        i.object_id,
+        i.index_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY i.object_id
+          ORDER BY COUNT(*) ASC, i.index_id ASC
+        ) AS rank
+      FROM sys.indexes AS i
+      INNER JOIN sys.index_columns AS key_ic
+        ON key_ic.object_id = i.object_id
+       AND key_ic.index_id = i.index_id
+       AND key_ic.is_included_column = 0
+      WHERE i.is_unique = 1
+        AND i.is_primary_key = 0
+        AND i.is_hypothetical = 0
+        AND COALESCE(i.has_filter, 0) = 0
+      GROUP BY i.object_id, i.index_id
+    ) AS ranked
+    WHERE ranked.rank = 1
+  ) AS best_unique
+    ON best_unique.object_id = ic.object_id
+   AND best_unique.index_id = ic.index_id
+  WHERE ic.is_included_column = 0
+) AS uk ON uk.object_id = c.object_id AND uk.column_id = c.column_id
 WHERE s.name = @schemaName
   AND t.name = @tableName
 ORDER BY c.column_id;';
@@ -3674,6 +3724,10 @@ EXEC sp_executesql
           isPrimaryKey:
               parts.length >= 7 &&
               (parts[6] == '1' || parts[6].toLowerCase() == 'true'),
+          isUniqueKey:
+              parts.length >= 8 &&
+              (parts[7] == '1' || parts[7].toLowerCase() == 'true'),
+          uniqueKeyOrdinal: parts.length >= 9 ? int.tryParse(parts[8]) ?? 0 : 0,
         ),
       );
     }
@@ -4035,6 +4089,23 @@ ORDER BY [__sync_agent_row_number];
     }
     if (primaryKeys.isNotEmpty) {
       return primaryKeys;
+    }
+    final uniqueKeys = schemas
+      .where(
+        (schema) =>
+            schema.isUniqueKey && snapshotColumnSet.contains(schema.name),
+      )
+      .toList(growable: false)..sort((left, right) {
+      final ordinalCompare = left.uniqueKeyOrdinal.compareTo(
+        right.uniqueKeyOrdinal,
+      );
+      if (ordinalCompare != 0) {
+        return ordinalCompare;
+      }
+      return left.name.compareTo(right.name);
+    });
+    if (uniqueKeys.isNotEmpty) {
+      return uniqueKeys.map((schema) => schema.name).toList(growable: false);
     }
     if (writableColumns.isNotEmpty) {
       return writableColumns;
@@ -7090,6 +7161,8 @@ class _TableColumnSchema {
     required this.isComputed,
     required this.generatedAlwaysType,
     required this.isPrimaryKey,
+    required this.isUniqueKey,
+    required this.uniqueKeyOrdinal,
   });
 
   final String name;
@@ -7099,6 +7172,8 @@ class _TableColumnSchema {
   final bool isComputed;
   final int generatedAlwaysType;
   final bool isPrimaryKey;
+  final bool isUniqueKey;
+  final int uniqueKeyOrdinal;
 }
 
 class _IntQueryResult {
