@@ -51,7 +51,7 @@ const recentEvents = <AgentEvent>[
     time: '09:55',
     title: 'Merge sync completed',
     message:
-        'Orders and Inventory rows were merged through the cloud namespace.',
+        'Orders and Inventory rows were synchronized through merge replication.',
     level: AgentEventLevel.info,
   ),
   AgentEvent(

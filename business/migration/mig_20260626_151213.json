@@ -1,0 +1,152 @@
+{
+  "name": "mig_20260626_151213",
+  "timestamp": "2026-06-26T15:12:13.617493+00:00",
+  "objects": [
+    {
+      "object": "SyncJob",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "publisherPassword",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "publisherUser",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "publisherDatabase",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "subscriberClientName",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "128",
+            "default": null
+          }
+        },
+        {
+          "field": "publisherServer",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "publicationName",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "publisherUseWindowsAuth",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "bool",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "mergeRole",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "32",
+            "default": null
+          }
+        }
+      ]
+    },
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "replicationUseWindowsAuth",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "bool",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "replicationPassword",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "replicationUser",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "256",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

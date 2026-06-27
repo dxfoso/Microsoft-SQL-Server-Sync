@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -11,38 +9,7 @@ const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
   defaultValue: 'https://sync.velvet-leaf.com/call',
 );
-const int _snapshotTransferChunkSizeBytes = 100 * 1024;
-const int _snapshotTransferMaxAttempts = 10;
-const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
 const Duration _controlPlaneRequestTimeout = Duration(seconds: 10);
-const List<Duration> _snapshotTransferRetryDelays = <Duration>[
-  Duration(seconds: 1),
-  Duration(seconds: 2),
-  Duration(seconds: 4),
-  Duration(seconds: 8),
-  Duration(seconds: 15),
-  Duration(seconds: 30),
-  Duration(seconds: 60),
-  Duration(seconds: 60),
-  Duration(seconds: 60),
-];
-
-typedef TransferProgressCallback =
-    void Function(TransferProgressSnapshot progress);
-
-class TransferProgressSnapshot {
-  const TransferProgressSnapshot({
-    required this.bytesTransferred,
-    required this.totalBytes,
-    this.currentChunk = 0,
-    this.totalChunks = 0,
-  });
-
-  final int bytesTransferred;
-  final int totalBytes;
-  final int currentChunk;
-  final int totalChunks;
-}
 
 class ClientUpdateInfo {
   const ClientUpdateInfo({
@@ -138,33 +105,6 @@ class AgentControlPlaneClient {
       ),
       phase,
     );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _exceptionFromResponse(response);
-    }
-    return _unwrapApiResponse(jsonDecode(response.body));
-  }
-
-  Future<dynamic> _invokeTransferFunction(
-    String functionName,
-    Map<String, dynamic> args,
-    String phase,
-  ) async {
-    final payloadArgs = <String, dynamic>{...args};
-    if (_authToken != null &&
-        _authToken!.isNotEmpty &&
-        functionName != 'auth_login') {
-      payloadArgs['token'] = _authToken;
-    }
-
-    final response = await _transferRequestWithRetry(
-      () => _client.post(
-        _uriCall(),
-        headers: _headers(json: true),
-        body: jsonEncode({'name': functionName, 'args': payloadArgs}),
-      ),
-      phase,
-    );
-
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _exceptionFromResponse(response);
     }
@@ -293,98 +233,6 @@ class AgentControlPlaneClient {
     return ClientUpdateInfo.fromJson(decoded);
   }
 
-  bool _isRetryableTransferStatus(int statusCode) {
-    return statusCode == 408 ||
-        statusCode == 429 ||
-        statusCode == 500 ||
-        statusCode == 502 ||
-        statusCode == 503 ||
-        statusCode == 504;
-  }
-
-  Duration _transferRetryDelay(int attempt) {
-    final index =
-        attempt.clamp(0, _snapshotTransferRetryDelays.length - 1).toInt();
-    return _snapshotTransferRetryDelays[index];
-  }
-
-  Future<http.Response> _transferRequestWithRetry(
-    Future<http.Response> Function() request,
-    String phase,
-  ) async {
-    Object? lastError;
-    for (
-      var attempt = 0;
-      attempt < _snapshotTransferMaxAttempts;
-      attempt += 1
-    ) {
-      try {
-        final response = await request().timeout(
-          _snapshotTransferRequestTimeout,
-        );
-        if (!_isRetryableTransferStatus(response.statusCode) ||
-            attempt == _snapshotTransferMaxAttempts - 1) {
-          return response;
-        }
-        lastError = AgentControlPlaneException(
-          _errorMessageFromResponse(response),
-          statusCode: response.statusCode,
-        );
-      } catch (error) {
-        lastError = error;
-        if (attempt == _snapshotTransferMaxAttempts - 1) {
-          throw AgentControlPlaneException(
-            'Control plane connection dropped during $phase. Retrying automatically.',
-            statusCode: 503,
-          );
-        }
-      }
-      await Future<void>.delayed(_transferRetryDelay(attempt));
-    }
-
-    throw AgentControlPlaneException(
-      'Control plane connection dropped during $phase. Retrying automatically. $lastError',
-      statusCode: 503,
-    );
-  }
-
-  Future<dynamic> _invokeFunctionWithRetry(
-    String functionName,
-    Map<String, dynamic> args,
-    String phase,
-  ) async {
-    Object? lastError;
-    for (
-      var attempt = 0;
-      attempt < _snapshotTransferMaxAttempts;
-      attempt += 1
-    ) {
-      try {
-        return await _invokeFunction(functionName, args, phase);
-      } catch (error) {
-        lastError = error;
-        final statusCode =
-            error is AgentControlPlaneException ? error.statusCode : null;
-        final canRetry =
-            statusCode != null && _isRetryableTransferStatus(statusCode);
-        if (!canRetry || attempt == _snapshotTransferMaxAttempts - 1) {
-          throw error is AgentControlPlaneException
-              ? error
-              : AgentControlPlaneException(
-                'Control plane connection dropped during $phase. Retrying automatically.',
-                statusCode: 503,
-              );
-        }
-        await Future<void>.delayed(_transferRetryDelay(attempt));
-      }
-    }
-
-    throw AgentControlPlaneException(
-      'Control plane connection dropped during $phase. Retrying automatically. $lastError',
-      statusCode: 503,
-    );
-  }
-
   Future<HeartbeatResult> heartbeat({
     required String clientName,
     required String machineName,
@@ -392,6 +240,9 @@ class AgentControlPlaneClient {
     required int autoSyncIntervalMinutes,
     required String server,
     required String database,
+    required bool replicationUseWindowsAuth,
+    required String replicationUser,
+    required String replicationPassword,
     required bool serverConnected,
     required bool sqlConnected,
     required String? selectedTable,
@@ -405,6 +256,9 @@ class AgentControlPlaneClient {
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
       'server': server,
       'database': database,
+      'replicationUseWindowsAuth': replicationUseWindowsAuth,
+      'replicationUser': replicationUser,
+      'replicationPassword': replicationPassword,
       'serverConnected': serverConnected,
       'sqlConnected': sqlConnected,
       'selectedTable': selectedTable,
@@ -570,263 +424,12 @@ class AgentControlPlaneClient {
     return _parseJobPayload(response, 'job progress');
   }
 
-  Future<UploadSnapshotResult> uploadSnapshot(
-    String jobId, {
-    required String clientName,
-    required String table,
-    required int rowCount,
-    required String snapshotCreatedAt,
-    required int snapshotBytes,
-    required String snapshotJson,
-    bool publishOwnerSnapshot = false,
-    TransferProgressCallback? onProgress,
-  }) async {
-    final payloadBytes = Uint8List.fromList(utf8.encode(snapshotJson));
-    final compressedBytes = Uint8List.fromList(gzip.encode(payloadBytes));
-    final chunkCount =
-        (compressedBytes.length / _snapshotTransferChunkSizeBytes).ceil();
-    final uploadId =
-        '$jobId-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
-
-    final startDecoded =
-        await _invokeTransferFunction('jobs_upload_chunk_start', {
-          'jobId': jobId,
-          'uploadId': uploadId,
-          'clientName': clientName,
-          'table': table,
-          'rowCount': rowCount,
-          'snapshotCreatedAt': snapshotCreatedAt,
-          'snapshotBytes': snapshotBytes,
-          'compressedBytes': compressedBytes.length,
-          'chunkSizeBytes': _snapshotTransferChunkSizeBytes,
-          'chunkCount': chunkCount,
-          'encoding': 'gzip',
-          'publishOwnerSnapshot': publishOwnerSnapshot,
-        }, 'starting snapshot upload');
-    if (startDecoded is! Map) {
-      throw const AgentControlPlaneException(
-        'Unexpected chunked upload start payload.',
-      );
-    }
-    final receivedIndexes =
-        (startDecoded['receivedIndexes'] as List<dynamic>?)
-            ?.map((item) => (item as num).round())
-            .toSet() ??
-        <int>{};
-    var bytesTransferred = 0;
-
-    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-      final currentChunk = chunkIndex + 1;
-      if (receivedIndexes.contains(chunkIndex)) {
-        final skippedStart = chunkIndex * _snapshotTransferChunkSizeBytes;
-        final skippedEnd = skippedStart + _snapshotTransferChunkSizeBytes;
-        bytesTransferred +=
-            (skippedEnd > compressedBytes.length
-                ? compressedBytes.length
-                : skippedEnd) -
-            skippedStart;
-        onProgress?.call(
-          TransferProgressSnapshot(
-            bytesTransferred: bytesTransferred,
-            totalBytes: compressedBytes.length,
-            currentChunk: currentChunk,
-            totalChunks: chunkCount,
-          ),
-        );
-        continue;
-      }
-
-      final start = chunkIndex * _snapshotTransferChunkSizeBytes;
-      final end = start + _snapshotTransferChunkSizeBytes;
-      final chunkBytes = compressedBytes.sublist(
-        start,
-        end > compressedBytes.length ? compressedBytes.length : end,
-      );
-      await _invokeTransferFunction(
-        'jobs_upload_chunk',
-        {
-          'jobId': jobId,
-          'uploadId': uploadId,
-          'chunkIndex': chunkIndex,
-          'chunkData': base64Encode(chunkBytes),
-        },
-        'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
-      );
-      bytesTransferred += chunkBytes.length;
-      onProgress?.call(
-        TransferProgressSnapshot(
-          bytesTransferred: bytesTransferred,
-          totalBytes: compressedBytes.length,
-          currentChunk: currentChunk,
-          totalChunks: chunkCount,
-        ),
-      );
-    }
-
-    final decoded = await _invokeTransferFunction(
-      'jobs_upload_chunk_complete',
-      {'jobId': jobId, 'uploadId': uploadId},
-      'completing snapshot upload',
-    );
-    onProgress?.call(
-      TransferProgressSnapshot(
-        bytesTransferred: compressedBytes.length,
-        totalBytes: compressedBytes.length,
-        currentChunk: chunkCount,
-        totalChunks: chunkCount,
-      ),
-    );
-    if (decoded is! Map) {
-      throw const AgentControlPlaneException('Unexpected upload payload.');
-    }
-
-    return UploadSnapshotResult(
-      job: RemoteSyncJob.fromJson(
-        Map<String, dynamic>.from(decoded['job'] as Map),
-      ),
-      snapshot: RemoteSnapshot.fromJson(
-        Map<String, dynamic>.from(decoded['snapshot'] as Map),
-      ),
-    );
-  }
-
-  Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
-    final manifest = await _invokeFunctionWithRetry(
-      'jobs_download_snapshot_manifest',
-      {'jobId': jobId},
-      'starting snapshot download',
-    );
-    if (manifest is! Map || manifest['manifest'] is! Map) {
-      throw const AgentControlPlaneException(
-        'Unexpected chunked download manifest payload.',
-      );
-    }
-    final manifestResponse = Map<String, dynamic>.from(manifest);
-    final manifestDecoded = Map<String, dynamic>.from(
-      manifest['manifest'] as Map,
-    );
-    final transferId = manifestDecoded['id'] as String? ?? '';
-    final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
-    final encoding = manifestDecoded['encoding'] as String? ?? 'gzip';
-
-    if (encoding == 'rows') {
-      return _downloadSnapshotRows(jobId, manifestResponse, manifestDecoded);
-    }
-
-    final compressedBytes =
-        (manifestDecoded['compressedBytes'] as num? ?? 0).round();
-
-    if (transferId.isEmpty || chunkCount < 1 || compressedBytes < 1) {
-      throw const AgentControlPlaneException(
-        'Chunked download manifest is incomplete.',
-      );
-    }
-
-    final buffer = BytesBuilder(copy: false);
-    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-      final chunkDecoded = await _invokeFunctionWithRetry(
-        'jobs_download_snapshot_chunk',
-        {'jobId': jobId, 'chunkIndex': chunkIndex},
-        'downloading snapshot chunk ${chunkIndex + 1} of $chunkCount',
-      );
-      if (chunkDecoded is! Map || chunkDecoded['chunkData'] is! String) {
-        throw const AgentControlPlaneException(
-          'Unexpected snapshot chunk payload.',
-        );
-      }
-      buffer.add(base64Decode(chunkDecoded['chunkData'] as String));
-    }
-
-    final compressedPayload = buffer.takeBytes();
-    if (compressedPayload.length != compressedBytes) {
-      throw const AgentControlPlaneException(
-        'Downloaded snapshot byte count does not match the manifest.',
-      );
-    }
-
-    final snapshotJson = utf8.decode(gzip.decode(compressedPayload));
-    final decoded = jsonDecode(snapshotJson);
-    if (decoded is! Map) {
-      throw const AgentControlPlaneException(
-        'Unexpected decompressed snapshot payload.',
-      );
-    }
-
-    if (manifestResponse['snapshot'] is! Map) {
-      throw const AgentControlPlaneException(
-        'Chunked download manifest is missing snapshot metadata.',
-      );
-    }
-
-    final snapshotMetadata = Map<String, dynamic>.from(
-      manifestResponse['snapshot'] as Map,
-    );
-    final snapshotPayload = Map<String, dynamic>.from(decoded);
-    return RemoteSnapshot.fromJson({
-      ...snapshotPayload,
-      ...snapshotMetadata,
-      'columns': snapshotPayload['columns'] ?? snapshotMetadata['columns'],
-      'rows': snapshotPayload['rows'] ?? const [],
-      'sourceJobId':
-          snapshotPayload['sourceJobId'] ?? snapshotMetadata['sourceJobId'],
-    });
-  }
-
-  Future<RemoteSnapshot> _downloadSnapshotRows(
-    String jobId,
-    Map<String, dynamic> manifestResponse,
-    Map<String, dynamic> manifestDecoded,
-  ) async {
-    final transferId = manifestDecoded['id'] as String? ?? '';
-    final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
-    if (transferId.isEmpty || chunkCount < 1) {
-      throw const AgentControlPlaneException(
-        'Row download manifest is incomplete.',
-      );
-    }
-    if (manifestResponse['snapshot'] is! Map) {
-      throw const AgentControlPlaneException(
-        'Row download manifest is missing snapshot metadata.',
-      );
-    }
-
-    final rows = <Map<String, String?>>[];
-    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-      final chunkDecoded = await _invokeFunctionWithRetry(
-        'jobs_download_snapshot_chunk',
-        {'jobId': jobId, 'chunkIndex': chunkIndex},
-        'downloading row page ${chunkIndex + 1} of $chunkCount',
-      );
-      if (chunkDecoded is! Map || chunkDecoded['rows'] is! List) {
-        throw const AgentControlPlaneException('Unexpected row page payload.');
-      }
-      final pageRows = chunkDecoded['rows'] as List<dynamic>;
-      for (final row in pageRows) {
-        rows.add(
-          Map<String, String?>.fromEntries(
-            Map<String, dynamic>.from(row as Map).entries.map(
-              (entry) => MapEntry(entry.key, entry.value?.toString()),
-            ),
-          ),
-        );
-      }
-    }
-
-    return RemoteSnapshot.fromJson({
-      ...Map<String, dynamic>.from(manifestResponse['snapshot'] as Map),
-      'rows': rows,
-    });
-  }
-
   Future<RemoteSyncJob> completeJob(
     String jobId, {
     required String status,
     required int progress,
     required String message,
     required int rowCount,
-    String? snapshotId,
-    String? snapshotCreatedAt,
-    int? snapshotBytes,
   }) async {
     final response = await _invokeFunction('jobs_complete', {
       'jobId': jobId,
@@ -834,9 +437,6 @@ class AgentControlPlaneClient {
       'progress': progress,
       'message': message,
       'rowCount': rowCount,
-      'snapshotId': snapshotId,
-      'snapshotCreatedAt': snapshotCreatedAt,
-      'snapshotBytes': snapshotBytes,
     }, 'completing job');
     return _parseJobPayload(response, 'job completion');
   }
@@ -1064,8 +664,16 @@ class RemoteSyncJob {
     required this.id,
     required this.clientName,
     required this.sourceClientName,
+    required this.subscriberClientName,
     required this.table,
     required this.direction,
+    required this.mergeRole,
+    required this.publisherServer,
+    required this.publisherDatabase,
+    required this.publicationName,
+    required this.publisherUseWindowsAuth,
+    required this.publisherUser,
+    required this.publisherPassword,
     required this.status,
     required this.progress,
     required this.rowCount,
@@ -1073,9 +681,6 @@ class RemoteSyncJob {
     required this.updatedAt,
     required this.startedAt,
     required this.completedAt,
-    required this.snapshotId,
-    required this.snapshotCreatedAt,
-    required this.snapshotBytes,
     required this.message,
     required this.error,
   });
@@ -1083,8 +688,16 @@ class RemoteSyncJob {
   final String id;
   final String clientName;
   final String sourceClientName;
+  final String subscriberClientName;
   final String table;
   final String direction;
+  final String mergeRole;
+  final String publisherServer;
+  final String publisherDatabase;
+  final String publicationName;
+  final bool publisherUseWindowsAuth;
+  final String publisherUser;
+  final String publisherPassword;
   final String status;
   final int progress;
   final int rowCount;
@@ -1092,9 +705,6 @@ class RemoteSyncJob {
   final String updatedAt;
   final String? startedAt;
   final String? completedAt;
-  final String? snapshotId;
-  final String? snapshotCreatedAt;
-  final int snapshotBytes;
   final String message;
   final String? error;
 
@@ -1103,8 +713,16 @@ class RemoteSyncJob {
       id: json['id'] as String? ?? '',
       clientName: json['clientName'] as String? ?? '',
       sourceClientName: json['sourceClientName'] as String? ?? '',
+      subscriberClientName: json['subscriberClientName'] as String? ?? '',
       table: json['table'] as String? ?? '',
       direction: json['direction'] as String? ?? 'sync',
+      mergeRole: json['mergeRole'] as String? ?? '',
+      publisherServer: json['publisherServer'] as String? ?? '',
+      publisherDatabase: json['publisherDatabase'] as String? ?? '',
+      publicationName: json['publicationName'] as String? ?? '',
+      publisherUseWindowsAuth: json['publisherUseWindowsAuth'] as bool? ?? true,
+      publisherUser: json['publisherUser'] as String? ?? '',
+      publisherPassword: json['publisherPassword'] as String? ?? '',
       status: json['status'] as String? ?? 'queued',
       progress: (json['progress'] as num? ?? 0).round(),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
@@ -1112,79 +730,13 @@ class RemoteSyncJob {
       updatedAt: json['updatedAt'] as String? ?? '',
       startedAt: json['startedAt'] as String?,
       completedAt: json['completedAt'] as String?,
-      snapshotId: json['snapshotId'] as String?,
-      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
     );
   }
 
   bool get isActive =>
-      status == 'queued' ||
-      status == 'snapshotting' ||
-      status == 'uploading' ||
-      status == 'downloading' ||
-      status == 'applying';
-}
-
-class RemoteSnapshot {
-  const RemoteSnapshot({
-    required this.id,
-    required this.clientName,
-    required this.table,
-    required this.createdAt,
-    required this.rowCount,
-    required this.checksum,
-    required this.snapshotBytes,
-    required this.columns,
-    required this.rows,
-    required this.sourceJobId,
-  });
-
-  final String id;
-  final String clientName;
-  final String table;
-  final String createdAt;
-  final int rowCount;
-  final String checksum;
-  final int snapshotBytes;
-  final List<String> columns;
-  final List<Map<String, String?>> rows;
-  final String? sourceJobId;
-
-  factory RemoteSnapshot.fromJson(Map<String, dynamic> json) {
-    final rawRows = json['rows'] as List<dynamic>? ?? const [];
-    return RemoteSnapshot(
-      id: json['id'] as String? ?? '',
-      clientName: json['clientName'] as String? ?? '',
-      table: json['table'] as String? ?? '',
-      createdAt: json['createdAt'] as String? ?? '',
-      rowCount: (json['rowCount'] as num? ?? 0).round(),
-      checksum: json['checksum'] as String? ?? '',
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
-      columns: (json['columns'] as List<dynamic>? ?? const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
-      rows: rawRows
-          .map(
-            (row) => Map<String, String?>.fromEntries(
-              Map<String, dynamic>.from(row as Map).entries.map(
-                (entry) => MapEntry(entry.key, entry.value?.toString()),
-              ),
-            ),
-          )
-          .toList(growable: false),
-      sourceJobId: json['sourceJobId'] as String?,
-    );
-  }
-}
-
-class UploadSnapshotResult {
-  const UploadSnapshotResult({required this.job, required this.snapshot});
-
-  final RemoteSyncJob job;
-  final RemoteSnapshot snapshot;
+      status == 'queued' || status == 'running' || status == 'applying';
 }
 
 class AgentControlPlaneException implements Exception {

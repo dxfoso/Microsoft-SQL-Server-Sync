@@ -9,16 +9,11 @@ const PORT = Number(process.env.PORT || "6006");
 const STATE_FILE =
   process.env.STATE_FILE ||
   path.join(process.cwd(), "data", "state.json");
-const UPLOADS_DIR =
-  process.env.UPLOADS_DIR ||
-  path.join(path.dirname(STATE_FILE), "upload-chunks");
 const CLIENT_UPDATES_DIR =
   process.env.CLIENT_UPDATES_DIR ||
   path.join(path.dirname(STATE_FILE), "client-updates");
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), "public");
 const MAX_BODY_SIZE = 100 * 1024 * 1024;
-const SNAPSHOT_TRANSFER_CHUNK_SIZE = 100 * 1024;
-const SNAPSHOT_TRANSFER_ENCODING = "gzip";
 const AGENT_ONLINE_WINDOW_MS = 60 * 1000;
 const DEFAULT_HISTORY_LIMIT = 5;
 const MAX_HISTORY_LIMIT = 100;
@@ -72,7 +67,6 @@ function createDefaultState() {
     sessions: {},
     agents: {},
     jobs: [],
-    snapshots: {},
   };
 }
 
@@ -256,7 +250,6 @@ function normalizePersistedState(parsed) {
     sessions: {},
     agents: {},
     jobs: [],
-    snapshots: {},
   };
 
   const rawUsers = Object.entries(parsed?.users || {}).map(([id, user]) => ({
@@ -409,37 +402,6 @@ function normalizePersistedState(parsed) {
       };
     })
     .filter((job) => String(job.clientName || "").trim() && String(job.table || "").trim());
-
-  for (const [legacyKey, snapshot] of Object.entries(parsed?.snapshots || {})) {
-    const legacySnapshotKeyParts = String(legacyKey).split("::");
-    const legacyClientName = legacySnapshotKeyParts.shift() || "";
-    const legacyTable = legacySnapshotKeyParts.join("::");
-    const rawClientIdentity = String(snapshot?.clientName || legacyClientName || "");
-    const clientUser = findNormalizedClientUser(
-      rawClientIdentity,
-      snapshot?.clientUserId,
-    );
-    const normalizedSnapshot = normalizeSnapshot({
-      ...snapshot,
-      clientName: normalizeClientIdentity(
-        rawClientIdentity,
-        snapshot?.clientUserId,
-      ),
-      clientUserId:
-        clientUser?.id ||
-        (snapshot?.clientUserId ? String(snapshot.clientUserId) : null),
-      ownerUserId:
-        clientUser?.ownerUserId ||
-        (snapshot?.ownerUserId ? String(snapshot.ownerUserId) : null),
-      table: normalizeTableKey(snapshot?.table || legacyTable),
-    });
-    if (!normalizedSnapshot.clientName || !normalizedSnapshot.table) {
-      continue;
-    }
-    normalized.snapshots[
-      snapshotKey(normalizedSnapshot.clientName, normalizedSnapshot.table)
-    ] = normalizedSnapshot;
-  }
 
   for (const [tokenHash, session] of Object.entries(parsed?.sessions || {})) {
     normalized.sessions[tokenHash] = {
@@ -711,10 +673,6 @@ function envJsPayload() {
   ].join("\n");
 }
 
-function snapshotKey(clientName, table) {
-  return `${clientName}::${table}`;
-}
-
 const TABLE_DATABASE_SEPARATOR = "::";
 
 function tableHasDatabase(table) {
@@ -969,41 +927,6 @@ function maybeQueueHeartbeatSave() {
   queueSave().catch(() => {});
 }
 
-function safePathToken(value) {
-  return String(value || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "item";
-}
-
-function chunkStorageDir(job, session) {
-  const jobToken = safePathToken(job?.id || "job");
-  const uploadToken = safePathToken(session?.id || "upload");
-  return path.join(UPLOADS_DIR, jobToken, uploadToken);
-}
-
-function chunkStoragePath(job, session, chunkIndex) {
-  return path.join(
-    chunkStorageDir(job, session),
-    `${String(Number(chunkIndex)).padStart(8, "0")}.bin`,
-  );
-}
-
-async function ensureChunkStorageDir(job, session) {
-  await fs.mkdir(chunkStorageDir(job, session), { recursive: true });
-}
-
-async function clearUploadSessionFiles(job, session) {
-  if (!session) {
-    return;
-  }
-  try {
-    await fs.rm(chunkStorageDir(job, session), { recursive: true, force: true });
-  } catch {
-    // Best-effort cleanup only.
-  }
-}
-
 function sortJobsDescending(items) {
   return items.sort((left, right) =>
     String(right.updatedAt || right.createdAt || "").localeCompare(
@@ -1013,8 +936,7 @@ function sortJobsDescending(items) {
 }
 
 function publicJobPayload(job) {
-  const { uploadSession, downloadSession, ...payload } = job;
-  return payload;
+  return { ...job };
 }
 
 function normalizeTableState(tableState) {
@@ -1029,22 +951,7 @@ function normalizeTableState(tableState) {
     direction,
     syncMode,
     rowCount: Number(tableState.rowCount || 0),
-    snapshotId: tableState.snapshotId ? String(tableState.snapshotId) : null,
-    snapshotCreatedAt: tableState.snapshotCreatedAt
-      ? String(tableState.snapshotCreatedAt)
-      : null,
-    snapshotBytes: Number(tableState.snapshotBytes || 0),
     message: String(tableState.message || ""),
-    mergedSnapshotSources:
-      tableState.mergedSnapshotSources &&
-      typeof tableState.mergedSnapshotSources === "object"
-        ? Object.fromEntries(
-            Object.entries(tableState.mergedSnapshotSources).map(([key, value]) => [
-              String(key),
-              String(value || ""),
-            ]),
-          )
-        : {},
   };
 }
 
@@ -1118,21 +1025,10 @@ function updateAgentTableFromJob(job, patch) {
   const currentTable = normalizeTableState(
     agent.tables[job.table] || { table: job.table, enabled: true },
   );
-  const mergedSnapshotSources = {
-    ...(currentTable.mergedSnapshotSources || {}),
-  };
-  const snapshotCreatedAt =
-    patch.snapshotCreatedAt !== undefined
-      ? String(patch.snapshotCreatedAt || "")
-      : String(job.snapshotCreatedAt || "");
-  if (job.sourceClientName && snapshotCreatedAt) {
-    mergedSnapshotSources[String(job.sourceClientName)] = snapshotCreatedAt;
-  }
   agent.tables[job.table] = {
     ...currentTable,
     ...patch,
     table: job.table,
-    mergedSnapshotSources,
   };
 }
 
@@ -1164,20 +1060,7 @@ function buildLiveState(viewer) {
         lastHeartbeat: agent.lastHeartbeat,
         selectedTable: agent.selectedTable,
         tables: Object.values(agent.tables || {})
-          .map((tableState) => {
-            const normalizedTableState = normalizeTableState(tableState);
-            const snapshot = latestSnapshot(
-              agent.clientName,
-              normalizedTableState.table,
-            );
-            if (!snapshot) {
-              return normalizedTableState;
-            }
-            return {
-              ...normalizedTableState,
-              snapshotBytes: finalizeSnapshot(snapshot).snapshotBytes,
-            };
-          })
+          .map((tableState) => normalizeTableState(tableState))
           .sort((left, right) => left.table.localeCompare(right.table)),
       };
     })
@@ -1188,32 +1071,8 @@ function buildLiveState(viewer) {
       viewerCanAccessRecord(viewer, job.ownerUserId || null, job.clientUserId || null),
     ),
   ).slice(0, 100).map(publicJobPayload);
-  const snapshots = Object.values(state.snapshots)
-    .filter((snapshot) =>
-      viewerCanAccessRecord(
-        viewer,
-        snapshot.ownerUserId || null,
-        snapshot.clientUserId || null,
-      ),
-    )
-    .map((snapshot) => {
-      const normalized = finalizeSnapshot(snapshot);
-      return {
-        id: normalized.id,
-        clientName: normalized.clientName,
-        table: normalized.table,
-        rowCount: normalized.rowCount,
-        checksum: normalized.checksum,
-        createdAt: normalized.createdAt,
-        snapshotBytes: normalized.snapshotBytes,
-        columns: normalized.columns,
-        previewRows: buildSnapshotPreviewRows(normalized),
-        sourceJobId: normalized.sourceJobId || null,
-      };
-    })
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 
-  return { generatedAt, agents, jobs: visibleJobs, snapshots };
+  return { generatedAt, agents, jobs: visibleJobs };
 }
 
 function createJob(payload) {
@@ -1238,9 +1097,6 @@ function createJob(payload) {
     updatedAt: nowIso(),
     startedAt: null,
     completedAt: null,
-    snapshotId: null,
-    snapshotCreatedAt: null,
-    snapshotBytes: 0,
     message: String(payload.message || "Queued."),
     error: null,
   };
@@ -1273,22 +1129,8 @@ function updateJob(job, patch) {
         : job.completedAt || job.updatedAt,
     rowCount:
       patch.rowCount !== undefined ? Number(patch.rowCount) : Number(job.rowCount),
-    snapshotId:
-      patch.snapshotId !== undefined ? patch.snapshotId : job.snapshotId,
-    snapshotCreatedAt:
-      patch.snapshotCreatedAt !== undefined
-        ? patch.snapshotCreatedAt
-        : job.snapshotCreatedAt,
-    snapshotBytes:
-      patch.snapshotBytes !== undefined
-        ? Number(patch.snapshotBytes || 0)
-        : Number(job.snapshotBytes || 0),
     message: patch.message !== undefined ? String(patch.message) : job.message,
   });
-}
-
-function latestSnapshot(clientName, table) {
-  return state.snapshots[snapshotKey(clientName, table)] || null;
 }
 
 function agentTableState(clientName, table) {
@@ -1299,381 +1141,9 @@ function agentTableState(clientName, table) {
   return agent.tables[table] ? normalizeTableState(agent.tables[table]) : null;
 }
 
-function namespaceSnapshotClientName(ownerUserId, clientName) {
-  const normalizedOwnerUserId = String(ownerUserId || "").trim();
-  if (normalizedOwnerUserId) {
-    return normalizedOwnerUserId;
-  }
-  return String(clientName || "").trim();
-}
-
-function latestNamespaceSnapshotForTable(ownerUserId, clientName, table) {
-  const snapshotClientName = namespaceSnapshotClientName(ownerUserId, clientName);
-  const snapshot = latestSnapshot(snapshotClientName, table);
-  if (!snapshot) {
-    return null;
-  }
-  return finalizeSnapshot(snapshot);
-}
-
-function resolveSyncSourceSnapshot(
-  clientName,
-  requestedSourceClientName,
-  table,
-  ownerUserId,
-) {
-  const explicitSource = String(requestedSourceClientName || "").trim();
-  if (explicitSource) {
-    const explicitSourceUser = findClientUserByName(explicitSource);
-    const explicitSourceClientName = explicitSourceUser
-      ? explicitSourceUser.username
-      : explicitSource;
-    const snapshot = latestSnapshot(explicitSourceClientName, table);
-    if (!snapshot || (snapshot.ownerUserId || null) !== (ownerUserId || null)) {
-      return null;
-    }
-    return finalizeSnapshot(snapshot);
-  }
-
-  return latestNamespaceSnapshotForTable(ownerUserId, clientName, table);
-}
-
-function shouldQueueMergeSyncJob(clientName, table, sourceSnapshot) {
-  if (!sourceSnapshot) {
-    return false;
-  }
-
-  const targetTableState = agentTableState(clientName, table);
-  const sourceClientName = String(sourceSnapshot.clientName || "").trim();
-  const mergedSources = targetTableState?.mergedSnapshotSources || {};
-  if (sourceClientName && mergedSources[sourceClientName]) {
-    const mergedTimestamp = Date.parse(mergedSources[sourceClientName]);
-    const sourceTimestamp = Date.parse(sourceSnapshot.createdAt);
-    if (
-      Number.isFinite(mergedTimestamp) &&
-      Number.isFinite(sourceTimestamp)
-    ) {
-      return sourceTimestamp > mergedTimestamp;
-    }
-    return String(mergedSources[sourceClientName]) !== sourceSnapshot.createdAt;
-  }
-  const targetCreatedAt = String(targetTableState?.snapshotCreatedAt || "").trim();
-  if (!targetCreatedAt) {
-    return true;
-  }
-
-  const targetTimestamp = Date.parse(targetCreatedAt);
-  const sourceTimestamp = Date.parse(sourceSnapshot.createdAt);
-  if (!Number.isFinite(targetTimestamp) || !Number.isFinite(sourceTimestamp)) {
-    return targetCreatedAt !== sourceSnapshot.createdAt;
-  }
-
-  return sourceTimestamp > targetTimestamp;
-}
-
-function normalizeSnapshotRow(row, columns) {
-  if (Array.isArray(row)) {
-    return Object.fromEntries(
-      columns.map((column, index) => [column, row[index] ?? null]),
-    );
-  }
-
-  if (row && typeof row === "object") {
-    return Object.fromEntries(
-      columns.map((column) => [
-        column,
-        Object.prototype.hasOwnProperty.call(row, column) ? row[column] : null,
-      ]),
-    );
-  }
-
-  return Object.fromEntries(columns.map((column) => [column, null]));
-}
-
-function normalizeSnapshot(snapshot) {
-  const columns = Array.isArray(snapshot.columns)
-    ? snapshot.columns.map((column) => String(column))
-    : [];
-  const rows = Array.isArray(snapshot.rows)
-    ? snapshot.rows.map((row) => normalizeSnapshotRow(row, columns))
-    : [];
-  const rowCount =
-    snapshot.rowCount !== undefined ? Number(snapshot.rowCount) : rows.length;
-
-  return {
-    id: snapshot.id ? String(snapshot.id) : crypto.randomUUID(),
-    clientName: String(snapshot.clientName || "").trim(),
-    clientUserId: snapshot.clientUserId ? String(snapshot.clientUserId) : null,
-    ownerUserId: snapshot.ownerUserId ? String(snapshot.ownerUserId) : null,
-    table: normalizeTableKey(snapshot.table),
-    createdAt: String(snapshot.createdAt || nowIso()),
-    rowCount,
-    checksum:
-      snapshot.checksum ||
-      crypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex"),
-    columns,
-    rows,
-    sourceJobId: snapshot.sourceJobId ? String(snapshot.sourceJobId) : null,
-    snapshotBytes: Number(snapshot.snapshotBytes || 0),
-  };
-}
-
-function createSnapshotFilePayload(snapshot) {
-  return {
-    formatVersion: 1,
-    id: snapshot.id,
-    clientName: snapshot.clientName,
-    clientUserId: snapshot.clientUserId || null,
-    ownerUserId: snapshot.ownerUserId || null,
-    table: snapshot.table,
-    createdAt: snapshot.createdAt,
-    rowCount: snapshot.rowCount,
-    checksum: snapshot.checksum,
-    snapshotBytes: Number(snapshot.snapshotBytes || 0),
-    columns: snapshot.columns,
-    rows: snapshot.rows,
-    sourceJobId: snapshot.sourceJobId || null,
-  };
-}
-
-function serializeSnapshotFile(snapshot) {
-  let snapshotBytes = Number(snapshot.snapshotBytes || 0);
-  let payload = createSnapshotFilePayload(snapshot);
-
-  for (let index = 0; index < 3; index += 1) {
-    payload = {
-      ...payload,
-      snapshotBytes,
-    };
-    const nextBytes = Buffer.byteLength(JSON.stringify(payload));
-    if (nextBytes === snapshotBytes) {
-      break;
-    }
-    snapshotBytes = nextBytes;
-  }
-
-  payload = {
-    ...payload,
-    snapshotBytes,
-  };
-
-  return {
-    payload,
-    buffer: Buffer.from(JSON.stringify(payload)),
-    snapshotBytes,
-  };
-}
-
-function finalizeSnapshot(snapshot) {
-  const normalized = normalizeSnapshot(snapshot);
-  const serialized = serializeSnapshotFile(normalized);
-  return {
-    ...normalized,
-    snapshotBytes: serialized.snapshotBytes,
-  };
-}
-
-function serializeSnapshot(snapshot) {
-  const normalized = finalizeSnapshot(snapshot);
-  return {
-    ...normalized,
-    rows: normalized.rows,
-  };
-}
-
-function serializeSnapshotSummary(snapshot) {
-  const normalized = finalizeSnapshot(snapshot);
-  const { rows, ...summary } = normalized;
-  return summary;
-}
-
-function transferChunkCount(byteLength) {
-  return Math.max(1, Math.ceil(byteLength / SNAPSHOT_TRANSFER_CHUNK_SIZE));
-}
-
-function receivedUploadIndexes(session) {
-  return Object.keys(session?.chunks || {})
-    .map((item) => Number(item))
-    .filter((item) => Number.isInteger(item) && item >= 0)
-    .sort((left, right) => left - right);
-}
-
-function receivedUploadBytes(session) {
-  return Object.values(session?.chunks || {}).reduce(
-    (total, chunk) => total + Number(chunk?.bytes || 0),
-    0,
-  );
-}
-
-function uploadSessionStatus(session) {
-  return {
-    uploadId: session.id,
-    chunkSizeBytes: session.chunkSizeBytes,
-    chunkCount: session.chunkCount,
-    compressedBytes: session.compressedBytes,
-    receivedBytes: receivedUploadBytes(session),
-    receivedIndexes: receivedUploadIndexes(session),
-  };
-}
-
-function createSnapshotTransfer(snapshot) {
-  const normalized = finalizeSnapshot(snapshot);
-  const serialized = serializeSnapshotFile(normalized);
-  const compressedBuffer = zlib.gzipSync(serialized.buffer);
-  return {
-    snapshot: {
-      ...normalized,
-      snapshotBytes: serialized.snapshotBytes,
-    },
-    payloadBytes: serialized.buffer.length,
-    compressedBuffer,
-    compressedBytes: compressedBuffer.length,
-    chunkSizeBytes: SNAPSHOT_TRANSFER_CHUNK_SIZE,
-    chunkCount: transferChunkCount(compressedBuffer.length),
-    encoding: SNAPSHOT_TRANSFER_ENCODING,
-  };
-}
-
-async function snapshotFromUploadSession(job) {
-  const session = job.uploadSession;
-  if (!session) {
-    throw new Error("upload session not found");
-  }
-
-  const buffers = [];
-  for (let index = 0; index < session.chunkCount; index += 1) {
-    const chunk = session.chunks?.[String(index)] || null;
-    const chunkPath = chunkStoragePath(job, session, index);
-    let buffer = null;
-    try {
-      buffer = await fs.readFile(chunkPath);
-    } catch {
-      buffer = null;
-    }
-
-    if (!buffer && chunk?.data) {
-      buffer = Buffer.from(chunk.data, "base64");
-    }
-    if (!buffer) {
-      throw new Error(`missing upload chunk ${index}`);
-    }
-    buffers.push(buffer);
-  }
-
-  const compressedBuffer = Buffer.concat(buffers);
-  if (
-    Number(session.compressedBytes || 0) > 0 &&
-    compressedBuffer.length !== Number(session.compressedBytes)
-  ) {
-    throw new Error("uploaded snapshot byte count does not match manifest");
-  }
-
-  const payloadBuffer = zlib.gunzipSync(compressedBuffer);
-  const payload = JSON.parse(payloadBuffer.toString("utf8"));
-  const columns = Array.isArray(payload.columns)
-    ? payload.columns.map((column) => String(column))
-    : [];
-  const rows = Array.isArray(payload.rows)
-    ? payload.rows.map((row) => normalizeSnapshotRow(row, columns))
-    : [];
-
-  return finalizeSnapshot({
-    id: payload.id || crypto.randomUUID(),
-    clientName:
-      session.publishOwnerSnapshot && job.ownerUserId
-        ? job.ownerUserId
-        : job.clientName,
-    clientUserId:
-      session.publishOwnerSnapshot && job.ownerUserId
-        ? null
-        : job.clientUserId || null,
-    ownerUserId: job.ownerUserId || null,
-    table: normalizeTableKey(payload.table || session.table || job.table),
-    createdAt: String(
-      payload.createdAt || payload.snapshotCreatedAt || session.snapshotCreatedAt || nowIso(),
-    ),
-    rowCount: Number(payload.rowCount || rows.length),
-    checksum: payload.checksum,
-    columns,
-    rows,
-    sourceJobId: job.id,
-  });
-}
-
-function downloadSessionForJob(job, snapshot) {
-  const transfer = createSnapshotTransfer(snapshot);
-  if (
-    job.downloadSession?.snapshotId === transfer.snapshot.id &&
-    job.downloadSession?.snapshotDataBase64
-  ) {
-    return job.downloadSession;
-  }
-
-  const session = {
-    id: crypto.randomUUID(),
-    snapshotId: transfer.snapshot.id,
-    snapshot: serializeSnapshotSummary(transfer.snapshot),
-    encoding: transfer.encoding,
-    chunkSizeBytes: transfer.chunkSizeBytes,
-    chunkCount: transfer.chunkCount,
-    compressedBytes: transfer.compressedBytes,
-    payloadBytes: transfer.payloadBytes,
-    snapshotDataBase64: transfer.compressedBuffer.toString("base64"),
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  };
-  job.downloadSession = session;
-  return session;
-}
-
-function downloadSessionManifest(session) {
-  const { snapshotDataBase64, ...manifest } = session;
-  return manifest;
-}
-
-function downloadSessionChunk(session, chunkIndex) {
-  const index = Number(chunkIndex);
-  if (!Number.isInteger(index) || index < 0 || index >= session.chunkCount) {
-    throw new Error("chunk index is out of range");
-  }
-
-  const compressedBuffer = Buffer.from(session.snapshotDataBase64, "base64");
-  const start = index * session.chunkSizeBytes;
-  const end = Math.min(start + session.chunkSizeBytes, compressedBuffer.length);
-  return compressedBuffer.subarray(start, end);
-}
-
-function buildSnapshotPreviewRows(snapshot) {
-  if (!Array.isArray(snapshot.rows)) {
-    return [];
-  }
-
-  return snapshot.rows.slice(0, 5).map((row) => {
-    const normalized = normalizeSnapshotRow(row, snapshot.columns);
-    return snapshot.columns.map((column) => {
-      const value = normalized[column];
-      return value === null || value === undefined ? "NULL" : String(value);
-    });
-  });
-}
-
-function snapshotFilename(snapshot) {
-  const sanitize = (value) =>
-    String(value || "snapshot")
-      .replace(/[^a-z0-9._-]+/gi, "-")
-      .replace(/^-+|-+$/g, "") || "snapshot";
-  const createdAt = sanitize(String(snapshot.createdAt || nowIso()));
-  return `${sanitize(snapshot.clientName)}-${sanitize(snapshot.table)}-${createdAt}.json`;
-}
 
 function isJobActive(job) {
-  return (
-    job.status === "queued" ||
-    job.status === "snapshotting" ||
-    job.status === "uploading" ||
-    job.status === "downloading" ||
-    job.status === "applying"
-  );
+  return job.status === "queued" || job.status === "running";
 }
 
 function activeJobsForClient(clientName) {
@@ -2160,15 +1630,8 @@ async function handleRequest(req, res) {
     }
 
     const jobs = tables.flatMap((table) => {
-      const sourceSnapshot = resolveSyncSourceSnapshot(
-        clientName,
-        sourceClientName,
-        table,
-        clientUser.ownerUserId || null,
-      );
       const resolvedSourceClientName =
-        sourceSnapshot?.clientName ||
-        namespaceSnapshotClientName(clientUser.ownerUserId || null, clientName);
+        sourceClientName || clientName;
 
       const existingJob = state.jobs.find(
         (job) =>
@@ -2182,16 +1645,11 @@ async function handleRequest(req, res) {
         return [existingJob];
       }
 
-      if (!shouldQueueMergeSyncJob(clientName, table, sourceSnapshot)) {
-        return [];
-      }
-
       return [createJob({
         clientName,
         clientUserId: clientUser.id,
         ownerUserId: clientUser.ownerUserId || null,
         sourceClientName: resolvedSourceClientName,
-        sourceClientUserId: sourceSnapshot?.clientUserId || null,
         table,
         direction,
         syncMode,
@@ -2200,156 +1658,6 @@ async function handleRequest(req, res) {
     });
     await queueSave();
     sendJson(res, 201, { jobs: jobs.map(publicJobPayload) });
-    return;
-  }
-
-  if (req.method === "GET" && pathname === "/api/snapshots/latest") {
-    const context = requireAuth(req, res);
-    if (!context) {
-      return;
-    }
-    const clientIdentity = String(url.searchParams.get("clientName") || "").trim();
-    const table = String(url.searchParams.get("table") || "").trim();
-    const clientUser = findClientUserByName(clientIdentity);
-    if (!clientUser || !canAccessClientUser(context.user, clientUser)) {
-      sendJson(res, 403, { error: "permission denied" });
-      return;
-    }
-    const snapshot = latestSnapshot(clientUser.username, table);
-    if (!snapshot) {
-      sendJson(res, 404, { error: "snapshot not found" });
-      return;
-    }
-    sendJson(res, 200, serializeSnapshot(snapshot));
-    return;
-  }
-
-  if (req.method === "GET" && pathname === "/api/snapshots/latest/file") {
-    const context = requireAuth(req, res);
-    if (!context) {
-      return;
-    }
-    const clientIdentity = String(url.searchParams.get("clientName") || "").trim();
-    const table = String(url.searchParams.get("table") || "").trim();
-    const clientUser = findClientUserByName(clientIdentity);
-    if (!clientUser || !canAccessClientUser(context.user, clientUser)) {
-      sendJson(res, 403, { error: "permission denied" });
-      return;
-    }
-    const snapshot = latestSnapshot(clientUser.username, table);
-    if (!snapshot) {
-      sendJson(res, 404, { error: "snapshot not found" });
-      return;
-    }
-    const normalized = finalizeSnapshot(snapshot);
-    const serialized = serializeSnapshotFile(normalized);
-    sendBuffer(
-      res,
-      200,
-      serialized.buffer,
-      "application/json; charset=utf-8",
-      {
-        "Content-Disposition": `attachment; filename="${snapshotFilename(
-          normalized,
-        )}"`,
-      },
-    );
-    return;
-  }
-
-  if (req.method === "GET" && pathname.startsWith("/api/snapshots/")) {
-    const context = requireAuth(req, res);
-    if (!context) {
-      return;
-    }
-    const snapshotId = decodeURIComponent(pathname.replace("/api/snapshots/", ""));
-    const snapshot = Object.values(state.snapshots)
-      .map((entry) => finalizeSnapshot(entry))
-      .find((entry) => entry.id === snapshotId);
-    if (!snapshot) {
-      sendJson(res, 404, { error: "snapshot not found" });
-      return;
-    }
-    if (
-      !viewerCanAccessRecord(
-        context.user,
-        snapshot.ownerUserId || null,
-        snapshot.clientUserId || null,
-      )
-    ) {
-      sendJson(res, 403, { error: "permission denied" });
-      return;
-    }
-    sendJson(res, 200, serializeSnapshot(snapshot));
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/snapshots/import") {
-    const context = requireAuth(req, res, {
-      allowedRoles: [ROLE_ADMIN, ROLE_OWNER],
-      app: APP_WEB,
-    });
-    if (!context) {
-      return;
-    }
-    const body = await parseJsonBody(req);
-    const clientUser = findClientUserByName(body.clientName);
-    if (!clientUser || !canAccessClientUser(context.user, clientUser)) {
-      sendJson(res, 403, { error: "permission denied for that client account" });
-      return;
-    }
-    const rawSnapshot =
-      body.snapshot && typeof body.snapshot === "object" ? body.snapshot : body;
-    const importDatabase =
-      body.database ||
-      databaseFromTableKey(rawSnapshot.table) ||
-      databaseFromTableKey(body.table) ||
-      state.agents[clientUser.username]?.database ||
-      "";
-    const snapshot = finalizeSnapshot({
-      ...rawSnapshot,
-      clientName: clientUser.username,
-      clientUserId: clientUser.id,
-      ownerUserId: clientUser.ownerUserId || null,
-      table: qualifyTableWithDatabase(
-        body.table || rawSnapshot.table,
-        importDatabase,
-      ),
-      createdAt:
-        body.createdAt ||
-        rawSnapshot.createdAt ||
-        rawSnapshot.snapshotCreatedAt ||
-        nowIso(),
-    });
-
-    if (!snapshot.clientName || !snapshot.table) {
-      sendJson(res, 400, { error: "clientName and table are required." });
-      return;
-    }
-
-    state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
-
-    const agent = state.agents[snapshot.clientName];
-    if (agent) {
-      const currentTable = normalizeTableState(
-        agent.tables[snapshot.table] || { table: snapshot.table, enabled: true },
-      );
-      agent.tables[snapshot.table] = {
-        ...currentTable,
-        table: snapshot.table,
-        status: currentTable.enabled ? "Completed" : currentTable.status,
-        progress: currentTable.enabled ? 100 : currentTable.progress,
-        lastSync: snapshot.createdAt,
-        rowCount: snapshot.rowCount,
-        snapshotId: snapshot.id,
-        snapshotCreatedAt: snapshot.createdAt,
-        snapshotBytes: snapshot.snapshotBytes,
-        message: `Backup file imported with ${snapshot.rowCount} rows.`,
-      };
-    }
-
-    await queueSave();
-    sendJson(res, 200, { snapshot: serializeSnapshot(snapshot) });
     return;
   }
 
@@ -2391,11 +1699,6 @@ async function handleRequest(req, res) {
       [
         "start",
         "progress",
-        "upload-chunk-start",
-        "upload-chunk",
-        "upload-chunk-complete",
-        "download-snapshot-manifest",
-        "download-snapshot-chunk",
         "complete",
         "fail",
       ].includes(action) &&
@@ -2408,10 +1711,10 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && action === "start") {
       const body = await parseJsonBody(req);
       updateJob(job, {
-        status: String(body.status || "snapshotting"),
+        status: String(body.status || "running"),
         startedAt: job.startedAt || nowIso(),
         progress: Number(body.progress || 5),
-        message: String(body.message || "Started."),
+        message: String(body.message || "Started merge replication."),
       });
       await queueSave();
       sendJson(res, 200, { job: publicJobPayload(job) });
@@ -2434,244 +1737,15 @@ async function handleRequest(req, res) {
       return;
     }
 
-    if (req.method === "POST" && action === "upload-chunk-start") {
-      const body = await parseJsonBody(req);
-      const chunkCount = Number(body.chunkCount || 0);
-      const chunkSizeBytes = Number(
-        body.chunkSizeBytes || SNAPSHOT_TRANSFER_CHUNK_SIZE,
-      );
-      const compressedBytes = Number(body.compressedBytes || 0);
-
-      if (
-        !Number.isInteger(chunkCount) ||
-        chunkCount < 1 ||
-        !Number.isInteger(chunkSizeBytes) ||
-        chunkSizeBytes < 1 ||
-        chunkSizeBytes > SNAPSHOT_TRANSFER_CHUNK_SIZE ||
-        !Number.isFinite(compressedBytes) ||
-        compressedBytes < 1
-      ) {
-        sendJson(res, 400, { error: "invalid chunked upload manifest" });
-        return;
-      }
-
-      const requestedUploadId = String(body.uploadId || "").trim();
-    if (
-        !job.uploadSession ||
-        (requestedUploadId && job.uploadSession.id !== requestedUploadId) ||
-        job.uploadSession.chunkCount !== chunkCount ||
-        job.uploadSession.compressedBytes !== compressedBytes
-      ) {
-        await clearUploadSessionFiles(job, job.uploadSession || null);
-        job.uploadSession = {
-          id: requestedUploadId || crypto.randomUUID(),
-          table: qualifyTableWithDatabase(
-            body.table || job.table,
-            databaseFromTableKey(job.table),
-          ),
-          snapshotCreatedAt: String(body.snapshotCreatedAt || body.createdAt || nowIso()),
-          rowCount: Number(body.rowCount || 0),
-          snapshotBytes: Number(body.snapshotBytes || 0),
-          compressedBytes,
-          chunkSizeBytes,
-          chunkCount,
-          encoding: SNAPSHOT_TRANSFER_ENCODING,
-          publishOwnerSnapshot: Boolean(body.publishOwnerSnapshot),
-          chunks: {},
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-        };
-      }
-      await ensureChunkStorageDir(job, job.uploadSession);
-
-      updateJob(job, {
-        status: "uploading",
-        progress: 70,
-        rowCount: Number(body.rowCount || job.rowCount || 0),
-        message: `Ready to receive ${chunkCount} compressed snapshot chunks.`,
-      });
-      await queueSave();
-      sendJson(res, 200, {
-        job: publicJobPayload(job),
-        ...uploadSessionStatus(job.uploadSession),
-      });
-      return;
-    }
-
-    if (req.method === "POST" && action === "upload-chunk") {
-      const body = await parseJsonBody(req);
-      const session = job.uploadSession;
-      const uploadId = String(body.uploadId || "").trim();
-      const chunkIndex = Number(body.chunkIndex);
-      const chunkData = String(body.chunkData || "");
-
-      if (!session || session.id !== uploadId) {
-        sendJson(res, 404, { error: "upload session not found" });
-        return;
-      }
-      if (
-        !Number.isInteger(chunkIndex) ||
-        chunkIndex < 0 ||
-        chunkIndex >= session.chunkCount
-      ) {
-        sendJson(res, 400, { error: "chunk index is out of range" });
-        return;
-      }
-      if (!chunkData) {
-        sendJson(res, 400, { error: "chunkData is required" });
-        return;
-      }
-
-      const buffer = Buffer.from(chunkData, "base64");
-      if (buffer.length > session.chunkSizeBytes) {
-        sendJson(res, 400, { error: "chunk is larger than the configured size" });
-        return;
-      }
-
-      await ensureChunkStorageDir(job, session);
-      await fs.writeFile(chunkStoragePath(job, session, chunkIndex), buffer);
-
-      session.chunks[String(chunkIndex)] = {
-        bytes: buffer.length,
-        receivedAt: nowIso(),
-      };
-      session.updatedAt = nowIso();
-      const receivedCount = receivedUploadIndexes(session).length;
-      const progress = Math.min(
-        95,
-        Math.max(70, Math.round(70 + (receivedCount / session.chunkCount) * 25)),
-      );
-      updateJob(job, {
-        status: "uploading",
-        progress,
-        rowCount: Number(session.rowCount || job.rowCount || 0),
-        message: `Received snapshot chunk ${receivedCount}/${session.chunkCount}.`,
-      });
-      sendJson(res, 200, {
-        job: publicJobPayload(job),
-        ...uploadSessionStatus(session),
-      });
-      return;
-    }
-
-    if (req.method === "POST" && action === "upload-chunk-complete") {
-      const body = await parseJsonBody(req);
-      const session = job.uploadSession;
-      const uploadId = String(body.uploadId || "").trim();
-
-      if (!session || session.id !== uploadId) {
-        sendJson(res, 404, { error: "upload session not found" });
-        return;
-      }
-      if (receivedUploadIndexes(session).length !== session.chunkCount) {
-        sendJson(res, 409, {
-          error: "upload is missing chunks",
-          ...uploadSessionStatus(session),
-        });
-        return;
-      }
-
-      const snapshot = await snapshotFromUploadSession(job);
-      state.snapshots[snapshotKey(snapshot.clientName, snapshot.table)] = snapshot;
-      await clearUploadSessionFiles(job, session);
-      job.uploadSession = null;
-      updateJob(job, {
-        status: "completed",
-        progress: 100,
-        completedAt: nowIso(),
-        snapshotId: snapshot.id,
-        snapshotCreatedAt: snapshot.createdAt,
-        snapshotBytes: snapshot.snapshotBytes,
-        rowCount: snapshot.rowCount,
-        message: `Snapshot uploaded with ${snapshot.rowCount} rows in compressed chunks.`,
-      });
-      await queueSave();
-      sendJson(res, 200, {
-        job: publicJobPayload(job),
-        snapshot: serializeSnapshotSummary(snapshot),
-      });
-      return;
-    }
-
-    if (req.method === "GET" && action === "download-snapshot-manifest") {
-      const snapshot = latestSnapshot(job.sourceClientName || job.clientName, job.table);
-      if (!snapshot) {
-        sendJson(res, 404, { error: "snapshot not found for job" });
-        return;
-      }
-      const session = downloadSessionForJob(job, snapshot);
-      updateJob(job, {
-        status: "downloading",
-        progress: Math.max(Number(job.progress || 0), 40),
-        rowCount: Number(session.snapshot?.rowCount || job.rowCount || 0),
-        message: `Prepared ${session.chunkCount} compressed snapshot chunks for download.`,
-      });
-      await queueSave();
-      sendJson(res, 200, {
-        job: publicJobPayload(job),
-        manifest: downloadSessionManifest(session),
-      });
-      return;
-    }
-
-    if (req.method === "GET" && action === "download-snapshot-chunk") {
-      const session = job.downloadSession;
-      if (!session?.snapshotDataBase64) {
-        sendJson(res, 404, { error: "download session not found" });
-        return;
-      }
-
-      try {
-        const chunkIndex = Number(url.searchParams.get("index"));
-        const chunk = downloadSessionChunk(session, chunkIndex);
-        const progress = Math.min(
-          74,
-          Math.max(
-            40,
-            Math.round(40 + ((chunkIndex + 1) / session.chunkCount) * 34),
-          ),
-        );
-        updateJob(job, {
-          status: "downloading",
-          progress,
-          rowCount: Number(session.snapshot?.rowCount || job.rowCount || 0),
-          message: `Served snapshot chunk ${chunkIndex + 1}/${session.chunkCount}.`,
-        });
-        await queueSave();
-        sendJson(res, 200, {
-          transferId: session.id,
-          chunkIndex,
-          chunkCount: session.chunkCount,
-          chunkData: chunk.toString("base64"),
-        });
-      } catch (error) {
-        sendJson(res, 400, {
-          error: error instanceof Error ? error.message : "invalid chunk request",
-        });
-      }
-      return;
-    }
-
     if (req.method === "POST" && action === "complete") {
       const body = await parseJsonBody(req);
-      job.downloadSession = null;
       updateJob(job, {
         status: String(body.status || "completed"),
         progress: Number(body.progress || 100),
         completedAt: nowIso(),
-        message: String(body.message || "Completed."),
+        message: String(body.message || "Completed merge replication."),
         rowCount:
           body.rowCount !== undefined ? Number(body.rowCount) : Number(job.rowCount),
-        snapshotId:
-          body.snapshotId !== undefined ? String(body.snapshotId) : job.snapshotId,
-        snapshotCreatedAt:
-          body.snapshotCreatedAt !== undefined
-            ? String(body.snapshotCreatedAt)
-            : job.snapshotCreatedAt,
-        snapshotBytes:
-          body.snapshotBytes !== undefined
-            ? Number(body.snapshotBytes || 0)
-            : Number(job.snapshotBytes || 0),
       });
       await queueSave();
       sendJson(res, 200, { job: publicJobPayload(job) });
@@ -2680,9 +1754,6 @@ async function handleRequest(req, res) {
 
     if (req.method === "POST" && action === "fail") {
       const body = await parseJsonBody(req);
-      await clearUploadSessionFiles(job, job.uploadSession || null);
-      job.uploadSession = null;
-      job.downloadSession = null;
       updateJob(job, {
         status: "failed",
         progress: Number(body.progress || job.progress || 100),

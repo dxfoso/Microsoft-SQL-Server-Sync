@@ -6,7 +6,6 @@ branding
 database
 deployment
 sync_windows_agent
-frontend
 
 sync_admin_web/.dart_tool
 sync_admin_web/.idea

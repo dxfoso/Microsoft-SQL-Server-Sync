@@ -10,33 +10,36 @@ def read_text(relative_path: str) -> str:
 
 
 class SyncContractsTests(unittest.TestCase):
-    def test_windows_agent_applies_merge_only_without_destructive_table_clear(self):
+    def test_windows_agent_uses_merge_replication_setup_only_without_custom_row_apply(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertIn("MERGE $qualifiedTable AS target", agent_page)
-        self.assertIn("WHEN NOT MATCHED BY TARGET THEN", agent_page)
-        self.assertNotIn("WHEN MATCHED", agent_page)
+        self.assertIn("EXEC sp_addmergepublication", agent_page)
+        self.assertIn("EXEC sp_addmergepullsubscription", agent_page)
+        self.assertIn("EXEC sp_addmergepullsubscription_agent", agent_page)
+        self.assertIn("@allow_subscriber_initiated_snapshot = N'false'", agent_page)
+        self.assertNotIn("MERGE $qualifiedTable AS target", agent_page)
         self.assertNotIn("DELETE FROM $qualifiedTable", agent_page)
         self.assertNotIn("TRUNCATE TABLE", agent_page)
 
-    def test_windows_merge_preserves_identity_primary_keys_for_missing_rows(self):
+    def test_windows_agent_removes_local_snapshot_apply_helpers(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertIn("final writeColumns = writableSnapshotColumns;", agent_page)
-        self.assertIn("if (primaryKeys.isNotEmpty) {\n      return primaryKeys;", agent_page)
-        self.assertIn("if (hasIdentity) 'SET IDENTITY_INSERT $qualifiedTable ON;'", agent_page)
-        self.assertIn("if (hasIdentity) {\n      statements.add('SET IDENTITY_INSERT $qualifiedTable OFF;');", agent_page)
-        self.assertIn("jsonEncode(keyColumns.map((column) => row[column]).toList())", agent_page)
-        self.assertNotIn("nonIdentityWritableColumns", agent_page)
+        self.assertNotIn("Future<void> _applySnapshotToTable(", agent_page)
+        self.assertNotIn("Future<_TableSnapshotResult> _createTableSnapshot(", agent_page)
+        self.assertNotIn("Future<_SnapshotPageResult> _querySnapshotPage(", agent_page)
+        self.assertNotIn("RemoteSnapshot snapshot", agent_page)
+        self.assertNotIn("Downloaded snapshot", agent_page)
 
-    def test_snapshot_download_uses_bounded_manifest_only(self):
+    def test_windows_agent_client_removes_snapshot_transport_endpoints(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
-        control_plane = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertIn("jobs_download_snapshot_manifest", client_api)
-        self.assertIn("jobs_download_snapshot_chunk", client_api)
-        self.assertNotIn("_downloadSnapshotLegacy", client_api)
-        self.assertNotIn("function jobs_download_snapshot(", control_plane)
+        self.assertNotIn("Future<UploadSnapshotResult> uploadSnapshot(", client_api)
+        self.assertNotIn("Future<RemoteSnapshot> downloadSnapshot(", client_api)
+        self.assertNotIn("jobs_upload_chunk_start", client_api)
+        self.assertNotIn("jobs_download_snapshot_manifest", client_api)
+        self.assertNotIn("Future<void> _processUploadJob(RemoteSyncJob job)", agent_page)
+        self.assertIn("_processUnsupportedLegacyJob(job);", agent_page)
 
     def test_control_plane_defaults_to_merge_sync_jobs(self):
         control_plane = read_text("business/control_plane.tru")
@@ -47,10 +50,15 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("direction: direction_for_sync_mode(resolvedMode)", control_plane)
         self.assertIn("message: string.concat('Queued merge sync for ', table, '.')", control_plane)
+        self.assertIn("mergeRole: 'publisher'", control_plane)
+        self.assertIn("mergeRole: 'subscriber'", control_plane)
+        self.assertIn("function merge_publication_name(clientName: string, table: string): string", control_plane)
 
-    def test_legacy_sync_modes_and_direct_upload_endpoint_are_removed(self):
+    def test_legacy_sync_modes_and_custom_transport_fallback_are_removed(self):
         control_plane = read_text("business/control_plane.tru")
         sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         node_server = read_text("frontend/server.js")
 
         self.assertNotIn("function jobs_upload(", control_plane)
@@ -76,32 +84,14 @@ class SyncContractsTests(unittest.TestCase):
             "value == 'download'",
         ):
             self.assertNotIn(legacy_condition, control_plane)
-        self.assertIn(
-            'function normalizeSyncMode(_value) {\n  return "sync";',
-            node_server,
-        )
-        self.assertIn(
-            'function directionForSyncMode(_syncMode) {\n  return "sync";',
-            node_server,
-        )
-        self.assertIn(
-            "publishOwnerSnapshot: Boolean(body.publishOwnerSnapshot)",
-            node_server,
-        )
-        self.assertIn(
-            "function latestNamespaceSnapshotForTable(ownerUserId, clientName, table)",
-            node_server,
-        )
-        self.assertIn(
-            "function resolveSyncSourceSnapshot(",
-            node_server,
-        )
-        self.assertIn(
-            'clientName:\n      session.publishOwnerSnapshot && job.ownerUserId\n        ? job.ownerUserId\n        : job.clientName,',
-            node_server,
-        )
-        self.assertNotIn('action === "upload"', node_server)
-        self.assertNotIn('action === "download-snapshot"', node_server)
+        self.assertNotIn("uploadSnapshot(", client_api)
+        self.assertNotIn("downloadSnapshot(", client_api)
+        self.assertNotIn("_processUploadJob(job)", agent_page)
+        self.assertIn("Legacy custom sync jobs are no longer supported.", agent_page)
+        self.assertNotIn("/api/snapshots/latest", node_server)
+        self.assertNotIn("/api/snapshots/import", node_server)
+        self.assertNotIn("download-snapshot-manifest", node_server)
+        self.assertNotIn("upload-chunk-start", node_server)
 
     def test_related_table_metadata_stays_in_app_state(self):
         control_plane = read_text("business/control_plane.tru")
@@ -123,7 +113,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables)", control_plane)
         self.assertIn("const rows = tablesToCreate.map((table) =>", control_plane)
         self.assertIn("const expandedTables = expand_sync_job_tables_for_owner(ownerId, tables)", control_plane)
-        self.assertIn("const createdJobsRaw = tablesToCreate.map((table) =>", control_plane)
+        self.assertIn("let createdJobsRaw = [];", control_plane)
+        self.assertIn("for (const table of tablesToCreate) {", control_plane)
         self.assertIn("return raw_json_success({ jobs: [] }, 201);", control_plane)
         self.assertIn("final tablesToQueue = <String>{", agent_page)
         self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
@@ -158,11 +149,10 @@ class SyncContractsTests(unittest.TestCase):
     def test_windows_agent_uses_unique_index_as_merge_key_without_primary_key(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertIn("CASE WHEN uk.column_id IS NULL THEN 0 ELSE 1 END AS is_unique_key", agent_page)
-        self.assertIn("ROW_NUMBER() OVER", agent_page)
-        self.assertIn("PARTITION BY i.object_id", agent_page)
-        self.assertIn("schema.isUniqueKey && snapshotColumnSet.contains(schema.name)", agent_page)
-        self.assertIn("uniqueKeyOrdinal", agent_page)
+        self.assertNotIn("CASE WHEN uk.column_id IS NULL THEN 0 ELSE 1 END AS is_unique_key", agent_page)
+        self.assertNotIn("uniqueKeyOrdinal", agent_page)
+        self.assertIn("EXEC sp_addmergepublication", agent_page)
+        self.assertIn("EXEC sp_addmergepullsubscription", agent_page)
 
     def test_web_dashboard_exposes_merge_sync_not_push_pull_jobs(self):
         dashboard = read_text("frontend/lib/dashboard_page.dart")
@@ -185,37 +175,38 @@ class SyncContractsTests(unittest.TestCase):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         visible_copy = dashboard + sample_data + agent_page
 
-        self.assertIn("cloud namespace snapshot sources", dashboard)
-        self.assertIn("Uploaded by namespace source", dashboard)
-        self.assertIn("POSTGRES CUSTOM SYNC", dashboard)
-        self.assertIn("Orders and Inventory rows were merged through the cloud namespace.", sample_data)
+        self.assertIn("MERGE REPLICATION", dashboard)
+        self.assertIn("Merge replication participant", dashboard)
+        self.assertIn("Waiting for the next merge replication sync.", agent_page)
+        self.assertIn(
+            "Orders and Inventory rows were synchronized through merge replication.",
+            sample_data,
+        )
         for legacy_text in (
-            "MERGE REPLICATION",
-            "Merge replication",
-            "merge replication",
             "finance-master",
             "sink agents",
             "batches pushed",
-            "Uploaded by master",
+            "POSTGRES CUSTOM SYNC",
+            "cloud namespace snapshot sources",
+            "Uploaded by namespace source",
             "master snapshot",
-            "merged this master",
         ):
             self.assertNotIn(legacy_text, visible_copy)
 
-    def test_helm_declares_free_postgres_custom_sync_mode_for_central_server(self):
+    def test_helm_declares_merge_replication_engine_mode(self):
         values = read_text("deployment/chart/values.yaml")
         backend_deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
         frontend_deployment = read_text("deployment/chart/templates/deployment.yaml")
         control_plane = read_text("business/control_plane.tru")
 
-        self.assertIn("syncEngine:\n  mode: postgresCustomSync", values)
-        self.assertNotIn("mergeReplication", values)
+        self.assertIn("syncEngine:\n  mode: mergeReplication", values)
+        self.assertNotIn("postgresCustomSync", values)
         self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
         self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
         self.assertIn("function sync_engine_metadata(): map<json>", control_plane)
-        self.assertIn("mode: 'postgresCustomSync'", control_plane)
-        self.assertIn("centralStore: 'postgresql'", control_plane)
-        self.assertIn("sqlServerMergeReplication: false", control_plane)
+        self.assertIn("mode: 'mergeReplication'", control_plane)
+        self.assertIn("centralStore: 'sqlserver'", control_plane)
+        self.assertIn("sqlServerMergeReplication: true", control_plane)
         self.assertIn("syncEngine: sync_engine_metadata()", control_plane)
 
 

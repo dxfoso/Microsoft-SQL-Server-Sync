@@ -73,13 +73,11 @@ class AdminLiveState {
     required this.generatedAt,
     required this.agents,
     required this.jobs,
-    required this.snapshots,
   });
 
   final String generatedAt;
   final List<AdminAgent> agents;
   final List<AdminJob> jobs;
-  final List<AdminSnapshot> snapshots;
 
   factory AdminLiveState.fromJson(Map<String, dynamic> json) {
     return AdminLiveState(
@@ -93,12 +91,6 @@ class AdminLiveState {
       jobs: (json['jobs'] as List<dynamic>? ?? const [])
           .map(
             (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),
-          )
-          .toList(growable: false),
-      snapshots: (json['snapshots'] as List<dynamic>? ?? const [])
-          .map(
-            (item) =>
-                AdminSnapshot.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false),
     );
@@ -278,18 +270,12 @@ class AdminBulkDiagnosticsRequestResult {
 
 class AdminServerResetResult {
   const AdminServerResetResult({
-    required this.uploadSessionDeletedCount,
-    required this.downloadSessionDeletedCount,
-    required this.snapshotDeletedCount,
     required this.jobDeletedCount,
     required this.agentResetCount,
     required this.hasMore,
     required this.totalDeletedCount,
   });
 
-  final int uploadSessionDeletedCount;
-  final int downloadSessionDeletedCount;
-  final int snapshotDeletedCount;
   final int jobDeletedCount;
   final int agentResetCount;
   final bool hasMore;
@@ -297,11 +283,6 @@ class AdminServerResetResult {
 
   factory AdminServerResetResult.fromJson(Map<String, dynamic> json) {
     return AdminServerResetResult(
-      uploadSessionDeletedCount:
-          (json['uploadSessionDeletedCount'] as num? ?? 0).round(),
-      downloadSessionDeletedCount:
-          (json['downloadSessionDeletedCount'] as num? ?? 0).round(),
-      snapshotDeletedCount: (json['snapshotDeletedCount'] as num? ?? 0).round(),
       jobDeletedCount: (json['jobDeletedCount'] as num? ?? 0).round(),
       agentResetCount: (json['agentResetCount'] as num? ?? 0).round(),
       hasMore: json['hasMore'] as bool? ?? false,
@@ -320,11 +301,7 @@ class AdminTableState {
     required this.direction,
     required this.syncMode,
     required this.rowCount,
-    required this.snapshotId,
-    required this.snapshotCreatedAt,
-    required this.snapshotBytes,
     required this.message,
-    required this.mergedSnapshotSources,
   });
 
   final String table;
@@ -335,11 +312,7 @@ class AdminTableState {
   final String direction;
   final String syncMode;
   final int rowCount;
-  final String? snapshotId;
-  final String? snapshotCreatedAt;
-  final int snapshotBytes;
   final String message;
-  final Map<String, String> mergedSnapshotSources;
 
   factory AdminTableState.fromJson(Map<String, dynamic> json) {
     return AdminTableState(
@@ -351,23 +324,12 @@ class AdminTableState {
       direction: json['direction'] as String? ?? 'sync',
       syncMode: json['syncMode'] as String? ?? 'sync',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
-      snapshotId: json['snapshotId'] as String?,
-      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
-      mergedSnapshotSources: (json['mergedSnapshotSources']
-                  as Map<dynamic, dynamic>? ??
-              const {})
-          .map(
-            (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
-          ),
     );
   }
 
   bool get inProgress =>
-      status.toLowerCase() == 'snapshotting' ||
-      status.toLowerCase() == 'uploading' ||
-      status.toLowerCase() == 'downloading' ||
+      status.toLowerCase() == 'running' ||
       status.toLowerCase() == 'applying';
 }
 
@@ -376,8 +338,14 @@ class AdminJob {
     required this.id,
     required this.clientName,
     required this.sourceClientName,
+    required this.subscriberClientName,
     required this.table,
     required this.direction,
+    required this.mergeRole,
+    required this.publisherServer,
+    required this.publisherDatabase,
+    required this.publicationName,
+    required this.publisherUseWindowsAuth,
     required this.status,
     required this.progress,
     required this.rowCount,
@@ -385,9 +353,6 @@ class AdminJob {
     required this.updatedAt,
     required this.startedAt,
     required this.completedAt,
-    required this.snapshotId,
-    required this.snapshotCreatedAt,
-    required this.snapshotBytes,
     required this.message,
     required this.error,
   });
@@ -395,8 +360,14 @@ class AdminJob {
   final String id;
   final String clientName;
   final String sourceClientName;
+  final String subscriberClientName;
   final String table;
   final String direction;
+  final String mergeRole;
+  final String publisherServer;
+  final String publisherDatabase;
+  final String publicationName;
+  final bool publisherUseWindowsAuth;
   final String status;
   final int progress;
   final int rowCount;
@@ -404,9 +375,6 @@ class AdminJob {
   final String updatedAt;
   final String? startedAt;
   final String? completedAt;
-  final String? snapshotId;
-  final String? snapshotCreatedAt;
-  final int snapshotBytes;
   final String message;
   final String? error;
 
@@ -415,8 +383,14 @@ class AdminJob {
       id: json['id'] as String? ?? '',
       clientName: json['clientName'] as String? ?? '',
       sourceClientName: json['sourceClientName'] as String? ?? '',
+      subscriberClientName: json['subscriberClientName'] as String? ?? '',
       table: json['table'] as String? ?? '',
       direction: json['direction'] as String? ?? 'sync',
+      mergeRole: json['mergeRole'] as String? ?? '',
+      publisherServer: json['publisherServer'] as String? ?? '',
+      publisherDatabase: json['publisherDatabase'] as String? ?? '',
+      publicationName: json['publicationName'] as String? ?? '',
+      publisherUseWindowsAuth: json['publisherUseWindowsAuth'] as bool? ?? true,
       status: json['status'] as String? ?? 'queued',
       progress: (json['progress'] as num? ?? 0).round(),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
@@ -424,166 +398,11 @@ class AdminJob {
       updatedAt: json['updatedAt'] as String? ?? '',
       startedAt: json['startedAt'] as String?,
       completedAt: json['completedAt'] as String?,
-      snapshotId: json['snapshotId'] as String?,
-      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
     );
   }
 
   bool get isActive =>
-      status == 'queued' ||
-      status == 'snapshotting' ||
-      status == 'uploading' ||
-      status == 'downloading' ||
-      status == 'applying';
-}
-
-class AdminSnapshot {
-  const AdminSnapshot({
-    required this.id,
-    required this.clientName,
-    required this.clientUserId,
-    required this.ownerUserId,
-    required this.table,
-    required this.rowCount,
-    required this.checksum,
-    required this.createdAt,
-    required this.snapshotBytes,
-    required this.columns,
-    required this.previewRows,
-    required this.sourceJobId,
-  });
-
-  final String id;
-  final String clientName;
-  final String? clientUserId;
-  final String? ownerUserId;
-  final String table;
-  final int rowCount;
-  final String checksum;
-  final String createdAt;
-  final int snapshotBytes;
-  final List<String> columns;
-  final List<List<String>> previewRows;
-  final String? sourceJobId;
-
-  factory AdminSnapshot.fromJson(Map<String, dynamic> json) {
-    final rawRows = json['previewRows'] as List<dynamic>? ?? const [];
-    return AdminSnapshot(
-      id: json['id'] as String? ?? '',
-      clientName: json['clientName'] as String? ?? '',
-      clientUserId: json['clientUserId'] as String?,
-      ownerUserId: json['ownerUserId'] as String?,
-      table: json['table'] as String? ?? '',
-      rowCount: (json['rowCount'] as num? ?? 0).round(),
-      checksum: json['checksum'] as String? ?? '',
-      createdAt: json['createdAt'] as String? ?? '',
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
-      columns: (json['columns'] as List<dynamic>? ?? const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
-      previewRows: rawRows
-          .map(
-            (row) => (row as List<dynamic>)
-                .map((item) => item?.toString() ?? '')
-                .toList(growable: false),
-          )
-          .toList(growable: false),
-      sourceJobId: json['sourceJobId'] as String?,
-    );
-  }
-}
-
-class AdminSnapshotDetail {
-  const AdminSnapshotDetail({
-    required this.id,
-    required this.clientName,
-    required this.clientUserId,
-    required this.ownerUserId,
-    required this.table,
-    required this.rowCount,
-    required this.checksum,
-    required this.createdAt,
-    required this.snapshotBytes,
-    required this.columns,
-    required this.rows,
-    required this.sourceJobId,
-  });
-
-  final String id;
-  final String clientName;
-  final String? clientUserId;
-  final String? ownerUserId;
-  final String table;
-  final int rowCount;
-  final String checksum;
-  final String createdAt;
-  final int snapshotBytes;
-  final List<String> columns;
-  final List<Map<String, String?>> rows;
-  final String? sourceJobId;
-
-  factory AdminSnapshotDetail.fromJson(Map<String, dynamic> json) {
-    final columns = (json['columns'] as List<dynamic>? ?? const [])
-        .map((item) => item.toString())
-        .toList(growable: false);
-    final rawRows = json['rows'] as List<dynamic>? ?? const [];
-
-    return AdminSnapshotDetail(
-      id: json['id'] as String? ?? '',
-      clientName: json['clientName'] as String? ?? '',
-      clientUserId: json['clientUserId'] as String?,
-      ownerUserId: json['ownerUserId'] as String?,
-      table: json['table'] as String? ?? '',
-      rowCount: (json['rowCount'] as num? ?? 0).round(),
-      checksum: json['checksum'] as String? ?? '',
-      createdAt: json['createdAt'] as String? ?? '',
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
-      columns: columns,
-      rows: rawRows
-          .map((row) => _decodeSnapshotRow(columns, row))
-          .toList(growable: false),
-      sourceJobId: json['sourceJobId'] as String?,
-    );
-  }
-
-  static Map<String, String?> _decodeSnapshotRow(
-    List<String> columns,
-    dynamic row,
-  ) {
-    if (row is List) {
-      return Map<String, String?>.fromEntries(
-        columns.asMap().entries.map(
-          (entry) => MapEntry(
-            entry.value,
-            entry.key < row.length ? row[entry.key]?.toString() : null,
-          ),
-        ),
-      );
-    }
-
-    if (row is Map) {
-      final rawMap = Map<String, dynamic>.fromEntries(
-        row.entries.map((entry) => MapEntry(entry.key.toString(), entry.value)),
-      );
-      final lowerKeys = <String, dynamic>{
-        for (final entry in rawMap.entries)
-          entry.key.toLowerCase(): entry.value,
-      };
-      return Map<String, String?>.fromEntries(
-        columns.map((column) {
-          final direct = rawMap[column];
-          final fallback = lowerKeys[column.toLowerCase()];
-          final value = direct ?? fallback;
-          return MapEntry(column, value?.toString());
-        }),
-      );
-    }
-
-    return Map<String, String?>.fromEntries(
-      columns.map((column) => MapEntry(column, null)),
-    );
-  }
+      status == 'queued' || status == 'running' || status == 'applying';
 }

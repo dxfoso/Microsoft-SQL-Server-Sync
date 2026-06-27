@@ -1,0 +1,538 @@
+{
+  "name": "mig_20260626_233852",
+  "timestamp": "2026-06-26T23:38:52.005921600+00:00",
+  "objects": [
+    {
+      "object": "UploadSession",
+      "namespace": null,
+      "action": "removed",
+      "fields": [
+        {
+          "field": "id",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "jobId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "uploadId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "128",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "table",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "256",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "rowCount",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "1000000000",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "snapshotCreatedAt",
+          "action": "removed",
+          "before": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "snapshotBytes",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "2147483647",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "compressedBytes",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "2147483647",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "chunkSizeBytes",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "1",
+            "max": "1048576",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "chunkCount",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "1",
+            "max": "10000",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "encoding",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "16",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "publishOwnerSnapshot",
+          "action": "removed",
+          "before": {
+            "ty": "bool",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "createdAt",
+          "action": "removed",
+          "before": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "updatedAt",
+          "action": "removed",
+          "before": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "chunks",
+          "action": "removed",
+          "before": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        }
+      ]
+    },
+    {
+      "object": "DownloadSession",
+      "namespace": null,
+      "action": "removed",
+      "fields": [
+        {
+          "field": "id",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "jobId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "snapshotId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "table",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "256",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "chunkSizeBytes",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "1",
+            "max": "1048576",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "chunkCount",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "1",
+            "max": "10000",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "compressedBytes",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "2147483647",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "encoding",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "16",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "createdAt",
+          "action": "removed",
+          "before": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "updatedAt",
+          "action": "removed",
+          "before": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "chunks",
+          "action": "removed",
+          "before": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        }
+      ]
+    },
+    {
+      "object": "SnapshotRecord",
+      "namespace": null,
+      "action": "removed",
+      "fields": [
+        {
+          "field": "id",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "clientName",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "128",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "table",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "256",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "rowCount",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "1000000000",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "checksum",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "128",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "createdAt",
+          "action": "removed",
+          "before": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "snapshotBytes",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "2147483647",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "columns",
+          "action": "removed",
+          "before": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "rows",
+          "action": "removed",
+          "before": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "previewRows",
+          "action": "removed",
+          "before": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "sourceJobId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "clientUserId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "ownerUserId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        }
+      ]
+    },
+    {
+      "object": "SyncJob",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "snapshotBytes",
+          "action": "removed",
+          "before": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "2147483647",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "snapshotId",
+          "action": "removed",
+          "before": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          },
+          "after": null
+        },
+        {
+          "field": "snapshotCreatedAt",
+          "action": "removed",
+          "before": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          },
+          "after": null
+        }
+      ]
+    }
+  ]
+}

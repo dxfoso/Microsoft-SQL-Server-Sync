@@ -17,37 +17,6 @@ String syncDirectionForMode(String syncMode) {
   return 'sync';
 }
 
-class SyncHistorySnapshotData {
-  const SyncHistorySnapshotData({required this.columns, required this.rows});
-
-  final List<String> columns;
-  final List<Map<String, String?>> rows;
-
-  factory SyncHistorySnapshotData.fromJson(Map<String, dynamic> json) {
-    final columns = (json['columns'] as List<dynamic>? ?? const [])
-        .map((item) => item.toString())
-        .toList(growable: false);
-    final rawRows = json['rows'] as List<dynamic>? ?? const [];
-
-    return SyncHistorySnapshotData(
-      columns: columns,
-      rows: rawRows
-          .map(
-            (row) => Map<String, String?>.fromEntries(
-              columns.map((column) {
-                final value =
-                    row is Map && row.containsKey(column) ? row[column] : null;
-                return MapEntry(column, value?.toString());
-              }),
-            ),
-          )
-          .toList(growable: false),
-    );
-  }
-
-  Map<String, dynamic> toJson() => {'columns': columns, 'rows': rows};
-}
-
 class SyncHistoryEntry {
   const SyncHistoryEntry({
     required this.timestamp,
@@ -58,10 +27,6 @@ class SyncHistoryEntry {
     this.direction = 'sync',
     this.rowCount = 0,
     this.progress = 0,
-    this.snapshotId,
-    this.snapshotCreatedAt,
-    this.snapshotBytes = 0,
-    this.snapshotData,
   });
 
   final String timestamp;
@@ -72,10 +37,6 @@ class SyncHistoryEntry {
   final String direction;
   final int rowCount;
   final int progress;
-  final String? snapshotId;
-  final String? snapshotCreatedAt;
-  final int snapshotBytes;
-  final SyncHistorySnapshotData? snapshotData;
 
   factory SyncHistoryEntry.fromJson(Map<String, dynamic> json) {
     return SyncHistoryEntry(
@@ -87,15 +48,6 @@ class SyncHistoryEntry {
       direction: json['direction'] as String? ?? 'sync',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       progress: (json['progress'] as num? ?? 0).round(),
-      snapshotId: json['snapshotId'] as String?,
-      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
-      snapshotData:
-          json['snapshotData'] is Map
-              ? SyncHistorySnapshotData.fromJson(
-                Map<String, dynamic>.from(json['snapshotData'] as Map),
-              )
-              : null,
     );
   }
 
@@ -108,10 +60,6 @@ class SyncHistoryEntry {
     'direction': direction,
     'rowCount': rowCount,
     'progress': progress,
-    'snapshotId': snapshotId,
-    'snapshotCreatedAt': snapshotCreatedAt,
-    'snapshotBytes': snapshotBytes,
-    'snapshotData': snapshotData?.toJson(),
   };
 }
 
@@ -125,9 +73,6 @@ class SyncTableState {
     required this.syncMode,
     required this.rowCount,
     required this.savedRowCount,
-    required this.snapshotId,
-    required this.snapshotCreatedAt,
-    required this.snapshotBytes,
     required this.message,
     required this.history,
   });
@@ -140,9 +85,6 @@ class SyncTableState {
   final String syncMode;
   final int rowCount;
   final int? savedRowCount;
-  final String? snapshotId;
-  final String? snapshotCreatedAt;
-  final int snapshotBytes;
   final String message;
   final List<SyncHistoryEntry> history;
 
@@ -162,9 +104,6 @@ class SyncTableState {
       syncMode: normalizeSyncMode(json['syncMode'] as String?),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       savedRowCount: (json['savedRowCount'] as num?)?.round(),
-      snapshotId: json['snapshotId'] as String?,
-      snapshotCreatedAt: json['snapshotCreatedAt'] as String?,
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
       history: history,
     );
@@ -179,9 +118,6 @@ class SyncTableState {
     'syncMode': syncMode,
     'rowCount': rowCount,
     'savedRowCount': savedRowCount,
-    'snapshotId': snapshotId,
-    'snapshotCreatedAt': snapshotCreatedAt,
-    'snapshotBytes': snapshotBytes,
     'message': message,
     'history': history.map((entry) => entry.toJson()).toList(growable: false),
   };
@@ -195,9 +131,6 @@ class SyncTableState {
     String? syncMode,
     int? rowCount,
     Object? savedRowCount = _syncTableStateUnset,
-    String? snapshotId,
-    String? snapshotCreatedAt,
-    int? snapshotBytes,
     String? message,
     List<SyncHistoryEntry>? history,
   }) {
@@ -213,9 +146,6 @@ class SyncTableState {
           identical(savedRowCount, _syncTableStateUnset)
               ? this.savedRowCount
               : savedRowCount as int?,
-      snapshotId: snapshotId ?? this.snapshotId,
-      snapshotCreatedAt: snapshotCreatedAt ?? this.snapshotCreatedAt,
-      snapshotBytes: snapshotBytes ?? this.snapshotBytes,
       message: message ?? this.message,
       history: history ?? this.history,
     );

@@ -14,7 +14,7 @@ tolerations: []
 affinity: {}
 
 syncEngine:
-  mode: postgresCustomSync
+  mode: mergeReplication
 
 certManager:
   enabled: true

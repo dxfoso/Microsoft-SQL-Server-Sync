@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -67,13 +66,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       const <String, List<_TableClientEntry>>{};
   List<String> _derivedDatabaseNames = const <String>[];
   Map<String, int> _derivedDatabaseTableCounts = const <String, int>{};
-  Map<String, _TableSnapshotSource> _derivedSnapshotSourcesByTable =
-      const <String, _TableSnapshotSource>{};
   Map<String, List<AdminJob>> _derivedJobsByTable =
       const <String, List<AdminJob>>{};
   Map<String, List<AdminJob>> _derivedJobsByTableClient =
       const <String, List<AdminJob>>{};
-  AdminSnapshotDetail? _snapshot;
   List<AuthenticatedUser> _visibleUsers = const <AuthenticatedUser>[];
   bool _loading = true;
   bool _loadingUsers = false;
@@ -89,7 +85,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _sortLastSyncAscending = false;
   int _detailTabIndex = 0;
   int _historyLimit = _defaultHistoryLimit;
-  final Set<String> _busyBackupKeys = <String>{};
   final Set<String> _busyTablePolicyKeys = <String>{};
   final Set<String> _requestingDiagnosticsClientNames = <String>{};
   bool _bulkSyncBusy = false;
@@ -602,7 +597,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _derivedClientsByTable = const <String, List<_TableClientEntry>>{};
       _derivedDatabaseNames = const <String>[];
       _derivedDatabaseTableCounts = const <String, int>{};
-      _derivedSnapshotSourcesByTable = const <String, _TableSnapshotSource>{};
       _derivedJobsByTable = const <String, List<AdminJob>>{};
       _derivedJobsByTableClient = const <String, List<AdminJob>>{};
       return;
@@ -642,7 +636,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           lastSync: _tableTimestampToken(latestClient.tableState),
           clientCount: clients.length,
           latestRowCount: latestClient.tableState.rowCount,
-          latestSnapshotBytes: latestClient.tableState.snapshotBytes,
           sourceClientName: latestClient.agent.clientName,
           clients: clients,
         ),
@@ -655,50 +648,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       for (final summary in summaries) summary.table: summary,
     };
     _derivedClientsByTable = clientsByTable;
-
-    final snapshotSources = <String, _TableSnapshotSource>{};
-    for (final snapshot in state.snapshots) {
-      final existing = snapshotSources[snapshot.table];
-      if (existing == null ||
-          _compareTimestamps(snapshot.createdAt, existing.createdAt) > 0) {
-        snapshotSources[snapshot.table] = _TableSnapshotSource(
-          clientName: snapshot.clientName,
-          table: snapshot.table,
-          createdAt: snapshot.createdAt,
-          rowCount: snapshot.rowCount,
-          snapshotBytes: snapshot.snapshotBytes,
-        );
-      }
-    }
-    for (final summary in summaries) {
-      snapshotSources.putIfAbsent(summary.table, () {
-        final clients = clientsByTable[summary.table]!;
-        _TableClientEntry? latestEntry;
-        for (final entry in clients) {
-          final token = _tableTimestampToken(entry.tableState);
-          if (token.isEmpty) {
-            continue;
-          }
-          if (latestEntry == null ||
-              _compareTimestamps(
-                    token,
-                    _tableTimestampToken(latestEntry.tableState),
-                  ) >
-                  0) {
-            latestEntry = entry;
-          }
-        }
-        final fallback = latestEntry ?? clients.first;
-        return _TableSnapshotSource(
-          clientName: fallback.agent.clientName,
-          table: summary.table,
-          createdAt: _tableTimestampToken(fallback.tableState),
-          rowCount: fallback.tableState.rowCount,
-          snapshotBytes: fallback.tableState.snapshotBytes,
-        );
-      });
-    }
-    _derivedSnapshotSourcesByTable = snapshotSources;
 
     final databaseTableSets = <String, Set<String>>{};
     for (final summary in summaries) {
@@ -821,7 +770,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedDatabaseName = databaseName;
       _selectedTableName = nextTableName;
       _selectedClientName = nextClientName;
-      _snapshot = null;
       _detailTabIndex = 0;
     });
   }
@@ -837,13 +785,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     if (_selectedClientName != null &&
         clients.any((entry) => entry.agent.clientName == _selectedClientName)) {
       return _selectedClientName;
-    }
-    final snapshotSource = _snapshotSourceForTable(state, tableName);
-    if (snapshotSource != null &&
-        clients.any(
-          (entry) => entry.agent.clientName == snapshotSource.clientName,
-        )) {
-      return snapshotSource.clientName;
     }
     return clients.first.agent.clientName;
   }
@@ -878,44 +819,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   String _stripDefaultSchema(String table) =>
       table.trim().replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
 
-  bool _snapshotMatchesAgentNamespace(
-    AdminSnapshot snapshot,
-    AdminAgent agent,
-  ) {
-    if (snapshot.clientName == agent.clientName) {
-      return true;
-    }
-    final snapshotOwnerId = snapshot.ownerUserId?.trim() ?? '';
-    final agentOwnerId = agent.ownerUserId?.trim() ?? '';
-    if (snapshotOwnerId.isNotEmpty &&
-        agentOwnerId.isNotEmpty &&
-        snapshotOwnerId == agentOwnerId) {
-      return true;
-    }
-    return snapshot.clientName.trim().isNotEmpty &&
-        agentOwnerId.isNotEmpty &&
-        snapshot.clientName.trim() == agentOwnerId;
-  }
-
-  bool _snapshotDetailMatchesAgentNamespace(
-    AdminSnapshotDetail snapshot,
-    AdminAgent agent,
-  ) {
-    if (snapshot.clientName == agent.clientName) {
-      return true;
-    }
-    final snapshotOwnerId = snapshot.ownerUserId?.trim() ?? '';
-    final agentOwnerId = agent.ownerUserId?.trim() ?? '';
-    if (snapshotOwnerId.isNotEmpty &&
-        agentOwnerId.isNotEmpty &&
-        snapshotOwnerId == agentOwnerId) {
-      return true;
-    }
-    return snapshot.clientName.trim().isNotEmpty &&
-        agentOwnerId.isNotEmpty &&
-        snapshot.clientName.trim() == agentOwnerId;
-  }
-
   List<_TableClientEntry> _clientsForTableFromState(
     AdminLiveState? state,
     String? tableName,
@@ -938,24 +841,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return left.agent.clientName.compareTo(right.agent.clientName);
   }
 
-  _TableSnapshotSource? _snapshotSourceForTable(
-    AdminLiveState? state,
-    String? tableName,
-  ) {
-    if (tableName == null) {
-      return null;
-    }
-    _ensureDerivedState(state);
-    return _derivedSnapshotSourcesByTable[tableName];
-  }
-
-  String _tableTimestampToken(AdminTableState tableState) {
-    final snapshotCreatedAt = tableState.snapshotCreatedAt?.trim() ?? '';
-    if (snapshotCreatedAt.isNotEmpty) {
-      return snapshotCreatedAt;
-    }
-    return tableState.lastSync.trim();
-  }
+  String _tableTimestampToken(AdminTableState tableState) =>
+      tableState.lastSync.trim();
 
   int _compareTimestamps(String left, String right) {
     return _timestampSortValue(left).compareTo(_timestampSortValue(right));
@@ -1032,7 +919,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     setState(() {
       _selectedTableName = tableName;
       _selectedClientName = nextClientName;
-      _snapshot = null;
       _detailTabIndex = 0;
     });
   }
@@ -2142,131 +2028,69 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }) async {
     _selectClient(clientName);
     final jobs = _jobsForClientAndTable(clientName: clientName, table: table);
-    final searchController = TextEditingController();
-    AdminJob? selectedJob;
-    Future<AdminSnapshotDetail?>? selectedSnapshotFuture;
-
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              final job = selectedJob;
-              final showingData = job != null;
-              final canGoBackToDetails =
-                  !showingData && (backLabel?.trim().isNotEmpty ?? false);
-
-              return Dialog(
-                insetPadding: const EdgeInsets.all(20),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: showingData ? 1180 : 860,
-                    maxHeight: MediaQuery.sizeOf(context).height * 0.84,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            if (showingData || canGoBackToDetails) ...[
-                              IconButton(
-                                tooltip:
-                                    showingData
-                                        ? 'Back to history'
-                                        : backLabel!.trim(),
-                                onPressed: () {
-                                  if (!showingData) {
-                                    Navigator.of(context).pop();
-                                    return;
-                                  }
-                                  setDialogState(() {
-                                    selectedJob = null;
-                                    selectedSnapshotFuture = null;
-                                    searchController.clear();
-                                  });
-                                },
-                                icon: const Icon(Icons.arrow_back_rounded),
-                              ),
-                              const SizedBox(width: 4),
-                            ],
-                            Expanded(
-                              child: Text(
-                                showingData
-                                    ? '${job.table} Data'
-                                    : '$clientName History',
-                                style: Theme.of(context).textTheme.headlineSmall
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Close',
-                              onPressed: () => Navigator.of(context).pop(),
-                              icon: const Icon(Icons.close),
-                            ),
-                          ],
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final canGoBackToDetails = backLabel?.trim().isNotEmpty ?? false;
+        return Dialog(
+          insetPadding: const EdgeInsets.all(20),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 860,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.84,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (canGoBackToDetails) ...[
+                        IconButton(
+                          tooltip: backLabel!.trim(),
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.arrow_back_rounded),
                         ),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          child:
-                              showingData
-                                  ? FutureBuilder<AdminSnapshotDetail?>(
-                                    future: selectedSnapshotFuture,
-                                    builder: (context, snapshotState) {
-                                      return _buildSnapshotDataContent(
-                                        job: job,
-                                        snapshotState: snapshotState,
-                                        searchController: searchController,
-                                        onSearchChanged:
-                                            () => setDialogState(() {}),
-                                      );
-                                    },
-                                  )
-                                  : jobs.isEmpty
-                                  ? const EmptyStateCard(
-                                    message:
-                                        'No sync jobs have been recorded yet for this client or table.',
-                                  )
-                                  : ListView.separated(
-                                    itemCount: jobs.length,
-                                    separatorBuilder:
-                                        (_, _) => const SizedBox(height: 6),
-                                    itemBuilder: (context, index) {
-                                      final historyJob = jobs[index];
-                                      return _buildJobCard(
-                                        historyJob,
-                                        onOpenSnapshot: () {
-                                          final snapshotId =
-                                              historyJob.snapshotId?.trim() ??
-                                              '';
-                                          if (snapshotId.isEmpty) {
-                                            return;
-                                          }
-                                          setDialogState(() {
-                                            selectedJob = historyJob;
-                                            selectedSnapshotFuture = _api
-                                                .fetchSnapshotById(snapshotId);
-                                            searchController.clear();
-                                          });
-                                        },
-                                      );
-                                    },
-                                  ),
-                        ),
+                        const SizedBox(width: 4),
                       ],
-                    ),
+                      Expanded(
+                        child: Text(
+                          '$clientName History',
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
                   ),
-                ),
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      searchController.dispose();
-    }
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child:
+                        jobs.isEmpty
+                            ? const EmptyStateCard(
+                              message:
+                                  'No merge replication jobs have been recorded yet for this client or table.',
+                            )
+                            : ListView.separated(
+                              itemCount: jobs.length,
+                              separatorBuilder:
+                                  (_, _) => const SizedBox(height: 6),
+                              itemBuilder:
+                                  (context, index) => _buildJobCard(jobs[index]),
+                            ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _openAboutDialog() async {
@@ -2310,167 +2134,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Future<void> _openJobSnapshotDialog(AdminJob job) async {
-    final snapshotId = job.snapshotId?.trim() ?? '';
-    if (snapshotId.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No snapshot data is stored for this history item.'),
-        ),
-      );
-      return;
-    }
-
-    final searchController = TextEditingController();
-    final snapshotFuture = _api.fetchSnapshotById(snapshotId);
-
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              return Dialog(
-                insetPadding: const EdgeInsets.all(20),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: 1180,
-                    maxHeight: MediaQuery.sizeOf(context).height * 0.82,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: FutureBuilder<AdminSnapshotDetail?>(
-                      future: snapshotFuture,
-                      builder: (context, snapshotState) {
-                        final snapshot = snapshotState.data;
-                        final filteredRows =
-                            snapshot == null
-                                ? const <_ScoredSnapshotRow>[]
-                                : _filteredSnapshotRowsForQuery(
-                                  snapshot,
-                                  searchController.text,
-                                );
-
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    '${job.table} Data',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .headlineSmall
-                                        ?.copyWith(fontWeight: FontWeight.w800),
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: 'Close',
-                                  onPressed: () => Navigator.of(context).pop(),
-                                  icon: const Icon(Icons.close),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: [
-                                MetricPill(
-                                  label: 'Client',
-                                  value: job.clientName,
-                                ),
-                                MetricPill(
-                                  label: 'Status',
-                                  value: job.status.toUpperCase(),
-                                ),
-                                MetricPill(
-                                  label: 'Date',
-                                  value: _formatTimestamp(
-                                    job.completedAt ?? job.updatedAt,
-                                  ),
-                                ),
-                                MetricPill(
-                                  label: 'Rows',
-                                  value:
-                                      snapshot == null
-                                          ? '${job.rowCount}'
-                                          : '${filteredRows.length} / ${snapshot.rowCount}',
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            TextField(
-                              controller: searchController,
-                              onChanged: (_) => setDialogState(() {}),
-                              decoration: InputDecoration(
-                                labelText: 'Search Rows',
-                                hintText:
-                                    'Search across all visible columns for the best matching row.',
-                                prefixIcon: const Icon(Icons.search),
-                                suffixIcon:
-                                    searchController.text.isEmpty
-                                        ? null
-                                        : IconButton(
-                                          tooltip: 'Clear search',
-                                          onPressed: () {
-                                            searchController.clear();
-                                            setDialogState(() {});
-                                          },
-                                          icon: const Icon(Icons.close),
-                                        ),
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            Expanded(
-                              child:
-                                  snapshotState.connectionState ==
-                                              ConnectionState.waiting &&
-                                          snapshot == null
-                                      ? const Center(
-                                        child: CircularProgressIndicator(),
-                                      )
-                                      : snapshotState.hasError
-                                      ? EmptyStateCard(
-                                        message: snapshotState.error.toString(),
-                                      )
-                                      : snapshot == null
-                                      ? const EmptyStateCard(
-                                        message:
-                                            'No snapshot data is available for this history item.',
-                                      )
-                                      : filteredRows.isEmpty
-                                      ? EmptyStateCard(
-                                        message:
-                                            searchController.text.trim().isEmpty
-                                                ? 'This snapshot has no rows.'
-                                                : 'No rows matched your search. Try a broader term or clear the search box.',
-                                      )
-                                      : _buildSnapshotGrid(
-                                        snapshot,
-                                        filteredRows,
-                                      ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      searchController.dispose();
-    }
-  }
-
   Future<void> _openClientDetailDialog({
     required _TableAggregateSummary summary,
     required _TableClientEntry entry,
@@ -2481,236 +2144,100 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       table: summary.table,
     );
     final recentJobs = jobs.take(_historyLimit).toList(growable: false);
-    final searchController = TextEditingController();
-    final latestSnapshotFuture = _api.fetchLatestSnapshot(
-      clientName: entry.agent.clientName,
-      table: summary.table,
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(20),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 1180,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildClientDetailDialogHeader(summary: summary, entry: entry),
+                  const SizedBox(height: 8),
+                  _buildSelectedClientInfo(
+                    entry,
+                    tableName: summary.displayTitle,
+                    recentHistoryCount: recentJobs.length,
+                    totalHistoryCount: jobs.length,
+                    onSync:
+                        entry.tableState.enabled
+                            ? () => _triggerJob(
+                              clientName: entry.agent.clientName,
+                              table: summary.table,
+                            )
+                            : null,
+                    onOpenHistory:
+                        () => _openHistoryDialog(
+                          clientName: entry.agent.clientName,
+                          table: summary.table,
+                          backLabel: 'Back to details',
+                        ),
+                  ),
+                  const SizedBox(height: 14),
+                  Expanded(child: _buildRecentHistoryPanel(recentJobs)),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
-
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              final busy = _isBackupBusy(entry.agent.clientName, summary.table);
-
-              return Dialog(
-                insetPadding: const EdgeInsets.all(20),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: 1180,
-                    maxHeight: MediaQuery.sizeOf(context).height * 0.88,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildClientDetailDialogHeader(
-                          summary: summary,
-                          entry: entry,
-                        ),
-                        const SizedBox(height: 8),
-                        _buildSelectedClientInfo(
-                          entry,
-                          tableName: summary.displayTitle,
-                          busy: busy,
-                          recentHistoryCount: recentJobs.length,
-                          totalHistoryCount: jobs.length,
-                          onDownload:
-                              () => _downloadSnapshotFile(
-                                clientName: entry.agent.clientName,
-                                table: summary.table,
-                              ),
-                          onUpload:
-                              () => _uploadSnapshotFile(
-                                clientName: entry.agent.clientName,
-                                table: summary.table,
-                              ),
-                          onSync:
-                              entry.tableState.enabled
-                                  ? () => _triggerJob(
-                                    clientName: entry.agent.clientName,
-                                    table: summary.table,
-                                  )
-                                  : null,
-                          onOpenHistory:
-                              () => _openHistoryDialog(
-                                clientName: entry.agent.clientName,
-                                table: summary.table,
-                                backLabel: 'Back to details',
-                              ),
-                        ),
-                        const SizedBox(height: 14),
-                        Expanded(
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final stack = constraints.maxWidth < 900;
-                              final snapshotPanel =
-                                  FutureBuilder<AdminSnapshotDetail?>(
-                                    future: latestSnapshotFuture,
-                                    builder:
-                                        (context, snapshotState) =>
-                                            _buildLatestSnapshotPanel(
-                                              snapshotState: snapshotState,
-                                              searchController:
-                                                  searchController,
-                                              onSearchChanged:
-                                                  () => setDialogState(() {}),
-                                            ),
-                                  );
-                              final historyPanel = _buildRecentHistoryPanel(
-                                recentJobs,
-                              );
-
-                              if (stack) {
-                                return Column(
-                                  children: [
-                                    Expanded(flex: 3, child: snapshotPanel),
-                                    const SizedBox(height: 12),
-                                    Expanded(flex: 2, child: historyPanel),
-                                  ],
-                                );
-                              }
-
-                              return Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(flex: 7, child: snapshotPanel),
-                                  const SizedBox(width: 12),
-                                  Expanded(flex: 4, child: historyPanel),
-                                ],
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      searchController.dispose();
-    }
   }
 
   Future<void> _openTableDataDialog(_TableAggregateSummary summary) async {
-    final source = _snapshotSourceForTable(_state, summary.table);
-    final clientName = source?.clientName ?? summary.sourceClientName;
-    final searchController = TextEditingController();
-    final latestSnapshotFuture = _api.fetchLatestSnapshot(
-      clientName: clientName,
-      table: summary.table,
-    );
-    final namespaceSnapshotsFuture = _loadLatestNamespaceSnapshotsForTable(
-      summary.table,
-    );
-
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              return Dialog(
-                insetPadding: const EdgeInsets.all(20),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: 1180,
-                    maxHeight: MediaQuery.sizeOf(context).height * 0.88,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 36,
-                              height: 36,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE6F4F1),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: const Color(0xFFB8DDD6),
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.table_rows_outlined,
-                                color: Color(0xFF0F766E),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    summary.displayTitle,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleLarge
-                                        ?.copyWith(fontWeight: FontWeight.w800),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    'Latest rows from $clientName',
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Color(0xFF667085),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              tooltip: 'Close',
-                              onPressed: () => Navigator.of(context).pop(),
-                              icon: const Icon(Icons.close),
-                            ),
-                          ],
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(20),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 860,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          summary.displayTitle,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
                         ),
-                        const SizedBox(height: 14),
-                        _buildTableDialogClientStatus(summary),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          child: FutureBuilder<AdminSnapshotDetail?>(
-                            future: latestSnapshotFuture,
-                            builder:
-                                (context, snapshotState) =>
-                                    _buildLatestSnapshotPanel(
-                                      snapshotState: snapshotState,
-                                      searchController: searchController,
-                                      onSearchChanged:
-                                          () => setDialogState(() {}),
-                                      rowNamespaceSnapshotsFuture:
-                                          namespaceSnapshotsFuture,
-                                    ),
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
                   ),
-                ),
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      searchController.dispose();
-    }
+                  const SizedBox(height: 14),
+                  _buildTableDialogClientStatus(summary),
+                  const SizedBox(height: 12),
+                  const EmptyStateCard(
+                    message:
+                        'The control plane no longer stores row-level table payloads. Use merge replication job history and the Windows client for table-level verification.',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildTableDialogClientStatus(_TableAggregateSummary summary) {
@@ -2765,108 +2292,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildLatestSnapshotPanel({
-    required AsyncSnapshot<AdminSnapshotDetail?> snapshotState,
-    required TextEditingController searchController,
-    required VoidCallback onSearchChanged,
-    Future<List<AdminSnapshotDetail>>? rowNamespaceSnapshotsFuture,
-  }) {
-    final snapshot = snapshotState.data;
-    final filteredRows =
-        snapshot == null
-            ? const <_ScoredSnapshotRow>[]
-            : _filteredSnapshotRowsForQuery(snapshot, searchController.text);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionLabel('Snapshot Data'),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            MetricPill(label: 'Rows', value: '${snapshot?.rowCount ?? 0}'),
-            MetricPill(
-              label: 'Columns',
-              value: '${snapshot?.columns.length ?? 0}',
-            ),
-            MetricPill(
-              label: 'Size',
-              value: _formatBytes(snapshot?.snapshotBytes ?? 0),
-            ),
-            MetricPill(
-              label: 'Created',
-              value: _formatTimestamp(snapshot?.createdAt ?? ''),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: searchController,
-          onChanged: (_) => onSearchChanged(),
-          decoration: InputDecoration(
-            labelText: 'Search Snapshot Rows',
-            hintText: 'Search across loaded snapshot columns.',
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon:
-                searchController.text.isEmpty
-                    ? null
-                    : IconButton(
-                      tooltip: 'Clear search',
-                      onPressed: () {
-                        searchController.clear();
-                        onSearchChanged();
-                      },
-                      icon: const Icon(Icons.close),
-                    ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Expanded(
-          child:
-              snapshotState.connectionState == ConnectionState.waiting &&
-                      snapshot == null
-                  ? const Center(child: CircularProgressIndicator())
-                  : snapshotState.hasError
-                  ? EmptyStateCard(message: snapshotState.error.toString())
-                  : snapshot == null
-                  ? const EmptyStateCard(
-                    message:
-                        'No snapshot data is stored yet for this client and table.',
-                  )
-                  : filteredRows.isEmpty
-                  ? EmptyStateCard(
-                    message:
-                        searchController.text.trim().isEmpty
-                            ? 'This snapshot has no rows.'
-                            : 'No rows matched your search. Try a broader term or clear the search box.',
-                  )
-                  : rowNamespaceSnapshotsFuture == null
-                  ? _buildSnapshotGrid(snapshot, filteredRows)
-                  : FutureBuilder<List<AdminSnapshotDetail>>(
-                    future: rowNamespaceSnapshotsFuture,
-                    builder: (context, namespaceState) {
-                      final rowSourceCounts =
-                          namespaceState.hasData
-                              ? _namespaceRowCountsForSnapshot(
-                                snapshot,
-                                namespaceState.data!,
-                              )
-                              : null;
-                      return _buildSnapshotGrid(
-                        snapshot,
-                        filteredRows,
-                        showNamespaceMatchColumn: true,
-                        rowSourceCounts: rowSourceCounts,
-                      );
-                    },
-                  ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildRecentHistoryPanel(List<AdminJob> recentJobs) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2886,88 +2311,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     itemBuilder:
                         (context, index) => _buildJobCard(recentJobs[index]),
                   ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSnapshotDataContent({
-    required AdminJob job,
-    required AsyncSnapshot<AdminSnapshotDetail?> snapshotState,
-    required TextEditingController searchController,
-    required VoidCallback onSearchChanged,
-  }) {
-    final snapshot = snapshotState.data;
-    final filteredRows =
-        snapshot == null
-            ? const <_ScoredSnapshotRow>[]
-            : _filteredSnapshotRowsForQuery(snapshot, searchController.text);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            MetricPill(label: 'Client', value: job.clientName),
-            MetricPill(label: 'Status', value: job.status.toUpperCase()),
-            MetricPill(
-              label: 'Date',
-              value: _formatTimestamp(job.completedAt ?? job.updatedAt),
-            ),
-            MetricPill(
-              label: 'Rows',
-              value:
-                  snapshot == null
-                      ? '${job.rowCount}'
-                      : '${filteredRows.length} / ${snapshot.rowCount}',
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          controller: searchController,
-          onChanged: (_) => onSearchChanged(),
-          decoration: InputDecoration(
-            labelText: 'Search Rows',
-            hintText:
-                'Search across all visible columns for the best matching row.',
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon:
-                searchController.text.isEmpty
-                    ? null
-                    : IconButton(
-                      tooltip: 'Clear search',
-                      onPressed: () {
-                        searchController.clear();
-                        onSearchChanged();
-                      },
-                      icon: const Icon(Icons.close),
-                    ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        Expanded(
-          child:
-              snapshotState.connectionState == ConnectionState.waiting &&
-                      snapshot == null
-                  ? const Center(child: CircularProgressIndicator())
-                  : snapshotState.hasError
-                  ? EmptyStateCard(message: snapshotState.error.toString())
-                  : snapshot == null
-                  ? const EmptyStateCard(
-                    message:
-                        'No snapshot data is available for this history item.',
-                  )
-                  : filteredRows.isEmpty
-                  ? EmptyStateCard(
-                    message:
-                        searchController.text.trim().isEmpty
-                            ? 'This snapshot has no rows.'
-                            : 'No rows matched your search. Try a broader term or clear the search box.',
-                  )
-                  : _buildSnapshotGrid(snapshot, filteredRows),
         ),
       ],
     );
@@ -3061,7 +2404,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'This deletes saved sync jobs, snapshots, upload/download sessions, and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
+                        'This deletes saved merge replication job state and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
                         style: Theme.of(
                           context,
                         ).textTheme.bodyMedium?.copyWith(height: 1.45),
@@ -3507,30 +2850,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
-  String _backupKey(String clientName, String table) => '$clientName::$table';
-
   String _tablePolicyBusyKey(String clientName, String table) =>
       '$clientName::$table';
 
-  bool _isBackupBusy(String clientName, String table) =>
-      _busyBackupKeys.contains(_backupKey(clientName, table));
-
   bool _isTablePolicyBusy(String clientName, String table) =>
       _busyTablePolicyKeys.contains(_tablePolicyBusyKey(clientName, table));
-
-  void _setBackupBusy(String clientName, String table, bool busy) {
-    final key = _backupKey(clientName, table);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      if (busy) {
-        _busyBackupKeys.add(key);
-      } else {
-        _busyBackupKeys.remove(key);
-      }
-    });
-  }
 
   void _setTablePolicyBusy(String clientName, String table, bool busy) {
     final key = _tablePolicyBusyKey(clientName, table);
@@ -3583,175 +2907,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     } finally {
       _setTablePolicyBusy(agent.clientName, tableState.table, false);
-    }
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes <= 0) {
-      return '--';
-    }
-
-    const units = ['B', 'KB', 'MB', 'GB'];
-    var value = bytes.toDouble();
-    var unitIndex = 0;
-    while (value >= 1024 && unitIndex < units.length - 1) {
-      value /= 1024;
-      unitIndex += 1;
-    }
-
-    final decimals =
-        value >= 100 || unitIndex == 0
-            ? 0
-            : value >= 10
-            ? 1
-            : 2;
-    return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
-  }
-
-  String _snapshotFilename(String clientName, String table, String createdAt) {
-    String sanitize(String value) {
-      final normalized = value
-          .replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-')
-          .replaceAll(RegExp(r'-+'), '-')
-          .replaceAll(RegExp(r'^-|-$'), '');
-      return normalized.isEmpty ? 'snapshot' : normalized;
-    }
-
-    return '${sanitize(clientName)}-${sanitize(table)}-${sanitize(createdAt)}.json';
-  }
-
-  Map<String, dynamic> _snapshotFilePayload(
-    AdminSnapshotDetail snapshot, {
-    required int snapshotBytes,
-  }) {
-    return <String, dynamic>{
-      'formatVersion': 1,
-      'id': snapshot.id,
-      'clientName': snapshot.clientName,
-      'table': snapshot.table,
-      'createdAt': snapshot.createdAt,
-      'rowCount': snapshot.rowCount,
-      'checksum': snapshot.checksum,
-      'snapshotBytes': snapshotBytes,
-      'columns': snapshot.columns,
-      'rows': snapshot.rows,
-      'sourceJobId': snapshot.sourceJobId,
-    };
-  }
-
-  String _encodeSnapshotFile(AdminSnapshotDetail snapshot) {
-    var snapshotBytes = 0;
-    var encoded = jsonEncode(
-      _snapshotFilePayload(snapshot, snapshotBytes: snapshotBytes),
-    );
-
-    for (var index = 0; index < 3; index += 1) {
-      final nextBytes = utf8.encode(encoded).length;
-      if (nextBytes == snapshotBytes) {
-        snapshotBytes = nextBytes;
-        break;
-      }
-      snapshotBytes = nextBytes;
-      encoded = jsonEncode(
-        _snapshotFilePayload(snapshot, snapshotBytes: snapshotBytes),
-      );
-    }
-
-    return encoded;
-  }
-
-  Future<void> _downloadSnapshotFile({
-    required String clientName,
-    required String table,
-  }) async {
-    _setBackupBusy(clientName, table, true);
-    try {
-      final snapshot =
-          _selectedClientName == clientName &&
-                  _selectedTableName == table &&
-                  _snapshot != null
-              ? _snapshot
-              : await _api.fetchLatestSnapshot(
-                clientName: clientName,
-                table: table,
-              );
-
-      if (!mounted) {
-        return;
-      }
-      if (snapshot == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('No backup file is available yet for $table.'),
-          ),
-        );
-        return;
-      }
-
-      await downloadBrowserTextFile(
-        filename: _snapshotFilename(clientName, table, snapshot.createdAt),
-        content: _encodeSnapshotFile(snapshot),
-      );
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Downloaded backup file for $table.')),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
-    } finally {
-      _setBackupBusy(clientName, table, false);
-    }
-  }
-
-  Future<void> _uploadSnapshotFile({
-    required String clientName,
-    required String table,
-  }) async {
-    _setBackupBusy(clientName, table, true);
-    try {
-      final pickedFile = await pickBrowserTextFile();
-      if (pickedFile == null) {
-        return;
-      }
-
-      final decoded = jsonDecode(pickedFile.content);
-      if (decoded is! Map) {
-        throw const FormatException('Backup file must contain a JSON object.');
-      }
-
-      await _api.importSnapshot(
-        clientName: clientName,
-        table: table,
-        snapshot: Map<String, dynamic>.from(decoded),
-      );
-      await _refreshState(silent: true);
-      if (_selectedClientName == clientName && _selectedTableName == table) {
-        setState(() {
-          _snapshot = null;
-        });
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Uploaded backup file to $table.')),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
-    } finally {
-      _setBackupBusy(clientName, table, false);
     }
   }
 
@@ -3817,7 +2972,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   String _roleLabel() => 'Participant';
 
-  String _syncModeDisplay(String syncMode) => 'POSTGRES CUSTOM SYNC';
+  String _syncModeDisplay(String syncMode) => 'MERGE REPLICATION';
 
   String _syncDirectionDisplay(String direction) => 'SYNC';
 
@@ -4093,44 +3248,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return entries;
   }
 
-  List<_ScoredSnapshotRow> _filteredSnapshotRowsForQuery(
-    AdminSnapshotDetail snapshot,
-    String query,
-  ) {
-    final normalizedQuery = query.trim();
-    final matches = snapshot.rows
-        .asMap()
-        .entries
-        .map((entry) {
-          final rowText = snapshot.columns
-              .map((column) => '$column ${entry.value[column] ?? 'NULL'}')
-              .join(' ');
-          return _ScoredSnapshotRow(
-            originalIndex: entry.key,
-            row: entry.value,
-            score:
-                normalizedQuery.isEmpty
-                    ? 1
-                    : _bestMatchScore(normalizedQuery, rowText),
-          );
-        })
-        .where((match) => match.score > 0)
-        .toList(growable: false);
-
-    if (normalizedQuery.isEmpty) {
-      return matches;
-    }
-
-    matches.sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return left.originalIndex.compareTo(right.originalIndex);
-    });
-    return matches;
-  }
-
   List<AdminJob> _jobsForClientAndTable({
     required String clientName,
     required String table,
@@ -4189,16 +3306,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   bool _tableStateHasSynced(AdminTableState tableState) {
     final status = tableState.status.toLowerCase();
-    return status == 'synced' ||
-        tableState.lastSync.trim().isNotEmpty ||
-        (tableState.snapshotId?.trim().isNotEmpty ?? false) ||
-        (tableState.snapshotCreatedAt?.trim().isNotEmpty ?? false);
+    return status == 'completed' ||
+        status == 'running' ||
+        status == 'applying' ||
+        tableState.lastSync.trim().isNotEmpty;
   }
 
-  bool _tableStateHasMerged(AdminTableState tableState) {
-    return tableState.mergedSnapshotSources.isNotEmpty ||
-        _tableStateHasSynced(tableState);
-  }
+  bool _tableStateHasMerged(AdminTableState tableState) =>
+      _tableStateHasSynced(tableState);
 
   Widget _buildSearchField({
     required TextEditingController controller,
@@ -4766,7 +3881,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: Icons.sync_rounded,
           countText: '${clients.length} / ${summary.clientCount}',
           meaning:
-              'This number counts clients that already have sync data for this table. A client is counted when it has a last sync time, snapshot id, or snapshot timestamp.',
+              'This number counts clients that already have merge replication activity for this table.',
           emptyMessage: 'No client has synced this table yet.',
           clients: clients,
         );
@@ -4775,17 +3890,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             summary.clients
                 .where((entry) => _tableStateHasMerged(entry.tableState))
                 .map((entry) {
-                  final sources =
-                      entry.tableState.mergedSnapshotSources.keys
-                          .where((name) => name.trim().isNotEmpty)
-                          .toList();
-                  sources.sort();
                   return _TableMetricClientInfo(
                     name: entry.agent.clientName,
                     subtitle:
-                        sources.isEmpty
-                            ? 'Merged mode with synced table data'
-                            : 'Merged from ${sources.join(', ')}',
+                        'Merge replication participant',
                     detail:
                         '${_syncModeDisplay(entry.tableState.syncMode)} - ${entry.tableState.status}',
                     active: entry.agent.isOnline,
@@ -4799,7 +3907,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: Icons.merge_type_rounded,
           countText: '${clients.length}',
           meaning:
-              'This number counts clients whose table data has merged cloud namespace snapshot sources, or clients in merge mode that already synced this table.',
+              'This number counts clients whose table data is configured for merge replication, or clients in merge mode that already synced this table.',
           emptyMessage: 'No client has merged data for this table yet.',
           clients: clients,
         );
@@ -5129,11 +4237,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildSelectedClientInfo(
     _TableClientEntry? selectedClient, {
     required String tableName,
-    required bool busy,
     required int recentHistoryCount,
     required int totalHistoryCount,
-    required VoidCallback onDownload,
-    required VoidCallback onUpload,
     required VoidCallback? onSync,
     required VoidCallback onOpenHistory,
   }) {
@@ -5171,7 +4276,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             'Flow',
             tableState.enabled ? 'Merge participant' : 'Disabled',
           ),
-          const MapEntry('Mode', 'POSTGRES CUSTOM SYNC'),
+          const MapEntry('Mode', 'MERGE REPLICATION'),
           const MapEntry('Direction', 'SYNC'),
           MapEntry('Database', agent.database),
           MapEntry(
@@ -5179,20 +4284,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             _formatTimestamp(_tableTimestampToken(tableState)),
           ),
           MapEntry('Rows', '${tableState.rowCount}'),
-          MapEntry('Backup', _formatBytes(tableState.snapshotBytes)),
           MapEntry('History', '$recentHistoryCount / $totalHistoryCount'),
         ];
         final actions = <Widget>[
-          _buildDetailActionButton(
-            label: 'Download',
-            icon: Icons.download_rounded,
-            onPressed: busy ? null : onDownload,
-          ),
-          _buildDetailActionButton(
-            label: 'Upload',
-            icon: Icons.upload_file_rounded,
-            onPressed: busy ? null : onUpload,
-          ),
           _buildDetailActionButton(
             label: 'Sync',
             icon: Icons.sync_rounded,
@@ -5820,914 +4914,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ],
         );
       },
-    );
-  }
-
-  Widget _buildSnapshotGrid(
-    AdminSnapshotDetail snapshot,
-    List<_ScoredSnapshotRow> filteredRows, {
-    bool showNamespaceMatchColumn = false,
-    Map<String, int>? rowSourceCounts,
-  }) {
-    const rowNumberWidth = 72.0;
-    const sourceCountWidth = 104.0;
-    const cellWidth = 220.0;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final panelWidth =
-            constraints.maxWidth.isFinite
-                ? constraints.maxWidth
-                : MediaQuery.sizeOf(context).width;
-        final mainTableWidth = math.max(
-          panelWidth,
-          rowNumberWidth + (snapshot.columns.length * cellWidth),
-        );
-        final panelHeight =
-            constraints.maxHeight.isFinite
-                ? constraints.maxHeight
-                : MediaQuery.sizeOf(context).height * 0.65;
-
-        if (showNamespaceMatchColumn) {
-          final stickyColumnController = ScrollController();
-          final horizontalController = ScrollController();
-          return Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              border: Border.all(color: const Color(0xFFDDE3EA)),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Scrollbar(
-                      controller: horizontalController,
-                      thumbVisibility: true,
-                      notificationPredicate:
-                          (notification) =>
-                              notification.metrics.axis == Axis.horizontal,
-                      child: SingleChildScrollView(
-                        controller: horizontalController,
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                          width: mainTableWidth,
-                          height: panelHeight,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  _buildSnapshotHeaderCell('#', rowNumberWidth),
-                                  ...snapshot.columns.map(
-                                    (column) => _buildSnapshotHeaderCell(
-                                      column,
-                                      cellWidth,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              Expanded(
-                                child: NotificationListener<
-                                  ScrollUpdateNotification
-                                >(
-                                  onNotification: (notification) {
-                                    if (stickyColumnController.hasClients) {
-                                      final targetOffset = notification
-                                          .metrics
-                                          .pixels
-                                          .clamp(
-                                            0.0,
-                                            stickyColumnController
-                                                .position
-                                                .maxScrollExtent,
-                                          );
-                                      if ((stickyColumnController.offset -
-                                                  targetOffset)
-                                              .abs() >
-                                          0.5) {
-                                        stickyColumnController.jumpTo(
-                                          targetOffset,
-                                        );
-                                      }
-                                    }
-                                    return false;
-                                  },
-                                  child: ListView.builder(
-                                    itemCount: filteredRows.length,
-                                    itemBuilder: (context, index) {
-                                      final match = filteredRows[index];
-                                      return _buildSnapshotRow(
-                                        snapshot: snapshot,
-                                        columns: snapshot.columns,
-                                        row: match.row,
-                                        rowNumber: match.originalIndex + 1,
-                                        rowNumberWidth: rowNumberWidth,
-                                        sourceCountWidth: sourceCountWidth,
-                                        cellWidth: cellWidth,
-                                        alternate: index.isOdd,
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Container(
-                    width: sourceCountWidth,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF5F3FF),
-                      border: Border(
-                        left: BorderSide(color: Color(0xFFD8CCFF)),
-                      ),
-                    ),
-                    child: Column(
-                      children: [
-                        _buildSnapshotStickyHeaderCell(
-                          'Sources',
-                          sourceCountWidth,
-                        ),
-                        Expanded(
-                          child: ListView.builder(
-                            controller: stickyColumnController,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: filteredRows.length,
-                            itemBuilder: (context, index) {
-                              final match = filteredRows[index];
-                              final rowNumber = match.originalIndex + 1;
-                              return _buildSnapshotStickySourceCell(
-                                snapshot: snapshot,
-                                row: match.row,
-                                rowNumber: rowNumber,
-                                width: sourceCountWidth,
-                                alternate: index.isOdd,
-                                value:
-                                    rowSourceCounts?[_snapshotRowSignature(
-                                      snapshot.columns,
-                                      match.row,
-                                    )],
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-
-        final horizontalController = ScrollController();
-        return Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            border: Border.all(color: const Color(0xFFDDE3EA)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Scrollbar(
-              controller: horizontalController,
-              thumbVisibility: true,
-              notificationPredicate:
-                  (notification) =>
-                      notification.metrics.axis == Axis.horizontal,
-              child: SingleChildScrollView(
-                controller: horizontalController,
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: mainTableWidth,
-                  height: panelHeight,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          _buildSnapshotHeaderCell('#', rowNumberWidth),
-                          ...snapshot.columns.map(
-                            (column) =>
-                                _buildSnapshotHeaderCell(column, cellWidth),
-                          ),
-                        ],
-                      ),
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: filteredRows.length,
-                          itemBuilder: (context, index) {
-                            final match = filteredRows[index];
-                            return _buildSnapshotRow(
-                              snapshot: snapshot,
-                              columns: snapshot.columns,
-                              row: match.row,
-                              rowNumber: match.originalIndex + 1,
-                              rowNumberWidth: rowNumberWidth,
-                              sourceCountWidth: sourceCountWidth,
-                              cellWidth: cellWidth,
-                              alternate: index.isOdd,
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildSnapshotHeaderCell(String value, double width) {
-    return Container(
-      width: width,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFE3E8E1),
-        border: Border(bottom: BorderSide(color: Color(0xFFBFC9BE))),
-      ),
-      child: Text(
-        value,
-        textDirection: directionForDisplayText(value),
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-
-  Widget _buildSnapshotStickyHeaderCell(String value, double width) {
-    return Container(
-      width: width,
-      height: 45,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFE9E3FF),
-        border: Border(bottom: BorderSide(color: Color(0xFFD4C6FF))),
-      ),
-      child: Text(
-        value,
-        textDirection: directionForDisplayText(value),
-        textAlign: TextAlign.center,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          fontWeight: FontWeight.w800,
-          color: Color(0xFF4C1D95),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSnapshotRow({
-    required AdminSnapshotDetail snapshot,
-    required List<String> columns,
-    required Map<String, String?> row,
-    required int rowNumber,
-    required double rowNumberWidth,
-    required double sourceCountWidth,
-    required double cellWidth,
-    required bool alternate,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap:
-            () => _openSnapshotRowDetailDialog(
-              snapshot: snapshot,
-              row: row,
-              rowNumber: rowNumber,
-            ),
-        mouseCursor: SystemMouseCursors.click,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _buildSnapshotBodyCell(
-              '$rowNumber',
-              rowNumberWidth,
-              alternate: alternate,
-              alignCenter: true,
-            ),
-            ...columns.map(
-              (column) => _buildSnapshotBodyCell(
-                row[column] ?? 'NULL',
-                cellWidth,
-                alternate: alternate,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSnapshotStickySourceCell({
-    required AdminSnapshotDetail snapshot,
-    required Map<String, String?> row,
-    required int rowNumber,
-    required double width,
-    required bool alternate,
-    required int? value,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap:
-            () => _openSnapshotRowDetailDialog(
-              snapshot: snapshot,
-              row: row,
-              rowNumber: rowNumber,
-            ),
-        mouseCursor: SystemMouseCursors.click,
-        child: Container(
-          width: width,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color:
-                alternate ? const Color(0xFFF8F5FF) : const Color(0xFFF3EEFF),
-            border: const Border(bottom: BorderSide(color: Color(0xFFE2D9FF))),
-          ),
-          child: Text(
-            value == null ? '...' : '$value',
-            textDirection: directionForDisplayText(
-              value == null ? '...' : '$value',
-            ),
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF5B21B6),
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openSnapshotRowDetailDialog({
-    required AdminSnapshotDetail snapshot,
-    required Map<String, String?> row,
-    required int rowNumber,
-  }) async {
-    final attemptsFuture = _loadNamespaceRowAttempts(
-      sourceSnapshot: snapshot,
-      row: row,
-    );
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(20),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 840,
-              maxHeight: MediaQuery.sizeOf(context).height * 0.82,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSnapshotRowDialogHeader(
-                    snapshot: snapshot,
-                    rowNumber: rowNumber,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Uploaded by namespace source: ${snapshot.clientName}',
-                    style: const TextStyle(
-                      color: Color(0xFF0F172A),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildSnapshotRowValuePreview(snapshot.columns, row),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: FutureBuilder<List<_NamespaceRowAttempt>>(
-                      future: attemptsFuture,
-                      builder: (context, attemptState) {
-                        if (attemptState.connectionState ==
-                                ConnectionState.waiting &&
-                            !attemptState.hasData) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-                        if (attemptState.hasError) {
-                          return EmptyStateCard(
-                            message: attemptState.error.toString(),
-                          );
-                        }
-                        final attempts =
-                            attemptState.data ?? const <_NamespaceRowAttempt>[];
-                        if (attempts.isEmpty) {
-                          return const EmptyStateCard(
-                            message:
-                                'No cloud namespace snapshot contains this same row value yet.',
-                          );
-                        }
-                        return _buildNamespaceRowAttemptList(attempts);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildSnapshotRowDialogHeader({
-    required AdminSnapshotDetail snapshot,
-    required int rowNumber,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(9),
-              border: Border.all(color: const Color(0xFFD9E2EC)),
-            ),
-            child: const Icon(
-              Icons.data_object_rounded,
-              size: 17,
-              color: Color(0xFF0F766E),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Row $rowNumber',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${snapshot.table} - ${_formatTimestamp(snapshot.createdAt)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Close',
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close),
-            visualDensity: VisualDensity.compact,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSnapshotRowValuePreview(
-    List<String> columns,
-    Map<String, String?> row,
-  ) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFCFCFD),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Scrollbar(
-        thumbVisibility: true,
-        notificationPredicate:
-            (notification) => notification.metrics.axis == Axis.horizontal,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final column in columns)
-                Padding(
-                  padding: const EdgeInsets.only(right: 18),
-                  child: _buildRowValueText(
-                    column,
-                    row[column] ?? 'NULL',
-                    width: 240,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRowValueText(
-    String label,
-    String value, {
-    required double width,
-  }) {
-    return SizedBox(
-      width: width,
-      child: Text.rich(
-        textDirection: directionForDisplayText('$label: $value'),
-        TextSpan(
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(
-                color: Color(0xFF667085),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            TextSpan(
-              text: value,
-              style: const TextStyle(
-                color: Color(0xFF101828),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11.5, height: 1.25),
-      ),
-    );
-  }
-
-  Widget _buildNamespaceRowAttemptList(List<_NamespaceRowAttempt> attempts) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionLabel('Source Attempts'),
-        const SizedBox(height: 8),
-        Expanded(
-          child: ListView.separated(
-            itemCount: attempts.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 6),
-            itemBuilder:
-                (context, index) =>
-                    _buildNamespaceRowAttemptTile(attempts[index]),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNamespaceRowAttemptTile(_NamespaceRowAttempt attempt) {
-    final usedByText =
-        attempt.usedByClients.isEmpty
-            ? 'No client has merged this namespace source yet'
-            : 'Used by ${attempt.usedByClients.join(', ')}';
-    final statusText =
-        attempt.isSelectedSource
-            ? 'Current uploaded row value'
-            : 'Same row value found in this namespace snapshot';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-      decoration: BoxDecoration(
-        color:
-            attempt.isSelectedSource ? const Color(0xFFEFF6FF) : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color:
-              attempt.isSelectedSource
-                  ? const Color(0xFFBFDBFE)
-                  : const Color(0xFFE5E7EB),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            margin: const EdgeInsets.only(top: 6),
-            decoration: BoxDecoration(
-              color:
-                  attempt.isSelectedSource
-                      ? const Color(0xFF2563EB)
-                      : const Color(0xFF94A3B8),
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  attempt.sourceName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$statusText - $usedByText',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    height: 1.25,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            _formatTimestamp(attempt.snapshot.createdAt),
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: Color(0xFF475467),
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<List<_NamespaceRowAttempt>> _loadNamespaceRowAttempts({
-    required AdminSnapshotDetail sourceSnapshot,
-    required Map<String, String?> row,
-  }) async {
-    final state = _state;
-    final signature = _snapshotRowSignature(sourceSnapshot.columns, row);
-    final namespaceNames =
-        (state?.agents ?? const <AdminAgent>[])
-            .map((agent) => agent.clientName)
-            .toSet();
-    if (sourceSnapshot.clientName.trim().isNotEmpty) {
-      namespaceNames.add(sourceSnapshot.clientName);
-    }
-
-    final candidateSummaries = (state?.snapshots ?? const <AdminSnapshot>[])
-        .where((snapshot) {
-          if (snapshot.table != sourceSnapshot.table) {
-            return false;
-          }
-          if (namespaceNames.contains(snapshot.clientName)) {
-            return true;
-          }
-          return (state?.agents ?? const <AdminAgent>[]).any(
-            (agent) => _snapshotMatchesAgentNamespace(snapshot, agent),
-          );
-        })
-        .toList(growable: false);
-
-    final loadedSnapshots = await Future.wait(
-      candidateSummaries.map((summary) async {
-        if (summary.id == sourceSnapshot.id) {
-          return sourceSnapshot;
-        }
-        try {
-          return await _api.fetchSnapshotById(summary.id);
-        } catch (_) {
-          return null;
-        }
-      }),
-    );
-
-    final attempts = <_NamespaceRowAttempt>[];
-    var sourceAdded = false;
-    for (final snapshot in loadedSnapshots.whereType<AdminSnapshotDetail>()) {
-      final isSelectedSource = snapshot.id == sourceSnapshot.id;
-      final hasMatchingRow = snapshot.rows.any(
-        (candidateRow) =>
-            _snapshotRowSignature(sourceSnapshot.columns, candidateRow) ==
-            signature,
-      );
-      if (!isSelectedSource && !hasMatchingRow) {
-        continue;
-      }
-      if (isSelectedSource) {
-        sourceAdded = true;
-      }
-      attempts.add(
-        _NamespaceRowAttempt(
-          sourceName: snapshot.clientName,
-          snapshot: snapshot,
-          isSelectedSource: isSelectedSource,
-          usedByClients: _clientsUsingNamespaceSnapshot(snapshot),
-        ),
-      );
-    }
-
-    if (!sourceAdded) {
-      attempts.add(
-        _NamespaceRowAttempt(
-          sourceName: sourceSnapshot.clientName,
-          snapshot: sourceSnapshot,
-          isSelectedSource: true,
-          usedByClients: _clientsUsingNamespaceSnapshot(sourceSnapshot),
-        ),
-      );
-    }
-
-    attempts.sort((left, right) {
-      if (left.isSelectedSource != right.isSelectedSource) {
-        return left.isSelectedSource ? -1 : 1;
-      }
-      return right.snapshot.createdAt.compareTo(left.snapshot.createdAt);
-    });
-    return attempts;
-  }
-
-  Future<List<AdminSnapshotDetail>> _loadLatestNamespaceSnapshotsForTable(
-    String table,
-  ) async {
-    final state = _state;
-    if (state == null) {
-      return const [];
-    }
-
-    final namespaceNames =
-        state.agents.map((agent) => agent.clientName).toSet();
-    final summaries = state.snapshots
-        .where((snapshot) {
-          if (snapshot.table != table) {
-            return false;
-          }
-          if (namespaceNames.contains(snapshot.clientName)) {
-            return true;
-          }
-          return state.agents.any(
-            (agent) => _snapshotMatchesAgentNamespace(snapshot, agent),
-          );
-        })
-        .toList(growable: false);
-    final seenIds = <String>{};
-    final loaded = await Future.wait(
-      summaries.where((snapshot) => seenIds.add(snapshot.id)).map((
-        snapshot,
-      ) async {
-        try {
-          return await _api.fetchSnapshotById(snapshot.id);
-        } catch (_) {
-          return null;
-        }
-      }),
-    );
-    return loaded.whereType<AdminSnapshotDetail>().toList(growable: false);
-  }
-
-  Map<String, int> _namespaceRowCountsForSnapshot(
-    AdminSnapshotDetail sourceSnapshot,
-    List<AdminSnapshotDetail> namespaceSnapshots,
-  ) {
-    final snapshots = <AdminSnapshotDetail>[...namespaceSnapshots];
-    if (_isNamespaceClientName(sourceSnapshot.clientName) &&
-        !snapshots.any((snapshot) => snapshot.id == sourceSnapshot.id)) {
-      snapshots.add(sourceSnapshot);
-    }
-
-    final counts = <String, int>{};
-    for (final snapshot in snapshots) {
-      if (snapshot.table != sourceSnapshot.table ||
-          !_isNamespaceSnapshot(snapshot)) {
-        continue;
-      }
-      final uniqueRowsInSource = <String>{};
-      for (final row in snapshot.rows) {
-        uniqueRowsInSource.add(
-          _snapshotRowSignature(sourceSnapshot.columns, row),
-        );
-      }
-      for (final signature in uniqueRowsInSource) {
-        counts[signature] = (counts[signature] ?? 0) + 1;
-      }
-    }
-    return counts;
-  }
-
-  bool _isNamespaceClientName(String clientName) {
-    final state = _state;
-    if (state == null) {
-      return false;
-    }
-    for (final agent in state.agents) {
-      if (agent.clientName == clientName) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool _isNamespaceSnapshot(AdminSnapshotDetail snapshot) {
-    final state = _state;
-    if (state == null) {
-      return false;
-    }
-    for (final agent in state.agents) {
-      if (_snapshotDetailMatchesAgentNamespace(snapshot, agent)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  List<String> _clientsUsingNamespaceSnapshot(AdminSnapshotDetail snapshot) {
-    final state = _state;
-    if (state == null) {
-      return const [];
-    }
-    final clients = <String>{};
-    for (final agent in state.agents) {
-      AdminTableState? tableState;
-      for (final candidate in agent.tables) {
-        if (candidate.table == snapshot.table) {
-          tableState = candidate;
-          break;
-        }
-      }
-      if (tableState == null) {
-        continue;
-      }
-      if (_snapshotDetailMatchesAgentNamespace(snapshot, agent)) {
-        clients.add(agent.clientName);
-        continue;
-      }
-      if (tableState.snapshotId == snapshot.id ||
-          tableState.mergedSnapshotSources.containsKey(snapshot.clientName)) {
-        clients.add(agent.clientName);
-      }
-    }
-    return clients.toList()..sort();
-  }
-
-  String _snapshotRowSignature(List<String> columns, Map<String, String?> row) {
-    return jsonEncode(
-      columns
-          .map((column) => <String, String?>{column: row[column]})
-          .toList(growable: false),
-    );
-  }
-
-  Widget _buildSnapshotBodyCell(
-    String value,
-    double width, {
-    required bool alternate,
-    bool alignCenter = false,
-  }) {
-    return Container(
-      width: width,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: alternate ? Colors.white : const Color(0xFFFAFBF9),
-        border: const Border(bottom: BorderSide(color: Color(0xFFE4E8E3))),
-      ),
-      child: Text(
-        value,
-        textDirection: directionForDisplayText(value),
-        textAlign: alignCenter ? TextAlign.center : TextAlign.start,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 13),
-      ),
     );
   }
 
@@ -8117,7 +6303,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildJobCard(AdminJob job, {VoidCallback? onOpenSnapshot}) {
-    final canOpenSnapshot = (job.snapshotId?.trim().isNotEmpty ?? false);
     final eventTime = _formatTimestamp(job.completedAt ?? job.updatedAt);
     final message =
         job.message.isEmpty ? 'No job message recorded.' : job.message;
@@ -8126,10 +6311,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap:
-            canOpenSnapshot
-                ? (onOpenSnapshot ?? () => _openJobSnapshotDialog(job))
-                : null,
+        onTap: onOpenSnapshot,
         child: Ink(
           width: double.infinity,
           decoration: BoxDecoration(
@@ -8170,19 +6352,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         fontSize: 11,
                       ),
                     ),
-                    Text(
-                      _formatBytes(job.snapshotBytes),
-                      style: const TextStyle(
-                        color: Color(0xFF5F6B76),
-                        fontSize: 11,
-                      ),
-                    ),
-                    if (canOpenSnapshot)
-                      const Icon(
-                        Icons.table_rows_outlined,
-                        size: 14,
-                        color: Color(0xFF62717C),
-                      ),
                   ],
                 );
 
@@ -8298,8 +6467,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         tableState == null
             ? _formatTimestamp(summary?.lastSync ?? '')
             : _formatTimestamp(_tableTimestampToken(tableState));
-    final backupBytes =
-        tableState?.snapshotBytes ?? summary?.latestSnapshotBytes;
     final status = _connected ? 'Online' : 'Offline';
     final visibleTables = _tableSummariesForDatabase(_tableSummaries).length;
     final totalTables = _tableSummaries.length;
@@ -8322,10 +6489,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       InfoLine(label: 'Agents', value: '$totalClients'),
       InfoLine(label: 'Jobs', value: '$totalJobs'),
       InfoLine(label: 'Last Sync', value: lastSync),
-      InfoLine(
-        label: 'Backup',
-        value: backupBytes == null ? '--' : _formatBytes(backupBytes),
-      ),
     ];
 
     return LayoutBuilder(
@@ -8767,7 +6930,6 @@ class _TableAggregateSummary {
     required this.lastSync,
     required this.clientCount,
     required this.latestRowCount,
-    required this.latestSnapshotBytes,
     required this.sourceClientName,
     required this.clients,
   });
@@ -8776,7 +6938,6 @@ class _TableAggregateSummary {
   final String lastSync;
   final int clientCount;
   final int latestRowCount;
-  final int latestSnapshotBytes;
   final String sourceClientName;
   final List<_TableClientEntry> clients;
 
@@ -8804,22 +6965,6 @@ class _TableClientEntry {
 
   final AdminAgent agent;
   final AdminTableState tableState;
-}
-
-class _TableSnapshotSource {
-  const _TableSnapshotSource({
-    required this.clientName,
-    required this.table,
-    required this.createdAt,
-    required this.rowCount,
-    required this.snapshotBytes,
-  });
-
-  final String clientName;
-  final String table;
-  final String createdAt;
-  final int rowCount;
-  final int snapshotBytes;
 }
 
 class _ServerInventoryItem {
@@ -8903,30 +7048,4 @@ class _TableMetricClientInfo {
   final String subtitle;
   final String detail;
   final bool active;
-}
-
-class _ScoredSnapshotRow {
-  const _ScoredSnapshotRow({
-    required this.originalIndex,
-    required this.row,
-    required this.score,
-  });
-
-  final int originalIndex;
-  final Map<String, String?> row;
-  final double score;
-}
-
-class _NamespaceRowAttempt {
-  const _NamespaceRowAttempt({
-    required this.sourceName,
-    required this.snapshot,
-    required this.isSelectedSource,
-    required this.usedByClients,
-  });
-
-  final String sourceName;
-  final AdminSnapshotDetail snapshot;
-  final bool isSelectedSource;
-  final List<String> usedByClients;
 }

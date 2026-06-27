@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 
 import 'agent_widgets.dart';
@@ -103,14 +102,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
-  final Set<String> _busyFileTables = <String>{};
   String? _lastSqlCmdLaunchError;
-  String? _activeUploadTable;
-  DateTime? _uploadMeterStartedAt;
-  int _uploadMeterBytesTransferred = 0;
-  double _uploadBytesPerSecond = 0;
-  int _uploadMeterCurrentChunk = 0;
-  int _uploadMeterTotalChunks = 0;
   ClientUpdateInfo? _clientUpdateInfo;
   String? _clientUpdateError;
   bool _checkingClientUpdate = false;
@@ -330,22 +322,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  SyncHistorySnapshotData _createHistorySnapshotData({
-    required List<String> columns,
-    required List<Map<String, String?>> rows,
-  }) {
-    return SyncHistorySnapshotData(
-      columns: List<String>.from(columns),
-      rows: rows
-          .map(
-            (row) => Map<String, String?>.fromEntries(
-              columns.map((column) => MapEntry(column, row[column])),
-            ),
-          )
-          .toList(growable: false),
-    );
-  }
-
   static const String _syncTableKeySeparator = '::';
 
   String _syncTableKey(String table, {String? database}) {
@@ -445,10 +421,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   bool _isPrioritySyncTable(SyncTableState state) {
-    return state.enabled ||
-        state.lastSync.trim().isNotEmpty ||
-        (state.snapshotId?.trim().isNotEmpty ?? false) ||
-        (state.snapshotCreatedAt?.trim().isNotEmpty ?? false);
+    return state.enabled || state.lastSync.trim().isNotEmpty;
   }
 
   SyncTableState _syncTableState(String table, {String? syncKey}) {
@@ -486,13 +459,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: enabled,
         message:
             enabled
-                ? 'Custom sync enabled for ${widget.clientName}.'
+                ? 'Merge replication enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
         direction: syncDirection,
         rowCount: current.rowCount,
         progress: enabled ? 0 : current.progress,
-        snapshotId: current.snapshotId,
-        snapshotBytes: current.snapshotBytes,
       ),
     );
     _updateSyncTableState(
@@ -505,7 +476,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         direction: syncDirection,
         syncMode: syncMode,
         message:
-            enabled ? 'Waiting for the next custom sync.' : 'Sync disabled.',
+            enabled
+                ? 'Waiting for the next merge replication sync.'
+                : 'Sync disabled.',
         history: nextHistory,
       ),
     );
@@ -562,7 +535,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         SnackBar(
           content: SelectableText(
             'Enabled ${newlyEnabled.length} related table'
-            '${newlyEnabled.length == 1 ? '' : 's'} for custom sync.',
+            '${newlyEnabled.length == 1 ? '' : 's'} for merge replication.',
           ),
         ),
       );
@@ -576,7 +549,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       selectedMode = await _openSyncModeDialog(
         table: table,
         initialMode: current.syncMode,
-        title: 'Start custom sync',
+        title: 'Start merge replication',
         confirmLabel: 'Enable sync',
       );
       if (!mounted || selectedMode == null) {
@@ -622,9 +595,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       syncMode: _defaultTableSyncMode,
       rowCount: 0,
       savedRowCount: null,
-      snapshotId: null,
-      snapshotCreatedAt: null,
-      snapshotBytes: 0,
       message: 'Remote sync disabled.',
       history: const [],
     );
@@ -1044,7 +1014,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             ? _tables
             : _syncState.tables.keys.toList(growable: false);
 
-    // Heartbeats only need live table metadata. Keep the local history and snapshots
+    // Heartbeats only need live table metadata. Keep local history details
     // out of the request body so the control-plane payload stays bounded.
     return Map<String, SyncTableState>.fromEntries(
       tableNames.map((table) {
@@ -1157,8 +1127,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     bool appendHistory = false,
     bool success = true,
     String? overrideMessage,
-    String? historySnapshotCreatedAt,
-    SyncHistorySnapshotData? historySnapshotData,
   }) {
     setState(() {
       final nextJobs = <String, RemoteSyncJob>{
@@ -1173,7 +1141,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     final current =
         _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
-    final timestamp = job.completedAt ?? job.snapshotCreatedAt ?? job.updatedAt;
+    final timestamp = job.completedAt ?? job.updatedAt;
     final nextStatus = _displayStatus(job.status);
     final nextMessage = overrideMessage ?? job.error ?? job.message;
     final nextState = current.copyWith(
@@ -1183,10 +1151,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       progress: job.progress,
       direction: job.direction,
       rowCount: job.rowCount,
-      snapshotId: job.snapshotId,
-      snapshotCreatedAt: job.snapshotCreatedAt ?? current.snapshotCreatedAt,
-      snapshotBytes:
-          job.snapshotBytes > 0 ? job.snapshotBytes : current.snapshotBytes,
       message: nextMessage,
       history:
           appendHistory
@@ -1201,31 +1165,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   direction: job.direction,
                   rowCount: job.rowCount,
                   progress: job.progress,
-                  snapshotId: job.snapshotId,
-                  snapshotCreatedAt:
-                      historySnapshotCreatedAt ?? job.snapshotCreatedAt,
-                  snapshotBytes: job.snapshotBytes,
-                  snapshotData: historySnapshotData,
                 ),
               )
               : current.history,
     );
     _updateSyncTableState(job.table, nextState);
-  }
-
-  bool _isFileBusy(String table) => _busyFileTables.contains(table);
-
-  void _setFileBusy(String table, bool busy) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      if (busy) {
-        _busyFileTables.add(table);
-      } else {
-        _busyFileTables.remove(table);
-      }
-    });
   }
 
   String _formatBytes(int bytes) {
@@ -1248,61 +1192,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             ? 1
             : 2;
     return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
-  }
-
-  String _formatTransferRate(double bytesPerSecond) {
-    if (bytesPerSecond <= 0) {
-      return '--';
-    }
-    return '${_formatBytes(bytesPerSecond.round())}/s';
-  }
-
-  void _beginUploadMeter(String table) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _activeUploadTable = table;
-      _uploadMeterStartedAt = DateTime.now();
-      _uploadMeterBytesTransferred = 0;
-      _uploadBytesPerSecond = 0;
-      _uploadMeterCurrentChunk = 0;
-      _uploadMeterTotalChunks = 0;
-    });
-  }
-
-  void _updateUploadMeter(TransferProgressSnapshot progress) {
-    if (!mounted) {
-      return;
-    }
-    final now = DateTime.now();
-    final startedAt = _uploadMeterStartedAt ?? now;
-    final elapsedSeconds =
-        math
-            .max(now.difference(startedAt).inMilliseconds / 1000, 0.001)
-            .toDouble();
-    final averageBytesPerSecond = progress.bytesTransferred / elapsedSeconds;
-    setState(() {
-      _uploadMeterStartedAt ??= startedAt;
-      _uploadMeterBytesTransferred = progress.bytesTransferred;
-      _uploadBytesPerSecond = averageBytesPerSecond;
-      _uploadMeterCurrentChunk = progress.currentChunk;
-      _uploadMeterTotalChunks = progress.totalChunks;
-    });
-  }
-
-  void _endUploadMeter() {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _activeUploadTable = null;
-      _uploadMeterStartedAt = null;
-      _uploadMeterBytesTransferred = 0;
-      _uploadBytesPerSecond = 0;
-      _uploadMeterCurrentChunk = 0;
-      _uploadMeterTotalChunks = 0;
-    });
   }
 
   String _formatTimestamp(String raw) {
@@ -1653,13 +1542,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       case 'Queued':
         return 'Queued: this table is waiting for the next sync job.';
       case 'Snapshotting':
-        return 'Snapshotting: preparing table rows for transfer.';
+        return 'Snapshotting: preparing SQL Server merge replication metadata.';
       case 'Uploading':
-        return 'Uploading: sending the local snapshot to the control plane.';
+        return 'Uploading: configuring the merge publication on the source SQL Server.';
       case 'Downloading':
-        return 'Downloading: fetching the remote snapshot.';
+        return 'Downloading: configuring the merge subscription on the target SQL Server.';
       case 'Applying':
-        return 'Applying: writing downloaded rows into local SQL Server.';
+        return 'Applying: running merge replication changes on local SQL Server.';
       case 'Completed':
       case 'Success':
         return 'Success: the last sync completed successfully.';
@@ -1937,7 +1826,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               : 'Paused';
       final nextMessage =
           policy.enabled
-              ? 'Waiting for the next custom sync.'
+              ? 'Waiting for the next merge replication sync.'
               : 'Sync disabled.';
       final nextDirection = syncDirectionForMode(policy.syncMode);
       final nextState = current.copyWith(
@@ -1975,9 +1864,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         left.direction == right.direction &&
         left.syncMode == right.syncMode &&
         left.rowCount == right.rowCount &&
-        left.snapshotId == right.snapshotId &&
-        left.snapshotCreatedAt == right.snapshotCreatedAt &&
-        left.snapshotBytes == right.snapshotBytes &&
         left.message == right.message;
   }
 
@@ -2049,540 +1935,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  double _bestRowMatchScore(String query, String candidate) {
-    final normalizedQuery = query.trim().toLowerCase();
-    final normalizedCandidate = candidate.trim().toLowerCase();
-
-    if (normalizedQuery.isEmpty) {
-      return 1.0;
-    }
-    if (normalizedCandidate.isEmpty) {
-      return 0.0;
-    }
-    if (normalizedCandidate == normalizedQuery) {
-      return 1000.0;
-    }
-    if (normalizedCandidate.startsWith(normalizedQuery)) {
-      return 850 - normalizedCandidate.length / 1000;
-    }
-
-    final exactIndex = normalizedCandidate.indexOf(normalizedQuery);
-    if (exactIndex >= 0) {
-      return 700.0 - exactIndex;
-    }
-
-    final tokens = normalizedQuery
-        .split(RegExp(r'\s+'))
-        .where((token) => token.isNotEmpty)
-        .toList(growable: false);
-
-    var tokenHits = 0;
-    var tokenScore = 0.0;
-    for (final token in tokens) {
-      final index = normalizedCandidate.indexOf(token);
-      if (index >= 0) {
-        tokenHits += 1;
-        tokenScore += 140 - math.min(index.toDouble(), 120);
-      }
-    }
-
-    final subsequenceScore = _rowSubsequenceScore(
-      normalizedQuery,
-      normalizedCandidate,
-    );
-    if (tokenHits == 0 && subsequenceScore == 0) {
-      return 0.0;
-    }
-
-    if (tokens.isNotEmpty && tokenHits == tokens.length) {
-      tokenScore += 120;
-    }
-    return tokenScore + subsequenceScore;
-  }
-
-  double _rowSubsequenceScore(String query, String candidate) {
-    var matched = 0;
-    var start = 0;
-
-    for (final codePoint in query.runes) {
-      final char = String.fromCharCode(codePoint);
-      final index = candidate.indexOf(char, start);
-      if (index == -1) {
-        continue;
-      }
-      matched += 1;
-      start = index + 1;
-    }
-
-    if (matched == 0) {
-      return 0.0;
-    }
-    return matched / query.length * 90;
-  }
-
-  List<_ScoredHistorySnapshotRow> _filteredHistorySnapshotRows(
-    SyncHistorySnapshotData snapshot,
-    String query,
-  ) {
-    final normalizedQuery = query.trim();
-    final matches = snapshot.rows
-        .asMap()
-        .entries
-        .map((entry) {
-          final rowText = snapshot.columns
-              .map((column) => '$column ${entry.value[column] ?? 'NULL'}')
-              .join(' ');
-          return _ScoredHistorySnapshotRow(
-            originalIndex: entry.key,
-            row: entry.value,
-            score:
-                normalizedQuery.isEmpty
-                    ? 1
-                    : _bestRowMatchScore(normalizedQuery, rowText),
-          );
-        })
-        .where((match) => match.score > 0)
-        .toList(growable: false);
-
-    if (normalizedQuery.isEmpty) {
-      return matches;
-    }
-
-    matches.sort((left, right) {
-      final byScore = right.score.compareTo(left.score);
-      if (byScore != 0) {
-        return byScore;
-      }
-      return left.originalIndex.compareTo(right.originalIndex);
-    });
-    return matches;
-  }
-
-  Future<void> _openHistorySnapshotDialog(SyncHistoryEntry entry) async {
-    final snapshot = entry.snapshotData;
-    if (snapshot == null || snapshot.columns.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No snapshot data is stored for this history item.'),
-        ),
-      );
-      return;
-    }
-
-    final searchController = TextEditingController();
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              final filteredRows = _filteredHistorySnapshotRows(
-                snapshot,
-                searchController.text,
-              );
-
-              return Dialog(
-                insetPadding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: 1180,
-                    maxHeight: MediaQuery.sizeOf(context).height * 0.82,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '${entry.table} Data',
-                                style: Theme.of(context).textTheme.headlineSmall
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Close',
-                              onPressed: () => Navigator.of(context).pop(),
-                              icon: const Icon(Icons.close),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: [
-                            _InfoLine(label: 'Status', value: entry.status),
-                            _InfoLine(
-                              label: 'Date',
-                              value: _formatTimestamp(
-                                entry.snapshotCreatedAt ?? entry.timestamp,
-                              ),
-                            ),
-                            _InfoLine(
-                              label: 'Rows',
-                              value:
-                                  '${filteredRows.length} / ${snapshot.rows.length}',
-                            ),
-                            _InfoLine(
-                              label: 'Size',
-                              value: _formatBytes(entry.snapshotBytes),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        TextField(
-                          controller: searchController,
-                          onChanged: (_) => setDialogState(() {}),
-                          decoration: _compactInputDecoration(
-                            'Search Rows',
-                          ).copyWith(
-                            hintText:
-                                'Search across all visible columns for the best matching row.',
-                            prefixIcon: const Icon(Icons.search),
-                            suffixIcon:
-                                searchController.text.isEmpty
-                                    ? null
-                                    : IconButton(
-                                      tooltip: 'Clear search',
-                                      onPressed: () {
-                                        searchController.clear();
-                                        setDialogState(() {});
-                                      },
-                                      icon: const Icon(Icons.close),
-                                    ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        Expanded(
-                          child:
-                              filteredRows.isEmpty
-                                  ? AgentEmptyStateCard(
-                                    message:
-                                        searchController.text.trim().isEmpty
-                                            ? 'This snapshot has no rows.'
-                                            : 'No rows matched your search. Try a broader term or clear the search box.',
-                                  )
-                                  : _buildHistorySnapshotGrid(
-                                    snapshot,
-                                    filteredRows,
-                                  ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      searchController.dispose();
-    }
-  }
-
-  _SnapshotFileDocument _createSnapshotFileDocument({
-    required String clientName,
-    required String table,
-    required String createdAt,
-    required int rowCount,
-    required List<String> columns,
-    required List<Map<String, String?>> rows,
-    String? id,
-    String checksum = '',
-    String? sourceJobId,
-  }) {
-    return _SnapshotFileDocument(
-      id: id ?? '${clientName}_${table}_${createdAt.hashCode}',
-      clientName: clientName,
-      table: table,
-      createdAt: createdAt,
-      rowCount: rowCount,
-      checksum: checksum,
-      snapshotBytes: 0,
-      columns: columns,
-      rows: rows,
-      sourceJobId: sourceJobId,
-    );
-  }
-
-  String _encodeSnapshotFileDocument(_SnapshotFileDocument document) {
-    var snapshotBytes = 0;
-    var encoded = jsonEncode(
-      document.copyWith(snapshotBytes: snapshotBytes).toJson(),
-    );
-
-    for (var index = 0; index < 3; index += 1) {
-      final nextBytes = utf8.encode(encoded).length;
-      if (nextBytes == snapshotBytes) {
-        snapshotBytes = nextBytes;
-        break;
-      }
-      snapshotBytes = nextBytes;
-      encoded = jsonEncode(
-        document.copyWith(snapshotBytes: snapshotBytes).toJson(),
-      );
-    }
-
-    return encoded;
-  }
-
-  String _backupFileName(String table, String createdAt) {
-    String sanitize(String value) {
-      final normalized = value
-          .replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-')
-          .replaceAll(RegExp(r'-+'), '-')
-          .replaceAll(RegExp(r'^-|-$'), '');
-      return normalized.isEmpty ? 'snapshot' : normalized;
-    }
-
-    return '${sanitize(widget.clientName)}-${sanitize(table)}-${sanitize(createdAt)}.json';
-  }
-
-  Future<void> _exportTableBackup(String table) async {
-    if (_selectedDatabase == null || _isFileBusy(table)) {
-      return;
-    }
-
-    final syncKey = _syncTableKey(table);
-    _setFileBusy(table, true);
-    try {
-      final snapshot = await _createTableSnapshot(
-        profile: _activeProfile(),
-        database: _selectedDatabase!,
-        table: table,
-      );
-      if (!snapshot.success) {
-        throw Exception(snapshot.errorText);
-      }
-
-      final document = _createSnapshotFileDocument(
-        clientName: widget.clientName,
-        table: syncKey,
-        createdAt: snapshot.snapshotCreatedAt,
-        rowCount: snapshot.totalRows,
-        columns: snapshot.columns,
-        rows: snapshot.rows,
-      );
-      final content = _encodeSnapshotFileDocument(document);
-      final bytes = utf8.encode(content).length;
-
-      final location = await getSaveLocation(
-        suggestedName: _backupFileName(syncKey, snapshot.snapshotCreatedAt),
-        acceptedTypeGroups: <XTypeGroup>[
-          const XTypeGroup(label: 'JSON backup', extensions: <String>['json']),
-        ],
-      );
-      if (location == null) {
-        return;
-      }
-
-      await File(location.path).writeAsString(content);
-
-      final current = _syncTableState(table, syncKey: syncKey);
-      final history = _appendHistory(
-        current.history,
-        SyncHistoryEntry(
-          timestamp: DateTime.now().toIso8601String(),
-          table: syncKey,
-          status: 'Backup saved',
-          success: true,
-          message: 'Saved a backup file with ${snapshot.totalRows} rows.',
-          direction: 'file',
-          rowCount: snapshot.totalRows,
-          progress: current.progress,
-          snapshotId: document.id,
-          snapshotCreatedAt: snapshot.snapshotCreatedAt,
-          snapshotBytes: bytes,
-          snapshotData: _createHistorySnapshotData(
-            columns: snapshot.columns,
-            rows: snapshot.rows,
-          ),
-        ),
-      );
-      _updateSyncTableState(
-        syncKey,
-        current.copyWith(
-          rowCount: snapshot.totalRows,
-          snapshotCreatedAt: snapshot.snapshotCreatedAt,
-          snapshotBytes: bytes,
-          message: 'Backup file saved for $table.',
-          history: history,
-        ),
-      );
-
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Saved backup file for $table.')));
-    } catch (error) {
-      final syncKey = _syncTableKey(table);
-      final current = _syncTableState(table, syncKey: syncKey);
-      _updateSyncTableState(
-        syncKey,
-        current.copyWith(
-          status: 'Failed',
-          message: error.toString(),
-          history: _appendHistory(
-            current.history,
-            SyncHistoryEntry(
-              timestamp: DateTime.now().toIso8601String(),
-              table: syncKey,
-              status: 'Backup save failed',
-              success: false,
-              message: error.toString(),
-              direction: 'file',
-              rowCount: current.rowCount,
-              progress: current.progress,
-              snapshotId: current.snapshotId,
-              snapshotCreatedAt: current.snapshotCreatedAt,
-              snapshotBytes: current.snapshotBytes,
-            ),
-          ),
-        ),
-      );
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
-    } finally {
-      _setFileBusy(table, false);
-    }
-  }
-
-  Future<void> _importTableBackup(String table) async {
-    if (_selectedDatabase == null || _isFileBusy(table)) {
-      return;
-    }
-
-    final syncKey = _syncTableKey(table);
-    _setFileBusy(table, true);
-    try {
-      final pickedFile = await openFile(
-        acceptedTypeGroups: <XTypeGroup>[
-          const XTypeGroup(label: 'JSON backup', extensions: <String>['json']),
-        ],
-      );
-      if (pickedFile == null) {
-        return;
-      }
-
-      final content = await pickedFile.readAsString();
-      final bytes = utf8.encode(content).length;
-      final document = _SnapshotFileDocument.fromJson(
-        Map<String, dynamic>.from(jsonDecode(content) as Map),
-      );
-
-      final snapshot = RemoteSnapshot(
-        id: document.id,
-        clientName: widget.clientName,
-        table: syncKey,
-        createdAt: document.createdAt,
-        rowCount: document.rowCount,
-        checksum: document.checksum,
-        snapshotBytes: bytes,
-        columns: document.columns,
-        rows: document.rows,
-        sourceJobId: document.sourceJobId,
-      );
-
-      await _applySnapshotToTable(
-        profile: _activeProfile(),
-        database: _selectedDatabase!,
-        table: table,
-        snapshot: snapshot,
-        mergeRows: true,
-      );
-
-      final current = _syncTableState(table, syncKey: syncKey);
-      final history = _appendHistory(
-        current.history,
-        SyncHistoryEntry(
-          timestamp: DateTime.now().toIso8601String(),
-          table: syncKey,
-          status: 'Backup applied',
-          success: true,
-          message: 'Applied a backup file with ${document.rowCount} rows.',
-          direction: 'file',
-          rowCount: document.rowCount,
-          progress: current.progress,
-          snapshotId: document.id,
-          snapshotCreatedAt: document.createdAt,
-          snapshotBytes: bytes,
-          snapshotData: _createHistorySnapshotData(
-            columns: document.columns,
-            rows: document.rows,
-          ),
-        ),
-      );
-      _updateSyncTableState(
-        syncKey,
-        current.copyWith(
-          rowCount: document.rowCount,
-          snapshotId: document.id,
-          snapshotCreatedAt: document.createdAt,
-          snapshotBytes: bytes,
-          message: 'Backup file applied to $table.',
-          history: history,
-        ),
-      );
-
-      if (_selectedTable == table) {
-        await _reloadCurrentTableRows();
-      }
-
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Applied backup file to $table.')));
-    } catch (error) {
-      final syncKey = _syncTableKey(table);
-      final current = _syncTableState(table, syncKey: syncKey);
-      _updateSyncTableState(
-        syncKey,
-        current.copyWith(
-          status: 'Failed',
-          message: error.toString(),
-          history: _appendHistory(
-            current.history,
-            SyncHistoryEntry(
-              timestamp: DateTime.now().toIso8601String(),
-              table: syncKey,
-              status: 'Backup apply failed',
-              success: false,
-              message: error.toString(),
-              direction: 'file',
-              rowCount: current.rowCount,
-              progress: current.progress,
-              snapshotId: current.snapshotId,
-              snapshotCreatedAt: current.snapshotCreatedAt,
-              snapshotBytes: current.snapshotBytes,
-            ),
-          ),
-        ),
-      );
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
-    } finally {
-      _setFileBusy(table, false);
-    }
-  }
 
   Future<void> _queueEnabledRoleJobs({Set<String>? forceTables}) async {
     if (_tables.isEmpty || _selectedDatabase == null) {
@@ -2640,18 +1992,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return error is AgentControlPlaneException && error.statusCode == 503;
   }
 
-  void _markControlPlaneTemporarilyUnavailable() {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _serverConnected = false;
-      _checkingServerConnection = false;
-      _lastServerCheck = DateTime.now();
-      _errorMessage = null;
-    });
-  }
-
   Future<void> _syncWithControlPlane() async {
     if (!mounted || _syncLoopBusy) {
       return;
@@ -2666,6 +2006,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         autoSyncIntervalMinutes: _syncState.autoSyncIntervalMinutes,
         server: _serverController.text.trim(),
         database: _selectedDatabase ?? '',
+        replicationUseWindowsAuth: _useWindowsAuth,
+        replicationUser: _userController.text.trim(),
+        replicationPassword: _passwordController.text,
         serverConnected: _serverConnected,
         sqlConnected: _selectedDatabase != null,
         selectedTable:
@@ -2876,188 +2219,210 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       _processingJobIds.add(job.id);
       try {
-        await _processUploadJob(job);
+        if (job.mergeRole == 'publisher') {
+          await _processReplicationPublisherJob(job);
+        } else if (job.mergeRole == 'subscriber') {
+          await _processReplicationSubscriberJob(job);
+        } else {
+          await _processUnsupportedLegacyJob(job);
+        }
       } finally {
         _processingJobIds.remove(job.id);
       }
     }
   }
 
-  Future<void> _processUploadJob(RemoteSyncJob job) async {
-    try {
-      _beginUploadMeter(job.table);
-      final localDatabase = _databaseNameFromSyncKey(job.table);
-      final localTable = _localTableName(job.table);
-      var activeJob = await _controlPlaneClient.startJob(
-        job.id,
-        status: 'snapshotting',
-        progress: 10,
-        message: 'Creating a local snapshot before upload.',
-      );
-      _applyRemoteJobState(activeJob);
+  Future<void> _processUnsupportedLegacyJob(RemoteSyncJob job) async {
+    final message =
+        'Legacy custom sync jobs are no longer supported. Requeue this table through merge replication.';
+    await _markRemoteJobFailed(job, Exception(message));
+    final failedJob = RemoteSyncJob(
+      id: job.id,
+      clientName: job.clientName,
+      sourceClientName: job.sourceClientName,
+      subscriberClientName: job.subscriberClientName,
+      table: job.table,
+      direction: job.direction,
+      mergeRole: job.mergeRole,
+      publisherServer: job.publisherServer,
+      publisherDatabase: job.publisherDatabase,
+      publicationName: job.publicationName,
+      publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+      publisherUser: job.publisherUser,
+      publisherPassword: job.publisherPassword,
+      status: 'failed',
+      progress: 100,
+      rowCount: job.rowCount,
+      createdAt: job.createdAt,
+      updatedAt: DateTime.now().toIso8601String(),
+      startedAt: job.startedAt,
+      completedAt: DateTime.now().toIso8601String(),
+      message: message,
+      error: message,
+    );
+    _applyRemoteJobState(
+      failedJob,
+      appendHistory: true,
+      success: false,
+      overrideMessage: message,
+    );
+  }
 
-      final snapshot = await _createTableSnapshot(
-        profile: _activeProfile(),
-        database: localDatabase,
-        table: localTable,
-      );
+  String _mergePublicationName(RemoteSyncJob job) {
+    if (job.publicationName.trim().isNotEmpty) {
+      return job.publicationName.trim();
+    }
+    final raw =
+        'merge_${job.sourceClientName.isEmpty ? job.clientName : job.sourceClientName}_${job.table}';
+    return raw.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
+  }
 
-      if (!snapshot.success) {
-        throw Exception(snapshot.errorText);
-      }
+  Future<void> _processReplicationPublisherJob(RemoteSyncJob job) async {
+    final localDatabase = _databaseNameFromSyncKey(job.table);
+    final tableName = _localTableName(job.table);
+    final publicationName = _mergePublicationName(job);
+    final tableParts = _splitQualifiedName(tableName);
+    var activeJob = await _controlPlaneClient.startJob(
+      job.id,
+      status: 'applying',
+      progress: 20,
+      message: 'Configuring merge publication metadata.',
+    );
+    _applyRemoteJobState(activeJob);
 
-      RemoteSnapshot? ownerSnapshotBeforeUpload;
-      try {
-        ownerSnapshotBeforeUpload = await _controlPlaneClient.downloadSnapshot(
-          job.id,
-        );
-      } catch (error) {
-        if (!_isMissingOwnerSnapshotError(error)) {
-          rethrow;
-        }
-      }
+    final query = '''
+USE ${_quoteIdentifier(localDatabase)};
+EXEC sp_replicationdboption @dbname=${_sqlLiteral(localDatabase)}, @optname=N'merge publish', @value=N'true';
+IF NOT EXISTS (SELECT 1 FROM sysmergepublications WHERE name = ${_sqlLiteral(publicationName)})
+BEGIN
+  EXEC sp_addmergepublication
+    @publication = ${_sqlLiteral(publicationName)},
+    @allow_subscriber_initiated_snapshot = N'false',
+    @dynamic_filters = N'false',
+    @retention = 14,
+    @publication_compatibility_level = N'150RTM';
+END;
+IF NOT EXISTS (SELECT 1 FROM sysmergearticles WHERE name = ${_sqlLiteral(tableParts.table)})
+BEGIN
+  EXEC sp_addmergearticle
+    @publication = ${_sqlLiteral(publicationName)},
+    @article = ${_sqlLiteral(tableParts.table)},
+    @source_owner = ${_sqlLiteral(tableParts.schema)},
+    @source_object = ${_sqlLiteral(tableParts.table)},
+    @type = N'table';
+END;
+''';
+    final result = await _runSqlCmd(
+      profile: _activeProfile(),
+      database: localDatabase,
+      query: query,
+    );
+    if (result == null) {
+      throw Exception(_sqlCmdUnavailableMessage(_activeProfile()));
+    }
+    if (result.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('merge publication setup', result));
+    }
 
-      final rowsToUpload =
-          ownerSnapshotBeforeUpload == null
-              ? snapshot.rows
-              : _rowsMissingFromOwnerSnapshot(
-                localRows: snapshot.rows,
-                ownerRows: ownerSnapshotBeforeUpload.rows,
-                keyColumns: snapshot.keyColumns,
-              );
-      final ownerRowsToPublish =
-          ownerSnapshotBeforeUpload == null
-              ? snapshot.rows
-              : _appendMissingOwnerSnapshotRows(
-                ownerRows: ownerSnapshotBeforeUpload.rows,
-                missingLocalRows: rowsToUpload,
-                keyColumns: snapshot.keyColumns,
-              );
+    activeJob = await _controlPlaneClient.completeJob(
+      job.id,
+      status: 'completed',
+      progress: 100,
+      message: 'Merge publication $publicationName is configured.',
+      rowCount: 0,
+    );
+    _applyRemoteJobState(
+      activeJob,
+      appendHistory: true,
+      success: true,
+      overrideMessage:
+          'Configured merge publication $publicationName for $tableName.',
+    );
+  }
 
-      final backupFile = _createSnapshotFileDocument(
-        clientName: widget.clientName,
-        table: job.table,
-        createdAt: snapshot.snapshotCreatedAt,
-        rowCount: ownerRowsToPublish.length,
-        columns: snapshot.columns,
-        rows: ownerRowsToPublish,
-      );
-      final backupContent = _encodeSnapshotFileDocument(backupFile);
-      final backupBytes = utf8.encode(backupContent).length;
-
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'uploading',
-        progress: 70,
-        message: 'Uploading compressed owner namespace snapshot.',
-        rowCount: ownerRowsToPublish.length,
-        direction: 'sync',
-      );
-      _applyRemoteJobState(activeJob);
-
-      final uploadResult = await _controlPlaneClient.uploadSnapshot(
-        job.id,
-        clientName: widget.clientName,
-        table: job.table,
-        rowCount: ownerRowsToPublish.length,
-        snapshotCreatedAt: snapshot.snapshotCreatedAt,
-        snapshotBytes: backupBytes,
-        snapshotJson: backupContent,
-        publishOwnerSnapshot: true,
-        onProgress: _updateUploadMeter,
-      );
-
-      _applyRemoteJobState(uploadResult.job);
-
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'downloading',
-        progress: 80,
-        message: 'Downloading owner namespace rows.',
-        rowCount: uploadResult.snapshot.rowCount,
-        direction: 'sync',
-      );
-      _applyRemoteJobState(activeJob);
-
-      final ownerSnapshot = await _controlPlaneClient.downloadSnapshot(job.id);
-
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'applying',
-        progress: 90,
-        message: 'Merging owner namespace rows into local SQL Server.',
-        rowCount: ownerSnapshot.rowCount,
-        direction: 'sync',
-      );
-      _applyRemoteJobState(activeJob);
-
-      await _applySnapshotToTable(
-        profile: _activeProfile(),
-        database: localDatabase,
-        table: localTable,
-        snapshot: ownerSnapshot,
-        mergeRows: true,
-      );
-
-      activeJob = await _controlPlaneClient.completeJob(
-        job.id,
-        status: 'completed',
-        progress: 100,
-        message:
-            'Merge sync completed with ${ownerSnapshot.rowCount} owner namespace rows.',
-        rowCount: ownerSnapshot.rowCount,
-        snapshotId: ownerSnapshot.id,
-        snapshotCreatedAt: ownerSnapshot.createdAt,
-        snapshotBytes: ownerSnapshot.snapshotBytes,
-      );
-
-      _applyRemoteJobState(
-        activeJob,
-        appendHistory: true,
-        success: true,
-        overrideMessage:
-            'Uploaded ${rowsToUpload.length} missing local rows and merged ${ownerSnapshot.rowCount} owner namespace rows.',
-        historySnapshotCreatedAt: ownerSnapshot.createdAt,
-        historySnapshotData: _createHistorySnapshotData(
-          columns: ownerSnapshot.columns,
-          rows: ownerSnapshot.rows,
-        ),
-      );
-      _endUploadMeter();
-    } catch (error) {
-      _endUploadMeter();
-      if (_isTemporaryControlPlaneUnavailable(error)) {
-        _markControlPlaneTemporarilyUnavailable();
-        return;
-      }
-      logStartupEvent('Upload sync job ${job.id} failed: $error');
-      await _markRemoteJobFailed(job, error);
-      final failedJob = RemoteSyncJob(
-        id: job.id,
-        clientName: job.clientName,
-        sourceClientName: job.sourceClientName,
-        table: job.table,
-        direction: job.direction,
-        status: 'failed',
-        progress: 100,
-        rowCount: job.rowCount,
-        createdAt: job.createdAt,
-        updatedAt: DateTime.now().toIso8601String(),
-        startedAt: job.startedAt,
-        completedAt: DateTime.now().toIso8601String(),
-        snapshotId: job.snapshotId,
-        snapshotCreatedAt: job.snapshotCreatedAt,
-        snapshotBytes: job.snapshotBytes,
-        message: error.toString(),
-        error: error.toString(),
-      );
-      _applyRemoteJobState(
-        failedJob,
-        appendHistory: true,
-        success: false,
-        overrideMessage: error.toString(),
+  Future<void> _processReplicationSubscriberJob(RemoteSyncJob job) async {
+    final localDatabase = _databaseNameFromSyncKey(job.table);
+    final publicationName = _mergePublicationName(job);
+    if (job.publisherServer.trim().isEmpty ||
+        job.publisherDatabase.trim().isEmpty) {
+      throw Exception(
+        'Merge subscription metadata is incomplete for ${job.table}. Publisher server and database are required.',
       );
     }
+    var activeJob = await _controlPlaneClient.startJob(
+      job.id,
+      status: 'applying',
+      progress: 30,
+      message: 'Configuring merge pull subscription.',
+    );
+    _applyRemoteJobState(activeJob);
+
+    final publisherSecurityMode = job.publisherUseWindowsAuth ? '1' : '0';
+    final publisherUserClause =
+        job.publisherUseWindowsAuth || job.publisherUser.trim().isEmpty
+            ? "NULL"
+            : _sqlLiteral(job.publisherUser.trim());
+    final publisherPasswordClause =
+        job.publisherUseWindowsAuth || job.publisherPassword.isEmpty
+            ? "NULL"
+            : _sqlLiteral(job.publisherPassword);
+
+    final query = '''
+USE ${_quoteIdentifier(localDatabase)};
+EXEC sp_addmergepullsubscription
+  @publisher = ${_sqlLiteral(job.publisherServer.trim())},
+  @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
+  @publication = ${_sqlLiteral(publicationName)},
+  @subscriber_type = N'local',
+  @subscription_priority = 0.0,
+  @sync_type = N'none';
+EXEC sp_addmergepullsubscription_agent
+  @publisher = ${_sqlLiteral(job.publisherServer.trim())},
+  @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
+  @publication = ${_sqlLiteral(publicationName)},
+  @distributor = ${_sqlLiteral(job.publisherServer.trim())},
+  @subscriber_security_mode = 1,
+  @publisher_security_mode = $publisherSecurityMode,
+  @publisher_login = $publisherUserClause,
+  @publisher_password = $publisherPasswordClause,
+  @use_ftp = N'false',
+  @frequency_type = 64,
+  @frequency_interval = 1,
+  @frequency_relative_interval = 1,
+  @frequency_recurrence_factor = 0,
+  @frequency_subday = 4,
+  @frequency_subday_interval = 5,
+  @active_start_time_of_day = 0,
+  @active_end_time_of_day = 235959,
+  @active_start_date = 20260101,
+  @active_end_date = 99991231;
+''';
+    final result = await _runSqlCmd(
+      profile: _activeProfile(),
+      database: localDatabase,
+      query: query,
+    );
+    if (result == null) {
+      throw Exception(_sqlCmdUnavailableMessage(_activeProfile()));
+    }
+    if (result.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('merge subscription setup', result));
+    }
+
+    activeJob = await _controlPlaneClient.completeJob(
+      job.id,
+      status: 'completed',
+      progress: 100,
+      message: 'Merge subscription $publicationName is configured.',
+      rowCount: 0,
+    );
+    _applyRemoteJobState(
+      activeJob,
+      appendHistory: true,
+      success: true,
+      overrideMessage:
+          'Configured merge pull subscription to ${job.publisherServer}/${job.publisherDatabase} for ${job.table}.',
+    );
   }
 
   Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {
@@ -3070,268 +2435,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     } catch (failError) {
       logStartupEvent('Unable to mark remote job ${job.id} failed: $failError');
     }
-  }
-
-  Future<void> _applySnapshotToTable({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String table,
-    required RemoteSnapshot snapshot,
-    bool mergeRows = true,
-  }) async {
-    if (database.isEmpty) {
-      throw Exception(
-        'Select a database before applying a downloaded snapshot.',
-      );
-    }
-
-    final tableParts = _splitQualifiedName(table);
-    final schemaResult = await _queryTableColumnSchemas(
-      profile: profile,
-      database: database,
-      schema: tableParts.schema,
-      table: tableParts.table,
-    );
-    if (!schemaResult.success) {
-      throw Exception(schemaResult.errorText);
-    }
-
-    final schemas = schemaResult.values;
-    if (schemas.isEmpty) {
-      throw Exception('No column metadata was found for $table.');
-    }
-
-    final schemasByName = {for (final schema in schemas) schema.name: schema};
-    final missingColumns =
-        snapshot.columns
-            .where((column) => !schemasByName.containsKey(column))
-            .toList();
-    if (missingColumns.isNotEmpty) {
-      throw Exception(
-        'Downloaded snapshot columns do not exist locally: ${missingColumns.join(', ')}',
-      );
-    }
-
-    final writableSnapshotColumns = snapshot.columns
-        .where((column) => _isWritableSyncColumn(schemasByName[column]!))
-        .toList(growable: false);
-    final writeColumns = writableSnapshotColumns;
-    if (snapshot.rows.isNotEmpty && writeColumns.isEmpty) {
-      throw Exception(
-        'Downloaded snapshot for $table has no writable local columns. Computed, rowversion, and generated columns cannot be applied.',
-      );
-    }
-
-    final hasIdentity = writeColumns.any(
-      (column) => schemasByName[column]?.isIdentity ?? false,
-    );
-    final qualifiedTable = _quoteQualifiedIdentifier(table);
-    final columnList = writeColumns.map(_quoteIdentifier).join(', ');
-    final keyColumns = _mergeKeyColumns(
-      schemas,
-      snapshot.columns,
-      mergeRows: mergeRows,
-      writableColumns: writeColumns,
-    );
-    if (mergeRows && keyColumns.isEmpty) {
-      throw Exception(
-        'Merge sync requires a primary key on $table. No primary key columns were found in the local table schema and downloaded snapshot.',
-      );
-    }
-    final rowsToApply =
-        mergeRows
-            ? _deduplicateMergeRows(
-              table: table,
-              rows: snapshot.rows,
-              signatureColumns: writeColumns,
-              keyColumns: keyColumns,
-            )
-            : snapshot.rows;
-    final statements = <String>[
-      'SET ANSI_NULLS ON;',
-      'SET QUOTED_IDENTIFIER ON;',
-      'SET ANSI_PADDING ON;',
-      'SET ANSI_WARNINGS ON;',
-      'SET CONCAT_NULL_YIELDS_NULL ON;',
-      'SET ARITHABORT ON;',
-      'SET NUMERIC_ROUNDABORT OFF;',
-      'SET NOCOUNT ON;',
-      'BEGIN TRY',
-      'BEGIN TRAN;',
-      if (hasIdentity) 'SET IDENTITY_INSERT $qualifiedTable ON;',
-    ];
-
-    const rowsPerBatch = 100;
-    for (var index = 0; index < rowsToApply.length; index += rowsPerBatch) {
-      final chunk = rowsToApply.skip(index).take(rowsPerBatch);
-      final sourceColumns =
-          mergeRows ? snapshot.columns : writableSnapshotColumns;
-      final values = chunk
-          .map(
-            (row) =>
-                '(${sourceColumns.map((column) => _sqlLiteral(row[column])).join(', ')})',
-          )
-          .join(', ');
-      if (values.isNotEmpty) {
-        if (mergeRows) {
-          statements.add(
-            _mergeSnapshotRowsStatement(
-              qualifiedTable: qualifiedTable,
-              sourceColumns: snapshot.columns,
-              writeColumns: writeColumns,
-              keyColumns: keyColumns,
-              values: values,
-            ),
-          );
-        } else {
-          statements.add(
-            'INSERT INTO $qualifiedTable ($columnList) VALUES $values;',
-          );
-        }
-      }
-    }
-
-    if (hasIdentity) {
-      statements.add('SET IDENTITY_INSERT $qualifiedTable OFF;');
-    }
-    statements.add('COMMIT TRAN;');
-    statements.add('END TRY');
-    statements.add('BEGIN CATCH');
-    statements.add('IF @@TRANCOUNT > 0 ROLLBACK TRAN;');
-    statements.add(
-      'DECLARE @errorMessage NVARCHAR(4000); '
-      'SET @errorMessage = ERROR_MESSAGE(); '
-      'RAISERROR(@errorMessage, 16, 1);',
-    );
-    statements.add('END CATCH;');
-
-    final processResult = await _runSqlCmd(
-      profile: profile,
-      database: database,
-      query: statements.join(' '),
-    );
-
-    if (processResult == null) {
-      throw Exception(_sqlCmdUnavailableMessage(profile));
-    }
-    if (processResult.exitCode != 0) {
-      throw Exception(_sqlCmdFailed('download apply', processResult));
-    }
-  }
-
-  Future<_TableSnapshotResult> _createTableSnapshot({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String table,
-  }) async {
-    if (database.isEmpty || table.isEmpty) {
-      return const _TableSnapshotResult(
-        success: false,
-        columns: [],
-        keyColumns: [],
-        signatureColumns: [],
-        rows: [],
-        totalRows: 0,
-        snapshotCreatedAt: '',
-        errorText: 'Load a database and table before syncing.',
-      );
-    }
-
-    final tableParts = _splitQualifiedName(table);
-    final schemaResult = await _queryTableColumnSchemas(
-      profile: profile,
-      database: database,
-      schema: tableParts.schema,
-      table: tableParts.table,
-    );
-    if (!schemaResult.success || schemaResult.values.isEmpty) {
-      return _TableSnapshotResult(
-        success: false,
-        columns: const [],
-        keyColumns: const [],
-        signatureColumns: const [],
-        rows: const [],
-        totalRows: 0,
-        snapshotCreatedAt: '',
-        errorText:
-            schemaResult.errorText ?? 'No columns were returned for $table.',
-      );
-    }
-    final columns = schemaResult.values
-        .map((schema) => schema.name)
-        .toList(growable: false);
-    final schemasByName = {
-      for (final schema in schemaResult.values) schema.name: schema,
-    };
-    final writableColumns = columns
-        .where((column) => _isWritableSyncColumn(schemasByName[column]!))
-        .toList(growable: false);
-    final signatureColumns = writableColumns
-        .where((column) => !(schemasByName[column]?.isIdentity ?? false))
-        .toList(growable: false);
-
-    final rowCountResult = await _queryTableRowCount(
-      profile: profile,
-      database: database,
-      schema: tableParts.schema,
-      table: tableParts.table,
-    );
-    if (!rowCountResult.success) {
-      return _TableSnapshotResult(
-        success: false,
-        columns: columns,
-        keyColumns: const [],
-        signatureColumns: const [],
-        rows: const [],
-        totalRows: 0,
-        snapshotCreatedAt: '',
-        errorText: rowCountResult.errorText,
-      );
-    }
-
-    final orderByColumn = _quoteIdentifier(columns.first);
-    final rows = <Map<String, String?>>[];
-    const pageSize = 200;
-    for (var offset = 0; offset < rowCountResult.value; offset += pageSize) {
-      final pageResult = await _querySnapshotPage(
-        profile: profile,
-        database: database,
-        table: table,
-        columns: columns,
-        orderByColumn: orderByColumn,
-        offset: offset,
-        pageSize: pageSize,
-      );
-      if (!pageResult.success) {
-        return _TableSnapshotResult(
-          success: false,
-          columns: columns,
-          keyColumns: const [],
-          signatureColumns: const [],
-          rows: const [],
-          totalRows: rowCountResult.value,
-          snapshotCreatedAt: '',
-          errorText: pageResult.errorText,
-        );
-      }
-      rows.addAll(pageResult.rows);
-    }
-
-    return _TableSnapshotResult(
-      success: true,
-      columns: columns,
-      keyColumns: _mergeKeyColumns(
-        schemaResult.values,
-        columns,
-        mergeRows: true,
-        writableColumns: writableColumns,
-      ),
-      signatureColumns: signatureColumns,
-      rows: rows,
-      totalRows: rowCountResult.value,
-      snapshotCreatedAt: DateTime.now().toIso8601String(),
-      errorText: null,
-    );
   }
 
   Future<_StringQueryResult> _queryDatabases({
@@ -3750,135 +2853,6 @@ ORDER BY ORDINAL_POSITION;
     return _StringQueryResult(success: true, values: values, errorText: null);
   }
 
-  Future<_ColumnSchemaResult> _queryTableColumnSchemas({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String schema,
-    required String table,
-  }) async {
-    final query = '''
-SET NOCOUNT ON;
-DECLARE @schemaName sysname = N'${_escapeSqlLiteral(schema)}';
-DECLARE @tableName sysname = N'${_escapeSqlLiteral(table)}';
-DECLARE @generatedAlwaysExpression nvarchar(80) =
-  CASE
-    WHEN COL_LENGTH('sys.columns', 'generated_always_type') IS NULL THEN N'0'
-    ELSE N'c.generated_always_type'
-  END;
-DECLARE @schemaSql nvarchar(max) = N'
-SELECT
-  c.name,
-  TYPE_NAME(c.user_type_id),
-  c.is_nullable,
-  c.is_identity,
-  c.is_computed,
-  ' + @generatedAlwaysExpression + N',
-  CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS is_primary_key,
-  CASE WHEN uk.column_id IS NULL THEN 0 ELSE 1 END AS is_unique_key,
-  COALESCE(uk.key_ordinal, 0) AS unique_key_ordinal
-FROM sys.columns AS c
-INNER JOIN sys.tables AS t ON t.object_id = c.object_id
-INNER JOIN sys.schemas AS s ON s.schema_id = t.schema_id
-LEFT JOIN (
-  SELECT ic.object_id, ic.column_id
-  FROM sys.indexes AS i
-  INNER JOIN sys.index_columns AS ic
-    ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-  WHERE i.is_primary_key = 1
-) AS pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
-LEFT JOIN (
-  SELECT ic.object_id, ic.column_id, ic.key_ordinal
-  FROM sys.index_columns AS ic
-  INNER JOIN (
-    SELECT ranked.object_id, ranked.index_id
-    FROM (
-      SELECT
-        i.object_id,
-        i.index_id,
-        ROW_NUMBER() OVER (
-          PARTITION BY i.object_id
-          ORDER BY COUNT(*) ASC, i.index_id ASC
-        ) AS rank
-      FROM sys.indexes AS i
-      INNER JOIN sys.index_columns AS key_ic
-        ON key_ic.object_id = i.object_id
-       AND key_ic.index_id = i.index_id
-       AND key_ic.is_included_column = 0
-      WHERE i.is_unique = 1
-        AND i.is_primary_key = 0
-        AND i.is_hypothetical = 0
-        AND COALESCE(i.has_filter, 0) = 0
-      GROUP BY i.object_id, i.index_id
-    ) AS ranked
-    WHERE ranked.rank = 1
-  ) AS best_unique
-    ON best_unique.object_id = ic.object_id
-   AND best_unique.index_id = ic.index_id
-  WHERE ic.is_included_column = 0
-) AS uk ON uk.object_id = c.object_id AND uk.column_id = c.column_id
-WHERE s.name = @schemaName
-  AND t.name = @tableName
-ORDER BY c.column_id;';
-EXEC sp_executesql
-  @schemaSql,
-  N'@schemaName sysname, @tableName sysname',
-  @schemaName = @schemaName,
-  @tableName = @tableName;
-''';
-    final processResult = await _runSqlCmd(
-      profile: profile,
-      database: database,
-      query: query,
-    );
-
-    if (processResult == null) {
-      return _ColumnSchemaResult(
-        success: false,
-        values: [],
-        errorText: _sqlCmdUnavailableMessage(profile),
-      );
-    }
-    if (processResult.exitCode != 0) {
-      return _ColumnSchemaResult(
-        success: false,
-        values: const [],
-        errorText: _sqlCmdFailed('column schema discovery', processResult),
-      );
-    }
-
-    final values = <_TableColumnSchema>[];
-    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
-    for (final line in lines) {
-      final trimmedLine = line.trim();
-      if (_isSkippableOutputLine(trimmedLine)) {
-        continue;
-      }
-      final parts = _splitRowValues(trimmedLine);
-      if (parts.length < 6) {
-        continue;
-      }
-      values.add(
-        _TableColumnSchema(
-          name: parts[0],
-          sqlType: parts[1],
-          isNullable: parts[2] == '1' || parts[2].toLowerCase() == 'true',
-          isIdentity: parts[3] == '1' || parts[3].toLowerCase() == 'true',
-          isComputed: parts[4] == '1' || parts[4].toLowerCase() == 'true',
-          generatedAlwaysType: int.tryParse(parts[5]) ?? 0,
-          isPrimaryKey:
-              parts.length >= 7 &&
-              (parts[6] == '1' || parts[6].toLowerCase() == 'true'),
-          isUniqueKey:
-              parts.length >= 8 &&
-              (parts[7] == '1' || parts[7].toLowerCase() == 'true'),
-          uniqueKeyOrdinal: parts.length >= 9 ? int.tryParse(parts[8]) ?? 0 : 0,
-        ),
-      );
-    }
-
-    return _ColumnSchemaResult(success: true, values: values, errorText: null);
-  }
-
   Future<_IntQueryResult> _queryTableRowCount({
     required _SqlConnectionProfile profile,
     required String database,
@@ -3922,60 +2896,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     }
 
     return _IntQueryResult(success: true, value: parsed, errorText: null);
-  }
-
-  Future<_SnapshotPageResult> _querySnapshotPage({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String table,
-    required List<String> columns,
-    required String orderByColumn,
-    required int offset,
-    required int pageSize,
-  }) async {
-    final columnList = columns.map(_quoteIdentifier).join(', ');
-    final firstRowNumber = offset + 1;
-    final lastRowNumber = offset + pageSize;
-
-    final query = '''
-SET NOCOUNT ON;
-WITH page_source AS (
-  SELECT
-    $columnList,
-    ROW_NUMBER() OVER (ORDER BY $orderByColumn ASC) AS [__sync_agent_row_number]
-  FROM ${_quoteQualifiedIdentifier(table)}
-)
-SELECT $columnList
-FROM page_source
-WHERE [__sync_agent_row_number] BETWEEN $firstRowNumber AND $lastRowNumber
-ORDER BY [__sync_agent_row_number];
-''';
-    final processResult = await _runSqlCmd(
-      profile: profile,
-      database: database,
-      query: query,
-    );
-
-    if (processResult == null) {
-      return _SnapshotPageResult(
-        success: false,
-        rows: [],
-        errorText: _sqlCmdUnavailableMessage(profile),
-      );
-    }
-    if (processResult.exitCode != 0) {
-      return _SnapshotPageResult(
-        success: false,
-        rows: const [],
-        errorText: _sqlCmdFailed('snapshot page fetch', processResult),
-      );
-    }
-
-    final rows = _parseSnapshotPageOutput(
-      output: processResult.stdout.toString(),
-      columns: columns,
-    );
-    return _SnapshotPageResult(success: true, rows: rows, errorText: null);
   }
 
   String _formatSqlError(ProcessResult processResult) {
@@ -4214,199 +3134,6 @@ ORDER BY [__sync_agent_row_number];
     return "N'${_escapeSqlLiteral(value)}'";
   }
 
-  List<String> _mergeKeyColumns(
-    List<_TableColumnSchema> schemas,
-    List<String> snapshotColumns, {
-    bool mergeRows = true,
-    List<String> writableColumns = const [],
-  }) {
-    final snapshotColumnSet = snapshotColumns.toSet();
-    final primaryKeys = schemas
-        .where(
-          (schema) =>
-              schema.isPrimaryKey && snapshotColumnSet.contains(schema.name),
-        )
-        .map((schema) => schema.name)
-        .toList(growable: false);
-    if (!mergeRows) {
-      return primaryKeys.isEmpty ? snapshotColumns : primaryKeys;
-    }
-    if (primaryKeys.isNotEmpty) {
-      return primaryKeys;
-    }
-    final uniqueKeys = schemas
-      .where(
-        (schema) =>
-            schema.isUniqueKey && snapshotColumnSet.contains(schema.name),
-      )
-      .toList(growable: false)..sort((left, right) {
-      final ordinalCompare = left.uniqueKeyOrdinal.compareTo(
-        right.uniqueKeyOrdinal,
-      );
-      if (ordinalCompare != 0) {
-        return ordinalCompare;
-      }
-      return left.name.compareTo(right.name);
-    });
-    if (uniqueKeys.isNotEmpty) {
-      return uniqueKeys.map((schema) => schema.name).toList(growable: false);
-    }
-    if (writableColumns.isNotEmpty) {
-      return writableColumns;
-    }
-    return [];
-  }
-
-  bool _isWritableSyncColumn(_TableColumnSchema schema) {
-    final sqlType = schema.sqlType.toLowerCase();
-    return !schema.isComputed &&
-        schema.generatedAlwaysType == 0 &&
-        sqlType != 'timestamp' &&
-        sqlType != 'rowversion';
-  }
-
-  String _mergeRowKey(Map<String, String?> row, List<String> keyColumns) =>
-      jsonEncode(keyColumns.map((column) => row[column]).toList());
-
-  String _mergeRowSignature(Map<String, String?> row, List<String> columns) =>
-      jsonEncode(columns.map((column) => row[column]).toList());
-
-  bool _isMissingOwnerSnapshotError(Object error) {
-    if (error is! AgentControlPlaneException) {
-      return false;
-    }
-    final message = error.message.toLowerCase();
-    return message.contains('not found') ||
-        message.contains('no completed snapshot') ||
-        message.contains('snapshot is not available');
-  }
-
-  List<Map<String, String?>> _rowsMissingFromOwnerSnapshot({
-    required List<Map<String, String?>> localRows,
-    required List<Map<String, String?>> ownerRows,
-    required List<String> keyColumns,
-  }) {
-    if (ownerRows.isEmpty) {
-      return localRows;
-    }
-
-    final ownerKeys = <String>{};
-    for (final ownerRow in ownerRows) {
-      ownerKeys.add(_mergeRowKey(ownerRow, keyColumns));
-    }
-
-    return localRows
-        .where(
-          (localRow) => !ownerKeys.contains(_mergeRowKey(localRow, keyColumns)),
-        )
-        .toList(growable: false);
-  }
-
-  List<Map<String, String?>> _appendMissingOwnerSnapshotRows({
-    required List<Map<String, String?>> ownerRows,
-    required List<Map<String, String?>> missingLocalRows,
-    required List<String> keyColumns,
-  }) {
-    if (missingLocalRows.isEmpty) {
-      return ownerRows;
-    }
-    if (ownerRows.isEmpty) {
-      return missingLocalRows;
-    }
-
-    final ownerKeys =
-        ownerRows.map((row) => _mergeRowKey(row, keyColumns)).toSet();
-    return <Map<String, String?>>[
-      ...ownerRows,
-      for (final localRow in missingLocalRows)
-        if (!ownerKeys.contains(_mergeRowKey(localRow, keyColumns))) localRow,
-    ];
-  }
-
-  List<Map<String, String?>> _deduplicateMergeRows({
-    required String table,
-    required List<Map<String, String?>> rows,
-    required List<String> signatureColumns,
-    required List<String> keyColumns,
-  }) {
-    final comparableColumns =
-        signatureColumns.isEmpty ? keyColumns : signatureColumns;
-    final rowsByKey = <String, Map<String, String?>>{};
-    final signatureByKey = <String, String>{};
-
-    for (final row in rows) {
-      final rowKey = _mergeRowKey(row, keyColumns);
-      final rowSignature = _mergeRowSignature(row, comparableColumns);
-      final existingSignature = signatureByKey[rowKey];
-      if (existingSignature == null) {
-        signatureByKey[rowKey] = rowSignature;
-        rowsByKey[rowKey] = row;
-        continue;
-      }
-      if (existingSignature != rowSignature) {
-        throw Exception(
-          'Merge conflict detected in downloaded snapshot for $table. Multiple rows share the same merge key but contain different writable values.',
-        );
-      }
-    }
-
-    return rowsByKey.values.toList(growable: false);
-  }
-
-  String _sqlColumnEqualityClause({
-    required String leftAlias,
-    required String rightAlias,
-    required List<String> columns,
-  }) {
-    return columns
-        .map(
-          (column) =>
-              '$leftAlias.${_quoteIdentifier(column)} = $rightAlias.${_quoteIdentifier(column)}',
-        )
-        .join(' AND ');
-  }
-
-  String _mergeSnapshotRowsStatement({
-    required String qualifiedTable,
-    required List<String> sourceColumns,
-    required List<String> writeColumns,
-    required List<String> keyColumns,
-    required String values,
-  }) {
-    if (sourceColumns.isEmpty || writeColumns.isEmpty || keyColumns.isEmpty) {
-      return '';
-    }
-    final sourceColumnList = sourceColumns.map(_quoteIdentifier).join(', ');
-    final matchClause = _sqlColumnEqualityClause(
-      leftAlias: 'target',
-      rightAlias: 'source',
-      columns: keyColumns,
-    );
-    final insertColumns = writeColumns.map(_quoteIdentifier).join(', ');
-    final insertValues = writeColumns
-        .map((column) => 'source.${_quoteIdentifier(column)}')
-        .join(', ');
-    final duplicateSourceKeysClause = keyColumns
-        .map((column) => 'source.${_quoteIdentifier(column)}')
-        .join(', ');
-    return '''
-IF EXISTS (
-  SELECT 1
-  FROM (VALUES $values) AS source ($sourceColumnList)
-  GROUP BY $duplicateSourceKeysClause
-  HAVING COUNT(*) > 1
-)
-BEGIN
-  RAISERROR(N'Downloaded snapshot contains duplicate primary keys for $qualifiedTable.', 16, 1);
-END;
-MERGE $qualifiedTable AS target
-USING (VALUES $values) AS source ($sourceColumnList)
-ON $matchClause
-WHEN NOT MATCHED BY TARGET THEN
-  INSERT ($insertColumns) VALUES ($insertValues);
-''';
-  }
-
   _QualifiedTableName _splitQualifiedName(String qualifiedName) {
     final parts = qualifiedName.split('.');
     if (parts.length >= 2) {
@@ -4490,31 +3217,6 @@ WHEN NOT MATCHED BY TARGET THEN
       hasMoreRows: hasMoreRows,
       errorText: null,
     );
-  }
-
-  List<Map<String, String?>> _parseSnapshotPageOutput({
-    required String output,
-    required List<String> columns,
-  }) {
-    final lines = output.split(RegExp(r'\r?\n'));
-    final rows = <Map<String, String?>>[];
-
-    for (final line in lines) {
-      final trimmedLine = line.trim();
-      if (_isSkippableOutputLine(trimmedLine)) {
-        continue;
-      }
-
-      final split = _splitRowValues(trimmedLine);
-      final row = <String, String?>{};
-      for (var index = 0; index < columns.length; index += 1) {
-        final value = index < split.length ? split[index] : '';
-        row[columns[index]] = value.isEmpty ? null : value;
-      }
-      rows.add(row);
-    }
-
-    return rows;
   }
 
   _SqlConnectionProfile _activeProfile() => _SqlConnectionProfile(
@@ -5427,8 +4129,6 @@ WHEN NOT MATCHED BY TARGET THEN
       );
     }
 
-    final busy = _isFileBusy(selectedRow.table);
-
     return AgentSurfaceCard(
       title: 'Sync Details',
       subtitle: '',
@@ -5437,20 +4137,17 @@ WHEN NOT MATCHED BY TARGET THEN
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: _buildMergedSyncDetailBody(selectedRow, busy: busy)),
+          Expanded(child: _buildMergedSyncDetailBody(selectedRow)),
         ],
       ),
     );
   }
 
-  Widget _buildMergedSyncDetailBody(
-    _SyncTableRowData row, {
-    required bool busy,
-  }) {
+  Widget _buildMergedSyncDetailBody(_SyncTableRowData row) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildUnifiedSyncDetailHeader(row, busy: busy),
+        _buildUnifiedSyncDetailHeader(row),
         const SizedBox(height: 18),
         _buildSectionLabel('History'),
         const SizedBox(height: 10),
@@ -5470,14 +4167,10 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
-  Widget _buildUnifiedSyncDetailHeader(
-    _SyncTableRowData row, {
-    required bool busy,
-  }) {
+  Widget _buildUnifiedSyncDetailHeader(_SyncTableRowData row) {
     final statusColor = _statusColor(row.state.status);
     final normalizedProgress = row.state.progress.clamp(0, 100);
     final canRunSync = row.state.enabled;
-    final canTransferBackup = _selectedDatabase != null && !busy;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -5486,7 +4179,6 @@ WHEN NOT MATCHED BY TARGET THEN
           row: row,
           compact: compact,
           canRunSync: canRunSync,
-          canTransferBackup: canTransferBackup,
         );
 
         return Container(
@@ -5529,7 +4221,6 @@ WHEN NOT MATCHED BY TARGET THEN
     required _SyncTableRowData row,
     required bool compact,
     required bool canRunSync,
-    required bool canTransferBackup,
   }) {
     final toolbarChildren = <Widget>[
       _buildSyncEnabledToolbarControl(row),
@@ -5555,25 +4246,10 @@ WHEN NOT MATCHED BY TARGET THEN
         icon: Icons.bookmark_add_outlined,
         onTap: () => _saveTableRowCountBaseline(row.table),
       ),
-      _buildToolbarStat(
-        tooltip: 'Backup size',
-        icon: Icons.inventory_2_outlined,
-        value: _formatBytes(row.state.snapshotBytes),
-      ),
       _buildToolbarIconControl(
         tooltip: 'View table',
         icon: Icons.table_rows_outlined,
         onTap: () => _openTableDataDialog(row.table),
-      ),
-      _buildToolbarIconControl(
-        tooltip: 'Download backup',
-        icon: Icons.download_rounded,
-        onTap: canTransferBackup ? () => _exportTableBackup(row.table) : null,
-      ),
-      _buildToolbarIconControl(
-        tooltip: 'Upload backup',
-        icon: Icons.upload_file_rounded,
-        onTap: canTransferBackup ? () => _importTableBackup(row.table) : null,
       ),
     ];
 
@@ -6278,201 +4954,157 @@ WHEN NOT MATCHED BY TARGET THEN
       separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final entry = historyEntries[index];
-        final canOpenSnapshot =
-            entry.snapshotData != null &&
-            entry.snapshotData!.columns.isNotEmpty;
         return Material(
           color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap:
-                canOpenSnapshot
-                    ? () => _openHistorySnapshotDialog(entry)
-                    : null,
-            child: Ink(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFDDE3EA)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final stack = constraints.maxWidth < 540;
+          child: Ink(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFDDE3EA)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final stack = constraints.maxWidth < 540;
 
-                    return stack
-                        ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                AgentStatusPill(
-                                  label: entry.success ? 'Success' : 'Failed',
-                                  color:
-                                      entry.success
-                                          ? const Color(0xFF0F766E)
-                                          : const Color(0xFFB42318),
-                                ),
-                                Text(
-                                  entry.status,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                Text(
-                                  _formatTimestamp(entry.timestamp),
-                                  style: const TextStyle(
-                                    color: Color(0xFF5F6B76),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                if (canOpenSnapshot)
-                                  const Icon(
-                                    Icons.table_rows_outlined,
-                                    size: 16,
-                                    color: Color(0xFF667085),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              entry.message,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                height: 1.2,
-                                fontSize: 12.5,
+                  return stack
+                      ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              AgentStatusPill(
+                                label: entry.success ? 'Success' : 'Failed',
+                                color:
+                                    entry.success
+                                        ? const Color(0xFF0F766E)
+                                        : const Color(0xFFB42318),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 4,
+                              Text(
+                                entry.status,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                _formatTimestamp(entry.timestamp),
+                                style: const TextStyle(
+                                  color: Color(0xFF5F6B76),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            entry.message,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(height: 1.2, fontSize: 12.5),
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              Text(
+                                '${entry.rowCount} rows',
+                                style: const TextStyle(
+                                  color: Color(0xFF5F6B76),
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                '${entry.progress}%',
+                                style: const TextStyle(
+                                  color: Color(0xFF5F6B76),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      )
+                      : Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          AgentStatusPill(
+                            label: entry.success ? 'Success' : 'Failed',
+                            color:
+                                entry.success
+                                    ? const Color(0xFF0F766E)
+                                    : const Color(0xFFB42318),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  '${entry.rowCount} rows',
-                                  style: const TextStyle(
-                                    color: Color(0xFF5F6B76),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                Text(
-                                  _formatBytes(entry.snapshotBytes),
-                                  style: const TextStyle(
-                                    color: Color(0xFF5F6B76),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                Text(
-                                  '${entry.progress}%',
-                                  style: const TextStyle(
-                                    color: Color(0xFF5F6B76),
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        )
-                        : Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            AgentStatusPill(
-                              label: entry.success ? 'Success' : 'Failed',
-                              color:
-                                  entry.success
-                                      ? const Color(0xFF0F766E)
-                                      : const Color(0xFFB42318),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          entry.status,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                      ),
-                                      Text(
-                                        _formatTimestamp(entry.timestamp),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        entry.status,
                                         style: const TextStyle(
-                                          color: Color(0xFF5F6B76),
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                      if (canOpenSnapshot) ...[
-                                        const SizedBox(width: 8),
-                                        const Icon(
-                                          Icons.table_rows_outlined,
-                                          size: 16,
-                                          color: Color(0xFF667085),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    entry.message,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      height: 1.2,
-                                      fontSize: 12.5,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 4,
-                                    children: [
-                                      Text(
-                                        '${entry.rowCount} rows',
-                                        style: const TextStyle(
-                                          color: Color(0xFF5F6B76),
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                      Text(
-                                        _formatBytes(entry.snapshotBytes),
-                                        style: const TextStyle(
-                                          color: Color(0xFF5F6B76),
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                      Text(
-                                        '${entry.progress}%',
-                                        style: const TextStyle(
-                                          color: Color(0xFF5F6B76),
                                           fontWeight: FontWeight.w700,
-                                          fontSize: 12,
+                                          fontSize: 13,
                                         ),
                                       ),
-                                    ],
+                                    ),
+                                    Text(
+                                      _formatTimestamp(entry.timestamp),
+                                      style: const TextStyle(
+                                        color: Color(0xFF5F6B76),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  entry.message,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    height: 1.2,
+                                    fontSize: 12.5,
                                   ),
-                                ],
-                              ),
+                                ),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  children: [
+                                    Text(
+                                      '${entry.rowCount} rows',
+                                      style: const TextStyle(
+                                        color: Color(0xFF5F6B76),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${entry.progress}%',
+                                      style: const TextStyle(
+                                        color: Color(0xFF5F6B76),
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                          ],
-                        );
-                  },
-                ),
+                          ),
+                        ],
+                      );
+                },
               ),
             ),
           ),
@@ -6573,132 +5205,6 @@ WHEN NOT MATCHED BY TARGET THEN
     );
   }
 
-  Widget _buildHistorySnapshotGrid(
-    SyncHistorySnapshotData snapshot,
-    List<_ScoredHistorySnapshotRow> filteredRows,
-  ) {
-    const rowNumberWidth = 72.0;
-    const cellWidth = 220.0;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final panelWidth =
-            constraints.maxWidth.isFinite
-                ? constraints.maxWidth
-                : MediaQuery.sizeOf(context).width;
-        final totalWidth = math.max(
-          panelWidth,
-          rowNumberWidth + (snapshot.columns.length * cellWidth),
-        );
-        final panelHeight =
-            constraints.maxHeight.isFinite
-                ? constraints.maxHeight
-                : MediaQuery.sizeOf(context).height * 0.65;
-
-        return Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            border: Border.all(color: const Color(0xFFDDE3EA)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: totalWidth,
-                height: panelHeight,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        _buildHistorySnapshotHeaderCell('#', rowNumberWidth),
-                        ...snapshot.columns.map(
-                          (column) => _buildHistorySnapshotHeaderCell(
-                            column,
-                            cellWidth,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: filteredRows.length,
-                        itemBuilder: (context, index) {
-                          final match = filteredRows[index];
-                          return _buildHistorySnapshotRow(
-                            columns: snapshot.columns,
-                            row: match.row,
-                            rowNumber: match.originalIndex + 1,
-                            rowNumberWidth: rowNumberWidth,
-                            cellWidth: cellWidth,
-                            alternate: index.isOdd,
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildHistorySnapshotHeaderCell(String value, double width) {
-    return Container(
-      width: width,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFE3E8E1),
-        border: Border(bottom: BorderSide(color: Color(0xFFBFC9BE))),
-      ),
-      child: Text(
-        value,
-        textDirection: directionForDisplayText(value),
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-
-  Widget _buildHistorySnapshotRow({
-    required List<String> columns,
-    required Map<String, String?> row,
-    required int rowNumber,
-    required double rowNumberWidth,
-    required double cellWidth,
-    required bool alternate,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Container(
-          width: rowNumberWidth,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          decoration: BoxDecoration(
-            color: alternate ? Colors.white : const Color(0xFFFAFBF9),
-            border: const Border(bottom: BorderSide(color: Color(0xFFE4E8E3))),
-          ),
-          child: Text(
-            '$rowNumber',
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-        ),
-        ...columns.map(
-          (column) =>
-              _buildTableCell(row[column] ?? '', cellWidth, alt: alternate),
-        ),
-      ],
-    );
-  }
-
   Widget _buildPinnedSummaryBar() {
     final syncRows = _tables
         .map((table) {
@@ -6746,8 +5252,6 @@ WHEN NOT MATCHED BY TARGET THEN
         label: 'Status',
         value: selectedSyncRow?.state.status ?? 'Idle',
       ),
-      if (_activeUploadTable != null)
-        _InfoLine(label: 'Upload', value: _uploadFooterValue()),
     ];
 
     return LayoutBuilder(
@@ -6798,14 +5302,6 @@ WHEN NOT MATCHED BY TARGET THEN
         );
       },
     );
-  }
-
-  String _uploadFooterValue() {
-    final chunkLabel =
-        _uploadMeterCurrentChunk > 0 && _uploadMeterTotalChunks > 0
-            ? '[${_uploadMeterCurrentChunk.toString()}/${_uploadMeterTotalChunks.toString()}] '
-            : '';
-    return '$chunkLabel${_formatTransferRate(_uploadBytesPerSecond)} (${_formatBytes(_uploadMeterBytesTransferred)})';
   }
 
   Widget _buildServerStatusIndicator() {
@@ -7152,18 +5648,6 @@ class _StringQueryResult {
   final String? errorText;
 }
 
-class _ColumnSchemaResult {
-  const _ColumnSchemaResult({
-    required this.success,
-    required this.values,
-    required this.errorText,
-  });
-
-  final bool success;
-  final List<_TableColumnSchema> values;
-  final String? errorText;
-}
-
 class _QualifiedTableName {
   const _QualifiedTableName({required this.schema, required this.table});
 
@@ -7202,103 +5686,7 @@ class _InfoLine extends StatelessWidget {
   }
 }
 
-class _ScoredHistorySnapshotRow {
-  const _ScoredHistorySnapshotRow({
-    required this.originalIndex,
-    required this.row,
-    required this.score,
-  });
-
-  final int originalIndex;
-  final Map<String, String?> row;
-  final double score;
-}
-
 enum _SyncTableSortField { name, lastSync, rows }
-
-class _SnapshotFileDocument {
-  const _SnapshotFileDocument({
-    required this.id,
-    required this.clientName,
-    required this.table,
-    required this.createdAt,
-    required this.rowCount,
-    required this.checksum,
-    required this.snapshotBytes,
-    required this.columns,
-    required this.rows,
-    required this.sourceJobId,
-  });
-
-  final String id;
-  final String clientName;
-  final String table;
-  final String createdAt;
-  final int rowCount;
-  final String checksum;
-  final int snapshotBytes;
-  final List<String> columns;
-  final List<Map<String, String?>> rows;
-  final String? sourceJobId;
-
-  factory _SnapshotFileDocument.fromJson(Map<String, dynamic> json) {
-    final columns = (json['columns'] as List<dynamic>? ?? const [])
-        .map((item) => item.toString())
-        .toList(growable: false);
-    final rawRows = json['rows'] as List<dynamic>? ?? const [];
-    return _SnapshotFileDocument(
-      id: json['id'] as String? ?? '',
-      clientName: json['clientName'] as String? ?? '',
-      table: json['table'] as String? ?? '',
-      createdAt: json['createdAt'] as String? ?? '',
-      rowCount: (json['rowCount'] as num? ?? rawRows.length).round(),
-      checksum: json['checksum'] as String? ?? '',
-      snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
-      columns: columns,
-      rows: rawRows
-          .map(
-            (row) => Map<String, String?>.fromEntries(
-              columns.map((column) {
-                final value =
-                    row is Map && row.containsKey(column) ? row[column] : null;
-                return MapEntry(column, value?.toString());
-              }),
-            ),
-          )
-          .toList(growable: false),
-      sourceJobId: json['sourceJobId'] as String?,
-    );
-  }
-
-  Map<String, dynamic> toJson() => <String, dynamic>{
-    'formatVersion': 1,
-    'id': id,
-    'clientName': clientName,
-    'table': table,
-    'createdAt': createdAt,
-    'rowCount': rowCount,
-    'checksum': checksum,
-    'snapshotBytes': snapshotBytes,
-    'columns': columns,
-    'rows': rows,
-    'sourceJobId': sourceJobId,
-  };
-
-  _SnapshotFileDocument copyWith({int? snapshotBytes}) {
-    return _SnapshotFileDocument(
-      id: id,
-      clientName: clientName,
-      table: table,
-      createdAt: createdAt,
-      rowCount: rowCount,
-      checksum: checksum,
-      snapshotBytes: snapshotBytes ?? this.snapshotBytes,
-      columns: columns,
-      rows: rows,
-      sourceJobId: sourceJobId,
-    );
-  }
-}
 
 class _TableRowsResult {
   const _TableRowsResult({
@@ -7316,64 +5704,6 @@ class _TableRowsResult {
   final int totalRows;
   final bool hasMoreRows;
   final String? errorText;
-}
-
-class _TableSnapshotResult {
-  const _TableSnapshotResult({
-    required this.success,
-    required this.columns,
-    required this.keyColumns,
-    required this.signatureColumns,
-    required this.rows,
-    required this.totalRows,
-    required this.snapshotCreatedAt,
-    required this.errorText,
-  });
-
-  final bool success;
-  final List<String> columns;
-  final List<String> keyColumns;
-  final List<String> signatureColumns;
-  final List<Map<String, String?>> rows;
-  final int totalRows;
-  final String snapshotCreatedAt;
-  final String? errorText;
-}
-
-class _SnapshotPageResult {
-  const _SnapshotPageResult({
-    required this.success,
-    required this.rows,
-    required this.errorText,
-  });
-
-  final bool success;
-  final List<Map<String, String?>> rows;
-  final String? errorText;
-}
-
-class _TableColumnSchema {
-  const _TableColumnSchema({
-    required this.name,
-    required this.sqlType,
-    required this.isNullable,
-    required this.isIdentity,
-    required this.isComputed,
-    required this.generatedAlwaysType,
-    required this.isPrimaryKey,
-    required this.isUniqueKey,
-    required this.uniqueKeyOrdinal,
-  });
-
-  final String name;
-  final String sqlType;
-  final bool isNullable;
-  final bool isIdentity;
-  final bool isComputed;
-  final int generatedAlwaysType;
-  final bool isPrimaryKey;
-  final bool isUniqueKey;
-  final int uniqueKeyOrdinal;
 }
 
 class _IntQueryResult {

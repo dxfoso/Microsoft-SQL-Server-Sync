@@ -66,7 +66,7 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
 
-    def test_chart_declares_free_postgres_custom_sync_engine(self):
+    def test_chart_declares_merge_replication_sync_engine(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
         frontend_deployment = (ROOT / "templates" / "deployment.yaml").read_text(
             encoding="utf-8"
@@ -75,8 +75,8 @@ class ChartContractsTests(unittest.TestCase):
             ROOT / "templates" / "backend-deployment.yaml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("syncEngine:\n  mode: postgresCustomSync", values_yaml)
-        self.assertNotIn("mergeReplication", values_yaml)
+        self.assertIn("syncEngine:\n  mode: mergeReplication", values_yaml)
+        self.assertNotIn("postgresCustomSync", values_yaml)
         self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
         self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
         self.assertNotIn("syncEngineMode", values_yaml)
