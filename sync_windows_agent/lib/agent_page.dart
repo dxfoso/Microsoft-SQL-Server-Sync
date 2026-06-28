@@ -107,6 +107,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _checkingServerConnection = false;
   DateTime? _lastServerCheck;
   bool _syncLoopBusy = false;
+  bool _rowCountsRefreshing = false;
   bool _markChangedTablesBusy = false;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
@@ -1015,6 +1016,56 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       orderByColumn: _currentTableSortColumn(),
       orderAscending: _sortAscending,
     );
+  }
+
+  Future<void> _refreshLocalRowCounts() async {
+    final database = _selectedDatabase;
+    if (database == null || _rowCountsRefreshing) {
+      return;
+    }
+
+    final tables = _stableVisibleTablesForDatabase(database, _tables);
+    if (tables.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _rowCountsRefreshing = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final rowCounts = await _queryTableRowCounts(
+        profile: _activeProfile(),
+        database: database,
+        tables: tables,
+      );
+      if (!mounted) {
+        return;
+      }
+      _applyTableRowCounts(database: database, rowCounts: rowCounts);
+      final selectedTable = _selectedTable;
+      if (selectedTable != null && rowCounts.containsKey(selectedTable)) {
+        setState(() {
+          _totalTableRows = rowCounts[selectedTable]!;
+        });
+      }
+      _refreshTableDataDialog();
+      unawaited(_syncWithControlPlane());
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _rowCountsRefreshing = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadMoreCurrentTableRows() async {
@@ -2134,6 +2185,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       runSpacing: 2,
       children: [
         _buildSyncActionIconButton(
+          tooltip:
+              _rowCountsRefreshing
+                  ? 'Refreshing local row counts'
+                  : 'Refresh local row counts',
+          icon: Icons.refresh_rounded,
+          onPressed:
+              _selectedDatabase == null || _rowCountsRefreshing
+                  ? null
+                  : () => unawaited(_refreshLocalRowCounts()),
+        ),
+        _buildSyncActionIconButton(
           tooltip: 'Settings',
           icon: Icons.settings_outlined,
           onPressed: _openSettingsDialog,
@@ -2680,11 +2742,123 @@ END;
       throw Exception(_sqlCmdFailed('merge subscription setup', result));
     }
 
+    activeJob = await _controlPlaneClient.startJob(
+      job.id,
+      status: 'applying',
+      progress: 70,
+      message: 'Running merge pull subscription agent.',
+    );
+    _applyRemoteJobState(activeJob);
+
+    final runAgentQuery = '''
+USE ${_quoteIdentifier(localDatabase)};
+DECLARE @publisher nvarchar(4000) = ${_sqlLiteral(job.publisherServer.trim())};
+DECLARE @publisherDb nvarchar(4000) = ${_sqlLiteral(job.publisherDatabase.trim())};
+DECLARE @publication nvarchar(4000) = ${_sqlLiteral(publicationName)};
+DECLARE @mergeJobName sysname;
+DECLARE @mergeJobId uniqueidentifier;
+DECLARE @latestSessionId int;
+DECLARE @running bit = 0;
+
+SELECT TOP (1)
+  @mergeJobName = j.name,
+  @mergeJobId = j.job_id
+FROM msdb.dbo.sysjobs AS j
+INNER JOIN msdb.dbo.sysjobsteps AS s ON s.job_id = j.job_id
+WHERE s.subsystem = N'Merge'
+  AND s.command LIKE N'%' + @publisher + N'%'
+  AND s.command LIKE N'%' + @publisherDb + N'%'
+  AND s.command LIKE N'%' + @publication + N'%'
+ORDER BY j.date_created DESC;
+
+IF @mergeJobId IS NULL
+BEGIN
+  RAISERROR(N'Merge Agent SQL Server Agent job was not found for publication %s.', 16, 1, @publication);
+  RETURN;
+END;
+
+SELECT @latestSessionId = MAX(session_id) FROM msdb.dbo.syssessions;
+
+SELECT @running =
+  CASE WHEN EXISTS (
+    SELECT 1
+    FROM msdb.dbo.sysjobactivity AS activity
+    WHERE activity.job_id = @mergeJobId
+      AND activity.session_id = @latestSessionId
+      AND activity.start_execution_date IS NOT NULL
+      AND activity.stop_execution_date IS NULL
+  ) THEN 1 ELSE 0 END;
+
+IF @running = 0
+BEGIN
+  EXEC msdb.dbo.sp_start_job @job_id = @mergeJobId;
+END;
+
+DECLARE @startedAt datetime2 = SYSDATETIME();
+WHILE DATEDIFF(SECOND, @startedAt, SYSDATETIME()) < 300
+BEGIN
+  WAITFOR DELAY '00:00:05';
+
+  SELECT @latestSessionId = MAX(session_id) FROM msdb.dbo.syssessions;
+  SELECT @running =
+    CASE WHEN EXISTS (
+      SELECT 1
+      FROM msdb.dbo.sysjobactivity AS activity
+      WHERE activity.job_id = @mergeJobId
+        AND activity.session_id = @latestSessionId
+        AND activity.start_execution_date IS NOT NULL
+        AND activity.stop_execution_date IS NULL
+    ) THEN 1 ELSE 0 END;
+
+  IF @running = 0
+  BEGIN
+    BREAK;
+  END;
+END;
+
+IF @running = 1
+BEGIN
+  RAISERROR(N'Merge Agent job %s did not finish within 300 seconds.', 16, 1, @mergeJobName);
+  RETURN;
+END;
+
+DECLARE @runStatus int;
+DECLARE @runMessage nvarchar(4000);
+SELECT TOP (1)
+  @runStatus = history.run_status,
+  @runMessage = history.message
+FROM msdb.dbo.sysjobhistory AS history
+WHERE history.job_id = @mergeJobId
+  AND history.step_id = 0
+ORDER BY history.instance_id DESC;
+
+IF @runStatus IS NOT NULL AND @runStatus <> 1
+BEGIN
+  RAISERROR(N'Merge Agent job %s failed: %s', 16, 1, @mergeJobName, @runMessage);
+  RETURN;
+END;
+
+PRINT N'Merge Agent job completed: ' + @mergeJobName;
+''';
+    final runAgentResult = await _runSqlCmd(
+      profile: _activeProfile(),
+      database: localDatabase,
+      query: runAgentQuery,
+    );
+    if (runAgentResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(_activeProfile()));
+    }
+    if (runAgentResult.exitCode != 0) {
+      throw Exception(
+        _sqlCmdFailed('merge subscription agent run', runAgentResult),
+      );
+    }
+
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
       status: 'completed',
       progress: 100,
-      message: 'Merge subscription $publicationName is configured.',
+      message: 'Merge subscription $publicationName completed.',
       rowCount: 0,
     );
     _applyRemoteJobState(
@@ -2692,7 +2866,7 @@ END;
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Configured merge pull subscription to ${job.publisherServer}/${job.publisherDatabase} for ${job.table}.',
+          'Ran merge pull subscription to ${job.publisherServer}/${job.publisherDatabase} for ${job.table}.',
     );
   }
 
