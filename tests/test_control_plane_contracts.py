@@ -170,6 +170,33 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("message: string.concat('Queued merge publication for ', table, '.')", source)
         self.assertIn("message: string.concat('Queued merge subscription for ', table, '.')", source)
 
+    def test_bulk_sync_all_jobs_include_required_sync_job_fields(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r"function create_sync_jobs_for_agent\(.*?\): array<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+
+        for expected in [
+            "subscriberClientName: agent.clientName",
+            "mergeRole: 'subscriber'",
+            "publisherServer: agent.server",
+            "publisherDatabase: agent.database",
+            "publicationName: merge_publication_name(agent.clientName, table)",
+            "publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true",
+            "publisherUser: agent.replicationUser",
+            "publisherPassword: agent.replicationPassword",
+            "snapshotBytes: 0",
+            "snapshotCreatedAt: null",
+            "snapshotId: null",
+        ]:
+            self.assertIn(expected, body)
+
     def test_windows_agent_uses_replication_procedures_instead_of_snapshot_transport(self):
         source = (ROOT / "sync_windows_agent" / "lib" / "agent_page.dart").read_text(
             encoding="utf-8"
