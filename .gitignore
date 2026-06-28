@@ -8,3 +8,5 @@ sync_windows_agent-windows-portable/
 sync_windows_agent-windows-portable.zip
 business/logs/
 .codex-run/
+__pycache__/
+*.py[cod]
