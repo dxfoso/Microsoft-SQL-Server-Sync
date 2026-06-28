@@ -2426,9 +2426,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processPendingJobs() async {
     final pendingJobs = _activeJobs
-        .where(
-          (job) => job.isActive && _syncKeyMatchesSelectedDatabase(job.table),
-        )
+        .where((job) => job.isActive)
         .toList(growable: false);
 
     for (final job in pendingJobs) {
