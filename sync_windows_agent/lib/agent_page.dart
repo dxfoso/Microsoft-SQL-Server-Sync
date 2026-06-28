@@ -2635,7 +2635,12 @@ BEGIN TRY
 END TRY
 BEGIN CATCH
   IF ERROR_NUMBER() <> 14058
-    THROW;
+  BEGIN
+    DECLARE @errorMessage nvarchar(4000) = ERROR_MESSAGE();
+    DECLARE @errorSeverity int = ERROR_SEVERITY();
+    DECLARE @errorState int = ERROR_STATE();
+    RAISERROR(@errorMessage, @errorSeverity, @errorState);
+  END;
   PRINT N'Merge pull subscription already exists; keeping existing metadata.';
 END CATCH;
 IF @subscriptionCreated = 1
