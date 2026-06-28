@@ -2,6 +2,8 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <filesystem>
+
 #include "flutter_window.h"
 #include "startup_log.h"
 #include "utils.h"
@@ -15,17 +17,26 @@ bool HasEnvironmentVariable(const wchar_t* name) {
   return size != 0 || GetLastError() != ERROR_ENVVAR_NOT_FOUND;
 }
 
-void EnableSoftwareRenderingIfRequested() {
+std::filesystem::path GetExecutableDirectory() {
+  wchar_t path[MAX_PATH];
+  const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+  if (length == 0 || length == MAX_PATH) {
+    LogStartupLastError(L"Unable to resolve executable path");
+    return std::filesystem::current_path();
+  }
+
+  return std::filesystem::path(path).parent_path();
+}
+
+void ConfigureEngineSwitches() {
   if (HasEnvironmentVariable(L"FLUTTER_ENGINE_SWITCHES")) {
     LogStartupEvent(
         L"Flutter engine switches already supplied. Keeping existing values.");
     return;
   }
 
-  if (!HasEnvironmentVariable(
-          L"SYNC_WINDOWS_AGENT_ENABLE_SOFTWARE_RENDERING")) {
-    LogStartupEvent(
-        L"Software rendering override not requested. Using engine defaults.");
+  if (!HasEnvironmentVariable(L"SYNC_WINDOWS_AGENT_ENABLE_SOFTWARE_RENDERING")) {
+    LogStartupEvent(L"Software rendering override not requested. Using engine defaults.");
     return;
   }
 
@@ -69,7 +80,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   LogStartupEvent(L"Native wWinMain starting");
   LogWindowsVersion();
-  EnableSoftwareRenderingIfRequested();
+  ConfigureEngineSwitches();
 
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
@@ -81,7 +92,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
-  flutter::DartProject project(L"data");
+  const auto data_path = GetExecutableDirectory() / L"data";
+  LogStartupEvent(L"Flutter data path: " + data_path.wstring());
+  flutter::DartProject project(data_path.wstring());
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();

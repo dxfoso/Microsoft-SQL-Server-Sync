@@ -178,6 +178,32 @@ function Test-FlutterCommandAvailable {
     return (Test-Path -LiteralPath $FlutterCommand -PathType Leaf)
 }
 
+function Get-FlutterSdkRootFromCommand {
+    param([Parameter(Mandatory = $true)][string] $FlutterCommand)
+
+    $commandPath = $FlutterCommand
+    if ($FlutterCommand -eq 'flutter') {
+        $resolvedCommand = Get-Command flutter -ErrorAction Stop
+        $commandPath = $resolvedCommand.Source
+    }
+
+    $commandFullPath = Get-FullPath -Path $commandPath
+    $binDir = Split-Path -Path $commandFullPath -Parent
+    return Split-Path -Path $binDir -Parent
+}
+
+function Get-FlutterReleaseEngineDllPath {
+    param([Parameter(Mandatory = $true)][string] $FlutterCommand)
+
+    $flutterRoot = Get-FlutterSdkRootFromCommand -FlutterCommand $FlutterCommand
+    $releaseDll = Join-Path -Path $flutterRoot -ChildPath 'bin\cache\artifacts\engine\windows-x64-release\flutter_windows.dll'
+    if (-not (Test-Path -LiteralPath $releaseDll -PathType Leaf)) {
+        throw "Flutter release engine DLL is missing: $releaseDll"
+    }
+
+    return $releaseDll
+}
+
 function Assert-FileSha256 {
     param(
         [Parameter(Mandatory = $true)][string] $Path,
@@ -201,6 +227,20 @@ function Assert-FileSha256 {
 
     if (-not $actualSha256.Equals($ExpectedSha256.ToLowerInvariant(), [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Flutter SDK archive hash mismatch. Expected $ExpectedSha256 but got $actualSha256 for $Path"
+    }
+}
+
+function Assert-SameFileSha256 {
+    param(
+        [Parameter(Mandatory = $true)][string] $ActualPath,
+        [Parameter(Mandatory = $true)][string] $ExpectedPath,
+        [Parameter(Mandatory = $true)][string] $Description
+    )
+
+    $actualHash = (Get-FileHash -LiteralPath $ActualPath -Algorithm SHA256).Hash
+    $expectedHash = (Get-FileHash -LiteralPath $ExpectedPath -Algorithm SHA256).Hash
+    if (-not $actualHash.Equals($expectedHash, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Description hash mismatch. Actual: $ActualPath Expected: $ExpectedPath"
     }
 }
 
@@ -559,7 +599,8 @@ function Get-PortableRequiredFiles {
 function Sync-WindowsReleasePayload {
     param(
         [Parameter(Mandatory = $true)][string] $ProjectPath,
-        [Parameter(Mandatory = $true)][string] $ReleaseDir
+        [Parameter(Mandatory = $true)][string] $ReleaseDir,
+        [Parameter(Mandatory = $true)][string] $FlutterReleaseEngineDll
     )
 
     $releaseDataDir = Join-Path -Path $ReleaseDir -ChildPath 'data'
@@ -585,6 +626,8 @@ function Sync-WindowsReleasePayload {
             Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
         }
     }
+
+    Copy-Item -LiteralPath $FlutterReleaseEngineDll -Destination (Join-Path -Path $ReleaseDir -ChildPath 'flutter_windows.dll') -Force
 
     if (Test-Path -LiteralPath $pluginReleaseRoot -PathType Container) {
         Get-ChildItem -LiteralPath $pluginReleaseRoot -Directory -ErrorAction SilentlyContinue |
@@ -808,16 +851,13 @@ try {
             Invoke-FlutterCommand -FlutterCommand $flutterCommand -Arguments @('pub', 'get') -WorkingDirectory $ProjectPath
         }
         Write-Host "Portable backend URL: $BackendBaseUrl"
-        $preserveWindowsBuildTree = $flutterToolchain.Source -eq 'PATH'
         Remove-WindowsAgentBuildArtifacts `
-            -ProjectPath $ProjectPath `
-            -PreserveFlutterEphemeral `
-            -PreserveWindowsBuildTree:$preserveWindowsBuildTree
+            -ProjectPath $ProjectPath
         $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
+        $buildArguments = @('build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines
         Write-Host 'Building Windows release...'
-        Invoke-FlutterCommand `
-            -FlutterCommand $flutterCommand `
-            -Arguments (@('build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines) `
+        Invoke-WindowsAgentVisualStudioCommand `
+            -Command (@($flutterCommand) + $buildArguments) `
             -WorkingDirectory $ProjectPath
 
         if ($LASTEXITCODE -ne 0) {
@@ -846,11 +886,19 @@ try {
         throw "Windows release build did not produce expected executable: $exePath"
     }
 
-    Sync-WindowsReleasePayload -ProjectPath $ProjectPath -ReleaseDir $releaseDir
+    $flutterReleaseEngineDll = Get-FlutterReleaseEngineDllPath -FlutterCommand $flutterCommand
+    Sync-WindowsReleasePayload `
+        -ProjectPath $ProjectPath `
+        -ReleaseDir $releaseDir `
+        -FlutterReleaseEngineDll $flutterReleaseEngineDll
 
     New-Item -Path $portableDir -ItemType Directory -Force | Out-Null
     Get-ChildItem -LiteralPath $releaseDir -Force |
         Copy-Item -Destination $portableDir -Recurse -Force
+    Assert-SameFileSha256 `
+        -ActualPath (Join-Path -Path $portableDir -ChildPath 'flutter_windows.dll') `
+        -ExpectedPath $flutterReleaseEngineDll `
+        -Description 'Portable Flutter release engine DLL'
 
     Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
 

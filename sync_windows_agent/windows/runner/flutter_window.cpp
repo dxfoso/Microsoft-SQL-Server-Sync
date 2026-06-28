@@ -1,9 +1,7 @@
 #include "flutter_window.h"
 
-#include <chrono>
 #include <optional>
 #include <string>
-#include <thread>
 
 #include "flutter/generated_plugin_registrant.h"
 #include "resource.h"
@@ -13,8 +11,6 @@ namespace {
 
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayIconId = 1;
-constexpr int kFlutterControllerCreateAttempts = 5;
-constexpr auto kFlutterControllerRetryDelay = std::chrono::milliseconds(300);
 
 std::wstring Utf8ToWide(const std::string& value) {
   if (value.empty()) {
@@ -59,46 +55,29 @@ bool FlutterWindow::OnCreate() {
 
   // The size here must match the window dimensions to avoid unnecessary surface
   // creation / destruction in the startup path.
-  bool has_engine = false;
-  bool has_view = false;
-  for (int attempt = 1; attempt <= kFlutterControllerCreateAttempts; ++attempt) {
-    SetLastError(ERROR_SUCCESS);
-    flutter_controller_ = std::make_unique<flutter::FlutterViewController>(
-        frame.right - frame.left, frame.bottom - frame.top, project_);
-    LogStartupLastError(
-        L"FlutterWindow::OnCreate FlutterViewController creation last_error");
+  SetLastError(ERROR_SUCCESS);
+  flutter_controller_ = std::make_unique<flutter::FlutterViewController>(
+      frame.right - frame.left, frame.bottom - frame.top, project_);
+  LogStartupLastError(
+      L"FlutterWindow::OnCreate FlutterViewController creation last_error");
 
-    if (!flutter_controller_) {
-      startup_failure_details_ = L"FlutterViewController allocation returned null";
-      LogStartupEvent(
-          L"FlutterWindow::OnCreate FlutterViewController allocation returned null");
-      return false;
-    }
+  if (!flutter_controller_) {
+    startup_failure_details_ = L"FlutterViewController allocation returned null";
+    LogStartupEvent(
+        L"FlutterWindow::OnCreate FlutterViewController allocation returned null");
+    return false;
+  }
 
-    has_engine = flutter_controller_->engine() != nullptr;
-    has_view = flutter_controller_->view() != nullptr;
-    if (has_engine && has_view) {
-      break;
-    }
-
-    wchar_t controller_message[192];
+  const bool has_engine = flutter_controller_->engine() != nullptr;
+  const bool has_view = flutter_controller_->view() != nullptr;
+  if (!has_engine || !has_view) {
+    wchar_t controller_message[160];
     swprintf_s(
         controller_message,
-        L"FlutterWindow::OnCreate controller state attempt=%d/%d engine=%ls view=%ls",
-        attempt, kFlutterControllerCreateAttempts,
+        L"FlutterWindow::OnCreate controller state engine=%ls view=%ls",
         has_engine ? L"present" : L"null",
         has_view ? L"present" : L"null");
     LogStartupEvent(controller_message);
-
-    flutter_controller_.reset();
-    if (attempt < kFlutterControllerCreateAttempts) {
-      LogStartupEvent(
-          L"FlutterWindow::OnCreate retrying controller initialization");
-      std::this_thread::sleep_for(kFlutterControllerRetryDelay);
-    }
-  }
-
-  if (!has_engine || !has_view || !flutter_controller_) {
     startup_failure_details_ =
         L"FlutterViewController initialized with missing engine/view";
     return false;
