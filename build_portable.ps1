@@ -736,6 +736,16 @@ function Assert-PortablePayload {
         }
     }
 
+    $aotLibraryPath = Join-Path -Path $PortableDir -ChildPath 'data\app.so'
+    if (-not (Test-Path -LiteralPath $aotLibraryPath -PathType Leaf)) {
+        throw "Portable output is missing release AOT library: data/app.so"
+    }
+
+    $debugKernelPath = Join-Path -Path $PortableDir -ChildPath 'data\flutter_assets\kernel_blob.bin'
+    if (Test-Path -LiteralPath $debugKernelPath -PathType Leaf) {
+        throw "Portable output contains debug kernel_blob.bin; refusing to publish a non-release payload."
+    }
+
     $payloadDlls = Get-ChildItem -LiteralPath $PortableDir -Filter '*.dll' -File -Force
     if ($payloadDlls.Count -eq 0) {
         throw "Portable output contains no DLLs: $PortableDir"
@@ -775,6 +785,7 @@ function Assert-PortableZipContents {
         $requiredEntries = @(
             "$PortableName/$ExeName",
             "$PortableName/flutter_windows.dll",
+            "$PortableName/data/app.so",
             "$PortableName/run_portable.bat",
             "$PortableName/update.ps1",
             "$PortableName/portable-manifest.txt"
@@ -791,6 +802,11 @@ function Assert-PortableZipContents {
             if (-not $entryNames.Contains($requiredEntry)) {
                 throw "Portable zip is missing required entry: $requiredEntry"
             }
+        }
+
+        $debugKernelEntry = "$PortableName/data/flutter_assets/kernel_blob.bin"
+        if ($entryNames.Contains($debugKernelEntry)) {
+            throw "Portable zip contains debug kernel_blob.bin; refusing to publish a non-release payload."
         }
     }
     finally {
