@@ -1504,6 +1504,20 @@ function enabled_sync_tables_for_agent(agent: map<json>): array<string> {
   return unique_string_values(enabledTables);
 }
 
+function enabled_sync_policy_tables_for_agent(agent: map<json>): array<string> {
+  let enabledTables = [];
+  const policies = list_table_sync_policies_for_scope(agent.ownerUserId).map((row) => normalize_stored_table_sync_policy(row));
+  for (const policy of policies) {
+    if (policy.enabled == true) {
+      const table = table_sync_policy_sync_key(policy);
+      if (table.trim().length != 0) {
+        enabledTables = enabledTables.concat([table]);
+      }
+    }
+  }
+  return unique_string_values(enabledTables);
+}
+
 function latest_completed_job_tables_for_client(clientName: string): array<string> {
   const rows = db.selectMany(SyncJob, {
     where: { clientName },
@@ -2118,7 +2132,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   let skippedBusyTables = [];
 
   for (const agent of visible_agent_rows_for(current)) {
-    let enabledTables = enabled_sync_tables_for_agent(agent);
+    let enabledTables = unique_string_values(enabled_sync_tables_for_agent(agent).concat(enabled_sync_policy_tables_for_agent(agent)));
     if (enabledTables.length == 0) {
       enabledTables = latest_completed_job_tables_for_client(agent.clientName);
     }
