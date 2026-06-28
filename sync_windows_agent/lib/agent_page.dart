@@ -2303,10 +2303,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final remoteRelationships = _relationshipGraphFromRemoteDependencies(
         heartbeat.tableDependencies,
       );
-      final enabledTables = {
-        ..._applyRemoteSyncSettings(heartbeat.syncSettings),
-        ..._applyRemoteTablePolicies(heartbeat.tablePolicies),
-      };
+      _applyRemoteSyncSettings(heartbeat.syncSettings);
+      _applyRemoteTablePolicies(heartbeat.tablePolicies);
       if (!mounted) {
         return;
       }
@@ -2330,11 +2328,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _applyRemoteJobState(job);
       }
 
-      if (enabledTables.isEmpty) {
-        await _queueEnabledRoleJobs();
-      } else {
-        await _queueEnabledRoleJobs(forceTables: enabledTables);
-      }
+      // Merge replication jobs need source-client publisher metadata, so the
+      // control plane must queue them. The agent should only execute jobs it
+      // receives, not create self-subscriber jobs from its heartbeat.
       await _processPendingJobs();
     } catch (error) {
       if (!mounted) {
