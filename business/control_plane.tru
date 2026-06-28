@@ -41,6 +41,7 @@ class Agent {
   field autoSyncIntervalMinutes: int min=1 max=1440
   field serverConnected: bool
   field sqlConnected: bool
+  field clientVersion: string? min=0 max=32
   field lastHeartbeat: string min=0 max=64
   field selectedTable: string? min=0 max=256
   field tables: array<json>
@@ -1066,6 +1067,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
     serverConnected: agent.serverConnected,
     sqlConnected: agent.sqlConnected,
+    clientVersion: agent.clientVersion ?? '',
     lastHeartbeat: agent.lastHeartbeat,
     selectedTable: agent.selectedTable,
     diagnostics: agent_diagnostics_payload(agent),
@@ -1380,6 +1382,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       diagnosticStatus: 'idle',
       diagnosticSummary: '',
       diagnosticPayload: '',
+      clientVersion: '',
       clientUserId,
       ownerUserId,
       updatedAt: now_iso()
@@ -1402,6 +1405,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     autoSyncIntervalMinutes: 15,
     serverConnected: false,
     sqlConnected: false,
+    clientVersion: '',
     lastHeartbeat: '',
     selectedTable: null,
     tables: [],
@@ -1788,7 +1792,7 @@ function live_state(token: string? = null): map<json> {
   };
 }
 
-function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, token: string? = null): map<json> {
+function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, clientVersion: string = '', token: string? = null): map<json> {
   let resolvedClientName = '';
   const current = current_user_record(token);
   if (current == null) {
@@ -1834,6 +1838,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes),
     serverConnected,
     sqlConnected,
+    clientVersion: truncate_text(clientVersion.trim(), 32),
     lastHeartbeat: now_iso(),
     selectedTable,
     tables: nextTables,

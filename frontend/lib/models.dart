@@ -110,6 +110,7 @@ class AdminAgent {
     required this.autoSyncIntervalMinutes,
     required this.serverConnected,
     required this.sqlConnected,
+    required this.clientVersion,
     required this.lastHeartbeat,
     required this.selectedTable,
     required this.diagnostics,
@@ -127,6 +128,7 @@ class AdminAgent {
   final int autoSyncIntervalMinutes;
   final bool serverConnected;
   final bool sqlConnected;
+  final String clientVersion;
   final String lastHeartbeat;
   final String? selectedTable;
   final AdminAgentDiagnostics diagnostics;
@@ -146,6 +148,7 @@ class AdminAgent {
           (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),
       serverConnected: json['serverConnected'] as bool? ?? false,
       sqlConnected: json['sqlConnected'] as bool? ?? false,
+      clientVersion: json['clientVersion'] as String? ?? '',
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
       selectedTable: json['selectedTable'] as String?,
       diagnostics:

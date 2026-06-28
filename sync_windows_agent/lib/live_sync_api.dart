@@ -253,6 +253,7 @@ class AgentControlPlaneClient {
     required String? selectedTable,
     required Map<String, SyncTableState> tables,
     required List<Map<String, String>> tableRelationships,
+    required String clientVersion,
   }) async {
     final response = await _invokeFunction('agents_heartbeat', {
       'clientName': clientName,
@@ -267,6 +268,7 @@ class AgentControlPlaneClient {
       'serverConnected': serverConnected,
       'sqlConnected': sqlConnected,
       'selectedTable': selectedTable,
+      'clientVersion': clientVersion,
       'tables': tables.entries
           .map((entry) => {'table': entry.key, ...entry.value.toJson()})
           .toList(growable: false),

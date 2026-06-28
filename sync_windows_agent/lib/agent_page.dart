@@ -2229,6 +2229,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             _selectedTable == null ? null : _syncTableKey(_selectedTable!),
         tables: _heartbeatTablesPayload(),
         tableRelationships: _tableRelationshipsPayload(),
+        clientVersion: _agentAppVersion,
       );
 
       if (!mounted) {

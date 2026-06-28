@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -5432,26 +5433,34 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             .map((table) => table.table.trim())
             .where((table) => table.isNotEmpty)
             .toSet();
-    final trackedTables =
+    var trackedTables =
         enabledTables.isEmpty
             ? agent.tables
                 .map((table) => table.table.trim())
                 .where((table) => table.isNotEmpty)
                 .toSet()
             : enabledTables;
+
+    final clientJobs = _jobs
+      .where((job) => job.clientName == agent.clientName)
+      .toList(growable: false)..sort(_compareJobsByUpdatedAtDesc);
+    if (trackedTables.isEmpty) {
+      trackedTables =
+          clientJobs
+              .map((job) => job.table.trim())
+              .where((table) => table.isNotEmpty)
+              .toSet();
+    }
     if (trackedTables.isEmpty) {
       return _ClientSyncProgress(
         progress: 0,
-        label: 'No tables',
+        label: 'No sync jobs',
         color: const Color(0xFF667085),
-        detail: 'No enabled sync tables are available.',
+        detail: 'No enabled tables or sync jobs are available yet.',
       );
     }
 
     final latestJobsByTable = <String, AdminJob>{};
-    final clientJobs = _jobs
-      .where((job) => job.clientName == agent.clientName)
-      .toList(growable: false)..sort(_compareJobsByUpdatedAtDesc);
     for (final job in clientJobs) {
       final table = job.table.trim();
       if (table.isEmpty ||
@@ -5560,6 +5569,43 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       detail:
           '$completedCount complete of ${trackedTables.length} enabled tables.',
     );
+  }
+
+  String _simpleClientVersion(AdminAgent agent) {
+    final version = _clientVersionSource(agent);
+    if (version.isEmpty) {
+      return '-';
+    }
+    final buildMatch = RegExp(r'\+(\d+)$').firstMatch(version);
+    if (buildMatch != null) {
+      return buildMatch.group(1)!;
+    }
+    final numberMatches = RegExp(r'\d+').allMatches(version).toList();
+    if (numberMatches.isEmpty) {
+      return version.length <= 8 ? version : version.substring(0, 8);
+    }
+    return numberMatches.last.group(0)!;
+  }
+
+  String _clientVersionSource(AdminAgent agent) {
+    final heartbeatVersion = agent.clientVersion.trim();
+    if (heartbeatVersion.isNotEmpty) {
+      return heartbeatVersion;
+    }
+    final payload = agent.diagnostics.payload?.trim();
+    if (payload == null || payload.isEmpty) {
+      return '';
+    }
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map && decoded['app'] is Map) {
+        final app = Map<String, dynamic>.from(decoded['app'] as Map);
+        return (app['version'] as String? ?? '').trim();
+      }
+    } catch (_) {
+      return '';
+    }
+    return '';
   }
 
   Widget _buildClientSyncProgressBar(AdminAgent agent) {
@@ -5834,7 +5880,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final selected = _selectedPageClientName == agent.clientName;
     final database =
         agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
-    final subtitle = '$database - ${agent.tables.length} tables';
+    final version = _simpleClientVersion(agent);
+    final versionLabel = version == '-' ? 'version unknown' : 'v$version';
+    final subtitle =
+        '$database - ${agent.tables.length} tables - $versionLabel';
     return Column(
       children: [
         _buildNavigationTile(
@@ -5985,6 +6034,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   runSpacing: 6,
                   children: [
                     _buildRoleBadge(),
+                    MetricPill(
+                      label: 'Version',
+                      value: _simpleClientVersion(agent),
+                    ),
                     StatusBadge(
                       label: agent.isOnline ? 'Online' : 'Offline',
                       color: statusColor,
@@ -6093,6 +6146,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               MetricPill(label: 'Machine', value: agent.machineName),
               MetricPill(label: 'Database', value: agent.database),
               MetricPill(label: 'Tables', value: '${agent.tables.length}'),
+              MetricPill(label: 'Version', value: _simpleClientVersion(agent)),
               MetricPill(label: 'Role', value: _roleLabel()),
               MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
               MetricPill(label: 'Diagnostics', value: diagnostics.status),
