@@ -1375,9 +1375,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   String? _localClientUpdateScriptPath() {
     final executableDir = File(Platform.resolvedExecutable).parent;
-    final updateScript = File(
-      path.join(executableDir.path, 'update.ps1'),
-    );
+    final updateScript = File(path.join(executableDir.path, 'update.ps1'));
     if (!updateScript.existsSync()) {
       return null;
     }
@@ -1416,8 +1414,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     final manifestUrl = _clientUpdateManifestUrl();
     final scriptUrl = _clientUpdateScriptUrl(updateInfo);
-    final installDir =
-        File(Platform.resolvedExecutable).parent.path.replaceAll('/', r'\');
+    final installDir = File(
+      Platform.resolvedExecutable,
+    ).parent.path.replaceAll('/', r'\');
     final localScriptPath = _localClientUpdateScriptPath();
     final psArgs =
         localScriptPath != null
@@ -1463,11 +1462,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'powershell.exe',
         ...psArgs,
       ];
-      await Process.start(
-        'cmd.exe',
-        ['/c', ...updaterCommandLine],
-        mode: ProcessStartMode.detached,
-      );
+      await Process.start('cmd.exe', [
+        '/c',
+        ...updaterCommandLine,
+      ], mode: ProcessStartMode.detached);
       if (!mounted) {
         return;
       }
@@ -1497,8 +1495,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String _clientUpdateCommand(ClientUpdateInfo updateInfo) {
     final manifestUrl = _clientUpdateManifestUrl();
     final scriptUrl = _clientUpdateScriptUrl(updateInfo);
-    final installDir =
-        File(Platform.resolvedExecutable).parent.path.replaceAll('/', r'\');
+    final installDir = File(
+      Platform.resolvedExecutable,
+    ).parent.path.replaceAll('/', r'\');
     final localScriptPath = _localClientUpdateScriptPath();
     if (localScriptPath != null) {
       return "powershell -ExecutionPolicy Bypass -NoProfile -File '$localScriptPath' -ManifestUrl '$manifestUrl' -InstallDir '$installDir'";
@@ -2623,33 +2622,45 @@ END;
 
     final query = '''
 USE ${_quoteIdentifier(localDatabase)};
-EXEC sp_addmergepullsubscription
-  @publisher = ${_sqlLiteral(job.publisherServer.trim())},
-  @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
-  @publication = ${_sqlLiteral(publicationName)},
-  @subscriber_type = N'local',
-  @subscription_priority = 0.0,
-  @sync_type = N'none';
-EXEC sp_addmergepullsubscription_agent
-  @publisher = ${_sqlLiteral(job.publisherServer.trim())},
-  @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
-  @publication = ${_sqlLiteral(publicationName)},
-  @distributor = ${_sqlLiteral(job.publisherServer.trim())},
-  @subscriber_security_mode = 1,
-  @publisher_security_mode = $publisherSecurityMode,
-  @publisher_login = $publisherUserClause,
-  @publisher_password = $publisherPasswordClause,
-  @use_ftp = N'false',
-  @frequency_type = 64,
-  @frequency_interval = 1,
-  @frequency_relative_interval = 1,
-  @frequency_recurrence_factor = 0,
-  @frequency_subday = 4,
-  @frequency_subday_interval = 5,
-  @active_start_time_of_day = 0,
-  @active_end_time_of_day = 235959,
-  @active_start_date = 20260101,
-  @active_end_date = 99991231;
+DECLARE @subscriptionCreated bit = 0;
+BEGIN TRY
+  EXEC sp_addmergepullsubscription
+    @publisher = ${_sqlLiteral(job.publisherServer.trim())},
+    @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
+    @publication = ${_sqlLiteral(publicationName)},
+    @subscriber_type = N'local',
+    @subscription_priority = 0.0,
+    @sync_type = N'none';
+  SET @subscriptionCreated = 1;
+END TRY
+BEGIN CATCH
+  IF ERROR_NUMBER() <> 14058
+    THROW;
+  PRINT N'Merge pull subscription already exists; keeping existing metadata.';
+END CATCH;
+IF @subscriptionCreated = 1
+BEGIN
+  EXEC sp_addmergepullsubscription_agent
+    @publisher = ${_sqlLiteral(job.publisherServer.trim())},
+    @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
+    @publication = ${_sqlLiteral(publicationName)},
+    @distributor = ${_sqlLiteral(job.publisherServer.trim())},
+    @subscriber_security_mode = 1,
+    @publisher_security_mode = $publisherSecurityMode,
+    @publisher_login = $publisherUserClause,
+    @publisher_password = $publisherPasswordClause,
+    @use_ftp = N'false',
+    @frequency_type = 64,
+    @frequency_interval = 1,
+    @frequency_relative_interval = 1,
+    @frequency_recurrence_factor = 0,
+    @frequency_subday = 4,
+    @frequency_subday_interval = 5,
+    @active_start_time_of_day = 0,
+    @active_end_time_of_day = 235959,
+    @active_start_date = 20260101,
+    @active_end_date = 99991231;
+END;
 ''';
     final result = await _runSqlCmd(
       profile: _activeProfile(),

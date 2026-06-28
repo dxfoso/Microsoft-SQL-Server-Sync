@@ -2081,7 +2081,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               separatorBuilder:
                                   (_, _) => const SizedBox(height: 6),
                               itemBuilder:
-                                  (context, index) => _buildJobCard(jobs[index]),
+                                  (context, index) =>
+                                      _buildJobCard(jobs[index]),
                             ),
                   ),
                 ],
@@ -2159,7 +2160,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildClientDetailDialogHeader(summary: summary, entry: entry),
+                  _buildClientDetailDialogHeader(
+                    summary: summary,
+                    entry: entry,
+                  ),
                   const SizedBox(height: 8),
                   _buildSelectedClientInfo(
                     entry,
@@ -3892,8 +3896,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 .map((entry) {
                   return _TableMetricClientInfo(
                     name: entry.agent.clientName,
-                    subtitle:
-                        'Merge replication participant',
+                    subtitle: 'Merge replication participant',
                     detail:
                         '${_syncModeDisplay(entry.tableState.syncMode)} - ${entry.tableState.status}',
                     active: entry.agent.isOnline,
@@ -5422,6 +5425,170 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return agents;
   }
 
+  _ClientSyncProgress _syncProgressForClient(AdminAgent agent) {
+    final enabledTables =
+        agent.tables
+            .where((table) => table.enabled)
+            .map((table) => table.table.trim())
+            .where((table) => table.isNotEmpty)
+            .toSet();
+    final trackedTables =
+        enabledTables.isEmpty
+            ? agent.tables
+                .map((table) => table.table.trim())
+                .where((table) => table.isNotEmpty)
+                .toSet()
+            : enabledTables;
+    if (trackedTables.isEmpty) {
+      return _ClientSyncProgress(
+        progress: 0,
+        label: 'No tables',
+        color: const Color(0xFF667085),
+        detail: 'No enabled sync tables are available.',
+      );
+    }
+
+    final latestJobsByTable = <String, AdminJob>{};
+    final clientJobs = _jobs
+      .where((job) => job.clientName == agent.clientName)
+      .toList(growable: false)..sort(_compareJobsByUpdatedAtDesc);
+    for (final job in clientJobs) {
+      final table = job.table.trim();
+      if (table.isEmpty ||
+          !trackedTables.contains(table) ||
+          latestJobsByTable.containsKey(table)) {
+        continue;
+      }
+      latestJobsByTable[table] = job;
+    }
+
+    var totalProgress = 0;
+    var completedCount = 0;
+    var activeCount = 0;
+    var failedCount = 0;
+    for (final table in trackedTables) {
+      final job = latestJobsByTable[table];
+      if (job != null) {
+        final status = job.status.toLowerCase();
+        final progress = job.progress.clamp(0, 100);
+        totalProgress += progress;
+        if (status == 'completed') {
+          completedCount += 1;
+        } else if (status == 'failed') {
+          failedCount += 1;
+        } else if (job.isActive) {
+          activeCount += 1;
+        }
+        continue;
+      }
+
+      final tableState = agent.tables
+          .where((state) => state.table.trim() == table)
+          .cast<AdminTableState?>()
+          .firstWhere((state) => state != null, orElse: () => null);
+      final progress = (tableState?.progress ?? 0).clamp(0, 100);
+      final status = (tableState?.status ?? '').toLowerCase();
+      totalProgress += progress;
+      if (progress >= 100 &&
+          (status == 'completed' ||
+              status == 'synced' ||
+              status == 'success')) {
+        completedCount += 1;
+      } else if (status == 'failed') {
+        failedCount += 1;
+      } else if (status == 'running' ||
+          status == 'applying' ||
+          status == 'queued') {
+        activeCount += 1;
+      }
+    }
+
+    final progress = (totalProgress / trackedTables.length).round().clamp(
+      0,
+      100,
+    );
+    if (failedCount > 0) {
+      return _ClientSyncProgress(
+        progress: progress,
+        label: 'Failed',
+        color: const Color(0xFFB42318),
+        detail:
+            '$failedCount failed, $completedCount complete of ${trackedTables.length} tables.',
+      );
+    }
+    if (completedCount == trackedTables.length && progress >= 100) {
+      return _ClientSyncProgress(
+        progress: 100,
+        label: 'Complete',
+        color: const Color(0xFF0F766E),
+        detail: 'All ${trackedTables.length} enabled tables are complete.',
+      );
+    }
+    if (activeCount > 0) {
+      return _ClientSyncProgress(
+        progress: progress,
+        label: 'Syncing',
+        color: const Color(0xFF2563EB),
+        detail:
+            '$activeCount active, $completedCount complete of ${trackedTables.length} tables.',
+      );
+    }
+    return _ClientSyncProgress(
+      progress: progress,
+      label: completedCount > 0 ? 'Partial' : 'Waiting',
+      color: const Color(0xFFB54708),
+      detail:
+          '$completedCount complete of ${trackedTables.length} enabled tables.',
+    );
+  }
+
+  Widget _buildClientSyncProgressBar(AdminAgent agent) {
+    final progress = _syncProgressForClient(agent);
+    return Tooltip(
+      message: progress.detail,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: progress.progress / 100,
+                    minHeight: 7,
+                    backgroundColor: const Color(0xFFE6EAF0),
+                    valueColor: AlwaysStoppedAnimation<Color>(progress.color),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${progress.progress}%',
+                style: TextStyle(
+                  color: progress.color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            progress.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: progress.color,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNavigationPane({bool closeAfterSelection = false}) {
     if (widget.authenticatedUser.isOwner) {
       return _buildClientNavigationPane(
@@ -5648,23 +5815,33 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final database =
         agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
     final subtitle = '$database - ${agent.tables.length} tables';
-    return _buildNavigationTile(
-      icon: Icons.computer_rounded,
-      iconColor:
-          agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318),
-      label: agent.clientName,
-      subtitle: subtitle,
-      selected: selected,
-      onTap:
-          () => _handleNavigationSelection(
-            () => _openClientPage(agent.clientName),
-            closeAfterSelection: closeAfterSelection,
+    return Column(
+      children: [
+        _buildNavigationTile(
+          icon: Icons.computer_rounded,
+          iconColor:
+              agent.isOnline
+                  ? const Color(0xFF0F766E)
+                  : const Color(0xFFB42318),
+          label: agent.clientName,
+          subtitle: subtitle,
+          selected: selected,
+          onTap:
+              () => _handleNavigationSelection(
+                () => _openClientPage(agent.clientName),
+                closeAfterSelection: closeAfterSelection,
+              ),
+          trailing: StatusBadge(
+            label: agent.isOnline ? 'Online' : 'Offline',
+            color:
+                agent.isOnline
+                    ? const Color(0xFF0F766E)
+                    : const Color(0xFFB42318),
           ),
-      trailing: StatusBadge(
-        label: agent.isOnline ? 'Online' : 'Offline',
-        color:
-            agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318),
-      ),
+        ),
+        const SizedBox(height: 6),
+        _buildClientSyncProgressBar(agent),
+      ],
     );
   }
 
@@ -5780,6 +5957,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(height: 8),
+                _buildClientSyncProgressBar(agent),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 6,
@@ -6965,6 +7144,20 @@ class _TableClientEntry {
 
   final AdminAgent agent;
   final AdminTableState tableState;
+}
+
+class _ClientSyncProgress {
+  const _ClientSyncProgress({
+    required this.progress,
+    required this.label,
+    required this.color,
+    required this.detail,
+  });
+
+  final int progress;
+  final String label;
+  final Color color;
+  final String detail;
 }
 
 class _ServerInventoryItem {
