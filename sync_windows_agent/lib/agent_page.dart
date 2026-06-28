@@ -1053,10 +1053,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Map<String, SyncTableState> _heartbeatTablesPayload() {
-    final tableNames =
-        _tables.isNotEmpty
-            ? _tables
-            : _syncState.tables.keys.toList(growable: false);
+    final tableNames = <String>{
+      for (final table in _syncState.tables.keys)
+        if (table.trim().isNotEmpty) table,
+      for (final table in _tables)
+        if (table.trim().isNotEmpty) table,
+    }.toList(growable: false);
 
     // Heartbeats only need live table metadata. Keep local history details
     // out of the request body so the control-plane payload stays bounded.
