@@ -1541,6 +1541,14 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
   if (tables.length == 0) {
     return [];
   }
+  let sourceAgent = null;
+  const resolvedSourceClientName = sourceClientName.trim();
+  if (resolvedSourceClientName.length != 0 && resolvedSourceClientName != agent.clientName) {
+    sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
+    if (sourceAgent == null) {
+      return [];
+    }
+  }
   const activeTables = active_job_tables_for_client(agent.clientName);
   const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables);
   let tablesToCreate = [];
@@ -1557,6 +1565,84 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
   }
   if (tablesToCreate.length == 0) {
     return [];
+  }
+  if (sourceAgent != null) {
+    const sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
+    let rows = [];
+    for (const table of tablesToCreate) {
+      let sourceBusy = false;
+      for (const sourceActiveTable of sourceActiveTables) {
+        if (sourceActiveTable == table) {
+          sourceBusy = true;
+        }
+      }
+      if (sourceBusy) {
+        continue;
+      }
+      const publicationName = merge_publication_name(sourceAgent.clientName, table);
+      rows = rows.concat([{
+        id: uuid.v4(),
+        clientName: sourceAgent.clientName,
+        sourceClientName: sourceAgent.clientName,
+        subscriberClientName: agent.clientName,
+        table,
+        direction: 'sync',
+        mergeRole: 'publisher',
+        publisherServer: sourceAgent.server,
+        publisherDatabase: sourceAgent.database,
+        publicationName,
+        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
+        publisherUser: sourceAgent.replicationUser,
+        publisherPassword: sourceAgent.replicationPassword,
+        status: 'queued',
+        progress: 0,
+        rowCount: 0,
+        snapshotBytes: 0,
+        snapshotCreatedAt: null,
+        snapshotId: null,
+        createdAt: now_iso(),
+        updatedAt: now_iso(),
+        startedAt: null,
+        completedAt: null,
+        message: string.concat('Queued merge publication for ', table, '.'),
+        error: null,
+        clientUserId: sourceAgent.clientUserId,
+        ownerUserId: sourceAgent.ownerUserId
+      }]);
+      rows = rows.concat([{
+        id: uuid.v4(),
+        clientName: agent.clientName,
+        sourceClientName: sourceAgent.clientName,
+        subscriberClientName: agent.clientName,
+        table,
+        direction: 'sync',
+        mergeRole: 'subscriber',
+        publisherServer: sourceAgent.server,
+        publisherDatabase: sourceAgent.database,
+        publicationName,
+        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
+        publisherUser: sourceAgent.replicationUser,
+        publisherPassword: sourceAgent.replicationPassword,
+        status: 'queued',
+        progress: 0,
+        rowCount: 0,
+        snapshotBytes: 0,
+        snapshotCreatedAt: null,
+        snapshotId: null,
+        createdAt: now_iso(),
+        updatedAt: now_iso(),
+        startedAt: null,
+        completedAt: null,
+        message: string.concat('Queued merge subscription for ', table, '.'),
+        error: null,
+        clientUserId: agent.clientUserId,
+        ownerUserId: agent.ownerUserId
+      }]);
+    }
+    if (rows.length == 0) {
+      return [];
+    }
+    return db.insertMany(SyncJob, rows);
   }
   const rows = tablesToCreate.map((table) => {
     const tableReference = sync_table_reference(table);
@@ -2131,7 +2217,8 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   let skippedOfflineClients = [];
   let skippedBusyTables = [];
 
-  for (const agent of visible_agent_rows_for(current)) {
+  const visibleAgents = visible_agent_rows_for(current);
+  for (const agent of visibleAgents) {
     let enabledTables = unique_string_values(enabled_sync_tables_for_agent(agent).concat(enabled_sync_policy_tables_for_agent(agent)));
     if (enabledTables.length == 0) {
       enabledTables = latest_completed_job_tables_for_client(agent.clientName);
@@ -2161,10 +2248,21 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     if (tablesToQueue.length == 0) {
       continue;
     }
-    const clientJobs = create_sync_jobs_for_agent(agent, tablesToQueue);
-    if (clientJobs.length > 0) {
-      createdJobs = createdJobs.concat(clientJobs);
-      queuedClientNames = queuedClientNames.concat([string.from(agent.clientName)]);
+    for (const sourceAgent of visibleAgents) {
+      if (sourceAgent.clientName == agent.clientName) {
+        continue;
+      }
+      if (sourceAgent.ownerUserId != agent.ownerUserId) {
+        continue;
+      }
+      if (sourceAgent.isOnline != true || sourceAgent.serverConnected != true || sourceAgent.sqlConnected != true) {
+        continue;
+      }
+      const clientJobs = create_sync_jobs_for_agent(agent, tablesToQueue, string.from(sourceAgent.clientName));
+      if (clientJobs.length > 0) {
+        createdJobs = createdJobs.concat(clientJobs);
+        queuedClientNames = queuedClientNames.concat([string.from(agent.clientName)]);
+      }
     }
   }
 

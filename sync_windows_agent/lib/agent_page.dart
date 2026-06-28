@@ -2658,6 +2658,8 @@ END;
 
   Future<void> _processReplicationSubscriberJob(RemoteSyncJob job) async {
     final localDatabase = _databaseNameFromSyncKey(job.table);
+    final tableName = _localTableName(job.table);
+    final tableParts = _splitQualifiedName(tableName);
     final publicationName = _mergePublicationName(job);
     if (job.publisherServer.trim().isEmpty ||
         job.publisherDatabase.trim().isEmpty) {
@@ -2672,6 +2674,19 @@ END;
       message: 'Configuring merge pull subscription.',
     );
     _applyRemoteJobState(activeJob);
+
+    final beforeCountResult = await _queryTableRowCount(
+      profile: _activeProfile(),
+      database: localDatabase,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (!beforeCountResult.success) {
+      throw Exception(
+        beforeCountResult.errorText ??
+            'Unable to read local row count before merge sync.',
+      );
+    }
 
     final publisherSecurityMode = job.publisherUseWindowsAuth ? '1' : '0';
     final publisherUserClause =
@@ -2854,19 +2869,41 @@ PRINT N'Merge Agent job completed: ' + @mergeJobName;
       );
     }
 
+    final afterCountResult = await _queryTableRowCount(
+      profile: _activeProfile(),
+      database: localDatabase,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (!afterCountResult.success) {
+      throw Exception(
+        afterCountResult.errorText ??
+            'Unable to read local row count after merge sync.',
+      );
+    }
+    final rowsAdded =
+        (afterCountResult.value - beforeCountResult.value)
+            .clamp(0, 1000000000)
+            .toInt();
+    _applyTableRowCounts(
+      database: localDatabase,
+      rowCounts: {tableName: afterCountResult.value},
+    );
+
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
       status: 'completed',
       progress: 100,
-      message: 'Merge subscription $publicationName completed.',
-      rowCount: 0,
+      message:
+          'Merge subscription $publicationName completed; +$rowsAdded rows.',
+      rowCount: rowsAdded,
     );
     _applyRemoteJobState(
       activeJob,
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Ran merge pull subscription to ${job.publisherServer}/${job.publisherDatabase} for ${job.table}.',
+          'Ran merge pull subscription to ${job.publisherServer}/${job.publisherDatabase} for ${job.table}; +$rowsAdded rows.',
     );
   }
 

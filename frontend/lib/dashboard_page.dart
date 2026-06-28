@@ -5571,6 +5571,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  _ClientSyncDelta? _latestSuccessfulRowDeltaForClient(AdminAgent agent) {
+    final jobs = _jobs
+      .where(
+        (job) =>
+            job.clientName == agent.clientName &&
+            job.status.toLowerCase() == 'completed',
+      )
+      .toList(growable: false)..sort(_compareJobsByUpdatedAtDesc);
+    if (jobs.isEmpty) {
+      return null;
+    }
+    final latest = jobs.first;
+    return _ClientSyncDelta(
+      rowsAdded: latest.rowCount.clamp(0, 1000000000).toInt(),
+      table: _displayTableName(latest.table),
+      completedAt: latest.completedAt ?? latest.updatedAt,
+    );
+  }
+
+  String _formatCompactCount(int value) {
+    final raw = value.toString();
+    final buffer = StringBuffer();
+    for (var index = 0; index < raw.length; index++) {
+      final remaining = raw.length - index;
+      buffer.write(raw[index]);
+      if (remaining > 1 && remaining % 3 == 1) {
+        buffer.write(',');
+      }
+    }
+    return buffer.toString();
+  }
+
   String _simpleClientVersion(AdminAgent agent) {
     final version = _clientVersionSource(agent);
     if (version.isEmpty) {
@@ -5610,6 +5642,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildClientSyncProgressBar(AdminAgent agent) {
     final progress = _syncProgressForClient(agent);
+    final delta = _latestSuccessfulRowDeltaForClient(agent);
     return Tooltip(
       message: progress.detail,
       child: Column(
@@ -5640,15 +5673,46 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            progress.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: progress.color,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                progress.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: progress.color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              if (delta != null)
+                Tooltip(
+                  message:
+                      'Last successful sync: ${delta.table} at ${_formatTimestamp(delta.completedAt)}',
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE7F8EF),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: const Color(0xFFB7E4C7)),
+                    ),
+                    child: Text(
+                      '+${_formatCompactCount(delta.rowsAdded)} rows',
+                      style: const TextStyle(
+                        color: Color(0xFF087443),
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
@@ -7232,6 +7296,18 @@ class _ClientSyncProgress {
   final String label;
   final Color color;
   final String detail;
+}
+
+class _ClientSyncDelta {
+  const _ClientSyncDelta({
+    required this.rowsAdded,
+    required this.table,
+    required this.completedAt,
+  });
+
+  final int rowsAdded;
+  final String table;
+  final String completedAt;
 }
 
 class _ServerInventoryItem {
