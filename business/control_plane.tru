@@ -2715,6 +2715,7 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
   targetNames = unique_string_values(targetNames);
 
   let cancelledJobs = [];
+  let cancelledJobIds = [];
   const completedAt = now_iso();
   for (const job of visible_job_rows_for(current)) {
     const status = string.from(job.status).trim();
@@ -2725,7 +2726,35 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
     if (targetNames.length != 0 && !string_array_contains(targetNames, jobClientName)) {
       continue;
     }
-    const updated = db.update(SyncJob, { id: job.id }, {
+    cancelledJobIds = cancelledJobIds.concat([job.id]);
+    cancelledJobs = cancelledJobs.concat([public_job_payload({
+      id: job.id,
+      clientName: job.clientName,
+      sourceClientName: job.sourceClientName,
+      subscriberClientName: job.subscriberClientName,
+      table: job.table,
+      direction: job.direction,
+      mergeRole: job.mergeRole,
+      publisherServer: job.publisherServer,
+      publisherDatabase: job.publisherDatabase,
+      publicationName: job.publicationName,
+      publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+      status: 'cancelled',
+      progress: 100,
+      rowCount: job.rowCount,
+      createdAt: job.createdAt,
+      updatedAt: completedAt,
+      startedAt: job.startedAt,
+      completedAt,
+      message,
+      error: message,
+      clientUserId: job.clientUserId,
+      ownerUserId: job.ownerUserId
+    })]);
+  }
+
+  if (cancelledJobIds.length != 0) {
+    db.updateMany(SyncJob, { id: { in: cancelledJobIds } }, {
       status: 'cancelled',
       progress: 100,
       completedAt,
@@ -2733,9 +2762,6 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
       error: message,
       updatedAt: completedAt
     });
-    if (updated != null) {
-      cancelledJobs = cancelledJobs.concat([public_job_payload(updated)]);
-    }
   }
 
   return {
