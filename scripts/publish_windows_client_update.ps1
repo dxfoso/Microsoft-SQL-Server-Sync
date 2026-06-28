@@ -1,6 +1,7 @@
 param(
     [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call',
     [string] $PublicBaseUrl = 'https://sync.velvet-leaf.com/client',
+    [string] $ClientUpdateBaseUrl = '',
     [string] $OutputDir = "$PSScriptRoot\..\artifacts\client-updates",
     [string] $DeploymentEnvPath = "$PSScriptRoot\..\deployment\chart\.env",
     [string] $Namespace = '',
@@ -75,6 +76,9 @@ if ([string]::IsNullOrWhiteSpace($Namespace)) {
 if (-not $SkipBuild) {
     $buildArgs = @{
         BackendBaseUrl = $BackendBaseUrl
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ClientUpdateBaseUrl)) {
+        $buildArgs.ClientUpdateBaseUrl = $ClientUpdateBaseUrl
     }
     if (-not [string]::IsNullOrWhiteSpace($FlutterVersion)) {
         $buildArgs.FlutterVersion = $FlutterVersion

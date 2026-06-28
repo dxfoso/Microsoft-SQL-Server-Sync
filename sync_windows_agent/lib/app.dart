@@ -75,6 +75,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String? _accountName;
   String? _rememberedLoginName;
   String? _rememberedLoginPassword;
+  String? _lastAutoUpdateTarget;
+  String? _lastAutoUpdateAttemptedAt;
   String _serverName = 'localhost';
   String? _loginError;
   bool _restoringSession = true;
@@ -139,6 +141,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
               ? store.rememberedLoginName!.trim()
               : null;
       _rememberedLoginPassword = store.rememberedLoginPassword ?? '';
+      _lastAutoUpdateTarget =
+          store.lastAutoUpdateTarget?.trim().isNotEmpty == true
+              ? store.lastAutoUpdateTarget!.trim()
+              : null;
+      _lastAutoUpdateAttemptedAt =
+          store.lastAutoUpdateAttemptedAt?.trim().isNotEmpty == true
+              ? store.lastAutoUpdateAttemptedAt!.trim()
+              : null;
       _serverName =
           store.server.trim().isNotEmpty ? store.server.trim() : 'localhost';
       _hasOpenedOnce = store.hasOpenedOnce;
@@ -193,6 +203,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       _accountName = null;
       _rememberedLoginName = null;
       _rememberedLoginPassword = '';
+      _lastAutoUpdateTarget = null;
+      _lastAutoUpdateAttemptedAt = null;
       _hasOpenedOnce = false;
       _startMinimized = false;
       _startOnStartup = false;
@@ -232,6 +244,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       accountName: _accountName,
       rememberedLoginName: _rememberedLoginName,
       rememberedLoginPassword: _rememberedLoginPassword,
+      lastAutoUpdateTarget: _lastAutoUpdateTarget,
+      lastAutoUpdateAttemptedAt: _lastAutoUpdateAttemptedAt,
     );
     await store.save();
   }
@@ -309,6 +323,18 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
 
   Future<void> _minimizeWindow() async {
     await WindowsAgentWindowSettings.minimizeWindow();
+  }
+
+  Future<void> _recordAutoUpdateAttempt(String target) async {
+    final normalized = target.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    setState(() {
+      _lastAutoUpdateTarget = normalized;
+      _lastAutoUpdateAttemptedAt = DateTime.now().toIso8601String();
+    });
+    await _saveStateNow();
   }
 
   void _updateSyncStateForClient(SyncClientState state) {
@@ -812,6 +838,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 onMinimizeWindow: _minimizeWindow,
                 initialServer: _serverName,
                 onServerChanged: _updateServerName,
+                lastAutoUpdateTarget: _lastAutoUpdateTarget,
+                onAutoUpdateAttempted: _recordAutoUpdateAttempt,
               ),
     );
   }

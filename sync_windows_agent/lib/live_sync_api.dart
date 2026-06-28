@@ -213,9 +213,14 @@ class AgentControlPlaneClient {
     }
   }
 
-  Future<ClientUpdateInfo?> fetchClientUpdateInfo() async {
+  Future<ClientUpdateInfo?> fetchClientUpdateInfo({String? manifestUrl}) async {
+    final overrideUrl = manifestUrl?.trim() ?? '';
+    final targetUri =
+        overrideUrl.isEmpty
+            ? _originUri('/client/latest.json')
+            : Uri.parse(overrideUrl);
     final response = await _sendRequest(
-      _client.get(_originUri('/client/latest.json')),
+      _client.get(targetUri),
       'checking client update manifest',
     );
     if (response.statusCode == 404) {

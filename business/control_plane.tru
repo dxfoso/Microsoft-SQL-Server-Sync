@@ -85,6 +85,9 @@ class SyncJob {
   field status: string min=1 max=32
   field progress: int min=0 max=100
   field rowCount: int min=0 max=1000000000
+  field snapshotBytes: int min=0 max=1000000000
+  field snapshotCreatedAt: datetime?
+  field snapshotId: string? min=0 max=128
   field createdAt: datetime
   field updatedAt: datetime
   field startedAt: datetime?
@@ -263,8 +266,8 @@ function normalize_sync_mode(value: string? = null, fallbackIsSync: bool = true)
 }
 
 function merge_publication_name(clientName: string, table: string): string {
-  const normalizedClientName = clientName.trim().replace('-', '_').replace('.', '_');
-  const normalizedTable = table.trim().replace(':', '_').replace('.', '_');
+  const normalizedClientName = clientName.trim();
+  const normalizedTable = table.trim();
   return string.concat('merge_', normalizedClientName, '_', normalizedTable).slice(0, 240);
 }
 
@@ -2261,6 +2264,9 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         status: 'queued',
         progress: 0,
         rowCount: 0,
+        snapshotBytes: 0,
+        snapshotCreatedAt: null,
+        snapshotId: null,
         createdAt: now_iso(),
         updatedAt: now_iso(),
         startedAt: null,
@@ -2287,6 +2293,9 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         status: 'queued',
         progress: 0,
         rowCount: 0,
+        snapshotBytes: 0,
+        snapshotCreatedAt: null,
+        snapshotId: null,
         createdAt: now_iso(),
         updatedAt: now_iso(),
         startedAt: null,
@@ -2327,6 +2336,9 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       status: 'queued',
       progress: 0,
       rowCount: 0,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
       createdAt: now_iso(),
       updatedAt: now_iso(),
       startedAt: null,

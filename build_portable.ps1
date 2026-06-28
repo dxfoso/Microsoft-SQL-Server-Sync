@@ -1,5 +1,6 @@
 param(
     [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call',
+    [string] $ClientUpdateBaseUrl = '',
     [string] $FlutterVersion = '',
     [string] $FlutterCacheRoot = '',
     [switch] $RequireFlutterVersion
@@ -388,7 +389,8 @@ function New-DartDefineArgs {
     return New-WindowsAgentDartDefineArgs `
         -ProjectPath $ProjectPath `
         -BackendBaseUrl $BackendBaseUrl `
-        -RepoRoot $PSScriptRoot
+        -RepoRoot $PSScriptRoot `
+        -ClientUpdateBaseUrl $ClientUpdateBaseUrl
 }
 
 function Invoke-FlutterCommand {

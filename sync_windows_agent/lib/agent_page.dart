@@ -6,6 +6,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
 import 'live_sync_api.dart';
@@ -15,6 +16,10 @@ import 'startup_log.dart';
 const String _agentAppVersion = String.fromEnvironment(
   'APP_VERSION',
   defaultValue: '1.0.0+2',
+);
+const String _clientUpdateBaseUrlOverride = String.fromEnvironment(
+  'CLIENT_UPDATE_BASE_URL',
+  defaultValue: '',
 );
 const String _agentBuildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
@@ -46,6 +51,8 @@ class AgentDashboardPage extends StatefulWidget {
     required this.onMinimizeWindow,
     required this.initialServer,
     required this.onServerChanged,
+    required this.lastAutoUpdateTarget,
+    required this.onAutoUpdateAttempted,
   });
 
   final bool autoLoadOnStart;
@@ -66,6 +73,8 @@ class AgentDashboardPage extends StatefulWidget {
   final Future<void> Function() onMinimizeWindow;
   final String initialServer;
   final ValueChanged<String> onServerChanged;
+  final String? lastAutoUpdateTarget;
+  final Future<void> Function(String target) onAutoUpdateAttempted;
 
   @override
   State<AgentDashboardPage> createState() => _AgentDashboardPageState();
@@ -106,6 +115,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   ClientUpdateInfo? _clientUpdateInfo;
   String? _clientUpdateError;
   bool _checkingClientUpdate = false;
+  bool _applyingClientUpdate = false;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -215,7 +225,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     });
 
     try {
-      final updateInfo = await _controlPlaneClient.fetchClientUpdateInfo();
+      final manifestUrl = _clientUpdateManifestUrl();
+      logStartupEvent('Checking client update manifest: $manifestUrl');
+      final updateInfo = await _controlPlaneClient.fetchClientUpdateInfo(
+        manifestUrl: manifestUrl,
+      );
       if (!mounted) {
         return;
       }
@@ -223,7 +237,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _clientUpdateInfo = updateInfo;
         _checkingClientUpdate = false;
       });
+      if (updateInfo == null) {
+        logStartupEvent('Client update manifest returned no update payload.');
+      } else {
+        logStartupEvent(
+          'Client update manifest loaded: version=${updateInfo.version} '
+          'commit=${updateInfo.commit}',
+        );
+      }
+      if (updateInfo != null) {
+        unawaited(_maybeAutoApplyClientUpdate(updateInfo));
+      }
     } catch (error) {
+      logStartupEvent('Client update check failed: $error');
       if (!mounted) {
         return;
       }
@@ -366,6 +392,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String _databaseNameFromSyncKey(String syncTableKey) {
     final separatorIndex = syncTableKey.indexOf(_syncTableKeySeparator);
     if (separatorIndex < 0) {
+      final qualifiedName = _splitQualifiedName(syncTableKey);
+      if (qualifiedName.database.isNotEmpty) {
+        return qualifiedName.database;
+      }
       return _selectedDatabase ?? '';
     }
     return syncTableKey.substring(0, separatorIndex);
@@ -373,18 +403,30 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   bool _syncKeyMatchesSelectedDatabase(String syncTableKey) {
     final databaseName = _selectedDatabase?.trim() ?? '';
-    if (databaseName.isEmpty ||
-        !syncTableKey.contains(_syncTableKeySeparator)) {
+    if (databaseName.isEmpty) {
       return true;
+    }
+    if (!syncTableKey.contains(_syncTableKeySeparator)) {
+      final qualifiedName = _splitQualifiedName(syncTableKey);
+      if (qualifiedName.database.isEmpty) {
+        return true;
+      }
+      return qualifiedName.database.toLowerCase() == databaseName.toLowerCase();
     }
     return syncTableKey.startsWith('$databaseName$_syncTableKeySeparator');
   }
 
   bool _syncKeyMatchesDatabase(String syncTableKey, String database) {
     final databaseName = database.trim();
-    if (databaseName.isEmpty ||
-        !syncTableKey.contains(_syncTableKeySeparator)) {
+    if (databaseName.isEmpty) {
       return true;
+    }
+    if (!syncTableKey.contains(_syncTableKeySeparator)) {
+      final qualifiedName = _splitQualifiedName(syncTableKey);
+      if (qualifiedName.database.isEmpty) {
+        return true;
+      }
+      return qualifiedName.database.toLowerCase() == databaseName.toLowerCase();
     }
     return syncTableKey.startsWith('$databaseName$_syncTableKeySeparator');
   }
@@ -933,6 +975,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _hasMoreRows = false;
       });
       _refreshTableDataDialog();
+      _retryAutomaticClientUpdateIfReady();
       return;
     }
 
@@ -956,6 +999,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rowCounts: {table: result.totalRows},
     );
     _refreshTableDataDialog();
+    _retryAutomaticClientUpdateIfReady();
   }
 
   Future<void> _reloadCurrentTableRows() async {
@@ -1267,6 +1311,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   String _clientUpdateLabel() {
     final updateInfo = _clientUpdateInfo;
+    if (_applyingClientUpdate) {
+      return 'Installing';
+    }
     if (_checkingClientUpdate) {
       return 'Checking';
     }
@@ -1279,17 +1326,184 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return 'Current';
   }
 
-  String _clientUpdateCommand(ClientUpdateInfo updateInfo) {
-    final scriptUrl = updateInfo.updateScriptUrl.trim();
-    final manifestUrl = _controlPlaneClient.baseUrl.replaceFirst(
+  String _clientUpdateManifestUrl() {
+    final overrideBaseUrl =
+        (Platform.environment['CLIENT_UPDATE_BASE_URL'] ??
+                _clientUpdateBaseUrlOverride)
+            .trim();
+    if (overrideBaseUrl.isNotEmpty) {
+      final normalizedBaseUrl =
+          overrideBaseUrl.endsWith('/')
+              ? overrideBaseUrl.substring(0, overrideBaseUrl.length - 1)
+              : overrideBaseUrl;
+      return '$normalizedBaseUrl/latest.json';
+    }
+    return _controlPlaneClient.baseUrl.replaceFirst(
       RegExp(r'/call/?$'),
       '/client/latest.json',
     );
-    final url =
-        scriptUrl.isEmpty
-            ? manifestUrl.replaceFirst('/latest.json', '/update.ps1')
-            : scriptUrl;
-    return "powershell -ExecutionPolicy Bypass -NoProfile -Command \"iex ((New-Object Net.WebClient).DownloadString('$url'))\"";
+  }
+
+  String _clientUpdateScriptUrl(ClientUpdateInfo updateInfo) {
+    final scriptUrl = updateInfo.updateScriptUrl.trim();
+    if (scriptUrl.isNotEmpty) {
+      return scriptUrl;
+    }
+    return _clientUpdateManifestUrl().replaceFirst(
+      '/latest.json',
+      '/update.ps1',
+    );
+  }
+
+  String _clientUpdateTargetId(ClientUpdateInfo updateInfo) {
+    final version = updateInfo.version.trim();
+    final commit = updateInfo.commit.trim().toLowerCase();
+    final hash = updateInfo.sha256.trim().toLowerCase();
+    return [version, commit, hash].where((part) => part.isNotEmpty).join('@');
+  }
+
+  bool get _supportsAutomaticClientUpdate {
+    if (!Platform.isWindows) {
+      return false;
+    }
+    final executablePath =
+        Platform.resolvedExecutable.replaceAll('/', r'\').toLowerCase();
+    return !executablePath.contains(r'\build\windows\x64\runner\debug\');
+  }
+
+  String _powershellSingleQuoted(String value) => value.replaceAll("'", "''");
+
+  String? _localClientUpdateScriptPath() {
+    final executableDir = File(Platform.resolvedExecutable).parent;
+    final updateScript = File(
+      path.join(executableDir.path, 'update.ps1'),
+    );
+    if (!updateScript.existsSync()) {
+      return null;
+    }
+    return updateScript.path.replaceAll('/', r'\');
+  }
+
+  void _retryAutomaticClientUpdateIfReady() {
+    final updateInfo = _clientUpdateInfo;
+    if (updateInfo == null) {
+      return;
+    }
+    unawaited(_maybeAutoApplyClientUpdate(updateInfo));
+  }
+
+  Future<void> _maybeAutoApplyClientUpdate(ClientUpdateInfo updateInfo) async {
+    if (!mounted ||
+        !_hasClientUpdate ||
+        !_supportsAutomaticClientUpdate ||
+        _applyingClientUpdate ||
+        _checkingClientUpdate) {
+      return;
+    }
+
+    final targetId = _clientUpdateTargetId(updateInfo);
+    if (targetId.isEmpty || widget.lastAutoUpdateTarget == targetId) {
+      return;
+    }
+    if (_syncLoopBusy ||
+        _rowsLoading ||
+        _processingJobIds.isNotEmpty ||
+        _activeJobs.any(
+          (job) => job.status == 'running' || job.status == 'applying',
+        )) {
+      return;
+    }
+
+    final manifestUrl = _clientUpdateManifestUrl();
+    final scriptUrl = _clientUpdateScriptUrl(updateInfo);
+    final installDir =
+        File(Platform.resolvedExecutable).parent.path.replaceAll('/', r'\');
+    final localScriptPath = _localClientUpdateScriptPath();
+    final psArgs =
+        localScriptPath != null
+            ? <String>[
+              '-NoProfile',
+              '-ExecutionPolicy',
+              'Bypass',
+              '-WindowStyle',
+              'Hidden',
+              '-File',
+              localScriptPath,
+              '-ManifestUrl',
+              manifestUrl,
+              '-InstallDir',
+              installDir,
+            ]
+            : <String>[
+              '-NoProfile',
+              '-ExecutionPolicy',
+              'Bypass',
+              '-WindowStyle',
+              'Hidden',
+              '-Command',
+              "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
+                  "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
+                  "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
+                  "-InstallDir '${_powershellSingleQuoted(installDir)}'",
+            ];
+
+    try {
+      setState(() {
+        _applyingClientUpdate = true;
+        _clientUpdateError = null;
+      });
+      await widget.onAutoUpdateAttempted(targetId);
+      logStartupEvent(
+        'Applying client update automatically: $targetId from $manifestUrl',
+      );
+      final updaterCommandLine = [
+        'start',
+        '""',
+        '/min',
+        'powershell.exe',
+        ...psArgs,
+      ];
+      await Process.start(
+        'cmd.exe',
+        ['/c', ...updaterCommandLine],
+        mode: ProcessStartMode.detached,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: SelectableText(
+            'Installing client update v${updateInfo.version}. The agent will restart automatically.',
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      if (mounted) {
+        exit(0);
+      }
+    } catch (error) {
+      logStartupEvent('Automatic client update failed: $error');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _applyingClientUpdate = false;
+        _clientUpdateError = error.toString();
+      });
+    }
+  }
+
+  String _clientUpdateCommand(ClientUpdateInfo updateInfo) {
+    final manifestUrl = _clientUpdateManifestUrl();
+    final scriptUrl = _clientUpdateScriptUrl(updateInfo);
+    final installDir =
+        File(Platform.resolvedExecutable).parent.path.replaceAll('/', r'\');
+    final localScriptPath = _localClientUpdateScriptPath();
+    if (localScriptPath != null) {
+      return "powershell -ExecutionPolicy Bypass -NoProfile -File '$localScriptPath' -ManifestUrl '$manifestUrl' -InstallDir '$installDir'";
+    }
+    return "powershell -ExecutionPolicy Bypass -NoProfile -Command \"& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing -Uri '$scriptUrl').Content)) -ManifestUrl '$manifestUrl' -InstallDir '$installDir'\"";
   }
 
   Future<void> _showClientUpdateDialog() async {
@@ -1315,6 +1529,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               [
                 'Current: ${_buildSummaryLabel()}',
                 'Latest: v${updateInfo.version} ${updateInfo.commit}',
+                if (_supportsAutomaticClientUpdate)
+                  'Automatic installation is enabled when the agent is idle.',
                 if (updateInfo.releaseDate.trim().isNotEmpty)
                   'Released: ${_formatTimestamp(updateInfo.releaseDate)}',
                 if (updateInfo.sizeBytes > 0)
@@ -1935,7 +2151,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-
   Future<void> _queueEnabledRoleJobs({Set<String>? forceTables}) async {
     if (_tables.isEmpty || _selectedDatabase == null) {
       return;
@@ -2072,6 +2287,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       });
     } finally {
       _syncLoopBusy = false;
+      _retryAutomaticClientUpdateIfReady();
     }
   }
 
@@ -2226,6 +2442,44 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         } else {
           await _processUnsupportedLegacyJob(job);
         }
+      } catch (error, stackTrace) {
+        final errorMessage = error.toString();
+        logStartupEvent(
+          'Remote job ${job.id} failed during ${job.mergeRole} processing: '
+          '$errorMessage',
+        );
+        logStartupEvent(stackTrace.toString());
+        await _markRemoteJobFailed(job, error);
+        final failedJob = RemoteSyncJob(
+          id: job.id,
+          clientName: job.clientName,
+          sourceClientName: job.sourceClientName,
+          subscriberClientName: job.subscriberClientName,
+          table: job.table,
+          direction: job.direction,
+          mergeRole: job.mergeRole,
+          publisherServer: job.publisherServer,
+          publisherDatabase: job.publisherDatabase,
+          publicationName: job.publicationName,
+          publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+          publisherUser: job.publisherUser,
+          publisherPassword: job.publisherPassword,
+          status: 'failed',
+          progress: 100,
+          rowCount: job.rowCount,
+          createdAt: job.createdAt,
+          updatedAt: DateTime.now().toIso8601String(),
+          startedAt: job.startedAt,
+          completedAt: DateTime.now().toIso8601String(),
+          message: errorMessage,
+          error: errorMessage,
+        );
+        _applyRemoteJobState(
+          failedJob,
+          appendHistory: true,
+          success: false,
+          overrideMessage: errorMessage,
+        );
       } finally {
         _processingJobIds.remove(job.id);
       }
@@ -2719,9 +2973,11 @@ ORDER BY child_table, parent_table;
 
     final fetchSize = pageSize + 1;
     final tableParts = _splitQualifiedName(table);
+    final resolvedDatabase =
+        tableParts.database.isEmpty ? database : tableParts.database;
     final columnsResult = await _queryTableColumns(
       profile: profile,
-      database: database,
+      database: resolvedDatabase,
       schema: tableParts.schema,
       table: tableParts.table,
     );
@@ -2738,7 +2994,7 @@ ORDER BY child_table, parent_table;
 
     final rowCountResult = await _queryTableRowCount(
       profile: profile,
-      database: database,
+      database: resolvedDatabase,
       schema: tableParts.schema,
       table: tableParts.table,
     );
@@ -2772,7 +3028,7 @@ WITH page_source AS (
   SELECT
     $columnList,
     ROW_NUMBER() OVER (ORDER BY $orderClause $direction) AS [__sync_agent_row_number]
-  FROM ${_quoteQualifiedIdentifier(table)}
+  FROM ${_quoteIdentifier(resolvedDatabase)}.${_quoteIdentifier(tableParts.schema)}.${_quoteIdentifier(tableParts.table)}
 )
 SELECT $columnList
 FROM page_source
@@ -2781,7 +3037,7 @@ ORDER BY [__sync_agent_row_number];
 ''';
     final processResult = await _runSqlCmd(
       profile: profile,
-      database: database,
+      database: resolvedDatabase,
       query: query,
     );
 
@@ -3136,14 +3392,18 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
   _QualifiedTableName _splitQualifiedName(String qualifiedName) {
     final parts = qualifiedName.split('.');
-    if (parts.length >= 2) {
+    if (parts.length >= 3) {
+      return _QualifiedTableName(
+        database: parts[parts.length - 3],
+        schema: parts[parts.length - 2],
+        table: parts.last,
+      );
+    }
+    if (parts.length == 2) {
       return _QualifiedTableName(schema: parts.first, table: parts.last);
     }
     return _QualifiedTableName(schema: 'dbo', table: qualifiedName);
   }
-
-  String _quoteQualifiedIdentifier(String qualifiedName) =>
-      qualifiedName.split('.').map(_quoteIdentifier).join('.');
 
   List<String> _splitRowValues(String line) =>
       line.split('|').map((value) => value.trim()).toList();
@@ -4136,9 +4396,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: _buildMergedSyncDetailBody(selectedRow)),
-        ],
+        children: [Expanded(child: _buildMergedSyncDetailBody(selectedRow))],
       ),
     );
   }
@@ -5649,8 +5907,13 @@ class _StringQueryResult {
 }
 
 class _QualifiedTableName {
-  const _QualifiedTableName({required this.schema, required this.table});
+  const _QualifiedTableName({
+    this.database = '',
+    required this.schema,
+    required this.table,
+  });
 
+  final String database;
   final String schema;
   final String table;
 }

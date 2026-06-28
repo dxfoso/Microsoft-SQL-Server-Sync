@@ -7,6 +7,27 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Write-UpdateLog {
+    param(
+        [Parameter(Mandatory = $true)][string] $Message,
+        [string] $LogPath = ''
+    )
+
+    $timestamp = [DateTime]::UtcNow.ToString('o')
+    $line = "[$timestamp] $Message"
+    Write-Host $line
+
+    if ([string]::IsNullOrWhiteSpace($LogPath)) {
+        return
+    }
+
+    $logDir = Split-Path -Path $LogPath -Parent
+    if (-not [string]::IsNullOrWhiteSpace($logDir)) {
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+    }
+    Add-Content -LiteralPath $LogPath -Value $line -Encoding ASCII
+}
+
 function Resolve-UpdateUrl {
     param(
         [Parameter(Mandatory = $true)][string] $BaseUrl,
@@ -89,15 +110,36 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Write-UpdateLog {
+    param(
+        [Parameter(Mandatory = $true)][string] $Message,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+
+    $timestamp = [DateTime]::UtcNow.ToString('o')
+    $line = "[$timestamp] $Message"
+    Write-Host $line
+    $logDir = Split-Path -Path $LogPath -Parent
+    if (-not [string]::IsNullOrWhiteSpace($logDir)) {
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+    }
+    Add-Content -LiteralPath $LogPath -Value $line -Encoding ASCII
+}
+
+$logPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
+Write-UpdateLog -Message "Finalize update helper started. payload=$PayloadDir install=$InstallDir parent=$ParentProcessId" -LogPath $logPath
+
 for ($attempt = 0; $attempt -lt 120; $attempt++) {
     $parent = Get-Process -Id $ParentProcessId -ErrorAction SilentlyContinue
     if ($null -eq $parent) {
+        Write-UpdateLog -Message "Parent process exited after $attempt wait iterations." -LogPath $logPath
         break
     }
     Start-Sleep -Milliseconds 250
 }
 
 New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
+Write-UpdateLog -Message "Copying payload into install dir." -LogPath $logPath
 Get-ChildItem -LiteralPath $PayloadDir -Force |
     Copy-Item -Destination $InstallDir -Recurse -Force
 
@@ -107,20 +149,19 @@ if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    Write-Host "Installed sync_windows_agent to $InstallDir"
+    Write-UpdateLog -Message "Installed sync_windows_agent to $InstallDir" -LogPath $logPath
 } else {
-    Write-Host "Installed sync_windows_agent version $Version to $InstallDir"
+    Write-UpdateLog -Message "Installed sync_windows_agent version $Version to $InstallDir" -LogPath $logPath
 }
 
 if (-not $NoStart) {
-    $launcherPath = Join-Path -Path $InstallDir -ChildPath 'run_portable.bat'
-    if (Test-Path -LiteralPath $launcherPath -PathType Leaf) {
-        Start-Process -FilePath $launcherPath -WorkingDirectory $InstallDir
-    } else {
-        Start-Process -FilePath $installedExe -WorkingDirectory $InstallDir
-    }
+    Write-UpdateLog -Message "Starting updated client executable: $installedExe" -LogPath $logPath
+    Start-Process -FilePath $installedExe -WorkingDirectory $InstallDir
+} else {
+    Write-UpdateLog -Message 'NoStart set. Skipping client relaunch.' -LogPath $logPath
 }
 
+Write-UpdateLog -Message "Finalize helper cleaning work root: $WorkRoot" -LogPath $logPath
 Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
 '@
 
@@ -150,7 +191,8 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 }
 
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
-Write-Host "Reading update manifest: $ManifestUrl"
+$mainLogPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
+Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir noStart=$NoStart" -LogPath $mainLogPath
 $manifest = Invoke-RestMethod -UseBasicParsing -Uri $ManifestUrl
 $zipValue = if (-not [string]::IsNullOrWhiteSpace([string] $manifest.latestZipUrl)) {
     [string] $manifest.latestZipUrl
@@ -165,7 +207,7 @@ $extractDir = Join-Path -Path $workRoot -ChildPath 'extract'
 
 New-Item -Path $workRoot -ItemType Directory -Force | Out-Null
 try {
-    Write-Host "Downloading client package: $zipUrl"
+    Write-UpdateLog -Message "Downloading client package: $zipUrl" -LogPath $mainLogPath
     Invoke-WebRequest -UseBasicParsing -Uri $zipUrl -OutFile $zipPath
 
     $expectedHash = [string] $manifest.sha256
@@ -174,9 +216,11 @@ try {
         if ($actualHash -ne $expectedHash.ToLowerInvariant()) {
             throw "Downloaded package hash mismatch. Expected $expectedHash but got $actualHash."
         }
+        Write-UpdateLog -Message "Package hash verified: $actualHash" -LogPath $mainLogPath
     }
 
     New-Item -Path $extractDir -ItemType Directory -Force | Out-Null
+    Write-UpdateLog -Message "Expanding package into $extractDir" -LogPath $mainLogPath
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
     $payloadDir = Get-SingleChildDirectory -Path $extractDir
     $payloadExe = Join-Path -Path $payloadDir -ChildPath 'sync_windows_agent.exe'
@@ -185,6 +229,7 @@ try {
     }
 
     Stop-AgentProcesses -TargetInstallDir $InstallDir
+    Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath
     Start-DeferredInstall `
         -PayloadDir $payloadDir `
         -TargetInstallDir $InstallDir `
@@ -192,10 +237,11 @@ try {
         -ParentProcessId $PID `
         -Version ([string] $manifest.version) `
         -NoStart:$NoStart
-    Write-Host "Updating sync_windows_agent version $($manifest.version) in $InstallDir"
+    Write-UpdateLog -Message "Updater scheduled for version $($manifest.version) in $InstallDir" -LogPath $mainLogPath
 }
 finally {
     if (-not (Test-Path -LiteralPath (Join-Path -Path $workRoot -ChildPath 'finalize-update.ps1') -PathType Leaf)) {
+        Write-UpdateLog -Message "Cleaning work root immediately: $workRoot" -LogPath $mainLogPath
         Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

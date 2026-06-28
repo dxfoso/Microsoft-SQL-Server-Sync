@@ -278,16 +278,21 @@ function New-WindowsAgentDartDefineArgs {
     param(
         [Parameter(Mandatory = $true)][string] $ProjectPath,
         [Parameter(Mandatory = $true)][string] $BackendBaseUrl,
-        [Parameter(Mandatory = $true)][string] $RepoRoot
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string] $ClientUpdateBaseUrl = ''
     )
 
     $releaseDate = Get-Date -Format "yyyy-MM-dd'T'HH:mm:sszzz"
-    return @(
+    $dartDefines = @(
         '--dart-define', "BACKEND_BASE_URL=$BackendBaseUrl",
         '--dart-define', "APP_VERSION=$(Get-WindowsAgentFlutterAppVersion -ProjectPath $ProjectPath)",
         '--dart-define', "BUILD_RELEASE_DATE=$releaseDate",
         '--dart-define', "BUILD_COMMIT_HASH=$(Get-WindowsAgentGitCommitHash -RepoRoot $RepoRoot)"
     )
+    if (-not [string]::IsNullOrWhiteSpace($ClientUpdateBaseUrl)) {
+        $dartDefines += @('--dart-define', "CLIENT_UPDATE_BASE_URL=$ClientUpdateBaseUrl")
+    }
+    return $dartDefines
 }
 
 function Stop-WindowsAgentBuildProcesses {

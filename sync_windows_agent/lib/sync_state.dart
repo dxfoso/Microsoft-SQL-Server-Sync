@@ -222,6 +222,8 @@ class SyncAppStateStore {
     this.accountName,
     this.rememberedLoginName,
     this.rememberedLoginPassword,
+    this.lastAutoUpdateTarget,
+    this.lastAutoUpdateAttemptedAt,
   });
 
   static const SyncAppStateStore _defaultStore = SyncAppStateStore(
@@ -237,6 +239,8 @@ class SyncAppStateStore {
     accountName: null,
     rememberedLoginName: null,
     rememberedLoginPassword: null,
+    lastAutoUpdateTarget: null,
+    lastAutoUpdateAttemptedAt: null,
   );
 
   final String lastClientName;
@@ -251,6 +255,8 @@ class SyncAppStateStore {
   final String? accountName;
   final String? rememberedLoginName;
   final String? rememberedLoginPassword;
+  final String? lastAutoUpdateTarget;
+  final String? lastAutoUpdateAttemptedAt;
 
   static Directory _stateDirectory() {
     final base =
@@ -300,6 +306,8 @@ class SyncAppStateStore {
             json['accountUsername'] as String? ??
             json['accountEmail'] as String?,
         rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
+        lastAutoUpdateTarget: json['lastAutoUpdateTarget'] as String?,
+        lastAutoUpdateAttemptedAt: json['lastAutoUpdateAttemptedAt'] as String?,
         clients: clientsJson.map(
           (key, value) => MapEntry(
             key,
@@ -346,6 +354,8 @@ class SyncAppStateStore {
             json['accountUsername'] as String? ??
             json['accountEmail'] as String?,
         rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
+        lastAutoUpdateTarget: json['lastAutoUpdateTarget'] as String?,
+        lastAutoUpdateAttemptedAt: json['lastAutoUpdateAttemptedAt'] as String?,
         clients: clientsJson.map(
           (key, value) => MapEntry(
             key,
@@ -377,6 +387,8 @@ class SyncAppStateStore {
       'accountName': accountName,
       'rememberedLoginName': rememberedLoginName,
       'rememberedLoginPassword': rememberedLoginPassword,
+      'lastAutoUpdateTarget': lastAutoUpdateTarget,
+      'lastAutoUpdateAttemptedAt': lastAutoUpdateAttemptedAt,
       'clients': clients.map((key, value) => MapEntry(key, value.toJson())),
     });
     await file.writeAsString(payload);

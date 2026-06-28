@@ -1,0 +1,49 @@
+{
+  "name": "mig_20260627_105255",
+  "timestamp": "2026-06-27T10:52:55.447422800+00:00",
+  "objects": [
+    {
+      "object": "SyncJob",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "snapshotId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "128",
+            "default": null
+          }
+        },
+        {
+          "field": "snapshotBytes",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": false,
+            "min": "0",
+            "max": "1000000000",
+            "default": null
+          }
+        },
+        {
+          "field": "snapshotCreatedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}
