@@ -1522,6 +1522,11 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
     return [];
   }
   const rows = tablesToCreate.map((table) => {
+    const tableReference = sync_table_reference(table);
+    let publisherDatabase = agent.database;
+    if (tableReference.database != null && string.from(tableReference.database).trim().length != 0) {
+      publisherDatabase = string.from(tableReference.database).trim();
+    }
     return {
       id: uuid.v4(),
       clientName: agent.clientName,
@@ -1531,7 +1536,7 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
       direction: 'sync',
       mergeRole: 'subscriber',
       publisherServer: agent.server,
-      publisherDatabase: agent.database,
+      publisherDatabase,
       publicationName: merge_publication_name(agent.clientName, table),
       publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
       publisherUser: agent.replicationUser,
@@ -2379,12 +2384,31 @@ function jobs_start(jobId: string, status: string = 'running', progress: int? = 
     nextProgress = progress;
   }
   const updated = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
     status,
     progress: nextProgress,
+    rowCount: job.rowCount,
+    snapshotBytes: job.snapshotBytes,
+    snapshotCreatedAt: job.snapshotCreatedAt,
+    snapshotId: job.snapshotId,
+    createdAt: job.createdAt,
     message,
     startedAt: now_iso(),
     completedAt: null,
     error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
     updatedAt: now_iso()
   });
   let nextJob = job;
@@ -2405,13 +2429,31 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   }
 
   const updated = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
     status,
     progress,
     message,
     rowCount,
     direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
+    snapshotBytes: job.snapshotBytes,
+    snapshotCreatedAt: job.snapshotCreatedAt,
+    snapshotId: job.snapshotId,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
     completedAt: null,
     error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
     updatedAt: now_iso()
   });
   let nextJob = job;
@@ -2432,12 +2474,31 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
 
   const completedAt = now_iso();
   const updated = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
     status,
     progress,
+    rowCount,
+    snapshotBytes: job.snapshotBytes,
+    snapshotCreatedAt: job.snapshotCreatedAt,
+    snapshotId: job.snapshotId,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
     completedAt,
     message,
-    rowCount,
     error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
     updatedAt: completedAt
   });
   let nextJob = job;
@@ -2460,11 +2521,31 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     nextProgress = progress;
   }
   const updated = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
     status: 'failed',
     progress: nextProgress,
+    rowCount: job.rowCount,
+    snapshotBytes: job.snapshotBytes,
+    snapshotCreatedAt: job.snapshotCreatedAt,
+    snapshotId: job.snapshotId,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
     completedAt: now_iso(),
     error: message,
     message,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
     updatedAt: now_iso()
   });
   let nextJob = job;
