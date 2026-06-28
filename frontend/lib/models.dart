@@ -329,8 +329,7 @@ class AdminTableState {
   }
 
   bool get inProgress =>
-      status.toLowerCase() == 'running' ||
-      status.toLowerCase() == 'applying';
+      status.toLowerCase() == 'running' || status.toLowerCase() == 'applying';
 }
 
 class AdminJob {
@@ -404,5 +403,7 @@ class AdminJob {
   }
 
   bool get isActive =>
-      status == 'queued' || status == 'running' || status == 'applying';
+      status.toLowerCase() == 'queued' ||
+      status.toLowerCase() == 'running' ||
+      status.toLowerCase() == 'applying';
 }

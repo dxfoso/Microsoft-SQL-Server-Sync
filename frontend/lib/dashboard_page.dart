@@ -5470,7 +5470,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       final job = latestJobsByTable[table];
       if (job != null) {
         final status = job.status.toLowerCase();
-        final progress = job.progress.clamp(0, 100);
+        var progress = job.progress.clamp(0, 100);
+        if (status == 'completed') {
+          progress = 100;
+        } else if (job.isActive && progress == 0) {
+          progress = status == 'queued' ? 4 : 8;
+        }
         totalProgress += progress;
         if (status == 'completed') {
           completedCount += 1;
@@ -5482,23 +5487,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         continue;
       }
 
-      final tableState = agent.tables
-          .where((state) => state.table.trim() == table)
-          .cast<AdminTableState?>()
-          .firstWhere((state) => state != null, orElse: () => null);
-      final progress = (tableState?.progress ?? 0).clamp(0, 100);
+      AdminTableState? tableState;
+      for (final state in agent.tables) {
+        if (state.table.trim() == table) {
+          tableState = state;
+          break;
+        }
+      }
       final status = (tableState?.status ?? '').toLowerCase();
-      totalProgress += progress;
-      if (progress >= 100 &&
-          (status == 'completed' ||
-              status == 'synced' ||
-              status == 'success')) {
-        completedCount += 1;
-      } else if (status == 'failed') {
-        failedCount += 1;
-      } else if (status == 'running' ||
+      final hasLastSync = (tableState?.lastSync.trim().isNotEmpty ?? false);
+      var progress = (tableState?.progress ?? 0).clamp(0, 100);
+      final isFailed = status.contains('fail') || status.contains('error');
+      final isActive =
+          status == 'running' ||
           status == 'applying' ||
-          status == 'queued') {
+          (status == 'queued' && !hasLastSync) ||
+          status == 'syncing';
+      final isComplete =
+          status == 'completed' ||
+          status == 'synced' ||
+          status == 'success' ||
+          (hasLastSync && !isFailed && !isActive);
+      if (isComplete) {
+        progress = 100;
+      } else if (isActive && progress == 0) {
+        progress = 4;
+      }
+      totalProgress += progress;
+      if (isComplete) {
+        completedCount += 1;
+      } else if (isFailed) {
+        failedCount += 1;
+      } else if (isActive) {
         activeCount += 1;
       }
     }
