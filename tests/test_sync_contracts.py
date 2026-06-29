@@ -46,6 +46,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_portable_build_bundles_symmetricds_runtime(self):
         build_script = read_text("build_portable.ps1")
         publish_script = read_text("scripts/publish_windows_client_update.ps1")
+        windows_build_script = read_text("scripts/windows_agent_build.ps1")
 
         self.assertIn("^Flutter\\s+[0-9]+\\.[0-9]+\\.[0-9]+\\b", build_script)
         self.assertIn("$SymmetricDsVersion = '3.16.10'", build_script)
@@ -55,7 +56,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Resolve-SourceForgeMirrorUrl", build_script)
         self.assertIn("Save-VerifiedZip", build_script)
         self.assertIn("symmetricds-$minorVersion", build_script)
-        self.assertIn('return "$commit-dirty"', read_text("scripts/windows_agent_build.ps1"))
+        self.assertIn('return "$commit-dirty"', windows_build_script)
         self.assertIn('return "$commit-dirty"', publish_script)
         self.assertIn("symmetricds\\bin\\sym.bat", build_script)
         self.assertIn("$PortableName/symmetricds/bin/sym.bat", build_script)
@@ -63,6 +64,12 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("$PortableName/symmetricds/bin/sym.bat", publish_script)
         self.assertIn("Portable client update ZIP is missing required entry", publish_script)
         self.assertIn("SymmetricDsVersion = '3.16.10'", publish_script)
+        self.assertIn("Remove-Item -LiteralPath $debugKernelPath -Force", build_script)
+        self.assertIn("-arch=x64 -host_arch=x64", windows_build_script)
+        self.assertIn(
+            "Invoke-FlutterCommand `\n            -FlutterCommand $flutterCommand `\n            -Arguments $buildArguments `\n            -WorkingDirectory $ProjectPath",
+            build_script,
+        )
 
     def test_windows_agent_restores_local_snapshot_relay_helpers(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

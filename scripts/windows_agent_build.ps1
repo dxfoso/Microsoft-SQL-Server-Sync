@@ -50,6 +50,19 @@ function Get-WindowsAgentVsDevCmdPath {
     }
 }
 
+function Get-WindowsAgentVsBootstrapCommand {
+    param([Parameter(Mandatory = $true)][string] $BootstrapPath)
+
+    $bootstrapLeaf = [System.IO.Path]::GetFileName($BootstrapPath)
+    if ($bootstrapLeaf -ieq 'vcvars64.bat') {
+        return ('call "{0}"' -f $BootstrapPath)
+    }
+    if ($bootstrapLeaf -ieq 'vcvarsall.bat') {
+        return ('call "{0}" x64' -f $BootstrapPath)
+    }
+    return ('call "{0}" -arch=x64 -host_arch=x64' -f $BootstrapPath)
+}
+
 function Import-WindowsAgentVisualStudioEnvironment {
     $vsDevCmdInfo = Get-WindowsAgentVsDevCmdPath
     $installationPath = $vsDevCmdInfo.InstallationPath
@@ -64,7 +77,7 @@ function Import-WindowsAgentVisualStudioEnvironment {
         $runnerLines = @(
             '@echo off',
             'setlocal',
-            ('call "{0}" >nul' -f $vsDevCmdPath),
+            ('{0} >nul' -f (Get-WindowsAgentVsBootstrapCommand -BootstrapPath $vsDevCmdPath)),
             'if errorlevel 1 exit /b %errorlevel%',
             ('set > "{0}"' -f $dumpPath)
         )
@@ -224,7 +237,7 @@ function Invoke-WindowsAgentVisualStudioCommand {
             '@echo off',
             'setlocal',
             ('pushd {0}' -f (ConvertTo-WindowsAgentCmdArgument -Value $WorkingDirectory)),
-            ('call {0} >nul' -f (ConvertTo-WindowsAgentCmdArgument -Value $vsDevCmdInfo.VsDevCmdPath)),
+            ('{0} >nul' -f (Get-WindowsAgentVsBootstrapCommand -BootstrapPath $vsDevCmdInfo.VsDevCmdPath)),
             'if errorlevel 1 exit /b %errorlevel%',
             ('call {0}' -f $commandText),
             'set "EXIT_CODE=%ERRORLEVEL%"',

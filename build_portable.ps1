@@ -754,7 +754,6 @@ function Sync-WindowsReleasePayload {
     )
 
     $releaseDataDir = Join-Path -Path $ReleaseDir -ChildPath 'data'
-    $flutterAssetsSource = Join-Path -Path $ProjectPath -ChildPath 'build\flutter_assets'
     $flutterAssetsDestination = Join-Path -Path $releaseDataDir -ChildPath 'flutter_assets'
     $nativeAssetsSource = Join-Path -Path $ProjectPath -ChildPath 'build\native_assets\windows'
     $appSoSource = Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so'
@@ -790,14 +789,6 @@ function Sync-WindowsReleasePayload {
             }
     }
 
-    if (Test-Path -LiteralPath $flutterAssetsSource -PathType Container) {
-        if (Test-Path -LiteralPath $flutterAssetsDestination) {
-            Remove-Item -LiteralPath $flutterAssetsDestination -Recurse -Force
-        }
-
-        Copy-Item -LiteralPath $flutterAssetsSource -Destination $flutterAssetsDestination -Recurse -Force
-    }
-
     if (Test-Path -LiteralPath $nativeAssetsSource -PathType Container) {
         Get-ChildItem -LiteralPath $nativeAssetsSource -Force |
             Copy-Item -Destination $ReleaseDir -Recurse -Force
@@ -805,6 +796,12 @@ function Sync-WindowsReleasePayload {
 
     if (Test-Path -LiteralPath $appSoSource -PathType Leaf) {
         Copy-Item -LiteralPath $appSoSource -Destination (Join-Path -Path $releaseDataDir -ChildPath 'app.so') -Force
+    }
+
+    $debugKernelPath = Join-Path -Path $flutterAssetsDestination -ChildPath 'kernel_blob.bin'
+    if ((Test-Path -LiteralPath (Join-Path -Path $releaseDataDir -ChildPath 'app.so') -PathType Leaf) -and
+        (Test-Path -LiteralPath $debugKernelPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $debugKernelPath -Force
     }
 }
 
@@ -1026,8 +1023,9 @@ try {
         $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
         $buildArguments = @('build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines
         Write-Host 'Building Windows release...'
-        Invoke-WindowsAgentVisualStudioCommand `
-            -Command (@($flutterCommand) + $buildArguments) `
+        Invoke-FlutterCommand `
+            -FlutterCommand $flutterCommand `
+            -Arguments $buildArguments `
             -WorkingDirectory $ProjectPath
 
         if ($LASTEXITCODE -ne 0) {
