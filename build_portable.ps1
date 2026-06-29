@@ -349,7 +349,7 @@ function Resolve-FlutterToolchain {
             Assert-FlutterVersion -FlutterVersionInfo $currentVersionInfo
             Write-Host "Using PATH Flutter $($currentVersionInfo.Version) for Windows portable build."
             return [pscustomobject]@{
-                Command = 'flutter'
+                Command = $currentFlutter.Source
                 VersionInfo = $currentVersionInfo
                 Source = 'PATH'
             }
@@ -359,7 +359,7 @@ function Resolve-FlutterToolchain {
             Assert-FlutterVersion -FlutterVersionInfo $currentVersionInfo
             Write-Host "Using PATH Flutter $Version for Windows portable build."
             return [pscustomobject]@{
-                Command = 'flutter'
+                Command = $currentFlutter.Source
                 VersionInfo = $currentVersionInfo
                 Source = 'PATH'
             }
@@ -394,7 +394,7 @@ function Resolve-FlutterToolchain {
                            "Use -RequireFlutterVersion to fail instead of falling back.") -f $fallbackVersionInfo.Version, $Version
         Write-Warning $warningMessage
         return [pscustomobject]@{
-            Command = 'flutter'
+            Command = $currentFlutter.Source
             VersionInfo = $fallbackVersionInfo
             Source = 'PATH fallback'
         }
@@ -1019,7 +1019,9 @@ try {
         }
         Write-Host "Portable backend URL: $BackendBaseUrl"
         Remove-WindowsAgentBuildArtifacts `
-            -ProjectPath $ProjectPath
+            -ProjectPath $ProjectPath `
+            -PreserveFlutterEphemeral `
+            -PreserveWindowsBuildTree
         $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
         $buildArguments = @('build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines
         Write-Host 'Building Windows release...'

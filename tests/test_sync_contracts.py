@@ -65,6 +65,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Portable client update ZIP is missing required entry", publish_script)
         self.assertIn("SymmetricDsVersion = '3.16.10'", publish_script)
         self.assertIn("Remove-Item -LiteralPath $debugKernelPath -Force", build_script)
+        self.assertIn("Command = $currentFlutter.Source", build_script)
+        self.assertIn("-PreserveFlutterEphemeral `", build_script)
+        self.assertIn("-PreserveWindowsBuildTree", build_script)
         self.assertIn("-arch=x64 -host_arch=x64", windows_build_script)
         self.assertIn(
             "Invoke-FlutterCommand `\n            -FlutterCommand $flutterCommand `\n            -Arguments $buildArguments `\n            -WorkingDirectory $ProjectPath",
