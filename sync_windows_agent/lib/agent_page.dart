@@ -1205,6 +1205,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (status.isEmpty) {
       return 'Idle';
     }
+    final normalizedStatus = status.trim().toLowerCase();
+    if (normalizedStatus == 'snapshotting' ||
+        normalizedStatus == 'uploading' ||
+        normalizedStatus == 'downloading') {
+      return 'Applying';
+    }
     final normalized = status.replaceAll('_', ' ').trim();
     return normalized.isEmpty
         ? 'Idle'
