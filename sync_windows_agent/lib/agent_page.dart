@@ -30,6 +30,13 @@ const String _agentBuildReleaseDate = String.fromEnvironment(
   'BUILD_RELEASE_DATE',
   defaultValue: '',
 );
+const Set<String> _textLikeSqlTypes = <String>{
+  'char',
+  'nchar',
+  'varchar',
+  'nvarchar',
+  'sysname',
+};
 
 class AgentDashboardPage extends StatefulWidget {
   const AgentDashboardPage({
@@ -3474,12 +3481,17 @@ ORDER BY ic.key_ordinal;
     required int offset,
     required int batchSize,
   }) async {
+    const fieldSeparator = 31;
+    const rowSentinel = 29;
     final columnList = columns
         .map((column) => _quoteIdentifier(column.name))
         .join(', ');
     final orderClause = orderColumns
         .map((column) => _quoteIdentifier(column))
         .join(', ');
+    final payloadExpression = columns
+        .map(_sourceBatchEncodedColumnExpression)
+        .join(' + NCHAR($fieldSeparator) + ');
     final firstRow = offset + 1;
     final lastRow = offset + batchSize;
     final query = '''
@@ -3490,11 +3502,10 @@ WITH page_source AS (
     ROW_NUMBER() OVER (ORDER BY $orderClause) AS [__sync_agent_row_number]
   FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}
 )
-SELECT $columnList
+SELECT ($payloadExpression + NCHAR($rowSentinel)) AS [__sync_agent_row_payload]
 FROM page_source
 WHERE [__sync_agent_row_number] BETWEEN $firstRow AND $lastRow
-ORDER BY [__sync_agent_row_number]
-FOR JSON PATH;
+ORDER BY [__sync_agent_row_number];
 ''';
     final processResult = await _runSqlCmd(
       profile: profile,
@@ -3508,30 +3519,143 @@ FOR JSON PATH;
       throw Exception(_sqlCmdFailed('source row fetch', processResult));
     }
 
-    final payload = _parseJsonResultOutput(processResult.stdout.toString());
-    if (payload.isEmpty) {
-      return const <Map<String, dynamic>>[];
-    }
-
-    final decoded = jsonDecode(payload);
-    if (decoded is! List) {
-      throw Exception('Source row fetch returned an unexpected JSON payload.');
-    }
-    return decoded
-        .map((item) => Map<String, dynamic>.from(item as Map))
-        .toList(growable: false);
+    return _parseSourceBatchRows(
+      processResult.stdout.toString(),
+      columns: columns,
+      fieldSeparator: String.fromCharCode(fieldSeparator),
+      rowSentinel: String.fromCharCode(rowSentinel),
+    );
   }
 
-  String _parseJsonResultOutput(String output) {
-    final buffer = StringBuffer();
+  String _sourceBatchEncodedColumnExpression(_SqlColumnDefinition column) {
+    final columnName = _quoteIdentifier(column.name);
+    final valueExpression = _sourceBatchColumnValueExpression(column);
+    return '''
+CASE
+  WHEN $columnName IS NULL THEN N'\\N'
+  ELSE REPLACE(
+    REPLACE(
+      REPLACE(
+        REPLACE(
+          REPLACE(
+            REPLACE($valueExpression, N'\\', N'\\\\'),
+            NCHAR(13), N'\\r'
+          ),
+          NCHAR(10), N'\\n'
+        ),
+        NCHAR(31), N'\\u001f'
+      ),
+      NCHAR(30), N'\\u001e'
+    ),
+    NCHAR(29), N'\\u001d'
+  )
+END
+''';
+  }
+
+  String _sourceBatchColumnValueExpression(_SqlColumnDefinition column) {
+    final columnName = _quoteIdentifier(column.name);
+    final normalized = column.sqlType.trim().toLowerCase();
+    if (normalized == 'binary' || normalized == 'varbinary') {
+      return 'master.dbo.fn_varbintohexstr(CONVERT(varbinary(max), $columnName))';
+    }
+    if (normalized == 'date') {
+      return 'CONVERT(nvarchar(10), $columnName, 23)';
+    }
+    if (normalized == 'datetimeoffset') {
+      return 'CONVERT(nvarchar(48), $columnName, 127)';
+    }
+    if (normalized == 'datetime' ||
+        normalized == 'smalldatetime' ||
+        normalized == 'datetime2' ||
+        normalized == 'time') {
+      return 'CONVERT(nvarchar(33), $columnName, 126)';
+    }
+    if (normalized == 'money' || normalized == 'smallmoney') {
+      return 'CONVERT(nvarchar(100), $columnName, 2)';
+    }
+    if (normalized == 'uniqueidentifier') {
+      return 'CONVERT(nvarchar(36), $columnName)';
+    }
+    return 'CONVERT(nvarchar(max), $columnName)';
+  }
+
+  List<Map<String, dynamic>> _parseSourceBatchRows(
+    String output, {
+    required List<_SqlColumnDefinition> columns,
+    required String fieldSeparator,
+    required String rowSentinel,
+  }) {
+    final rows = <Map<String, dynamic>>[];
     final lines = output.split(RegExp(r'\r?\n'));
     for (final line in lines) {
-      if (_isSkippableOutputLine(line.trim())) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
         continue;
       }
-      buffer.write(line);
+      final payload =
+          line.endsWith(rowSentinel)
+              ? line.substring(0, line.length - rowSentinel.length)
+              : line;
+      final parts = payload.split(fieldSeparator);
+      if (parts.length != columns.length) {
+        throw Exception(
+          'Source row fetch returned ${parts.length} field(s) for ${columns.length} column(s).',
+        );
+      }
+      rows.add({
+        for (var index = 0; index < columns.length; index++)
+          columns[index].name: _decodeSourceBatchField(parts[index]),
+      });
     }
-    return buffer.toString().trim();
+    return rows;
+  }
+
+  String? _decodeSourceBatchField(String raw) {
+    if (raw == r'\N') {
+      return null;
+    }
+
+    final buffer = StringBuffer();
+    for (var index = 0; index < raw.length; index++) {
+      final char = raw[index];
+      if (char != r'\') {
+        buffer.write(char);
+        continue;
+      }
+      if (raw.startsWith(r'\\', index)) {
+        buffer.write(r'\');
+        index += 1;
+        continue;
+      }
+      if (raw.startsWith(r'\r', index)) {
+        buffer.write('\r');
+        index += 1;
+        continue;
+      }
+      if (raw.startsWith(r'\n', index)) {
+        buffer.write('\n');
+        index += 1;
+        continue;
+      }
+      if (raw.startsWith(r'\u001f', index)) {
+        buffer.writeCharCode(31);
+        index += 5;
+        continue;
+      }
+      if (raw.startsWith(r'\u001e', index)) {
+        buffer.writeCharCode(30);
+        index += 5;
+        continue;
+      }
+      if (raw.startsWith(r'\u001d', index)) {
+        buffer.writeCharCode(29);
+        index += 5;
+        continue;
+      }
+      buffer.write(char);
+    }
+    return buffer.toString();
   }
 
   Future<void> _applySourceBatchToTarget({
@@ -3547,7 +3671,6 @@ FOR JSON PATH;
       return;
     }
 
-    final jsonPayload = jsonEncode(rows);
     final insertColumns = columns
         .where((column) => column.isWritable)
         .toList(growable: false);
@@ -3557,15 +3680,6 @@ FOR JSON PATH;
               !primaryKeyColumns.contains(column.name) && !column.isIdentity,
         )
         .toList(growable: false);
-    final jsonWithClause = insertColumns
-        .map(
-          (column) =>
-              '${_quoteIdentifier(column.name)} ${column.openJsonType} ${_jsonPathForColumn(column.name)}',
-        )
-        .join(',\n      ');
-    final sourceSelectList = insertColumns
-        .map((column) => _quoteIdentifier(column.name))
-        .join(',\n      ');
     final joinClause = primaryKeyColumns
         .map(
           (column) =>
@@ -3578,6 +3692,14 @@ FOR JSON PATH;
     final insertValueList = insertColumns
         .map((column) => 'source.${_quoteIdentifier(column.name)}')
         .join(', ');
+    final sourceColumnList = insertColumns
+        .map((column) => _quoteIdentifier(column.name))
+        .join(', ');
+    final sourceValueTuples = rows
+        .map(
+          (row) => '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
+        )
+        .join(',\n      ');
     final updateClause =
         updatableColumns.isEmpty
             ? ''
@@ -3599,15 +3721,12 @@ WHEN MATCHED THEN
             : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
     final query = '''
 SET NOCOUNT ON;
-DECLARE @payload nvarchar(max) = N'${_escapeSqlLiteral(jsonPayload)}';
 $identityInsertOn
 WITH source_rows AS (
-  SELECT
-      $sourceSelectList
-  FROM OPENJSON(@payload)
-  WITH (
-      $jsonWithClause
-  )
+  SELECT *
+  FROM (VALUES
+      $sourceValueTuples
+  ) AS source($sourceColumnList)
 )
 MERGE ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} AS target
 USING source_rows AS source
@@ -3631,8 +3750,24 @@ $identityInsertOff
     }
   }
 
-  String _jsonPathForColumn(String columnName) =>
-      "'\$.\"${columnName.replaceAll('"', '\\"')}\"'";
+  String _sourceBatchTargetLiteral(
+    _SqlColumnDefinition column,
+    Object? value,
+  ) {
+    if (value == null) {
+      return 'NULL';
+    }
+
+    final stringValue = value.toString();
+    final normalized = column.sqlType.trim().toLowerCase();
+    if (normalized == 'binary' || normalized == 'varbinary') {
+      return "CONVERT(${column.sqlCastType}, '${_escapeSqlLiteral(stringValue)}', 1)";
+    }
+    if (_textLikeSqlTypes.contains(normalized)) {
+      return "N'${_escapeSqlLiteral(stringValue)}'";
+    }
+    return "CAST(N'${_escapeSqlLiteral(stringValue)}' AS ${column.sqlCastType})";
+  }
 
   Future<_StringQueryResult> _queryDatabases({
     required _SqlConnectionProfile profile,
@@ -6907,6 +7042,40 @@ class _SqlColumnDefinition {
     }
     if (normalized == 'xml') {
       return 'nvarchar(max)';
+    }
+    return normalized;
+  }
+
+  String get sqlCastType {
+    final normalized = sqlType.trim().toLowerCase();
+    if (normalized == 'nvarchar' || normalized == 'nchar') {
+      if (maxLength < 0) {
+        return 'nvarchar(max)';
+      }
+      return 'nvarchar(${maxLength ~/ 2})';
+    }
+    if (normalized == 'varchar' || normalized == 'char') {
+      if (maxLength < 0) {
+        return 'varchar(max)';
+      }
+      return '$normalized($maxLength)';
+    }
+    if (normalized == 'varbinary' || normalized == 'binary') {
+      if (maxLength < 0) {
+        return 'varbinary(max)';
+      }
+      return '$normalized($maxLength)';
+    }
+    if (normalized == 'decimal' || normalized == 'numeric') {
+      return '$normalized($precision,$scale)';
+    }
+    if (normalized == 'datetime2' ||
+        normalized == 'datetimeoffset' ||
+        normalized == 'time') {
+      return '$normalized($scale)';
+    }
+    if (normalized == 'sysname') {
+      return 'nvarchar(128)';
     }
     return normalized;
   }
