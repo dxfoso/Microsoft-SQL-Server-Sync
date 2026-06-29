@@ -1405,33 +1405,50 @@ function visible_job_rows_for(current: map<json>): array<json> {
 }
 
 function public_agent_payload(agent: map<json>): map<json> {
+  let payloadAgent = agent;
+  if (
+    (payloadAgent.tables == null
+      || payloadAgent.symmetricDsStatus == null
+      || payloadAgent.diagnosticStatus == null)
+    && payloadAgent.clientName != null
+  ) {
+    const refreshed = db.selectOne(Agent, {
+      clientName: string.from(payloadAgent.clientName)
+    });
+    if (refreshed != null) {
+      payloadAgent = refreshed;
+    }
+  }
   let nextTables = [];
   if (agent.tables != null) {
     nextTables = apply_table_sync_policies(agent.ownerUserId, bounded_agent_tables(agent.tables, agent.selectedTable), string.from(agent.database));
   }
+  if (payloadAgent.tables != null) {
+    nextTables = apply_table_sync_policies(payloadAgent.ownerUserId, bounded_agent_tables(payloadAgent.tables, payloadAgent.selectedTable), string.from(payloadAgent.database));
+  }
   return {
-    clientName: agent.clientName,
-    machineName: agent.machineName,
-    server: agent.server,
-    database: agent.database,
+    clientName: payloadAgent.clientName,
+    machineName: payloadAgent.machineName,
+    server: payloadAgent.server,
+    database: payloadAgent.database,
     isOnline: effective_agent_online(agent),
-    historyLimit: agent.historyLimit,
-    autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
-    serverConnected: agent.serverConnected,
-    sqlConnected: agent.sqlConnected,
-    clientVersion: agent.clientVersion ?? '',
-    lastHeartbeat: agent.lastHeartbeat,
-    selectedTable: agent.selectedTable,
+    historyLimit: payloadAgent.historyLimit,
+    autoSyncIntervalMinutes: payloadAgent.autoSyncIntervalMinutes,
+    serverConnected: payloadAgent.serverConnected,
+    sqlConnected: payloadAgent.sqlConnected,
+    clientVersion: payloadAgent.clientVersion ?? '',
+    lastHeartbeat: payloadAgent.lastHeartbeat,
+    selectedTable: payloadAgent.selectedTable,
     symmetricDs: {
-      status: agent.symmetricDsStatus,
-      configPath: agent.symmetricDsConfigPath,
-      message: agent.symmetricDsMessage,
-      configuredAt: agent.symmetricDsConfiguredAt
+      status: payloadAgent.symmetricDsStatus,
+      configPath: payloadAgent.symmetricDsConfigPath,
+      message: payloadAgent.symmetricDsMessage,
+      configuredAt: payloadAgent.symmetricDsConfiguredAt
     },
-    diagnostics: agent_diagnostics_payload(agent),
+    diagnostics: agent_diagnostics_payload(payloadAgent),
     tables: nextTables,
-    clientUserId: agent.clientUserId,
-    ownerUserId: agent.ownerUserId
+    clientUserId: payloadAgent.clientUserId,
+    ownerUserId: payloadAgent.ownerUserId
   };
 }
 

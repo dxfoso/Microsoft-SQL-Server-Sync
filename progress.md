@@ -1,18 +1,18 @@
 Current
 - Live backend is deployed and healthy on commit `e195b26`.
-- The current public client manifest has been corrected once, but that publish reused a stale Windows runner and still crashes on startup.
-- The published artifact now contains the production backend URL, but the packaged EXE must be rebuilt cleanly with the right Flutter toolchain.
+- The public Windows client update channel is live on `1.0.38+42`, and the downloaded portable build starts, logs in, and talks to production.
+- A sequential live end-to-end sync proof now succeeds on the published client for direct jobs against real tables in the local `velvet` database: source upload completed, target download/apply completed, and the server recorded row counts and snapshot bytes.
+- The web `live_state` payload still needs the current backend patch deployed so client list table/progress state is fully populated again.
 
 Doing now
-- Guard the portable build script against stale runner reuse.
-- Publish a clean Windows client update as version `1.0.38+42` using the installed Flutter toolchain.
-- Retest the live artifact and client startup behavior after republish.
+- Deploy the `business/control_plane.tru` `live_state` enrichment fix without turning the live-state query into a heavy full-row scan.
+- Recheck production client list/progress behavior after redeploy.
 
 Remaining
-- Verify the new public manifest and downloaded ZIP match the clean build.
-- Confirm the published client starts and stays on the production backend.
-- Re-run sync checks and inspect live logs/UI behavior for progress and table sync issues.
+- Redeploy the backend fix so the web client list receives table and SymmetricDS data again.
+- Re-verify production `live_state` / client list progress after redeploy.
+- Bring real `c1` and `c2` back online on the current client version and verify their user-facing sync path, not just the codex sequential proof.
 
 Summary
-- Backend fix is live.
-- Client publish remains the blocker for full end-to-end verification until the republished runner starts cleanly.
+- Client publishing is no longer the blocker.
+- The remaining blockers are production web-state visibility and the real `c1` / `c2` client availability.
