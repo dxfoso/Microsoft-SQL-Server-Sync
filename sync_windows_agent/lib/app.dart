@@ -1,12 +1,28 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as path;
 
 import 'agent_page.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
 import 'startup_log.dart';
 import 'window_settings.dart';
+
+const String _shellAgentAppVersion = String.fromEnvironment(
+  'APP_VERSION',
+  defaultValue: '1.0.0+2',
+);
+const String _shellClientUpdateBaseUrlOverride = String.fromEnvironment(
+  'CLIENT_UPDATE_BASE_URL',
+  defaultValue: '',
+);
+const String _shellAgentBuildCommitHash = String.fromEnvironment(
+  'BUILD_COMMIT_HASH',
+  defaultValue: '',
+);
+const Duration _shellAutoUpdateRetryCooldown = Duration(minutes: 10);
+const Duration _shellClientUpdatePollInterval = Duration(minutes: 30);
 
 const List<String> _uiFontFallback = <String>[
   'Segoe UI',
@@ -79,6 +95,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String? _lastAutoUpdateAttemptedAt;
   String _serverName = 'localhost';
   String? _loginError;
+  ClientUpdateInfo? _shellClientUpdateInfo;
+  String? _shellClientUpdateError;
+  bool _checkingShellClientUpdate = false;
+  bool _applyingShellClientUpdate = false;
   bool _restoringSession = true;
   bool _submittingLogin = false;
   bool _showPassword = false;
@@ -87,6 +107,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   bool _startOnStartup = false;
   bool _didLogFirstBuild = false;
   String? _lastWindowTitle;
+  Timer? _clientUpdateCheckTimer;
 
   static const SyncClientState _defaultClientState = SyncClientState(
     historyLimit: kDefaultHistoryLimit,
@@ -124,7 +145,16 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void initState() {
     super.initState();
     logStartupEvent('SyncWindowsAgentApp initState');
+    _clientUpdateCheckTimer = Timer.periodic(
+      _shellClientUpdatePollInterval,
+      (_) => unawaited(_checkShellClientUpdate()),
+    );
     _loadState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_checkShellClientUpdate());
+      }
+    });
   }
 
   void _loadState() {
@@ -347,10 +377,259 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   @override
   void dispose() {
     _saveDebounce?.cancel();
+    _clientUpdateCheckTimer?.cancel();
     _authClient.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  bool get _dashboardSessionActive =>
+      !_restoringSession &&
+      (_authToken?.isNotEmpty ?? false) &&
+      (_accountUsername?.isNotEmpty ?? false);
+
+  String _shellClientUpdateManifestUrl() {
+    final overrideBaseUrl =
+        (Platform.environment['CLIENT_UPDATE_BASE_URL'] ??
+                _shellClientUpdateBaseUrlOverride)
+            .trim();
+    if (overrideBaseUrl.isNotEmpty) {
+      final normalizedBaseUrl =
+          overrideBaseUrl.endsWith('/')
+              ? overrideBaseUrl.substring(0, overrideBaseUrl.length - 1)
+              : overrideBaseUrl;
+      return '$normalizedBaseUrl/latest.json';
+    }
+    return _authClient.baseUrl.replaceFirst(
+      RegExp(r'/call/?$'),
+      '/client/latest.json',
+    );
+  }
+
+  String _shellClientUpdateScriptUrl(ClientUpdateInfo updateInfo) {
+    final scriptUrl = updateInfo.updateScriptUrl.trim();
+    if (scriptUrl.isNotEmpty) {
+      return scriptUrl;
+    }
+    return _shellClientUpdateManifestUrl().replaceFirst(
+      '/latest.json',
+      '/update.ps1',
+    );
+  }
+
+  String _shellClientUpdateTargetId(ClientUpdateInfo updateInfo) {
+    final version = updateInfo.version.trim();
+    final commit = updateInfo.commit.trim().toLowerCase();
+    final hash = updateInfo.sha256.trim().toLowerCase();
+    return [version, commit, hash].where((part) => part.isNotEmpty).join('@');
+  }
+
+  bool _hasRecentShellAutoUpdateAttempt(String targetId) {
+    final lastTarget = _lastAutoUpdateTarget?.trim() ?? '';
+    if (targetId.isEmpty || lastTarget != targetId) {
+      return false;
+    }
+
+    final attemptedAtRaw = _lastAutoUpdateAttemptedAt?.trim() ?? '';
+    if (attemptedAtRaw.isEmpty) {
+      return false;
+    }
+
+    final attemptedAt = DateTime.tryParse(attemptedAtRaw);
+    if (attemptedAt == null) {
+      return false;
+    }
+
+    return DateTime.now().difference(attemptedAt.toLocal()) <
+        _shellAutoUpdateRetryCooldown;
+  }
+
+  bool get _supportsShellAutomaticClientUpdate {
+    if (!Platform.isWindows) {
+      return false;
+    }
+    final executablePath =
+        Platform.resolvedExecutable.replaceAll('/', r'\').toLowerCase();
+    return !executablePath.contains(r'\build\windows\x64\runner\debug\');
+  }
+
+  bool get _shellHasClientUpdate {
+    final updateInfo = _shellClientUpdateInfo;
+    if (updateInfo == null) {
+      return false;
+    }
+    final currentVersion = _shellAgentAppVersion.trim();
+    final latestVersion = updateInfo.version.trim();
+    final currentCommit = _shellAgentBuildCommitHash.trim().toLowerCase();
+    final latestCommit = updateInfo.commit.trim().toLowerCase();
+    if (latestCommit.isNotEmpty && currentCommit.isNotEmpty) {
+      return latestCommit != currentCommit;
+    }
+    return latestVersion.isNotEmpty && latestVersion != currentVersion;
+  }
+
+  String _powershellSingleQuoted(String value) => value.replaceAll("'", "''");
+
+  String _shellClientUpdateInstallDir() =>
+      File(Platform.resolvedExecutable).parent.path.replaceAll('/', r'\');
+
+  String? _shellLocalClientUpdateScriptPath() {
+    final updateScript = File(
+      path.join(File(Platform.resolvedExecutable).parent.path, 'update.ps1'),
+    );
+    if (!updateScript.existsSync()) {
+      return null;
+    }
+    return updateScript.path.replaceAll('/', r'\');
+  }
+
+  List<String> _shellClientUpdatePowerShellArgs(ClientUpdateInfo updateInfo) {
+    final manifestUrl = _shellClientUpdateManifestUrl();
+    final scriptUrl = _shellClientUpdateScriptUrl(updateInfo);
+    final installDir = _shellClientUpdateInstallDir();
+    final localScriptPath = _shellLocalClientUpdateScriptPath();
+    if (scriptUrl.isNotEmpty) {
+      return <String>[
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
+            "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
+            "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
+            "-InstallDir '${_powershellSingleQuoted(installDir)}'",
+      ];
+    }
+    if (localScriptPath != null) {
+      return <String>[
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-File',
+        localScriptPath,
+        '-ManifestUrl',
+        manifestUrl,
+        '-InstallDir',
+        installDir,
+      ];
+    }
+    return <String>[
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-WindowStyle',
+      'Hidden',
+      '-Command',
+      "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
+          "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
+          "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
+          "-InstallDir '${_powershellSingleQuoted(installDir)}'",
+    ];
+  }
+
+  Future<void> _checkShellClientUpdate() async {
+    if (!mounted ||
+        _checkingShellClientUpdate ||
+        _applyingShellClientUpdate ||
+        _dashboardSessionActive) {
+      return;
+    }
+
+    setState(() {
+      _checkingShellClientUpdate = true;
+      _shellClientUpdateError = null;
+    });
+
+    try {
+      final manifestUrl = _shellClientUpdateManifestUrl();
+      logStartupEvent('Checking shell client update manifest: $manifestUrl');
+      final updateInfo = await _authClient.fetchClientUpdateInfo(
+        manifestUrl: manifestUrl,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _shellClientUpdateInfo = updateInfo;
+        _checkingShellClientUpdate = false;
+      });
+      if (updateInfo != null) {
+        logStartupEvent(
+          'Shell client update manifest loaded: version=${updateInfo.version} '
+          'commit=${updateInfo.commit}',
+        );
+        unawaited(_maybeAutoApplyShellClientUpdate(updateInfo));
+      } else {
+        logStartupEvent('Shell client update manifest returned no payload.');
+      }
+    } catch (error) {
+      logStartupEvent('Shell client update check failed: $error');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _checkingShellClientUpdate = false;
+        _shellClientUpdateError = error.toString();
+      });
+    }
+  }
+
+  Future<void> _maybeAutoApplyShellClientUpdate(
+    ClientUpdateInfo updateInfo,
+  ) async {
+    if (!mounted ||
+        !_shellHasClientUpdate ||
+        !_supportsShellAutomaticClientUpdate ||
+        _applyingShellClientUpdate ||
+        _dashboardSessionActive ||
+        _submittingLogin) {
+      return;
+    }
+
+    final targetId = _shellClientUpdateTargetId(updateInfo);
+    if (targetId.isEmpty || _hasRecentShellAutoUpdateAttempt(targetId)) {
+      return;
+    }
+
+    final manifestUrl = _shellClientUpdateManifestUrl();
+    final psArgs = _shellClientUpdatePowerShellArgs(updateInfo);
+
+    try {
+      setState(() {
+        _applyingShellClientUpdate = true;
+        _shellClientUpdateError = null;
+      });
+      await _recordAutoUpdateAttempt(targetId);
+      logStartupEvent(
+        'Applying shell client update automatically: $targetId from $manifestUrl',
+      );
+      await Process.start('cmd.exe', [
+        '/c',
+        'start',
+        '""',
+        '/min',
+        'powershell.exe',
+        ...psArgs,
+      ], mode: ProcessStartMode.detached);
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      if (mounted) {
+        exit(0);
+      }
+    } catch (error) {
+      logStartupEvent('Shell automatic client update failed: $error');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _applyingShellClientUpdate = false;
+        _shellClientUpdateError = error.toString();
+      });
+    }
   }
 
   void _migrateStoredClientState(String fromClientName, String toClientName) {
@@ -586,6 +865,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       _passwordController.text = _rememberedLoginPassword ?? '';
     });
     _scheduleSave();
+    unawaited(_checkShellClientUpdate());
   }
 
   Widget _buildLoginShell() {
@@ -635,6 +915,57 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                               height: 1.35,
                             ),
                           ),
+                          if (_applyingShellClientUpdate) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFECFDF3),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: const Color(0xFFA6F4C5),
+                                ),
+                              ),
+                              child: const Text(
+                                'Installing the latest client update. The agent will restart automatically.',
+                                style: TextStyle(
+                                  color: Color(0xFF067647),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ] else if (_shellHasClientUpdate &&
+                              _shellClientUpdateInfo != null) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFFAEB),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: const Color(0xFFFEC84B),
+                                ),
+                              ),
+                              child: Text(
+                                'Client update v${_shellClientUpdateInfo!.version} is available. The agent will install it automatically.',
+                                style: const TextStyle(
+                                  color: Color(0xFFB54708),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ] else if (_shellClientUpdateError != null) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              'Update check failed: $_shellClientUpdateError',
+                              style: const TextStyle(
+                                color: Color(0xFFB42318),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 22),
                           TextField(
                             controller: _usernameController,

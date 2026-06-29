@@ -92,6 +92,21 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Invoke-WebRequest -UseBasicParsing ", agent_page)
         self.assertIn("if (localScriptPath != null) {", agent_page)
 
+    def test_windows_agent_checks_for_updates_before_dashboard_login(self):
+        app_shell = read_text("sync_windows_agent/lib/app.dart")
+
+        self.assertIn("Future<void> _checkShellClientUpdate() async {", app_shell)
+        self.assertIn("Future<void> _maybeAutoApplyShellClientUpdate(", app_shell)
+        self.assertIn(
+            "Installing the latest client update. The agent will restart automatically.",
+            app_shell,
+        )
+        self.assertIn(
+            "Client update v${_shellClientUpdateInfo!.version} is available. The agent will install it automatically.",
+            app_shell,
+        )
+        self.assertIn("unawaited(_checkShellClientUpdate());", app_shell)
+
     def test_windows_agent_client_restores_snapshot_transport_endpoints(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
