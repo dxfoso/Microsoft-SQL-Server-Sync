@@ -123,6 +123,27 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("return ordered.sublist(0, _heartbeatTablePayloadLimit);", agent_page)
 
+    def test_windows_update_script_stops_existing_instances_before_relaunch(self):
+        update_script = read_text("update.ps1")
+
+        self.assertIn("function Get-AgentProcesses {", update_script)
+        self.assertIn(
+            "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir",
+            update_script,
+        )
+        self.assertIn(
+            'Write-UpdateLog -Message "Ensuring prior client instances are stopped before install." -LogPath $logPath',
+            update_script,
+        )
+        self.assertIn(
+            'Write-UpdateLog -Message "Stopping any remaining client instances before relaunch." -LogPath $logPath',
+            update_script,
+        )
+        self.assertGreaterEqual(
+            update_script.count("Stop-AgentProcesses -TargetInstallDir $InstallDir"),
+            2,
+        )
+
     def test_windows_agent_client_restores_snapshot_transport_endpoints(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

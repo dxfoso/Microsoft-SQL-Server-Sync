@@ -7,6 +7,46 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Get-AgentProcesses {
+    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+
+    $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
+    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
+
+    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
+                return $false
+            }
+            $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+            return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+}
+
+function Stop-AgentProcesses {
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [int] $MaxWaitSeconds = 30
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MaxWaitSeconds))
+    do {
+        $agentProcesses = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
+        if ($agentProcesses.Count -eq 0) {
+            return
+        }
+        foreach ($process in $agentProcesses) {
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    $remaining = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
+    if ($remaining.Count -gt 0) {
+        throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
+    }
+}
+
 function Write-UpdateLog {
     param(
         [Parameter(Mandatory = $true)][string] $Message,
@@ -196,24 +236,45 @@ function Select-UpdateWorkParent {
     throw "Not enough free space for client update staging. Required at least $requiredLabel. Checked: $summary"
 }
 
-function Stop-AgentProcesses {
+function Get-AgentProcesses {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
     $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
     $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
 
-    Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
             if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
                 return $false
             }
             $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
             return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-        } |
-        ForEach-Object {
-            Write-Host "Stopping sync_windows_agent.exe [$($_.ProcessId)]"
-            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        })
+}
+
+function Stop-AgentProcesses {
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [int] $MaxWaitSeconds = 30
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MaxWaitSeconds))
+    do {
+        $agentProcesses = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
+        if ($agentProcesses.Count -eq 0) {
+            return
         }
+        foreach ($process in $agentProcesses) {
+            Write-Host "Stopping sync_windows_agent.exe [$($process.ProcessId)]"
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    $remaining = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
+    if ($remaining.Count -gt 0) {
+        throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
+    }
 }
 
 function Get-SingleChildDirectory {
@@ -279,6 +340,9 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
     Start-Sleep -Milliseconds 250
 }
 
+Write-UpdateLog -Message "Ensuring prior client instances are stopped before install." -LogPath $logPath
+Stop-AgentProcesses -TargetInstallDir $InstallDir
+
 New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
 Write-UpdateLog -Message "Copying payload into install dir." -LogPath $logPath
 Get-ChildItem -LiteralPath $PayloadDir -Force |
@@ -296,6 +360,8 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 
 if (-not $NoStart) {
+    Write-UpdateLog -Message "Stopping any remaining client instances before relaunch." -LogPath $logPath
+    Stop-AgentProcesses -TargetInstallDir $InstallDir
     Write-UpdateLog -Message "Starting updated client executable: $installedExe" -LogPath $logPath
     Start-Process -FilePath $installedExe -WorkingDirectory $InstallDir
 } else {

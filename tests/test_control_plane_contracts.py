@@ -119,6 +119,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "apply_table_sync_policies(agent.ownerUserId, bounded_agent_tables(agent.tables, agent.selectedTable), string.from(agent.database))",
             source,
         )
+        self.assertIn("function bounded_heartbeat_tables", source)
 
         heartbeat_match = re.search(
             r"function agents_heartbeat\(.*?\): map<json> \{(?P<body>.*?)\n\}",
@@ -129,7 +130,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         heartbeat_body = heartbeat_match.group("body")
 
         self.assertIn(
-            "nextTables = bounded_agent_tables(nextTables, selectedTable);",
+            "nextTables = bounded_heartbeat_tables(nextTables, selectedTable);",
             heartbeat_body,
         )
         self.assertNotIn(

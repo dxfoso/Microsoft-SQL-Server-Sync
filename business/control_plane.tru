@@ -842,6 +842,58 @@ function agent_table_payload_limit(): int {
   return 150;
 }
 
+function heartbeat_table_payload_limit(): int {
+  return 60;
+}
+
+function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: string? = null): array<json> {
+  if (tables == null) {
+    return [];
+  }
+  let selected = '';
+  if (selectedTable != null) {
+    selected = string.from(selectedTable).trim();
+  }
+  const maxNonSelected = selected.length == 0
+    ? heartbeat_table_payload_limit()
+    : heartbeat_table_payload_limit() - 1;
+  let selectedState = null;
+  let result = [];
+  for (const tableState of tables) {
+    if (result.length >= maxNonSelected) {
+      break;
+    }
+    if (tableState.table == null) {
+      continue;
+    }
+    const tableName = string.from(tableState.table).trim();
+    if (tableName.length == 0) {
+      continue;
+    }
+    const nextState = {
+      table: tableName,
+      enabled: tableState.enabled == true,
+      status: string.from(tableState.status ?? ''),
+      lastSync: string.from(tableState.lastSync ?? ''),
+      progress: int.from(tableState.progress ?? 0),
+      direction: string.from(tableState.direction ?? 'sync'),
+      syncMode: normalize_sync_mode(tableState.syncMode, true),
+      rowCount: int.from(tableState.rowCount ?? 0),
+      message: string.from(tableState.message ?? ''),
+      history: []
+    };
+    if (selected.length != 0 && tableName == selected && selectedState == null) {
+      selectedState = nextState;
+      continue;
+    }
+    result = result.concat([nextState]);
+  }
+  if (selectedState != null) {
+    return [selectedState].concat(result);
+  }
+  return result;
+}
+
 function bounded_agent_tables(tables: array<json>? = null, selectedTable: string? = null): array<json> {
   if (tables == null) {
     return [];
@@ -2337,7 +2389,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     nextTables = tables;
   }
   const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
-  nextTables = bounded_agent_tables(nextTables, selectedTable);
+  nextTables = bounded_heartbeat_tables(nextTables, selectedTable);
   let nextSymmetricDsConfiguredAt = agent.symmetricDsConfiguredAt;
   if (symmetricDsConfigured) {
     nextSymmetricDsConfiguredAt = now_iso();
