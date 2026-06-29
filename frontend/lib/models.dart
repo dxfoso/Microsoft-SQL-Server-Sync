@@ -113,6 +113,7 @@ class AdminAgent {
     required this.clientVersion,
     required this.lastHeartbeat,
     required this.selectedTable,
+    required this.symmetricDs,
     required this.diagnostics,
     required this.tables,
   });
@@ -131,6 +132,7 @@ class AdminAgent {
   final String clientVersion;
   final String lastHeartbeat;
   final String? selectedTable;
+  final AdminAgentSymmetricDs symmetricDs;
   final AdminAgentDiagnostics diagnostics;
   final List<AdminTableState> tables;
 
@@ -151,6 +153,12 @@ class AdminAgent {
       clientVersion: json['clientVersion'] as String? ?? '',
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
       selectedTable: json['selectedTable'] as String?,
+      symmetricDs:
+          json['symmetricDs'] is Map
+              ? AdminAgentSymmetricDs.fromJson(
+                Map<String, dynamic>.from(json['symmetricDs'] as Map),
+              )
+              : const AdminAgentSymmetricDs(),
       diagnostics:
           json['diagnostics'] is Map
               ? AdminAgentDiagnostics.fromJson(
@@ -164,6 +172,31 @@ class AdminAgent {
             ),
           )
           .toList(growable: false),
+    );
+  }
+}
+
+class AdminAgentSymmetricDs {
+  const AdminAgentSymmetricDs({
+    this.status = 'unknown',
+    this.configPath = '',
+    this.message = '',
+    this.configuredAt,
+  });
+
+  final String status;
+  final String configPath;
+  final String message;
+  final String? configuredAt;
+
+  bool get configured => status == 'configured';
+
+  factory AdminAgentSymmetricDs.fromJson(Map<String, dynamic> json) {
+    return AdminAgentSymmetricDs(
+      status: json['status'] as String? ?? 'unknown',
+      configPath: json['configPath'] as String? ?? '',
+      message: json['message'] as String? ?? '',
+      configuredAt: json['configuredAt'] as String?,
     );
   }
 }

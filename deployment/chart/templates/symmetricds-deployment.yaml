@@ -1,0 +1,106 @@
+{{- if .Values.symmetricds.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sync-admin-web.symmetricdsFullname" . }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sync-admin-web.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: symmetricds
+  template:
+    metadata:
+      labels:
+        {{- include "sync-admin-web.labels" . | nindent 8 }}
+        app.kubernetes.io/component: symmetricds
+    spec:
+      {{- if (include "sync-admin-web.usesImagePullSecret" . | trim) }}
+      imagePullSecrets:
+        - name: {{ include "sync-admin-web.registrySecretName" . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: render-engine-config
+          image: {{ .Values.symmetricds.initImage | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sync-admin-web.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
+            - name: ENGINE_NAME
+              value: {{ .Values.symmetricds.engineName | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cp "/config/${ENGINE_NAME}.properties.tpl" "/engines/${ENGINE_NAME}.properties"
+              printf '\ndb.password=%s\n' "${POSTGRES_PASSWORD}" >> "/engines/${ENGINE_NAME}.properties"
+          volumeMounts:
+            - name: symmetricds-config
+              mountPath: /config
+            - name: symmetricds-engines
+              mountPath: /engines
+      containers:
+        - name: symmetricds
+          image: {{ .Values.symmetricds.image | quote }}
+          imagePullPolicy: {{ include "sync-admin-web.imagePullPolicy" . }}
+          ports:
+            - containerPort: {{ .Values.symmetricds.service.port }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sync-admin-web.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: symmetricds-engines
+              mountPath: /opt/symmetric-ds/engines
+            - name: symmetricds-data
+              mountPath: /opt/symmetric-ds/tmp
+          resources:
+            {{- toYaml .Values.symmetricds.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /sync/server
+              port: {{ .Values.symmetricds.service.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /sync/server
+              port: {{ .Values.symmetricds.service.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: symmetricds-config
+          configMap:
+            name: {{ include "sync-admin-web.symmetricdsFullname" . }}-config
+        - name: symmetricds-engines
+          persistentVolumeClaim:
+            claimName: {{ include "sync-admin-web.symmetricdsPvcName" . }}
+        - name: symmetricds-data
+          emptyDir: {}
+{{- end }}

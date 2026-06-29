@@ -2075,7 +2075,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         jobs.isEmpty
                             ? const EmptyStateCard(
                               message:
-                                  'No merge replication jobs have been recorded yet for this client or table.',
+                                  'No SymmetricDS jobs have been recorded yet for this client or table.',
                             )
                             : ListView.separated(
                               itemCount: jobs.length,
@@ -2234,7 +2234,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   const SizedBox(height: 12),
                   const EmptyStateCard(
                     message:
-                        'The control plane no longer stores row-level table payloads. Use merge replication job history and the Windows client for table-level verification.',
+                        'The control plane no longer stores row-level table payloads. Use SymmetricDS job history and the Windows client for table-level verification.',
                   ),
                 ],
               ),
@@ -2409,7 +2409,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'This deletes saved merge replication job state and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
+                        'This deletes saved SymmetricDS job state and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
                         style: Theme.of(
                           context,
                         ).textTheme.bodyMedium?.copyWith(height: 1.45),
@@ -2977,7 +2977,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   String _roleLabel() => 'Participant';
 
-  String _syncModeDisplay(String syncMode) => 'MERGE REPLICATION';
+  String _syncModeDisplay(String syncMode) => 'SYMMETRICDS';
 
   String _syncDirectionDisplay(String direction) => 'SYNC';
 
@@ -3886,7 +3886,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: Icons.sync_rounded,
           countText: '${clients.length} / ${summary.clientCount}',
           meaning:
-              'This number counts clients that already have merge replication activity for this table.',
+              'This number counts clients that already have SymmetricDS activity for this table.',
           emptyMessage: 'No client has synced this table yet.',
           clients: clients,
         );
@@ -3897,7 +3897,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 .map((entry) {
                   return _TableMetricClientInfo(
                     name: entry.agent.clientName,
-                    subtitle: 'Merge replication participant',
+                    subtitle: 'SymmetricDS participant',
                     detail:
                         '${_syncModeDisplay(entry.tableState.syncMode)} - ${entry.tableState.status}',
                     active: entry.agent.isOnline,
@@ -3911,7 +3911,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: Icons.merge_type_rounded,
           countText: '${clients.length}',
           meaning:
-              'This number counts clients whose table data is configured for merge replication, or clients in merge mode that already synced this table.',
+              'This number counts clients whose table data is configured for SymmetricDS, or clients that already synced this table.',
           emptyMessage: 'No client has merged data for this table yet.',
           clients: clients,
         );
@@ -4280,7 +4280,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             'Flow',
             tableState.enabled ? 'Merge participant' : 'Disabled',
           ),
-          const MapEntry('Mode', 'MERGE REPLICATION'),
+          const MapEntry('Mode', 'SYMMETRICDS'),
           const MapEntry('Direction', 'SYNC'),
           MapEntry('Database', agent.database),
           MapEntry(
@@ -6114,6 +6114,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       label: 'SQL',
                       value: agent.sqlConnected ? 'Connected' : 'Pending',
                     ),
+                    MetricPill(
+                      label: 'SymmetricDS',
+                      value:
+                          agent.symmetricDs.configured
+                              ? 'Configured'
+                              : agent.symmetricDs.status,
+                    ),
                   ],
                 ),
               ],
@@ -6213,9 +6220,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               MetricPill(label: 'Version', value: _simpleClientVersion(agent)),
               MetricPill(label: 'Role', value: _roleLabel()),
               MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
+              MetricPill(
+                label: 'SymmetricDS',
+                value:
+                    agent.symmetricDs.configured
+                        ? 'Configured'
+                        : agent.symmetricDs.status,
+              ),
               MetricPill(label: 'Diagnostics', value: diagnostics.status),
             ],
           ),
+          if (agent.symmetricDs.message.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              agent.symmetricDs.message,
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,

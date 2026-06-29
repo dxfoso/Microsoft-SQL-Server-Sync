@@ -11,6 +11,7 @@ import 'package:path/path.dart' as path;
 import 'agent_widgets.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
+import 'symmetricds_service.dart';
 import 'startup_log.dart';
 
 const String _agentAppVersion = String.fromEnvironment(
@@ -117,6 +118,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _clientUpdateError;
   bool _checkingClientUpdate = false;
   bool _applyingClientUpdate = false;
+  final SymmetricDsService _symmetricDsService = const SymmetricDsService();
+  String _symmetricDsStatus = 'unknown';
+  String _symmetricDsConfigPath = '';
+  String _symmetricDsMessage = '';
+  bool _symmetricDsConfigured = false;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -502,7 +508,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: enabled,
         message:
             enabled
-                ? 'Merge replication enabled for ${widget.clientName}.'
+                ? 'SymmetricDS sync enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
         direction: syncDirection,
         rowCount: current.rowCount,
@@ -520,7 +526,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         syncMode: syncMode,
         message:
             enabled
-                ? 'Waiting for the next merge replication sync.'
+                ? 'Waiting for the next SymmetricDS sync.'
                 : 'Sync disabled.',
         history: nextHistory,
       ),
@@ -578,7 +584,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         SnackBar(
           content: SelectableText(
             'Enabled ${newlyEnabled.length} related table'
-            '${newlyEnabled.length == 1 ? '' : 's'} for merge replication.',
+            '${newlyEnabled.length == 1 ? '' : 's'} for SymmetricDS sync.',
           ),
         ),
       );
@@ -592,7 +598,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       selectedMode = await _openSyncModeDialog(
         table: table,
         initialMode: current.syncMode,
-        title: 'Start merge replication',
+        title: 'Start SymmetricDS sync',
         confirmLabel: 'Enable sync',
       );
       if (!mounted || selectedMode == null) {
@@ -1810,13 +1816,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       case 'Queued':
         return 'Queued: this table is waiting for the next sync job.';
       case 'Snapshotting':
-        return 'Snapshotting: preparing SQL Server merge replication metadata.';
+        return 'Preparing: writing SymmetricDS node metadata.';
       case 'Uploading':
-        return 'Uploading: configuring the merge publication on the source SQL Server.';
+        return 'Uploading: SymmetricDS is sending local table changes.';
       case 'Downloading':
-        return 'Downloading: configuring the merge subscription on the target SQL Server.';
+        return 'Downloading: SymmetricDS is receiving remote table changes.';
       case 'Applying':
-        return 'Applying: running merge replication changes on local SQL Server.';
+        return 'Applying: waiting for SymmetricDS background processing.';
       case 'Completed':
       case 'Success':
         return 'Success: the last sync completed successfully.';
@@ -2094,7 +2100,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               : 'Paused';
       final nextMessage =
           policy.enabled
-              ? 'Waiting for the next merge replication sync.'
+              ? 'Waiting for the next SymmetricDS sync.'
               : 'Sync disabled.';
       final nextDirection = syncDirectionForMode(policy.syncMode);
       final nextState = current.copyWith(
@@ -2277,6 +2283,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _syncLoopBusy = true;
     try {
+      await _writeSymmetricDsConfig();
       final heartbeat = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
@@ -2294,6 +2301,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         tables: _heartbeatTablesPayload(),
         tableRelationships: _tableRelationshipsPayload(),
         clientVersion: _agentAppVersion,
+        symmetricDsStatus: _symmetricDsStatus,
+        symmetricDsConfigPath: _symmetricDsConfigPath,
+        symmetricDsMessage: _symmetricDsMessage,
+        symmetricDsConfigured: _symmetricDsConfigured,
       );
 
       if (!mounted) {
@@ -2328,9 +2339,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _applyRemoteJobState(job);
       }
 
-      // Merge replication jobs need source-client publisher metadata, so the
-      // control plane must queue them. The agent should only execute jobs it
-      // receives, not create self-subscriber jobs from its heartbeat.
+      // SymmetricDS jobs need source-client metadata, so the control plane must
+      // queue them. The agent should only execute jobs it receives.
       await _processPendingJobs();
     } catch (error) {
       if (!mounted) {
@@ -2349,6 +2359,144 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _syncLoopBusy = false;
       _retryAutomaticClientUpdateIfReady();
     }
+  }
+
+  Future<SymmetricDsConfigResult?> _writeSymmetricDsConfig() async {
+    final database = _selectedDatabase;
+    if (database == null || database.trim().isEmpty) {
+      _symmetricDsStatus = 'waiting-for-database';
+      _symmetricDsMessage =
+          'Select a SQL Server database before SymmetricDS can be configured.';
+      _symmetricDsConfigured = false;
+      return null;
+    }
+    final selectedTables = _syncState.tables.entries.map((entry) {
+      return SymmetricDsTableConfig(
+        syncKey: entry.key,
+        tableName: _localTableName(entry.key),
+        enabled: entry.value.enabled,
+      );
+    });
+    final controlPlaneUri = Uri.parse(_controlPlaneClient.baseUrl);
+    final registrationUrl = controlPlaneUri.replace(
+      path: '/sync/server',
+      query: null,
+      fragment: null,
+    );
+    final result = await _symmetricDsService.writeNodeConfig(
+      clientName: widget.clientName,
+      machineName: Platform.localHostname,
+      server: _serverController.text.trim(),
+      database: database,
+      useWindowsAuth: _useWindowsAuth,
+      username: _userController.text.trim(),
+      password: _passwordController.text,
+      registrationUrl: registrationUrl,
+      tables: selectedTables,
+    );
+    final bootstrapResult =
+        result.configured
+            ? await _applySymmetricDsBootstrapIfReady(
+              database: database,
+              result: result,
+            )
+            : const _SymmetricDsBootstrapApplyResult(
+              applied: false,
+              message: '',
+            );
+    _symmetricDsStatus =
+        bootstrapResult.applied
+            ? 'bootstrap-applied'
+            : result.configured
+            ? result.runtimeStatus
+            : 'no-selected-tables';
+    _symmetricDsConfigPath = result.propertiesPath;
+    _symmetricDsMessage =
+        bootstrapResult.message.isEmpty
+            ? result.message
+            : '${result.message} ${bootstrapResult.message}';
+    _symmetricDsConfigured = result.configured;
+    if (!mounted || !result.configured) {
+      return result;
+    }
+    logStartupEvent(result.message);
+    return result;
+  }
+
+  Future<_SymmetricDsBootstrapApplyResult> _applySymmetricDsBootstrapIfReady({
+    required String database,
+    required SymmetricDsConfigResult result,
+  }) async {
+    final bootstrapFile = File(result.bootstrapSqlPath);
+    if (!await bootstrapFile.exists()) {
+      return const _SymmetricDsBootstrapApplyResult(
+        applied: false,
+        message: 'SymmetricDS bootstrap SQL file is missing.',
+      );
+    }
+
+    final readinessResult = await _runSqlCmd(
+      profile: _activeProfile(),
+      database: database,
+      query: '''
+SET NOCOUNT ON;
+IF OBJECT_ID(N'dbo.sym_trigger', N'U') IS NOT NULL
+  AND OBJECT_ID(N'dbo.sym_router', N'U') IS NOT NULL
+  AND OBJECT_ID(N'dbo.sym_trigger_router', N'U') IS NOT NULL
+  SELECT 1;
+ELSE
+  SELECT 0;
+''',
+    );
+    if (readinessResult == null) {
+      return _SymmetricDsBootstrapApplyResult(
+        applied: false,
+        message:
+            _lastSqlCmdLaunchError ??
+            _sqlCmdUnavailableMessage(_activeProfile()),
+      );
+    }
+    if (readinessResult.exitCode != 0) {
+      return _SymmetricDsBootstrapApplyResult(
+        applied: false,
+        message: _sqlCmdFailed(
+          'SymmetricDS metadata readiness check',
+          readinessResult,
+        ),
+      );
+    }
+    if (!readinessResult.stdout.toString().trim().contains('1')) {
+      return const _SymmetricDsBootstrapApplyResult(
+        applied: false,
+        message:
+            'Waiting for SymmetricDS to create local sym_* metadata tables before applying bootstrap SQL.',
+      );
+    }
+
+    final bootstrapSql = await bootstrapFile.readAsString();
+    final applyResult = await _runSqlCmd(
+      profile: _activeProfile(),
+      database: database,
+      query: bootstrapSql,
+    );
+    if (applyResult == null) {
+      return _SymmetricDsBootstrapApplyResult(
+        applied: false,
+        message:
+            _lastSqlCmdLaunchError ??
+            _sqlCmdUnavailableMessage(_activeProfile()),
+      );
+    }
+    if (applyResult.exitCode != 0) {
+      return _SymmetricDsBootstrapApplyResult(
+        applied: false,
+        message: _sqlCmdFailed('SymmetricDS bootstrap apply', applyResult),
+      );
+    }
+    return const _SymmetricDsBootstrapApplyResult(
+      applied: true,
+      message: 'SymmetricDS bootstrap SQL applied.',
+    );
   }
 
   Future<void> _uploadRequestedDiagnostics(
@@ -2452,6 +2600,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'historyLimit': _syncState.historyLimit,
         'autoSyncIntervalMinutes': _syncState.autoSyncIntervalMinutes,
       },
+      'symmetricDs': {
+        'status': _symmetricDsStatus,
+        'configPath': _symmetricDsConfigPath,
+        'message': _symmetricDsMessage,
+        'configured': _symmetricDsConfigured,
+      },
       'errors': {
         'errorMessage': _errorMessage,
         'lastSqlCmdLaunchError': _lastSqlCmdLaunchError,
@@ -2493,10 +2647,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       _processingJobIds.add(job.id);
       try {
-        if (job.mergeRole == 'publisher') {
-          await _processReplicationPublisherJob(job);
-        } else if (job.mergeRole == 'subscriber') {
-          await _processReplicationSubscriberJob(job);
+        if (job.mergeRole == 'symmetricds') {
+          await _processSymmetricDsJob(job);
         } else {
           await _processUnsupportedLegacyJob(job);
         }
@@ -2546,7 +2698,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processUnsupportedLegacyJob(RemoteSyncJob job) async {
     final message =
-        'Legacy custom sync jobs are no longer supported. Requeue this table through merge replication.';
+        'Unsupported sync job role ${job.mergeRole}. Requeue this table through SymmetricDS sync.';
     await _markRemoteJobFailed(job, Exception(message));
     final failedJob = RemoteSyncJob(
       id: job.id,
@@ -2580,67 +2732,34 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  String _mergePublicationName(RemoteSyncJob job) {
-    if (job.publicationName.trim().isNotEmpty) {
-      return job.publicationName.trim();
-    }
-    final raw =
-        'merge_${job.sourceClientName.isEmpty ? job.clientName : job.sourceClientName}_${job.table}';
-    return raw.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
-  }
-
-  Future<void> _processReplicationPublisherJob(RemoteSyncJob job) async {
-    final localDatabase = _databaseNameFromSyncKey(job.table);
-    final tableName = _localTableName(job.table);
-    final publicationName = _mergePublicationName(job);
-    final tableParts = _splitQualifiedName(tableName);
+  Future<void> _processSymmetricDsJob(RemoteSyncJob job) async {
     var activeJob = await _controlPlaneClient.startJob(
       job.id,
       status: 'applying',
       progress: 20,
-      message: 'Configuring merge publication metadata.',
+      message: 'Preparing SymmetricDS node configuration.',
     );
     _applyRemoteJobState(activeJob);
 
-    final query = '''
-USE ${_quoteIdentifier(localDatabase)};
-EXEC sp_replicationdboption @dbname=${_sqlLiteral(localDatabase)}, @optname=N'merge publish', @value=N'true';
-IF NOT EXISTS (SELECT 1 FROM sysmergepublications WHERE name = ${_sqlLiteral(publicationName)})
-BEGIN
-  EXEC sp_addmergepublication
-    @publication = ${_sqlLiteral(publicationName)},
-    @allow_subscriber_initiated_snapshot = N'false',
-    @dynamic_filters = N'false',
-    @retention = 14,
-    @publication_compatibility_level = N'150RTM';
-END;
-IF NOT EXISTS (SELECT 1 FROM sysmergearticles WHERE name = ${_sqlLiteral(tableParts.table)})
-BEGIN
-  EXEC sp_addmergearticle
-    @publication = ${_sqlLiteral(publicationName)},
-    @article = ${_sqlLiteral(tableParts.table)},
-    @source_owner = ${_sqlLiteral(tableParts.schema)},
-    @source_object = ${_sqlLiteral(tableParts.table)},
-    @type = N'table';
-END;
-''';
-    final result = await _runSqlCmd(
-      profile: _activeProfile(),
-      database: localDatabase,
-      query: query,
+    await _writeSymmetricDsConfig();
+
+    activeJob = await _controlPlaneClient.updateJobProgress(
+      job.id,
+      status: 'applying',
+      progress: 70,
+      message:
+          'SymmetricDS configuration is ready. Background service can process ${job.table}.',
+      rowCount: job.rowCount,
+      direction: job.direction,
     );
-    if (result == null) {
-      throw Exception(_sqlCmdUnavailableMessage(_activeProfile()));
-    }
-    if (result.exitCode != 0) {
-      throw Exception(_sqlCmdFailed('merge publication setup', result));
-    }
+    _applyRemoteJobState(activeJob);
 
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
       status: 'completed',
       progress: 100,
-      message: 'Merge publication $publicationName is configured.',
+      message:
+          'SymmetricDS sync request prepared for ${_localTableName(job.table)}.',
       rowCount: 0,
     );
     _applyRemoteJobState(
@@ -2648,258 +2767,7 @@ END;
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Configured merge publication $publicationName for $tableName.',
-    );
-  }
-
-  Future<void> _processReplicationSubscriberJob(RemoteSyncJob job) async {
-    final localDatabase = _databaseNameFromSyncKey(job.table);
-    final tableName = _localTableName(job.table);
-    final tableParts = _splitQualifiedName(tableName);
-    final publicationName = _mergePublicationName(job);
-    if (job.publisherServer.trim().isEmpty ||
-        job.publisherDatabase.trim().isEmpty) {
-      throw Exception(
-        'Merge subscription metadata is incomplete for ${job.table}. Publisher server and database are required.',
-      );
-    }
-    var activeJob = await _controlPlaneClient.startJob(
-      job.id,
-      status: 'applying',
-      progress: 30,
-      message: 'Configuring merge pull subscription.',
-    );
-    _applyRemoteJobState(activeJob);
-
-    final beforeCountResult = await _queryTableRowCount(
-      profile: _activeProfile(),
-      database: localDatabase,
-      schema: tableParts.schema,
-      table: tableParts.table,
-    );
-    if (!beforeCountResult.success) {
-      throw Exception(
-        beforeCountResult.errorText ??
-            'Unable to read local row count before merge sync.',
-      );
-    }
-
-    final publisherSecurityMode = job.publisherUseWindowsAuth ? '1' : '0';
-    final publisherUserClause =
-        job.publisherUseWindowsAuth || job.publisherUser.trim().isEmpty
-            ? "NULL"
-            : _sqlLiteral(job.publisherUser.trim());
-    final publisherPasswordClause =
-        job.publisherUseWindowsAuth || job.publisherPassword.isEmpty
-            ? "NULL"
-            : _sqlLiteral(job.publisherPassword);
-
-    final query = '''
-USE ${_quoteIdentifier(localDatabase)};
-DECLARE @subscriptionCreated bit = 0;
-BEGIN TRY
-  EXEC sp_addmergepullsubscription
-    @publisher = ${_sqlLiteral(job.publisherServer.trim())},
-    @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
-    @publication = ${_sqlLiteral(publicationName)},
-    @subscriber_type = N'local',
-    @subscription_priority = 0.0,
-    @sync_type = N'none';
-  SET @subscriptionCreated = 1;
-END TRY
-BEGIN CATCH
-  IF ERROR_NUMBER() <> 14058
-  BEGIN
-    DECLARE @errorMessage nvarchar(4000) = ERROR_MESSAGE();
-    DECLARE @errorSeverity int = ERROR_SEVERITY();
-    DECLARE @errorState int = ERROR_STATE();
-    RAISERROR(@errorMessage, @errorSeverity, @errorState);
-  END;
-  PRINT N'Merge pull subscription already exists; keeping existing metadata.';
-END CATCH;
-IF @subscriptionCreated = 1
-BEGIN
-  EXEC sp_addmergepullsubscription_agent
-    @publisher = ${_sqlLiteral(job.publisherServer.trim())},
-    @publisher_db = ${_sqlLiteral(job.publisherDatabase.trim())},
-    @publication = ${_sqlLiteral(publicationName)},
-    @distributor = ${_sqlLiteral(job.publisherServer.trim())},
-    @subscriber_security_mode = 1,
-    @publisher_security_mode = $publisherSecurityMode,
-    @publisher_login = $publisherUserClause,
-    @publisher_password = $publisherPasswordClause,
-    @use_ftp = N'false',
-    @frequency_type = 64,
-    @frequency_interval = 1,
-    @frequency_relative_interval = 1,
-    @frequency_recurrence_factor = 0,
-    @frequency_subday = 4,
-    @frequency_subday_interval = 5,
-    @active_start_time_of_day = 0,
-    @active_end_time_of_day = 235959,
-    @active_start_date = 20260101,
-    @active_end_date = 99991231;
-END;
-''';
-    final result = await _runSqlCmd(
-      profile: _activeProfile(),
-      database: localDatabase,
-      query: query,
-    );
-    if (result == null) {
-      throw Exception(_sqlCmdUnavailableMessage(_activeProfile()));
-    }
-    if (result.exitCode != 0) {
-      throw Exception(_sqlCmdFailed('merge subscription setup', result));
-    }
-
-    activeJob = await _controlPlaneClient.startJob(
-      job.id,
-      status: 'applying',
-      progress: 70,
-      message: 'Running merge pull subscription agent.',
-    );
-    _applyRemoteJobState(activeJob);
-
-    final runAgentQuery = '''
-USE ${_quoteIdentifier(localDatabase)};
-DECLARE @publisher nvarchar(4000) = ${_sqlLiteral(job.publisherServer.trim())};
-DECLARE @publisherDb nvarchar(4000) = ${_sqlLiteral(job.publisherDatabase.trim())};
-DECLARE @publication nvarchar(4000) = ${_sqlLiteral(publicationName)};
-DECLARE @mergeJobName sysname;
-DECLARE @mergeJobId uniqueidentifier;
-DECLARE @latestSessionId int;
-DECLARE @running bit = 0;
-
-SELECT TOP (1)
-  @mergeJobName = j.name,
-  @mergeJobId = j.job_id
-FROM msdb.dbo.sysjobs AS j
-INNER JOIN msdb.dbo.sysjobsteps AS s ON s.job_id = j.job_id
-WHERE s.subsystem = N'Merge'
-  AND s.command LIKE N'%' + @publisher + N'%'
-  AND s.command LIKE N'%' + @publisherDb + N'%'
-  AND s.command LIKE N'%' + @publication + N'%'
-ORDER BY j.date_created DESC;
-
-IF @mergeJobId IS NULL
-BEGIN
-  RAISERROR(N'Merge Agent SQL Server Agent job was not found for publication %s.', 16, 1, @publication);
-  RETURN;
-END;
-
-SELECT @latestSessionId = MAX(session_id) FROM msdb.dbo.syssessions;
-
-SELECT @running =
-  CASE WHEN EXISTS (
-    SELECT 1
-    FROM msdb.dbo.sysjobactivity AS activity
-    WHERE activity.job_id = @mergeJobId
-      AND activity.session_id = @latestSessionId
-      AND activity.start_execution_date IS NOT NULL
-      AND activity.stop_execution_date IS NULL
-  ) THEN 1 ELSE 0 END;
-
-IF @running = 0
-BEGIN
-  EXEC msdb.dbo.sp_start_job @job_id = @mergeJobId;
-END;
-
-DECLARE @startedAt datetime2 = SYSDATETIME();
-WHILE DATEDIFF(SECOND, @startedAt, SYSDATETIME()) < 300
-BEGIN
-  WAITFOR DELAY '00:00:05';
-
-  SELECT @latestSessionId = MAX(session_id) FROM msdb.dbo.syssessions;
-  SELECT @running =
-    CASE WHEN EXISTS (
-      SELECT 1
-      FROM msdb.dbo.sysjobactivity AS activity
-      WHERE activity.job_id = @mergeJobId
-        AND activity.session_id = @latestSessionId
-        AND activity.start_execution_date IS NOT NULL
-        AND activity.stop_execution_date IS NULL
-    ) THEN 1 ELSE 0 END;
-
-  IF @running = 0
-  BEGIN
-    BREAK;
-  END;
-END;
-
-IF @running = 1
-BEGIN
-  RAISERROR(N'Merge Agent job %s did not finish within 300 seconds.', 16, 1, @mergeJobName);
-  RETURN;
-END;
-
-DECLARE @runStatus int;
-DECLARE @runMessage nvarchar(4000);
-SELECT TOP (1)
-  @runStatus = history.run_status,
-  @runMessage = history.message
-FROM msdb.dbo.sysjobhistory AS history
-WHERE history.job_id = @mergeJobId
-  AND history.step_id = 0
-ORDER BY history.instance_id DESC;
-
-IF @runStatus IS NOT NULL AND @runStatus <> 1
-BEGIN
-  RAISERROR(N'Merge Agent job %s failed: %s', 16, 1, @mergeJobName, @runMessage);
-  RETURN;
-END;
-
-PRINT N'Merge Agent job completed: ' + @mergeJobName;
-''';
-    final runAgentResult = await _runSqlCmd(
-      profile: _activeProfile(),
-      database: localDatabase,
-      query: runAgentQuery,
-    );
-    if (runAgentResult == null) {
-      throw Exception(_sqlCmdUnavailableMessage(_activeProfile()));
-    }
-    if (runAgentResult.exitCode != 0) {
-      throw Exception(
-        _sqlCmdFailed('merge subscription agent run', runAgentResult),
-      );
-    }
-
-    final afterCountResult = await _queryTableRowCount(
-      profile: _activeProfile(),
-      database: localDatabase,
-      schema: tableParts.schema,
-      table: tableParts.table,
-    );
-    if (!afterCountResult.success) {
-      throw Exception(
-        afterCountResult.errorText ??
-            'Unable to read local row count after merge sync.',
-      );
-    }
-    final rowsAdded =
-        (afterCountResult.value - beforeCountResult.value)
-            .clamp(0, 1000000000)
-            .toInt();
-    _applyTableRowCounts(
-      database: localDatabase,
-      rowCounts: {tableName: afterCountResult.value},
-    );
-
-    activeJob = await _controlPlaneClient.completeJob(
-      job.id,
-      status: 'completed',
-      progress: 100,
-      message:
-          'Merge subscription $publicationName completed; +$rowsAdded rows.',
-      rowCount: rowsAdded,
-    );
-    _applyRemoteJobState(
-      activeJob,
-      appendHistory: true,
-      success: true,
-      overrideMessage:
-          'Ran merge pull subscription to ${job.publisherServer}/${job.publisherDatabase} for ${job.table}; +$rowsAdded rows.',
+          'SymmetricDS sync request prepared for ${_localTableName(job.table)}.',
     );
   }
 
@@ -3606,13 +3474,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   String _quoteIdentifier(String value) => '[${value.replaceAll(']', ']]')}]';
 
   String _escapeSqlLiteral(String value) => value.replaceAll("'", "''");
-
-  String _sqlLiteral(String? value) {
-    if (value == null) {
-      return 'NULL';
-    }
-    return "N'${_escapeSqlLiteral(value)}'";
-  }
 
   _QualifiedTableName _splitQualifiedName(String qualifiedName) {
     final parts = qualifiedName.split('.');
@@ -6140,6 +6001,16 @@ class _QualifiedTableName {
   final String database;
   final String schema;
   final String table;
+}
+
+class _SymmetricDsBootstrapApplyResult {
+  const _SymmetricDsBootstrapApplyResult({
+    required this.applied,
+    required this.message,
+  });
+
+  final bool applied;
+  final String message;
 }
 
 class _InfoLine extends StatelessWidget {

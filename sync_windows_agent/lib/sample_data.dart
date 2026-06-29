@@ -50,8 +50,7 @@ const recentEvents = <AgentEvent>[
   AgentEvent(
     time: '09:55',
     title: 'Merge sync completed',
-    message:
-        'Orders and Inventory rows were synchronized through merge replication.',
+    message: 'Orders and Inventory rows were synchronized through SymmetricDS.',
     level: AgentEventLevel.info,
   ),
   AgentEvent(

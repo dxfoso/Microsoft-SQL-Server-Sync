@@ -66,7 +66,7 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
 
-    def test_chart_declares_merge_replication_sync_engine(self):
+    def test_chart_declares_symmetricds_sync_engine(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
         frontend_deployment = (ROOT / "templates" / "deployment.yaml").read_text(
             encoding="utf-8"
@@ -75,13 +75,49 @@ class ChartContractsTests(unittest.TestCase):
             ROOT / "templates" / "backend-deployment.yaml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("syncEngine:\n  mode: mergeReplication", values_yaml)
+        self.assertIn("syncEngine:\n  mode: symmetricDs", values_yaml)
         self.assertNotIn("postgresCustomSync", values_yaml)
         self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
         self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
         self.assertNotIn("syncEngineMode", values_yaml)
         self.assertNotIn(".Values.frontend.syncEngineMode", frontend_deployment)
         self.assertNotIn(".Values.backend.env.syncEngineMode", backend_deployment)
+
+    def test_chart_runs_symmetricds_runtime_behind_sync_path(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        ingress = (ROOT / "templates" / "ingress.yaml").read_text(encoding="utf-8")
+        symmetricds_deployment = (
+            ROOT / "templates" / "symmetricds-deployment.yaml"
+        ).read_text(encoding="utf-8")
+        symmetricds_service = (
+            ROOT / "templates" / "symmetricds-service.yaml"
+        ).read_text(encoding="utf-8")
+        symmetricds_config = (
+            ROOT / "templates" / "symmetricds-configmap.yaml"
+        ).read_text(encoding="utf-8")
+        pvc = (ROOT / "templates" / "pvc.yaml").read_text(encoding="utf-8")
+        helpers = (ROOT / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
+
+        self.assertIn("symmetricds:\n  enabled: true\n", values_yaml)
+        self.assertIn("image: docker.io/jumpmind/symmetricds:3.16.10", values_yaml)
+        self.assertIn("initImage: docker.io/library/busybox:1.36.1", values_yaml)
+        self.assertNotIn("jumpmind/symmetricds:latest", values_yaml)
+        self.assertIn("- path: /sync", ingress)
+        self.assertIn("include \"sync-admin-web.symmetricdsFullname\"", ingress)
+        self.assertIn("kind: Deployment", symmetricds_deployment)
+        self.assertIn("app.kubernetes.io/component: symmetricds", symmetricds_deployment)
+        self.assertIn("path: /sync/server", symmetricds_deployment)
+        self.assertIn("initContainers:", symmetricds_deployment)
+        self.assertIn("render-engine-config", symmetricds_deployment)
+        self.assertIn("printf '\\ndb.password=%s\\n'", symmetricds_deployment)
+        self.assertIn("secretKeyRef:", symmetricds_deployment)
+        self.assertIn("kind: Service", symmetricds_service)
+        self.assertIn("{{ .Values.symmetricds.engineName }}.properties.tpl", symmetricds_config)
+        self.assertIn("sync.url=https://{{ .Values.domain }}/sync/server", symmetricds_config)
+        self.assertIn("db.driver=org.postgresql.Driver", symmetricds_config)
+        self.assertNotIn("db.password=", symmetricds_config)
+        self.assertIn("sync-admin-web.symmetricdsPvcName", helpers)
+        self.assertIn("sync-admin-web.symmetricdsPvcName", pvc)
 
     def test_chart_derives_frontend_api_route_from_central_ingress(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
@@ -110,6 +146,7 @@ class ChartContractsTests(unittest.TestCase):
             values_yaml,
         )
         self.assertIn("image: docker.io/library/postgres:16-alpine", values_yaml)
+        self.assertIn("image: docker.io/jumpmind/symmetricds:3.16.10", values_yaml)
 
     def test_postgres_password_is_secret_backed(self):
         postgres_deployment = (
@@ -169,6 +206,7 @@ class ChartContractsTests(unittest.TestCase):
             "deployment.yaml",
             "backend-deployment.yaml",
             "postgres-deployment.yaml",
+            "symmetricds-deployment.yaml",
         ):
             template = (ROOT / "templates" / template_name).read_text(
                 encoding="utf-8"

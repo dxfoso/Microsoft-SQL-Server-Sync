@@ -9,6 +9,8 @@ param(
     [string] $RemoteUpdatesDir = '/app/data/client-updates',
     [string] $FlutterVersion = '',
     [string] $FlutterCacheRoot = '',
+    [string] $SymmetricDsVersion = '3.16.10',
+    [string] $SymmetricDsDownloadUrl = '',
     [switch] $RequireFlutterVersion,
     [switch] $SkipBuild
 )
@@ -34,7 +36,12 @@ function Get-PubspecVersion {
 function Get-GitCommit {
     Push-Location $RepoRoot
     try {
-        return (& git rev-parse --short=12 HEAD).Trim()
+        $commit = (& git rev-parse --short=12 HEAD).Trim()
+        $status = (& git status --porcelain)
+        if ($LASTEXITCODE -eq 0 -and @($status).Count -gt 0) {
+            return "$commit-dirty"
+        }
+        return $commit
     }
     finally {
         Pop-Location
@@ -65,6 +72,34 @@ function Invoke-CheckedNative {
     }
 }
 
+function Assert-ClientUpdateZipContents {
+    param([Parameter(Mandatory = $true)][string] $ZipPath)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $entryNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($entry in $archive.Entries) {
+            [void] $entryNames.Add($entry.FullName.Replace('\', '/'))
+        }
+
+        $requiredEntries = @(
+            "$PortableName/sync_windows_agent.exe",
+            "$PortableName/update.ps1",
+            "$PortableName/portable-manifest.txt",
+            "$PortableName/symmetricds/bin/sym.bat"
+        )
+        foreach ($requiredEntry in $requiredEntries) {
+            if (-not $entryNames.Contains($requiredEntry)) {
+                throw "Portable client update ZIP is missing required entry: $requiredEntry"
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
 if (-not (Test-Path -LiteralPath $UpdaterScript -PathType Leaf)) {
     throw "Missing updater script: $UpdaterScript"
 }
@@ -86,6 +121,12 @@ if (-not $SkipBuild) {
     if (-not [string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
         $buildArgs.FlutterCacheRoot = $FlutterCacheRoot
     }
+    if (-not [string]::IsNullOrWhiteSpace($SymmetricDsVersion)) {
+        $buildArgs.SymmetricDsVersion = $SymmetricDsVersion
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SymmetricDsDownloadUrl)) {
+        $buildArgs.SymmetricDsDownloadUrl = $SymmetricDsDownloadUrl
+    }
     if ($RequireFlutterVersion) {
         $buildArgs.RequireFlutterVersion = $true
     }
@@ -99,6 +140,7 @@ if (-not $SkipBuild) {
 if (-not (Test-Path -LiteralPath $PortableZip -PathType Leaf)) {
     throw "Missing portable ZIP: $PortableZip"
 }
+Assert-ClientUpdateZipContents -ZipPath $PortableZip
 
 New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
 

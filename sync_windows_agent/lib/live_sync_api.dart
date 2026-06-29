@@ -254,6 +254,10 @@ class AgentControlPlaneClient {
     required Map<String, SyncTableState> tables,
     required List<Map<String, String>> tableRelationships,
     required String clientVersion,
+    required String symmetricDsStatus,
+    required String symmetricDsConfigPath,
+    required String symmetricDsMessage,
+    required bool symmetricDsConfigured,
   }) async {
     final response = await _invokeFunction('agents_heartbeat', {
       'clientName': clientName,
@@ -273,6 +277,10 @@ class AgentControlPlaneClient {
           .map((entry) => {'table': entry.key, ...entry.value.toJson()})
           .toList(growable: false),
       'tableRelationships': tableRelationships,
+      'symmetricDsStatus': symmetricDsStatus,
+      'symmetricDsConfigPath': symmetricDsConfigPath,
+      'symmetricDsMessage': symmetricDsMessage,
+      'symmetricDsConfigured': symmetricDsConfigured,
     }, 'sending heartbeat');
 
     if (response is! Map) {

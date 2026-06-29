@@ -36,4 +36,25 @@ spec:
   {{- if .Values.postgres.persistence.storageClassName }}
   storageClassName: {{ .Values.postgres.persistence.storageClassName | quote }}
   {{- end }}
+{{- if .Values.symmetricds.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sync-admin-web.symmetricdsPvcName" . }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.symmetricds.persistence.size | quote }}
+  {{- if .Values.symmetricds.persistence.storageClassName }}
+  storageClassName: {{ .Values.symmetricds.persistence.storageClassName | quote }}
+  {{- end }}
+{{- end }}
 {{- end }}

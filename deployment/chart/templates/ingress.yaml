@@ -63,6 +63,15 @@ spec:
                 name: {{ include "sync-admin-web.backendFullname" . }}
                 port:
                   number: {{ .Values.backend.service.port }}
+          {{- if .Values.symmetricds.enabled }}
+          - path: /sync
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sync-admin-web.symmetricdsFullname" . }}
+                port:
+                  number: {{ .Values.symmetricds.service.port }}
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:

@@ -1,0 +1,22 @@
+{{- if .Values.symmetricds.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sync-admin-web.symmetricdsFullname" . }}-config
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: symmetricds
+data:
+  {{ .Values.symmetricds.engineName }}.properties.tpl: |
+    engine.name={{ .Values.symmetricds.engineName }}
+    group.id={{ .Values.symmetricds.groupId }}
+    external.id={{ .Values.symmetricds.externalId }}
+    sync.url=https://{{ .Values.domain }}/sync/server
+    registration.url=
+    db.driver=org.postgresql.Driver
+    db.url=jdbc:postgresql://{{ include "sync-admin-web.postgresFullname" . }}:{{ .Values.postgres.service.port }}/{{ .Values.postgres.database }}
+    db.user={{ .Values.postgres.username }}
+    auto.config.database=true
+    auto.insert.registration.svr.if.not.found=true
+{{- end }}

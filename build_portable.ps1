@@ -3,6 +3,8 @@ param(
     [string] $ClientUpdateBaseUrl = '',
     [string] $FlutterVersion = '',
     [string] $FlutterCacheRoot = '',
+    [string] $SymmetricDsVersion = '3.16.10',
+    [string] $SymmetricDsDownloadUrl = '',
     [switch] $RequireFlutterVersion
 )
 
@@ -113,7 +115,10 @@ function Get-FlutterVersion {
         throw "Unable to run flutter --version using: $FlutterCommand"
     }
 
-    $firstLine = @($versionOutput | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0]
+    $firstLine = @($versionOutput | Where-Object { $_ -match '^Flutter\s+[0-9]+\.[0-9]+\.[0-9]+\b' } | Select-Object -First 1)[0]
+    if ([string]::IsNullOrWhiteSpace($firstLine)) {
+        throw "Unable to find Flutter version line in: $($versionOutput -join "`n")"
+    }
     $match = [regex]::Match($firstLine, '^Flutter\s+([0-9]+\.[0-9]+\.[0-9]+)\b')
     if (-not $match.Success) {
         throw "Unable to parse Flutter version from: $firstLine"
@@ -546,6 +551,150 @@ function Copy-VCRuntimeDlls {
     }
 }
 
+function Get-SymmetricDsDownloadUrl {
+    param([Parameter(Mandatory = $true)][string] $Version)
+
+    $minorVersion = [regex]::Match($Version, '^([0-9]+\.[0-9]+)').Groups[1].Value
+    if ([string]::IsNullOrWhiteSpace($minorVersion)) {
+        throw "Could not derive SymmetricDS minor version from: $Version"
+    }
+    return "https://sourceforge.net/projects/symmetricds/files/symmetricds/symmetricds-$minorVersion/symmetric-server-$Version.zip/download"
+}
+
+function Test-ZipFileSignature {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        if ($stream.Length -lt 4) {
+            return $false
+        }
+        $buffer = New-Object byte[] 4
+        [void] $stream.Read($buffer, 0, 4)
+        return $buffer[0] -eq 0x50 -and $buffer[1] -eq 0x4B
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function Resolve-SourceForgeMirrorUrl {
+    param([Parameter(Mandatory = $true)][string] $HtmlContent)
+
+    $match = [regex]::Match($HtmlContent, 'url=(https://downloads\.sourceforge\.net/[^"'']+)')
+    if (-not $match.Success) {
+        return ''
+    }
+    return [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value)
+}
+
+function Save-VerifiedZip {
+    param(
+        [Parameter(Mandatory = $true)][string] $Url,
+        [Parameter(Mandatory = $true)][string] $OutFile,
+        [Parameter(Mandatory = $true)][string] $Description
+    )
+
+    $tempFile = "$OutFile.tmp"
+    if (Test-Path -LiteralPath $tempFile) {
+        Remove-Item -LiteralPath $tempFile -Force
+    }
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $tempFile -MaximumRedirection 10
+    if (Test-ZipFileSignature -Path $tempFile) {
+        Move-Item -LiteralPath $tempFile -Destination $OutFile -Force
+        return
+    }
+
+    $content = Get-Content -LiteralPath $tempFile -Raw -ErrorAction SilentlyContinue
+    $mirrorUrl = if ($content) { Resolve-SourceForgeMirrorUrl -HtmlContent $content } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($mirrorUrl)) {
+        Invoke-WebRequest -UseBasicParsing -Uri $mirrorUrl -OutFile $tempFile -MaximumRedirection 10
+        if (Test-ZipFileSignature -Path $tempFile) {
+            Move-Item -LiteralPath $tempFile -Destination $OutFile -Force
+            return
+        }
+    }
+
+    if (Test-Path -LiteralPath $tempFile) {
+        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+    }
+    throw "$Description did not download as a ZIP archive."
+}
+
+function Install-SymmetricDsRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string] $Version,
+        [AllowEmptyString()][string] $DownloadUrl,
+        [Parameter(Mandatory = $true)][string] $PortableDir,
+        [Parameter(Mandatory = $true)][string] $CacheRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
+        $DownloadUrl = Get-SymmetricDsDownloadUrl -Version $Version
+    }
+
+    $downloadsDir = Join-Path -Path $CacheRoot -ChildPath 'downloads'
+    $archivePath = Join-Path -Path $downloadsDir -ChildPath "symmetric-server-$Version.zip"
+    $extractRoot = Join-Path -Path $CacheRoot -ChildPath "symmetricds-$Version"
+    $tempRoot = Join-Path -Path $CacheRoot -ChildPath ("tmp-symmetricds-$Version-" + [guid]::NewGuid().ToString('N'))
+    $destination = Join-Path -Path $PortableDir -ChildPath 'symmetricds'
+
+    New-Item -ItemType Directory -Path $downloadsDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $CacheRoot -Force | Out-Null
+
+    if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+        Write-Host "Downloading SymmetricDS $Version from $DownloadUrl"
+        Save-VerifiedZip -Url $DownloadUrl -OutFile $archivePath -Description "SymmetricDS $Version"
+    } else {
+        Write-Host "Using cached SymmetricDS archive: $archivePath"
+        if (-not (Test-ZipFileSignature -Path $archivePath)) {
+            Write-Warning "Cached SymmetricDS archive is not a ZIP. Removing and downloading a fresh copy."
+            Remove-Item -LiteralPath $archivePath -Force
+            Save-VerifiedZip -Url $DownloadUrl -OutFile $archivePath -Description "SymmetricDS $Version"
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path -Path $extractRoot -ChildPath 'bin') -PathType Container)) {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            Write-Host "Extracting SymmetricDS $Version..."
+            Expand-Archive -LiteralPath $archivePath -DestinationPath $tempRoot -Force
+            $extractedRoot = Get-ChildItem -LiteralPath $tempRoot -Directory -Recurse -ErrorAction Stop |
+                Where-Object { Test-Path -LiteralPath (Join-Path -Path $_.FullName -ChildPath 'bin') -PathType Container } |
+                Select-Object -First 1
+            if ($null -eq $extractedRoot) {
+                throw "SymmetricDS archive did not contain a directory with a bin folder: $archivePath"
+            }
+            if (Test-Path -LiteralPath $extractRoot) {
+                Remove-Item -LiteralPath $extractRoot -Recurse -Force
+            }
+            Move-Item -LiteralPath $extractedRoot.FullName -Destination $extractRoot
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    $symBat = Join-Path -Path $extractRoot -ChildPath 'bin\sym.bat'
+    if (-not (Test-Path -LiteralPath $symBat -PathType Leaf)) {
+        throw "SymmetricDS runtime is missing bin\sym.bat after extraction: $extractRoot"
+    }
+
+    if (Test-Path -LiteralPath $destination) {
+        Remove-Item -LiteralPath $destination -Recurse -Force
+    }
+    Copy-Item -LiteralPath $extractRoot -Destination $destination -Recurse -Force
+    Write-Host "Included SymmetricDS runtime: $destination"
+}
+
 function New-PortableLauncher {
     param(
         [Parameter(Mandatory = $true)][string] $Destination,
@@ -592,7 +741,8 @@ function Get-PortableRequiredFiles {
         $ExeName,
         'flutter_windows.dll',
         'run_portable.bat',
-        'update.ps1'
+        'update.ps1',
+        'symmetricds\bin\sym.bat'
     )
 }
 
@@ -788,7 +938,8 @@ function Assert-PortableZipContents {
             "$PortableName/data/app.so",
             "$PortableName/run_portable.bat",
             "$PortableName/update.ps1",
-            "$PortableName/portable-manifest.txt"
+            "$PortableName/portable-manifest.txt",
+            "$PortableName/symmetricds/bin/sym.bat"
         )
         if ($RequireVCRuntime) {
             $requiredEntries += @(
@@ -828,6 +979,9 @@ try {
     $OutputRoot = Get-FullPath -Path $PSScriptRoot
     $PortableName = ''
     if (-not [string]::IsNullOrWhiteSpace($FlutterVersion) -and [string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
+        $FlutterCacheRoot = Get-DefaultFlutterCacheRoot
+    }
+    if ([string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
         $FlutterCacheRoot = Get-DefaultFlutterCacheRoot
     }
 
@@ -917,6 +1071,11 @@ try {
         -Description 'Portable Flutter release engine DLL'
 
     Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
+    Install-SymmetricDsRuntime `
+        -Version $SymmetricDsVersion `
+        -DownloadUrl $SymmetricDsDownloadUrl `
+        -PortableDir $portableDir `
+        -CacheRoot (Join-Path -Path $FlutterCacheRoot -ChildPath 'symmetricds')
 
     New-PortableLauncher -Destination $portableDir -ExeName $exeName
     Copy-Item -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'update.ps1') -Destination (Join-Path -Path $portableDir -ChildPath 'update.ps1') -Force

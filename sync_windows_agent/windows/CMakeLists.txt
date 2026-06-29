@@ -38,7 +38,11 @@ add_definitions(-DUNICODE -D_UNICODE)
 # default. In most cases, you should add new options to specific targets instead
 # of modifying this function.
 function(APPLY_STANDARD_SETTINGS TARGET)
-  target_compile_features(${TARGET} PUBLIC cxx_std_17)
+  if(MSVC)
+    target_compile_options(${TARGET} PUBLIC /std:c++17)
+  else()
+    target_compile_features(${TARGET} PUBLIC cxx_std_17)
+  endif()
   target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100")
   target_compile_options(${TARGET} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/FS>)
   target_compile_options(${TARGET} PRIVATE /EHsc)

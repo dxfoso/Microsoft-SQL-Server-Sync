@@ -1653,7 +1653,7 @@ async function handleRequest(req, res) {
         table,
         direction,
         syncMode,
-        message: `Queued merge sync for ${table}.`,
+        message: `Queued SymmetricDS sync for ${table}.`,
       })];
     });
     await queueSave();
@@ -1714,7 +1714,7 @@ async function handleRequest(req, res) {
         status: String(body.status || "running"),
         startedAt: job.startedAt || nowIso(),
         progress: Number(body.progress || 5),
-        message: String(body.message || "Started merge replication."),
+        message: String(body.message || "Started SymmetricDS sync."),
       });
       await queueSave();
       sendJson(res, 200, { job: publicJobPayload(job) });
@@ -1743,7 +1743,7 @@ async function handleRequest(req, res) {
         status: String(body.status || "completed"),
         progress: Number(body.progress || 100),
         completedAt: nowIso(),
-        message: String(body.message || "Completed merge replication."),
+        message: String(body.message || "Completed SymmetricDS sync."),
         rowCount:
           body.rowCount !== undefined ? Number(body.rowCount) : Number(job.rowCount),
       });

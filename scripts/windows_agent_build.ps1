@@ -266,6 +266,10 @@ function Get-WindowsAgentGitCommitHash {
     try {
         $commit = (& git -C $RepoRoot rev-parse --short=12 HEAD 2>$null).Trim()
         if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($commit)) {
+            $status = (& git -C $RepoRoot status --porcelain 2>$null)
+            if ($LASTEXITCODE -eq 0 -and @($status).Count -gt 0) {
+                return "$commit-dirty"
+            }
             return $commit
         }
     } catch {

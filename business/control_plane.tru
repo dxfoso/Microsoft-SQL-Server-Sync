@@ -54,6 +54,10 @@ class Agent {
   field diagnosticStatus: string min=0 max=32
   field diagnosticSummary: string min=0 max=4000
   field diagnosticPayload: string min=0 max=64000
+  field symmetricDsStatus: string min=0 max=64
+  field symmetricDsConfigPath: string min=0 max=512
+  field symmetricDsMessage: string min=0 max=4000
+  field symmetricDsConfiguredAt: datetime?
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field updatedAt: datetime
@@ -126,11 +130,13 @@ function raw_json_error(status: int, message: string): json {
 
 function sync_engine_metadata(): map<json> {
   return {
-    mode: 'mergeReplication',
-    centralStore: 'sqlserver',
-    sqlServerMergeReplication: true,
+    mode: 'symmetricDs',
+    centralStore: 'symmetricds',
+    sqlServerMergeReplication: false,
+    symmetricDs: true,
+    backgroundService: true,
     legacySnapshotCompatibility: false,
-    conflictPolicy: 'sql-server-merge-replication'
+    conflictPolicy: 'symmetricds-default'
   };
 }
 
@@ -991,7 +997,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'symmetricDsStatus', 'symmetricDsConfigPath', 'symmetricDsMessage', 'symmetricDsConfiguredAt', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1070,6 +1076,12 @@ function public_agent_payload(agent: map<json>): map<json> {
     clientVersion: agent.clientVersion ?? '',
     lastHeartbeat: agent.lastHeartbeat,
     selectedTable: agent.selectedTable,
+    symmetricDs: {
+      status: agent.symmetricDsStatus,
+      configPath: agent.symmetricDsConfigPath,
+      message: agent.symmetricDsMessage,
+      configuredAt: agent.symmetricDsConfiguredAt
+    },
     diagnostics: agent_diagnostics_payload(agent),
     tables: nextTables,
     clientUserId: agent.clientUserId,
@@ -1382,6 +1394,10 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       diagnosticStatus: 'idle',
       diagnosticSummary: '',
       diagnosticPayload: '',
+      symmetricDsStatus: 'unknown',
+      symmetricDsConfigPath: '',
+      symmetricDsMessage: '',
+      symmetricDsConfiguredAt: null,
       clientVersion: '',
       clientUserId,
       ownerUserId,
@@ -1418,6 +1434,10 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     diagnosticStatus: 'idle',
     diagnosticSummary: '',
     diagnosticPayload: '',
+    symmetricDsStatus: 'unknown',
+    symmetricDsConfigPath: '',
+    symmetricDsMessage: '',
+    symmetricDsConfiguredAt: null,
     clientUserId,
     ownerUserId,
     updatedAt: now_iso()
@@ -1567,48 +1587,8 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
     return [];
   }
   if (sourceAgent != null) {
-    const sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
     let rows = [];
     for (const table of tablesToCreate) {
-      let sourceBusy = false;
-      for (const sourceActiveTable of sourceActiveTables) {
-        if (sourceActiveTable == table) {
-          sourceBusy = true;
-        }
-      }
-      if (sourceBusy) {
-        continue;
-      }
-      const publicationName = merge_publication_name(sourceAgent.clientName, table);
-      rows = rows.concat([{
-        id: uuid.v4(),
-        clientName: sourceAgent.clientName,
-        sourceClientName: sourceAgent.clientName,
-        subscriberClientName: agent.clientName,
-        table,
-        direction: 'sync',
-        mergeRole: 'publisher',
-        publisherServer: sourceAgent.server,
-        publisherDatabase: sourceAgent.database,
-        publicationName,
-        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sourceAgent.replicationUser,
-        publisherPassword: sourceAgent.replicationPassword,
-        status: 'queued',
-        progress: 0,
-        rowCount: 0,
-        snapshotBytes: 0,
-        snapshotCreatedAt: null,
-        snapshotId: null,
-        createdAt: now_iso(),
-        updatedAt: now_iso(),
-        startedAt: null,
-        completedAt: null,
-        message: string.concat('Queued merge publication for ', table, '.'),
-        error: null,
-        clientUserId: sourceAgent.clientUserId,
-        ownerUserId: sourceAgent.ownerUserId
-      }]);
       rows = rows.concat([{
         id: uuid.v4(),
         clientName: agent.clientName,
@@ -1616,10 +1596,10 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         subscriberClientName: agent.clientName,
         table,
         direction: 'sync',
-        mergeRole: 'subscriber',
+        mergeRole: 'symmetricds',
         publisherServer: sourceAgent.server,
         publisherDatabase: sourceAgent.database,
-        publicationName,
+        publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
         publisherUser: sourceAgent.replicationUser,
         publisherPassword: sourceAgent.replicationPassword,
@@ -1633,7 +1613,7 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         updatedAt: now_iso(),
         startedAt: null,
         completedAt: null,
-        message: string.concat('Queued merge subscription for ', table, '.'),
+        message: string.concat('Queued SymmetricDS sync for ', table, '.'),
         error: null,
         clientUserId: agent.clientUserId,
         ownerUserId: agent.ownerUserId
@@ -1657,10 +1637,10 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
       subscriberClientName: agent.clientName,
       table,
       direction: 'sync',
-      mergeRole: 'subscriber',
+      mergeRole: 'symmetricds',
       publisherServer: agent.server,
       publisherDatabase,
-      publicationName: merge_publication_name(agent.clientName, table),
+      publicationName: '',
       publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
       publisherUser: agent.replicationUser,
       publisherPassword: agent.replicationPassword,
@@ -1674,7 +1654,7 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
       updatedAt: now_iso(),
       startedAt: null,
       completedAt: null,
-      message: string.concat('Queued merge sync for ', table, '.'),
+      message: string.concat('Queued SymmetricDS sync for ', table, '.'),
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId: agent.ownerUserId
@@ -1911,7 +1891,7 @@ function live_state(token: string? = null): map<json> {
   };
 }
 
-function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, clientVersion: string = '', token: string? = null): map<json> {
+function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, clientVersion: string = '', symmetricDsStatus: string = 'unknown', symmetricDsConfigPath: string = '', symmetricDsMessage: string = '', symmetricDsConfigured: bool = false, token: string? = null): map<json> {
   let resolvedClientName = '';
   const current = current_user_record(token);
   if (current == null) {
@@ -1945,6 +1925,10 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
   nextTables = bounded_agent_tables(nextTables, selectedTable);
   nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);
+  let nextSymmetricDsConfiguredAt = agent.symmetricDsConfiguredAt;
+  if (symmetricDsConfigured) {
+    nextSymmetricDsConfiguredAt = now_iso();
+  }
   const updated = db.update(Agent, { clientName: resolvedClientName }, {
     machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
     server,
@@ -1958,6 +1942,10 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     serverConnected,
     sqlConnected,
     clientVersion: truncate_text(clientVersion.trim(), 32),
+    symmetricDsStatus: truncate_text(symmetricDsStatus.trim(), 64),
+    symmetricDsConfigPath: truncate_text(symmetricDsConfigPath.trim(), 512),
+    symmetricDsMessage: truncate_text(symmetricDsMessage.trim(), 4000),
+    symmetricDsConfiguredAt: nextSymmetricDsConfiguredAt,
     lastHeartbeat: now_iso(),
     selectedTable,
     tables: nextTables,
@@ -1979,6 +1967,48 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),
     jobs: active_jobs_for_client(resolvedClientName),
     diagnostics: agent_diagnostics_payload(nextAgent)
+  };
+}
+
+function agent_symmetricds_status_post(clientName: string? = null, status: string = 'unknown', configPath: string = '', message: string = '', configured: bool = false, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  let resolvedClientName = '';
+  if (clientName == null || clientName.trim().length == 0) {
+    if (current.username == null) {
+      resolvedClientName = normalize_user_name(current.name);
+    } else {
+      resolvedClientName = current.username;
+    }
+  } else {
+    resolvedClientName = normalize_user_name(clientName);
+  }
+  const clientUser = find_user_by_identity(resolvedClientName);
+  if (clientUser != null && !can_manage_user(current, clientUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let userId = current.id;
+  let ownerUserId = owner_namespace_for_user(current);
+  const agent = ensure_agent(resolvedClientName, userId, ownerUserId);
+  let nextSymmetricDsConfiguredAt = agent.symmetricDsConfiguredAt;
+  if (configured) {
+    nextSymmetricDsConfiguredAt = now_iso();
+  }
+  const updated = db.update(Agent, { clientName: resolvedClientName }, {
+    symmetricDsStatus: truncate_text(status.trim(), 64),
+    symmetricDsConfigPath: truncate_text(configPath.trim(), 512),
+    symmetricDsMessage: truncate_text(message.trim(), 4000),
+    symmetricDsConfiguredAt: nextSymmetricDsConfiguredAt,
+    updatedAt: now_iso()
+  });
+  if (updated == null) {
+    return raw_json_error(500, 'agent symmetricds status unavailable');
+  }
+  return {
+    ok: true,
+    agent: public_agent_payload(updated)
   };
 }
 
@@ -2393,44 +2423,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
   let createdJobsRaw = [];
   for (const table of tablesToCreate) {
     const resolvedMode = normalize_sync_mode(syncMode, true);
-    let publicationClientName = resolvedClientName;
-    if (resolvedSourceClientName.length != 0) {
-      publicationClientName = resolvedSourceClientName;
-    }
-    const publicationName = merge_publication_name(
-      publicationClientName,
-      table
-    );
     if (sourceAgent != null && resolvedSourceClientName != resolvedClientName) {
-      createdJobsRaw = createdJobsRaw.concat([{
-        id: uuid.v4(),
-        clientName: resolvedSourceClientName,
-        sourceClientName: resolvedSourceClientName,
-        subscriberClientName: resolvedClientName,
-        table,
-        direction: direction_for_sync_mode(resolvedMode),
-        mergeRole: 'publisher',
-        publisherServer: sourceAgent.server,
-        publisherDatabase: sourceAgent.database,
-        publicationName,
-        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sourceAgent.replicationUser,
-        publisherPassword: sourceAgent.replicationPassword,
-        status: 'queued',
-        progress: 0,
-        rowCount: 0,
-        snapshotBytes: 0,
-        snapshotCreatedAt: null,
-        snapshotId: null,
-        createdAt: now_iso(),
-        updatedAt: now_iso(),
-        startedAt: null,
-        completedAt: null,
-        message: string.concat('Queued merge publication for ', table, '.'),
-        error: null,
-        clientUserId: sourceAgent.clientUserId,
-        ownerUserId: sourceAgent.ownerUserId
-      }]);
       createdJobsRaw = createdJobsRaw.concat([{
         id: uuid.v4(),
         clientName: resolvedClientName,
@@ -2438,10 +2431,10 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         subscriberClientName: resolvedClientName,
         table,
         direction: direction_for_sync_mode(resolvedMode),
-        mergeRole: 'subscriber',
+        mergeRole: 'symmetricds',
         publisherServer: sourceAgent.server,
         publisherDatabase: sourceAgent.database,
-        publicationName,
+        publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
         publisherUser: sourceAgent.replicationUser,
         publisherPassword: sourceAgent.replicationPassword,
@@ -2455,7 +2448,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         updatedAt: now_iso(),
         startedAt: null,
         completedAt: null,
-        message: string.concat('Queued merge subscription for ', table, '.'),
+        message: string.concat('Queued SymmetricDS sync for ', table, '.'),
         error: null,
         clientUserId,
         ownerUserId: ownerId
@@ -2481,10 +2474,10 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       subscriberClientName: resolvedClientName,
       table,
       direction: direction_for_sync_mode(resolvedMode),
-      mergeRole: 'subscriber',
+      mergeRole: 'symmetricds',
       publisherServer,
       publisherDatabase,
-      publicationName,
+      publicationName: '',
       publisherUseWindowsAuth,
       publisherUser,
       publisherPassword,
@@ -2498,7 +2491,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       updatedAt: now_iso(),
       startedAt: null,
       completedAt: null,
-      message: string.concat('Queued merge sync for ', table, '.'),
+      message: string.concat('Queued SymmetricDS sync for ', table, '.'),
       error: null,
       clientUserId,
       ownerUserId: ownerId
@@ -2508,7 +2501,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
   return raw_json_success({ jobs: createdJobs.map((job) => public_job_payload(job)) }, 201);
 }
 
-function jobs_start(jobId: string, status: string = 'running', progress: int? = null, message: string = 'Started merge replication.', token: string? = null): map<json> {
+function jobs_start(jobId: string, status: string = 'running', progress: int? = null, message: string = 'Started SymmetricDS sync.', token: string? = null): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -2602,7 +2595,7 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed merge replication.', rowCount: int = 0, token: string? = null): map<json> {
+function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed SymmetricDS sync.', rowCount: int = 0, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');

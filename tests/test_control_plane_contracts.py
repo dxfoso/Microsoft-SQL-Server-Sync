@@ -137,6 +137,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("replicationUser,", source)
         self.assertIn("replicationPassword,", source)
 
+    def test_agent_heartbeat_persists_symmetricds_status(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+        client_api = (
+            ROOT / "sync_windows_agent" / "lib" / "live_sync_api.dart"
+        ).read_text(encoding="utf-8")
+        frontend_models = (ROOT / "frontend" / "lib" / "models.dart").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("field symmetricDsStatus: string min=0 max=64", source)
+        self.assertIn("field symmetricDsConfigPath: string min=0 max=512", source)
+        self.assertIn("symmetricDsStatus: truncate_text(symmetricDsStatus.trim(), 64)", source)
+        self.assertIn("function agent_symmetricds_status_post", source)
+        self.assertIn("'symmetricDsStatus': symmetricDsStatus", client_api)
+        self.assertIn("class AdminAgentSymmetricDs", frontend_models)
+        self.assertIn("symmetricDs: {", source)
+
     def test_ensure_agent_repairs_stale_rows_before_recreating_them(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
@@ -158,17 +177,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("db.delete(Agent, { clientName });", body)
         self.assertIn("return db.insert(Agent, {", body)
 
-    def test_jobs_create_pairs_publication_and_subscription_for_remote_source(self):
+    def test_jobs_create_queues_symmetricds_sync_for_remote_source(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });", source)
         self.assertIn("return raw_json_error(404, 'source client not found');", source)
-        self.assertIn("mergeRole: 'publisher'", source)
-        self.assertIn("mergeRole: 'subscriber'", source)
-        self.assertIn("message: string.concat('Queued merge publication for ', table, '.')", source)
-        self.assertIn("message: string.concat('Queued merge subscription for ', table, '.')", source)
+        self.assertIn("mergeRole: 'symmetricds'", source)
+        self.assertIn("message: string.concat('Queued SymmetricDS sync for ', table, '.')", source)
 
     def test_bulk_sync_all_jobs_include_required_sync_job_fields(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
@@ -184,19 +201,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         for expected in [
             "subscriberClientName: agent.clientName",
-            "mergeRole: 'subscriber'",
+            "mergeRole: 'symmetricds'",
             "publisherServer: sourceAgent.server",
             "publisherDatabase: sourceAgent.database",
-            "publicationName = merge_publication_name(sourceAgent.clientName, table)",
+            "publicationName: ''",
             "publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true",
             "publisherUser: sourceAgent.replicationUser",
             "publisherPassword: sourceAgent.replicationPassword",
-            "mergeRole: 'publisher'",
-            "clientName: sourceAgent.clientName",
+            "clientName: agent.clientName",
             "sourceClientName: sourceAgent.clientName",
             "publisherServer: agent.server",
             "publisherDatabase,",
-            "publicationName: merge_publication_name(agent.clientName, table)",
             "publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true",
             "publisherUser: agent.replicationUser",
             "publisherPassword: agent.replicationPassword",
@@ -206,28 +221,29 @@ class ControlPlaneContractsTests(unittest.TestCase):
         ]:
             self.assertIn(expected, body)
 
-    def test_windows_agent_uses_replication_procedures_instead_of_snapshot_transport(self):
+    def test_windows_agent_handles_symmetricds_jobs_instead_of_snapshot_transport(self):
         source = (ROOT / "sync_windows_agent" / "lib" / "agent_page.dart").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("Future<void> _processReplicationPublisherJob(RemoteSyncJob job) async {", source)
-        self.assertIn("Future<void> _processReplicationSubscriberJob(RemoteSyncJob job) async {", source)
-        self.assertIn("EXEC sp_addmergepublication", source)
-        self.assertIn("EXEC sp_addmergearticle", source)
-        self.assertIn("EXEC sp_addmergepullsubscription", source)
-        self.assertIn("EXEC sp_addmergepullsubscription_agent", source)
+        self.assertIn("Future<void> _processSymmetricDsJob(RemoteSyncJob job) async {", source)
+        self.assertIn("job.mergeRole == 'symmetricds'", source)
+        self.assertIn("writeNodeConfig", source)
+        self.assertNotIn("job.mergeRole == 'publisher'", source)
+        self.assertNotIn("job.mergeRole == 'subscriber'", source)
+        self.assertIn("Unsupported sync job role", source)
         self.assertNotIn("Future<void> _processUploadJob(RemoteSyncJob job) async {", source)
 
-    def test_control_plane_advertises_merge_replication_engine(self):
+    def test_control_plane_advertises_symmetricds_engine(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("function sync_engine_metadata(): map<json>", source)
-        self.assertIn("mode: 'mergeReplication'", source)
-        self.assertIn("centralStore: 'sqlserver'", source)
-        self.assertIn("sqlServerMergeReplication: true", source)
+        self.assertIn("mode: 'symmetricDs'", source)
+        self.assertIn("centralStore: 'symmetricds'", source)
+        self.assertIn("sqlServerMergeReplication: false", source)
+        self.assertIn("symmetricDs: true", source)
         self.assertIn("legacySnapshotCompatibility: false", source)
         self.assertIn("syncEngine: sync_engine_metadata()", source)
 
