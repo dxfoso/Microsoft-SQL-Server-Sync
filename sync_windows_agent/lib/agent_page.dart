@@ -2736,38 +2736,60 @@ ELSE
     var activeJob = await _controlPlaneClient.startJob(
       job.id,
       status: 'applying',
-      progress: 20,
+      progress: 10,
       message: 'Preparing SymmetricDS node configuration.',
     );
     _applyRemoteJobState(activeJob);
 
-    await _writeSymmetricDsConfig();
+    final configResult = await _writeSymmetricDsConfig();
 
     activeJob = await _controlPlaneClient.updateJobProgress(
       job.id,
       status: 'applying',
-      progress: 70,
+      progress: 25,
       message:
-          'SymmetricDS configuration is ready. Background service can process ${job.table}.',
+          'SymmetricDS configuration is ready. Copying rows for ${job.table}.',
       rowCount: job.rowCount,
       direction: job.direction,
     );
     _applyRemoteJobState(activeJob);
+
+    Future<void> reportProgress(
+      int progress,
+      String message,
+      int rowCount,
+    ) async {
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'applying',
+        progress: progress,
+        message: message,
+        rowCount: rowCount,
+        direction: job.direction,
+      );
+      _applyRemoteJobState(activeJob);
+    }
+
+    final syncResult = await _runDirectQueuedTableSync(
+      job: job,
+      onProgress: reportProgress,
+    );
 
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
       status: 'completed',
       progress: 100,
       message:
-          'SymmetricDS sync request prepared for ${_localTableName(job.table)}.',
-      rowCount: 0,
+          'Synced ${syncResult.sourceRowCount} source row${syncResult.sourceRowCount == 1 ? '' : 's'} into ${_localTableName(job.table)}. ${configResult?.message ?? ''}'
+              .trim(),
+      rowCount: syncResult.targetRowCount,
     );
     _applyRemoteJobState(
       activeJob,
       appendHistory: true,
       success: true,
       overrideMessage:
-          'SymmetricDS sync request prepared for ${_localTableName(job.table)}.',
+          'Synced ${syncResult.sourceRowCount} source row${syncResult.sourceRowCount == 1 ? '' : 's'} into ${_localTableName(job.table)}.',
     );
   }
 
@@ -2782,6 +2804,462 @@ ELSE
       logStartupEvent('Unable to mark remote job ${job.id} failed: $failError');
     }
   }
+
+  _SqlConnectionProfile _sourceProfileForJob(RemoteSyncJob job) =>
+      _SqlConnectionProfile(
+        server: job.publisherServer.trim(),
+        useWindowsAuth: job.publisherUseWindowsAuth,
+        user: job.publisherUser.trim(),
+        password: job.publisherPassword,
+      );
+
+  Future<_RemoteTableSyncResult> _runDirectQueuedTableSync({
+    required RemoteSyncJob job,
+    required Future<void> Function(int progress, String message, int rowCount)
+    onProgress,
+  }) async {
+    final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
+    if (targetDatabase.isEmpty) {
+      throw Exception(
+        'Queued sync for ${job.table} is missing the target database name.',
+      );
+    }
+
+    final localTableName = _localTableName(job.table);
+    final targetTable = _splitQualifiedName(localTableName);
+    final sourceDatabase =
+        job.publisherDatabase.trim().isEmpty
+            ? targetDatabase
+            : job.publisherDatabase.trim();
+    final sourceProfile = await _resolveSqlConnectionProfile(
+      _sourceProfileForJob(job),
+    );
+    if (sourceProfile.server.isEmpty) {
+      throw Exception(
+        'Queued sync for ${job.table} is missing the source SQL Server name.',
+      );
+    }
+
+    final targetProfile = _activeProfile();
+    final columnDefinitions = await _querySyncColumnDefinitions(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (columnDefinitions.isEmpty) {
+      throw Exception(
+        'No writable columns were found for ${targetTable.schema}.${targetTable.table}.',
+      );
+    }
+
+    final unsupportedColumns =
+        columnDefinitions.where((column) => !column.isSupported).toList();
+    if (unsupportedColumns.isNotEmpty) {
+      final names = unsupportedColumns.map((column) => column.name).join(', ');
+      throw Exception(
+        'Queued sync for ${targetTable.schema}.${targetTable.table} cannot run because these column types are not supported yet: $names.',
+      );
+    }
+
+    final syncColumns = columnDefinitions
+        .where((column) => column.isWritable)
+        .toList(growable: false);
+    if (syncColumns.isEmpty) {
+      throw Exception(
+        'Table ${targetTable.schema}.${targetTable.table} has no writable columns to sync.',
+      );
+    }
+
+    final primaryKeyColumns = await _queryPrimaryKeyColumns(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (primaryKeyColumns.isEmpty) {
+      throw Exception(
+        'Queued sync for ${targetTable.schema}.${targetTable.table} requires a primary key.',
+      );
+    }
+
+    final sourceRowCountResult = await _queryTableRowCount(
+      profile: sourceProfile,
+      database: sourceDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (!sourceRowCountResult.success) {
+      throw Exception(
+        sourceRowCountResult.errorText ?? 'Source row count failed.',
+      );
+    }
+
+    final sourceRowCount = sourceRowCountResult.value;
+    await onProgress(
+      30,
+      'Found $sourceRowCount source row${sourceRowCount == 1 ? '' : 's'} for ${_localTableName(job.table)}.',
+      0,
+    );
+
+    if (sourceRowCount == 0) {
+      final targetRowCountResult = await _queryTableRowCount(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+      );
+      if (!targetRowCountResult.success) {
+        throw Exception(
+          targetRowCountResult.errorText ?? 'Target row count lookup failed.',
+        );
+      }
+      return _RemoteTableSyncResult(
+        sourceRowCount: 0,
+        processedRowCount: 0,
+        targetRowCount: targetRowCountResult.value,
+      );
+    }
+
+    const batchSize = 200;
+    var processedRowCount = 0;
+    while (processedRowCount < sourceRowCount) {
+      final rows = await _fetchSourceTableBatch(
+        profile: sourceProfile,
+        database: sourceDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        columns: syncColumns,
+        orderColumns: primaryKeyColumns,
+        offset: processedRowCount,
+        batchSize: math.min(batchSize, sourceRowCount - processedRowCount),
+      );
+      if (rows.isEmpty) {
+        throw Exception(
+          'Source query for ${_localTableName(job.table)} returned no rows before all source data was read.',
+        );
+      }
+
+      await _applySourceBatchToTarget(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        columns: syncColumns,
+        primaryKeyColumns: primaryKeyColumns,
+        rows: rows,
+      );
+
+      processedRowCount += rows.length;
+      final progress = 30 + ((processedRowCount * 65) ~/ sourceRowCount);
+      await onProgress(
+        progress.clamp(30, 95).toInt(),
+        'Synced $processedRowCount / $sourceRowCount row${sourceRowCount == 1 ? '' : 's'} for ${_localTableName(job.table)}.',
+        processedRowCount,
+      );
+    }
+
+    final targetRowCountResult = await _queryTableRowCount(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (!targetRowCountResult.success) {
+      throw Exception(
+        targetRowCountResult.errorText ?? 'Target row count lookup failed.',
+      );
+    }
+
+    if (_selectedDatabase == targetDatabase) {
+      final visibleTableName = _stripKnownDatabaseAndDefaultSchema(
+        localTableName,
+        database: targetDatabase,
+      );
+      _applyTableRowCounts(
+        database: targetDatabase,
+        rowCounts: {visibleTableName: targetRowCountResult.value},
+      );
+      if (_selectedTable == visibleTableName) {
+        setState(() {
+          _totalTableRows = targetRowCountResult.value;
+        });
+      }
+      unawaited(_syncWithControlPlane());
+    }
+
+    return _RemoteTableSyncResult(
+      sourceRowCount: sourceRowCount,
+      processedRowCount: processedRowCount,
+      targetRowCount: targetRowCountResult.value,
+    );
+  }
+
+  Future<List<_SqlColumnDefinition>> _querySyncColumnDefinitions({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+  }) async {
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT
+  c.name,
+  t.name,
+  c.max_length,
+  c.precision,
+  c.scale,
+  c.is_identity,
+  c.is_computed
+FROM sys.columns AS c
+INNER JOIN sys.types AS t
+  ON t.user_type_id = c.user_type_id
+WHERE c.object_id = OBJECT_ID(N'${_escapeSqlLiteral(_quoteIdentifier(schema))}.${_escapeSqlLiteral(_quoteIdentifier(table))}')
+ORDER BY c.column_id;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('column metadata lookup', processResult));
+    }
+
+    final definitions = <_SqlColumnDefinition>[];
+    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      final parts = _splitRowValues(trimmedLine);
+      if (parts.length < 7) {
+        continue;
+      }
+      definitions.add(
+        _SqlColumnDefinition(
+          name: parts[0],
+          sqlType: parts[1],
+          maxLength: int.tryParse(parts[2]) ?? 0,
+          precision: int.tryParse(parts[3]) ?? 0,
+          scale: int.tryParse(parts[4]) ?? 0,
+          isIdentity: parts[5] == '1' || parts[5].toLowerCase() == 'true',
+          isComputed: parts[6] == '1' || parts[6].toLowerCase() == 'true',
+        ),
+      );
+    }
+    return definitions;
+  }
+
+  Future<List<String>> _queryPrimaryKeyColumns({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+  }) async {
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT c.name
+FROM sys.indexes AS i
+INNER JOIN sys.index_columns AS ic
+  ON ic.object_id = i.object_id
+ AND ic.index_id = i.index_id
+INNER JOIN sys.columns AS c
+  ON c.object_id = ic.object_id
+ AND c.column_id = ic.column_id
+WHERE i.is_primary_key = 1
+  AND i.object_id = OBJECT_ID(N'${_escapeSqlLiteral(_quoteIdentifier(schema))}.${_escapeSqlLiteral(_quoteIdentifier(table))}')
+ORDER BY ic.key_ordinal;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('primary key lookup', processResult));
+    }
+    return _parseSingleColumnOutput(processResult.stdout.toString());
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchSourceTableBatch({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> columns,
+    required List<String> orderColumns,
+    required int offset,
+    required int batchSize,
+  }) async {
+    final columnList = columns
+        .map((column) => _quoteIdentifier(column.name))
+        .join(', ');
+    final orderClause = orderColumns
+        .map((column) => _quoteIdentifier(column))
+        .join(', ');
+    final firstRow = offset + 1;
+    final lastRow = offset + batchSize;
+    final query = '''
+SET NOCOUNT ON;
+WITH page_source AS (
+  SELECT
+    $columnList,
+    ROW_NUMBER() OVER (ORDER BY $orderClause) AS [__sync_agent_row_number]
+  FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}
+)
+SELECT $columnList
+FROM page_source
+WHERE [__sync_agent_row_number] BETWEEN $firstRow AND $lastRow
+ORDER BY [__sync_agent_row_number]
+FOR JSON PATH, INCLUDE_NULL_VALUES;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('source row fetch', processResult));
+    }
+
+    final payload = _parseJsonResultOutput(processResult.stdout.toString());
+    if (payload.isEmpty) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final decoded = jsonDecode(payload);
+    if (decoded is! List) {
+      throw Exception('Source row fetch returned an unexpected JSON payload.');
+    }
+    return decoded
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList(growable: false);
+  }
+
+  String _parseJsonResultOutput(String output) {
+    final buffer = StringBuffer();
+    final lines = output.split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      if (_isSkippableOutputLine(line.trim())) {
+        continue;
+      }
+      buffer.write(line);
+    }
+    return buffer.toString().trim();
+  }
+
+  Future<void> _applySourceBatchToTarget({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> columns,
+    required List<String> primaryKeyColumns,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    if (rows.isEmpty) {
+      return;
+    }
+
+    final jsonPayload = jsonEncode(rows);
+    final insertColumns = columns
+        .where((column) => column.isWritable)
+        .toList(growable: false);
+    final updatableColumns = insertColumns
+        .where(
+          (column) =>
+              !primaryKeyColumns.contains(column.name) && !column.isIdentity,
+        )
+        .toList(growable: false);
+    final jsonWithClause = insertColumns
+        .map(
+          (column) =>
+              '${_quoteIdentifier(column.name)} ${column.openJsonType} ${_jsonPathForColumn(column.name)}',
+        )
+        .join(',\n      ');
+    final sourceSelectList = insertColumns
+        .map((column) => _quoteIdentifier(column.name))
+        .join(',\n      ');
+    final joinClause = primaryKeyColumns
+        .map(
+          (column) =>
+              'target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}',
+        )
+        .join(' AND ');
+    final insertColumnList = insertColumns
+        .map((column) => _quoteIdentifier(column.name))
+        .join(', ');
+    final insertValueList = insertColumns
+        .map((column) => 'source.${_quoteIdentifier(column.name)}')
+        .join(', ');
+    final updateClause =
+        updatableColumns.isEmpty
+            ? ''
+            : '''
+WHEN MATCHED THEN
+  UPDATE SET
+    ${updatableColumns.map((column) => 'target.${_quoteIdentifier(column.name)} = source.${_quoteIdentifier(column.name)}').join(',\n    ')}
+''';
+    final identityColumns = insertColumns
+        .where((column) => column.isIdentity)
+        .toList(growable: false);
+    final identityInsertOn =
+        identityColumns.isEmpty
+            ? ''
+            : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} ON;';
+    final identityInsertOff =
+        identityColumns.isEmpty
+            ? ''
+            : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
+    final query = '''
+SET NOCOUNT ON;
+DECLARE @payload nvarchar(max) = N'${_escapeSqlLiteral(jsonPayload)}';
+$identityInsertOn
+WITH source_rows AS (
+  SELECT
+      $sourceSelectList
+  FROM OPENJSON(@payload)
+  WITH (
+      $jsonWithClause
+  )
+)
+MERGE ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} AS target
+USING source_rows AS source
+ON $joinClause
+$updateClause
+WHEN NOT MATCHED BY TARGET THEN
+  INSERT ($insertColumnList)
+  VALUES ($insertValueList);
+$identityInsertOff
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('target upsert', processResult));
+    }
+  }
+
+  String _jsonPathForColumn(String columnName) =>
+      "'\$.\"${columnName.replaceAll('"', '\\"')}\"'";
 
   Future<_StringQueryResult> _queryDatabases({
     required _SqlConnectionProfile profile,
@@ -5977,6 +6455,100 @@ class _SqlConnectionProfile {
   final bool useWindowsAuth;
   final String user;
   final String password;
+}
+
+class _SqlColumnDefinition {
+  const _SqlColumnDefinition({
+    required this.name,
+    required this.sqlType,
+    required this.maxLength,
+    required this.precision,
+    required this.scale,
+    required this.isIdentity,
+    required this.isComputed,
+  });
+
+  final String name;
+  final String sqlType;
+  final int maxLength;
+  final int precision;
+  final int scale;
+  final bool isIdentity;
+  final bool isComputed;
+
+  bool get isRowVersion {
+    final normalized = sqlType.trim().toLowerCase();
+    return normalized == 'rowversion' || normalized == 'timestamp';
+  }
+
+  bool get isSupported {
+    final normalized = sqlType.trim().toLowerCase();
+    if (isComputed || isRowVersion) {
+      return true;
+    }
+    return !const {
+      'image',
+      'text',
+      'ntext',
+      'sql_variant',
+      'hierarchyid',
+      'geometry',
+      'geography',
+      'cursor',
+      'table',
+    }.contains(normalized);
+  }
+
+  bool get isWritable => !isComputed && !isRowVersion;
+
+  String get openJsonType {
+    final normalized = sqlType.trim().toLowerCase();
+    if (normalized == 'nvarchar' || normalized == 'nchar') {
+      if (maxLength < 0) {
+        return 'nvarchar(max)';
+      }
+      return 'nvarchar(${maxLength ~/ 2})';
+    }
+    if (normalized == 'varchar' || normalized == 'char') {
+      if (maxLength < 0) {
+        return 'varchar(max)';
+      }
+      return '$normalized($maxLength)';
+    }
+    if (normalized == 'varbinary' || normalized == 'binary') {
+      if (maxLength < 0) {
+        return 'varbinary(max)';
+      }
+      return '$normalized($maxLength)';
+    }
+    if (normalized == 'decimal' || normalized == 'numeric') {
+      return '$normalized($precision,$scale)';
+    }
+    if (normalized == 'datetime2' ||
+        normalized == 'datetimeoffset' ||
+        normalized == 'time') {
+      return '$normalized($scale)';
+    }
+    if (normalized == 'sysname') {
+      return 'nvarchar(128)';
+    }
+    if (normalized == 'xml') {
+      return 'nvarchar(max)';
+    }
+    return normalized;
+  }
+}
+
+class _RemoteTableSyncResult {
+  const _RemoteTableSyncResult({
+    required this.sourceRowCount,
+    required this.processedRowCount,
+    required this.targetRowCount,
+  });
+
+  final int sourceRowCount;
+  final int processedRowCount;
+  final int targetRowCount;
 }
 
 class _StringQueryResult {
