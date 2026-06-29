@@ -70,6 +70,21 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("'tables'", body)
         self.assertNotIn("diagnosticPayload", body)
 
+    def test_bounded_agent_tables_prioritizes_enabled_tables(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r"function bounded_agent_tables\(.*?\): array<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+
+        self.assertIn("if (tableState.enabled == true) {", body)
+        self.assertIn("if (existing.table == tableState.table) {", body)
+
     def test_sync_jobs_carry_merge_replication_metadata(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
@@ -223,6 +238,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
             self.assertIn(expected, body)
 
         self.assertIn("function remote_source_server(agent: map<json>): string {", source)
+
+    def test_bulk_sync_all_prefers_latest_completed_source_direction(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "function latest_completed_source_for_target_table(targetClientName: string, table: string): string {",
+            source,
+        )
+        self.assertIn(
+            "function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>): string {",
+            source,
+        )
+        self.assertIn(
+            "const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, visibleAgents);",
+            source,
+        )
+        self.assertIn("skippedSourceResolutionTables", source)
 
     def test_snapshot_record_stays_backward_compatible_with_live_schema(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
