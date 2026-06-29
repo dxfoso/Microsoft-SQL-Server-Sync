@@ -11,6 +11,7 @@
 namespace {
 
 using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
+HANDLE g_instance_mutex = nullptr;
 
 bool HasEnvironmentVariable(const wchar_t* name) {
   const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
@@ -74,6 +75,31 @@ void LogWindowsVersion() {
   LogStartupEvent(version_message);
 }
 
+bool AcquireSingleInstanceMutex() {
+  g_instance_mutex =
+      CreateMutexW(nullptr, FALSE, L"Local\\MicrosoftSqlServerSyncAgent");
+  if (g_instance_mutex == nullptr) {
+    LogStartupLastError(L"CreateMutexW failed for single-instance guard");
+    return true;
+  }
+
+  if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    LogStartupEvent(L"Another sync_windows_agent instance is already running. Exiting duplicate launch.");
+    CloseHandle(g_instance_mutex);
+    g_instance_mutex = nullptr;
+    return false;
+  }
+
+  return true;
+}
+
+void ReleaseSingleInstanceMutex() {
+  if (g_instance_mutex != nullptr) {
+    CloseHandle(g_instance_mutex);
+    g_instance_mutex = nullptr;
+  }
+}
+
 }  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
@@ -81,6 +107,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   LogStartupEvent(L"Native wWinMain starting");
   LogWindowsVersion();
   ConfigureEngineSwitches();
+  if (!AcquireSingleInstanceMutex()) {
+    return EXIT_SUCCESS;
+  }
 
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
@@ -111,6 +140,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     }
     LogStartupLastError(L"Native window create failed last_error");
     LogStartupEvent(L"Native window create failed");
+    ReleaseSingleInstanceMutex();
     return EXIT_FAILURE;
   }
   LogStartupEvent(L"Native window create succeeded");
@@ -124,6 +154,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   LogStartupEvent(L"Native message pump exiting");
+  ReleaseSingleInstanceMutex();
   ::CoUninitialize();
   return EXIT_SUCCESS;
 }

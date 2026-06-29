@@ -144,6 +144,14 @@ class SyncContractsTests(unittest.TestCase):
             2,
         )
 
+    def test_windows_runner_enforces_single_instance(self):
+        main_cpp = read_text("sync_windows_agent/windows/runner/main.cpp")
+
+        self.assertIn("CreateMutexW(nullptr, FALSE, L\"Local\\\\MicrosoftSqlServerSyncAgent\")", main_cpp)
+        self.assertIn("if (GetLastError() == ERROR_ALREADY_EXISTS)", main_cpp)
+        self.assertIn("Another sync_windows_agent instance is already running. Exiting duplicate launch.", main_cpp)
+        self.assertIn("ReleaseSingleInstanceMutex();", main_cpp)
+
     def test_windows_agent_client_restores_snapshot_transport_endpoints(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
