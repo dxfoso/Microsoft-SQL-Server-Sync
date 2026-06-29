@@ -1,0 +1,49 @@
+{
+  "name": "mig_20260629_044457",
+  "timestamp": "2026-06-29T04:44:57.162050900+00:00",
+  "objects": [
+    {
+      "object": "SnapshotRecord",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "previewRows",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "columns",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "rows",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "array<json>",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

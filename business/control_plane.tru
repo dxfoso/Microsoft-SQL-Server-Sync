@@ -112,6 +112,9 @@ class SnapshotRecord {
   field checksum: string min=1 max=128
   field createdAt: datetime
   field snapshotBytes: int min=0 max=2147483647
+  field columns: array<json>
+  field rows: array<json>
+  field previewRows: array<json>
   field compressedBytes: int min=0 max=2147483647
   field chunkCount: int min=0 max=10000
   field encoding: string min=1 max=16
@@ -2887,6 +2890,9 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: stri
     checksum: snapshot_checksum({ id: uploadId, sourceJobId: jobId, table: session.table, rowCount: session.rowCount, snapshotBytes: session.snapshotBytes, compressedBytes: session.compressedBytes }),
     createdAt: snapshotCreatedAt,
     snapshotBytes: session.snapshotBytes,
+    columns: [],
+    rows: [],
+    previewRows: [],
     compressedBytes: session.compressedBytes,
     chunkCount: session.chunkCount,
     encoding: session.encoding,

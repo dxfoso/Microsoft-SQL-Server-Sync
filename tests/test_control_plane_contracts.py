@@ -223,6 +223,18 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("function remote_source_server(agent: map<json>): string {", source)
 
+    def test_snapshot_record_stays_backward_compatible_with_live_schema(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("field columns: array<json>", source)
+        self.assertIn("field rows: array<json>", source)
+        self.assertIn("field previewRows: array<json>", source)
+        self.assertIn("columns: [],", source)
+        self.assertIn("rows: [],", source)
+        self.assertIn("previewRows: [],", source)
+
     def test_windows_agent_handles_symmetricds_jobs_instead_of_snapshot_transport(self):
         source = (ROOT / "sync_windows_agent" / "lib" / "agent_page.dart").read_text(
             encoding="utf-8"
