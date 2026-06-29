@@ -46,6 +46,9 @@ spec:
               value: "/call"
             - name: SQL_SYNC_ENGINE_MODE
               value: {{ .Values.syncEngine.mode | quote }}
+          volumeMounts:
+            - name: frontend-client-updates
+              mountPath: /app/data/client-updates
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
           readinessProbe:
@@ -60,3 +63,7 @@ spec:
               port: 80
             initialDelaySeconds: 30
             periodSeconds: 20
+      volumes:
+        - name: frontend-client-updates
+          persistentVolumeClaim:
+            claimName: {{ include "sync-admin-web.frontendClientUpdatesPvcName" . }}

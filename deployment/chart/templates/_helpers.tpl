@@ -36,6 +36,10 @@ sql-sync
 {{- include "sync-admin-web.componentFullname" (list . "back-data") -}}
 {{- end -}}
 
+{{- define "sync-admin-web.frontendClientUpdatesPvcName" -}}
+{{- include "sync-admin-web.componentFullname" (list . "front-client-updates") -}}
+{{- end -}}
+
 {{- define "sync-admin-web.postgresPvcName" -}}
 {{- include "sync-admin-web.componentFullname" (list . "postgres-data") -}}
 {{- end -}}

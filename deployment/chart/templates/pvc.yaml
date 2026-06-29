@@ -21,6 +21,25 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  name: {{ include "sync-admin-web.frontendClientUpdatesPvcName" . }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.frontend.clientUpdates.size | quote }}
+  {{- if .Values.frontend.clientUpdates.storageClassName }}
+  storageClassName: {{ .Values.frontend.clientUpdates.storageClassName | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
   name: {{ include "sync-admin-web.postgresPvcName" . }}
   namespace: {{ include "sync-admin-web.resourceNamespace" . }}
   labels:

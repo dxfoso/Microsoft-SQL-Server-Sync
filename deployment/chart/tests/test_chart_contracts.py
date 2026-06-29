@@ -30,8 +30,8 @@ class ChartContractsTests(unittest.TestCase):
 
     def test_values_keep_production_pod_defaults_and_use_endpoint_upstreams(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
-        self.assertIn("frontend:\n  replicas: 2\n", values_yaml)
-        self.assertIn("backend:\n  enabled: true\n  replicas: 2\n", values_yaml)
+        self.assertIn("frontend:\n  replicas: 1\n", values_yaml)
+        self.assertIn("backend:\n  enabled: true\n  replicas: 1\n", values_yaml)
         self.assertNotIn('nginx.ingress.kubernetes.io/service-upstream: "true"', values_yaml)
         self.assertIn(
             'nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_503 http_504"',
@@ -127,6 +127,8 @@ class ChartContractsTests(unittest.TestCase):
         frontend_deployment = (ROOT / "templates" / "deployment.yaml").read_text(
             encoding="utf-8"
         )
+        pvc = (ROOT / "templates" / "pvc.yaml").read_text(encoding="utf-8")
+        helpers = (ROOT / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
 
         self.assertNotIn("backendBaseUrl", values_yaml)
         self.assertNotIn("apiBaseUrl", values_yaml)
@@ -134,6 +136,10 @@ class ChartContractsTests(unittest.TestCase):
         self.assertNotIn("publicHost", values_yaml)
         self.assertIn('value: "/call"', frontend_deployment)
         self.assertNotIn(".Values.frontend.backendBaseUrl", frontend_deployment)
+        self.assertIn("mountPath: /app/data/client-updates", frontend_deployment)
+        self.assertIn("sync-admin-web.frontendClientUpdatesPvcName", frontend_deployment)
+        self.assertIn("frontendClientUpdatesPvcName", helpers)
+        self.assertIn("frontend.clientUpdates.size", pvc)
 
     def test_chart_default_images_are_not_latest(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")

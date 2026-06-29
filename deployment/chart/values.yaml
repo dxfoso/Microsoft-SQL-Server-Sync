@@ -48,8 +48,11 @@ certManager:
     ingressClassName: nginx
 
 frontend:
-  replicas: 2
+  replicas: 1
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:dev
+  clientUpdates:
+    size: 2Gi
+    storageClassName: ""
   resources:
     requests:
       cpu: 300m
@@ -60,7 +63,7 @@ frontend:
 
 backend:
   enabled: true
-  replicas: 2
+  replicas: 1
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:dev
   secretName: sql-sync-backend
   service:
