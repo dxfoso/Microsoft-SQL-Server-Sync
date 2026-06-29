@@ -202,7 +202,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         for expected in [
             "subscriberClientName: agent.clientName",
             "mergeRole: 'symmetricds'",
-            "publisherServer: sourceAgent.server",
+            "publisherServer: remote_source_server(sourceAgent)",
             "publisherDatabase: sourceAgent.database",
             "publicationName: ''",
             "publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true",
@@ -220,6 +220,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "snapshotId: null",
         ]:
             self.assertIn(expected, body)
+
+        self.assertIn("function remote_source_server(agent: map<json>): string {", source)
 
     def test_windows_agent_handles_symmetricds_jobs_instead_of_snapshot_transport(self):
         source = (ROOT / "sync_windows_agent" / "lib" / "agent_page.dart").read_text(

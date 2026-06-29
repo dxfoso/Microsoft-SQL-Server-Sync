@@ -312,6 +312,27 @@ function sync_table_reference(syncTable: string): map<json> {
   };
 }
 
+function remote_source_server(agent: map<json>): string {
+  const machineName = string.from(agent.machineName ?? '').trim();
+  const server = string.from(agent.server ?? '').trim();
+  if (server.length == 0 || machineName.length == 0) {
+    return server;
+  }
+  const normalized = server.toLowerCase();
+  if (normalized == '.' || normalized == 'localhost' || normalized == '127.0.0.1') {
+    return machineName;
+  }
+  const parts = server.split('\\');
+  if (parts.length >= 2) {
+    const host = string.from(parts[0]).trim().toLowerCase();
+    const instance = string.from(parts[1]).trim();
+    if ((host == '.' || host == 'localhost' || host == '127.0.0.1') && instance.length != 0) {
+      return string.concat(machineName, '\\', instance);
+    }
+  }
+  return server;
+}
+
 function table_sync_policy_database_name(policy: map<json>): string {
   if (policy.database != null && string.from(policy.database).trim().length != 0) {
     return string.from(policy.database).trim();
@@ -1597,7 +1618,7 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         table,
         direction: 'sync',
         mergeRole: 'symmetricds',
-        publisherServer: sourceAgent.server,
+        publisherServer: remote_source_server(sourceAgent),
         publisherDatabase: sourceAgent.database,
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
@@ -2432,7 +2453,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         table,
         direction: direction_for_sync_mode(resolvedMode),
         mergeRole: 'symmetricds',
-        publisherServer: sourceAgent.server,
+        publisherServer: remote_source_server(sourceAgent),
         publisherDatabase: sourceAgent.database,
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
@@ -2461,7 +2482,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
     let publisherUser = '';
     let publisherPassword = '';
     if (sourceAgent != null) {
-      publisherServer = sourceAgent.server;
+      publisherServer = remote_source_server(sourceAgent);
       publisherDatabase = sourceAgent.database;
       publisherUseWindowsAuth = sourceAgent.replicationUseWindowsAuth == true;
       publisherUser = sourceAgent.replicationUser;
