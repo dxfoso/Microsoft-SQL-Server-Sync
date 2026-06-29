@@ -127,6 +127,9 @@ class SyncContractsTests(unittest.TestCase):
         update_script = read_text("update.ps1")
 
         self.assertIn("function Get-AgentProcesses {", update_script)
+        self.assertGreaterEqual(update_script.count("function Stop-AgentProcesses {"), 2)
+        self.assertIn("$agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)", update_script)
+        self.assertIn("$remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)", update_script)
         self.assertIn(
             "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir",
             update_script,
@@ -142,6 +145,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertGreaterEqual(
             update_script.count("Stop-AgentProcesses -TargetInstallDir $InstallDir"),
             2,
+        )
+        self.assertIn(
+            'Write-UpdateLog -Message "Finalize update helper started. payload=$PayloadDir install=$InstallDir parent=$ParentProcessId" -LogPath $logPath',
+            update_script,
         )
 
     def test_windows_runner_enforces_single_instance(self):

@@ -7,46 +7,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Get-AgentProcesses {
-    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
-
-    $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
-    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
-
-    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {
-            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
-                return $false
-            }
-            $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
-            return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-        })
-}
-
-function Stop-AgentProcesses {
-    param(
-        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
-        [int] $MaxWaitSeconds = 30
-    )
-
-    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MaxWaitSeconds))
-    do {
-        $agentProcesses = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
-        if ($agentProcesses.Count -eq 0) {
-            return
-        }
-        foreach ($process in $agentProcesses) {
-            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-        }
-        Start-Sleep -Milliseconds 250
-    } while ([DateTime]::UtcNow -lt $deadline)
-
-    $remaining = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
-    if ($remaining.Count -gt 0) {
-        throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
-    }
-}
-
 function Write-UpdateLog {
     param(
         [Parameter(Mandatory = $true)][string] $Message,
@@ -260,8 +220,8 @@ function Stop-AgentProcesses {
 
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MaxWaitSeconds))
     do {
-        $agentProcesses = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
-        if ($agentProcesses.Count -eq 0) {
+        $agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+        if (@($agentProcesses).Count -eq 0) {
             return
         }
         foreach ($process in $agentProcesses) {
@@ -271,8 +231,8 @@ function Stop-AgentProcesses {
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
 
-    $remaining = Get-AgentProcesses -TargetInstallDir $TargetInstallDir
-    if ($remaining.Count -gt 0) {
+    $remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+    if (@($remaining).Count -gt 0) {
         throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
     }
 }
@@ -311,6 +271,47 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+function Get-AgentProcesses {
+    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+
+    $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
+    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
+
+    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
+                return $false
+            }
+            $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+            return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+}
+
+function Stop-AgentProcesses {
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [int] $MaxWaitSeconds = 30
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MaxWaitSeconds))
+    do {
+        $agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+        if (@($agentProcesses).Count -eq 0) {
+            return
+        }
+        foreach ($process in $agentProcesses) {
+            Write-Host "Stopping sync_windows_agent.exe [$($process.ProcessId)]"
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    $remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+    if (@($remaining).Count -gt 0) {
+        throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
+    }
+}
 
 function Write-UpdateLog {
     param(
