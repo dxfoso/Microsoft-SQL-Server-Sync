@@ -2903,9 +2903,10 @@ ELSE
   Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(
     RemoteSyncJob job,
   ) async {
+    final tableDatabase = _databaseNameFromSyncKey(job.table).trim();
     final database =
-        job.publisherDatabase.trim().isEmpty
-            ? _databaseNameFromSyncKey(job.table).trim()
+        tableDatabase.isNotEmpty
+            ? tableDatabase
             : job.publisherDatabase.trim();
     if (database.isEmpty) {
       throw Exception(
