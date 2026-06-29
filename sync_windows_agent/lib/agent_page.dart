@@ -1477,6 +1477,56 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return updateScript.path.replaceAll('/', r'\');
   }
 
+  List<String> _clientUpdatePowerShellArgs(ClientUpdateInfo updateInfo) {
+    final manifestUrl = _clientUpdateManifestUrl();
+    final scriptUrl = _clientUpdateScriptUrl(updateInfo);
+    final installDir = File(
+      Platform.resolvedExecutable,
+    ).parent.path.replaceAll('/', r'\');
+    final localScriptPath = _localClientUpdateScriptPath();
+    if (scriptUrl.isNotEmpty) {
+      return <String>[
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
+            "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
+            "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
+            "-InstallDir '${_powershellSingleQuoted(installDir)}'",
+      ];
+    }
+    if (localScriptPath != null) {
+      return <String>[
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-File',
+        localScriptPath,
+        '-ManifestUrl',
+        manifestUrl,
+        '-InstallDir',
+        installDir,
+      ];
+    }
+    return <String>[
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-WindowStyle',
+      'Hidden',
+      '-Command',
+      "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
+          "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
+          "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
+          "-InstallDir '${_powershellSingleQuoted(installDir)}'",
+    ];
+  }
+
   void _retryAutomaticClientUpdateIfReady() {
     final updateInfo = _clientUpdateInfo;
     if (updateInfo == null) {
@@ -1508,38 +1558,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final manifestUrl = _clientUpdateManifestUrl();
-    final scriptUrl = _clientUpdateScriptUrl(updateInfo);
-    final installDir = File(
-      Platform.resolvedExecutable,
-    ).parent.path.replaceAll('/', r'\');
-    final localScriptPath = _localClientUpdateScriptPath();
-    final psArgs =
-        localScriptPath != null
-            ? <String>[
-              '-NoProfile',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-WindowStyle',
-              'Hidden',
-              '-File',
-              localScriptPath,
-              '-ManifestUrl',
-              manifestUrl,
-              '-InstallDir',
-              installDir,
-            ]
-            : <String>[
-              '-NoProfile',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-WindowStyle',
-              'Hidden',
-              '-Command',
-              "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
-                  "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
-                  "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
-                  "-InstallDir '${_powershellSingleQuoted(installDir)}'",
-            ];
+    final psArgs = _clientUpdatePowerShellArgs(updateInfo);
 
     try {
       setState(() {
@@ -1594,6 +1613,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       Platform.resolvedExecutable,
     ).parent.path.replaceAll('/', r'\');
     final localScriptPath = _localClientUpdateScriptPath();
+    if (scriptUrl.isNotEmpty) {
+      return "powershell -ExecutionPolicy Bypass -NoProfile -Command \"& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing -Uri '$scriptUrl').Content)) -ManifestUrl '$manifestUrl' -InstallDir '$installDir'\"";
+    }
     if (localScriptPath != null) {
       return "powershell -ExecutionPolicy Bypass -NoProfile -File '$localScriptPath' -ManifestUrl '$manifestUrl' -InstallDir '$installDir'";
     }

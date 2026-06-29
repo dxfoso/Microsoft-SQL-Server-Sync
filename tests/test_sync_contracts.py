@@ -74,6 +74,14 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("required RemoteSnapshot snapshot", agent_page)
         self.assertIn("Downloading compressed snapshot", agent_page)
 
+    def test_windows_agent_prefers_server_published_update_script(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("List<String> _clientUpdatePowerShellArgs(ClientUpdateInfo updateInfo)", agent_page)
+        self.assertIn("if (scriptUrl.isNotEmpty) {", agent_page)
+        self.assertIn("Invoke-WebRequest -UseBasicParsing ", agent_page)
+        self.assertIn("if (localScriptPath != null) {", agent_page)
+
     def test_windows_agent_client_restores_snapshot_transport_endpoints(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
