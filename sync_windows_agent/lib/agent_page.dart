@@ -94,6 +94,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
+  static const int _heartbeatTablePayloadLimit = 150;
 
   late final TextEditingController _serverController;
   final TextEditingController _userController = TextEditingController();
@@ -1120,12 +1121,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Map<String, SyncTableState> _heartbeatTablesPayload() {
-    final tableNames = <String>{
-      for (final table in _syncState.tables.keys)
-        if (table.trim().isNotEmpty) table,
-      for (final table in _tables)
-        if (table.trim().isNotEmpty) table,
-    }.toList(growable: false);
+    final tableNames = _boundedHeartbeatTableNames();
 
     // Heartbeats only need live table metadata. Keep local history details
     // out of the request body so the control-plane payload stays bounded.
@@ -1142,6 +1138,49 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         );
       }),
     );
+  }
+
+  List<String> _boundedHeartbeatTableNames() {
+    final ordered = <String>[];
+    final seen = <String>{};
+
+    void addTableName(String table) {
+      final trimmed = table.trim();
+      if (trimmed.isEmpty || !seen.add(trimmed)) {
+        return;
+      }
+      ordered.add(trimmed);
+    }
+
+    if (_selectedTable != null) {
+      addTableName(_syncTableKey(_selectedTable!));
+    }
+    for (final job in _activeJobs) {
+      addTableName(job.table);
+    }
+    for (final entry in _syncState.tables.entries) {
+      if (entry.value.enabled) {
+        addTableName(entry.key);
+      }
+    }
+    for (final table in _syncState.tables.keys) {
+      addTableName(table);
+      if (ordered.length >= _heartbeatTablePayloadLimit) {
+        break;
+      }
+    }
+    if (ordered.length < _heartbeatTablePayloadLimit) {
+      for (final table in _tables) {
+        addTableName(_syncTableKey(table));
+        if (ordered.length >= _heartbeatTablePayloadLimit) {
+          break;
+        }
+      }
+    }
+    if (ordered.length <= _heartbeatTablePayloadLimit) {
+      return ordered;
+    }
+    return ordered.sublist(0, _heartbeatTablePayloadLimit);
   }
 
   List<Map<String, String>> _tableRelationshipsPayload() {

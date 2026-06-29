@@ -2338,7 +2338,6 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   }
   const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
   nextTables = bounded_agent_tables(nextTables, selectedTable);
-  nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);
   let nextSymmetricDsConfiguredAt = agent.symmetricDsConfiguredAt;
   if (symmetricDsConfigured) {
     nextSymmetricDsConfiguredAt = now_iso();

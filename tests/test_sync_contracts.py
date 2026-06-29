@@ -107,6 +107,22 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("unawaited(_checkShellClientUpdate());", app_shell)
 
+    def test_windows_agent_bounds_heartbeat_table_payloads(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn(
+            "static const int _heartbeatTablePayloadLimit = 150;",
+            agent_page,
+        )
+        self.assertIn("List<String> _boundedHeartbeatTableNames() {", agent_page)
+        self.assertIn("for (final job in _activeJobs) {", agent_page)
+        self.assertIn("if (entry.value.enabled) {", agent_page)
+        self.assertIn(
+            "if (ordered.length >= _heartbeatTablePayloadLimit) {",
+            agent_page,
+        )
+        self.assertIn("return ordered.sublist(0, _heartbeatTablePayloadLimit);", agent_page)
+
     def test_windows_agent_client_restores_snapshot_transport_endpoints(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

@@ -107,7 +107,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("required this.publisherDatabase,", client_api)
         self.assertIn("required this.publicationName,", client_api)
 
-    def test_agent_payloads_bound_table_lists_before_policy_application(self):
+    def test_agent_payloads_bound_table_lists_before_persisting_heartbeat_state(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(
             encoding="utf-8"
         )
@@ -132,13 +132,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "nextTables = bounded_agent_tables(nextTables, selectedTable);",
             heartbeat_body,
         )
-        self.assertIn(
+        self.assertNotIn(
             "nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);",
             heartbeat_body,
-        )
-        self.assertLess(
-            heartbeat_body.index("bounded_agent_tables"),
-            heartbeat_body.index("apply_table_sync_policies"),
         )
 
     def test_agent_heartbeat_persists_replication_connection_settings(self):
