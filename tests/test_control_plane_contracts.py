@@ -267,6 +267,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
             source,
         )
         self.assertIn("skippedSourceResolutionTables", source)
+        self.assertIn("function effective_agent_online(agent: map<json>): bool {", source)
+        self.assertIn("|| !effective_agent_online(candidate)) {", source)
+        self.assertIn("&& effective_agent_online(candidate)) {", source)
+
+    def test_live_state_and_bulk_requests_ignore_stale_online_flags(self):
+        source = (ROOT / "business" / "control_plane.tru").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("function agent_online_timeout_minutes(agent: map<json>): int {", source)
+        self.assertIn("return date.diff(date.now(), heartbeat, 'min') <= agent_online_timeout_minutes(agent);", source)
+        self.assertIn("isOnline: effective_agent_online(agent),", source)
+        self.assertIn("if (!effective_agent_online(agent)) {", source)
+        self.assertIn("skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);", source)
 
     def test_snapshot_record_stays_backward_compatible_with_live_schema(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(

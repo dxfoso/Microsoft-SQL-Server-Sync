@@ -307,6 +307,28 @@ function sync_job_text(value: string? = null, maxLength: int = 256): string {
   return truncate_text(string.from(value ?? ''), maxLength);
 }
 
+function agent_online_timeout_minutes(agent: map<json>): int {
+  let timeout = clamp_auto_sync_interval(int.from(agent.autoSyncIntervalMinutes ?? 15)) * 3;
+  if (timeout < 5) {
+    timeout = 5;
+  }
+  if (timeout > 60) {
+    timeout = 60;
+  }
+  return timeout;
+}
+
+function effective_agent_online(agent: map<json>): bool {
+  if (agent.isOnline != true || agent.serverConnected != true || agent.sqlConnected != true) {
+    return false;
+  }
+  const heartbeat = string.from(agent.lastHeartbeat ?? '').trim();
+  if (heartbeat.length == 0) {
+    return false;
+  }
+  return date.diff(date.now(), heartbeat, 'min') <= agent_online_timeout_minutes(agent);
+}
+
 function default_admin_username(): string {
   return 'dxfoso@gmail.com';
 }
@@ -1392,7 +1414,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     machineName: agent.machineName,
     server: agent.server,
     database: agent.database,
-    isOnline: agent.isOnline,
+    isOnline: effective_agent_online(agent),
     historyLimit: agent.historyLimit,
     autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
     serverConnected: agent.serverConnected,
@@ -1948,9 +1970,7 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
   for (const candidate of visibleAgents) {
     if (candidate.clientName == targetClientName
       || candidate.ownerUserId != targetAgent.ownerUserId
-      || candidate.isOnline != true
-      || candidate.serverConnected != true
-      || candidate.sqlConnected != true) {
+      || !effective_agent_online(candidate)) {
       continue;
     }
     if (firstAvailableSource.length == 0) {
@@ -1977,9 +1997,7 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
       if (candidate.clientName == rememberedSource
         && candidate.clientName != targetAgent.clientName
         && candidate.ownerUserId == targetAgent.ownerUserId
-        && candidate.isOnline == true
-        && candidate.serverConnected == true
-        && candidate.sqlConnected == true) {
+        && effective_agent_online(candidate)) {
         return rememberedSource;
       }
     }
@@ -2584,8 +2602,18 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
   const visibleAgents = visible_agent_rows_for(current);
   let requestedClientNames = [];
   for (const agent of visibleAgents) {
+    if (!effective_agent_online(agent)) {
+      continue;
+    }
     const clientName = normalize_user_name(agent.clientName);
     if (clientName.length != 0) {
+      db.update(Agent, { clientName }, {
+        diagnosticRequestId: requestId,
+        diagnosticRequestedAt: requestedAt,
+        diagnosticRequestedByUserId: current.id,
+        diagnosticStatus: 'requested',
+        updatedAt: requestedAt
+      });
       requestedClientNames = requestedClientNames.concat([clientName]);
     }
   }
@@ -2598,24 +2626,6 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
       requestedClientCount: 0,
       requestedClientNames: []
     };
-  }
-
-  if (is_owner_user(current)) {
-    db.updateMany(Agent, { ownerUserId: current.id }, {
-      diagnosticRequestId: requestId,
-      diagnosticRequestedAt: requestedAt,
-      diagnosticRequestedByUserId: current.id,
-      diagnosticStatus: 'requested',
-      updatedAt: requestedAt
-    });
-  } else {
-    db.updateMany(Agent, { clientName: { gte: '' } }, {
-      diagnosticRequestId: requestId,
-      diagnosticRequestedAt: requestedAt,
-      diagnosticRequestedByUserId: current.id,
-      diagnosticStatus: 'requested',
-      updatedAt: requestedAt
-    });
   }
 
   return {
@@ -2726,7 +2736,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     if (enabledTables.length == 0) {
       continue;
     }
-    if (agent.isOnline != true || agent.serverConnected != true || agent.sqlConnected != true) {
+    if (!effective_agent_online(agent)) {
       skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
       continue;
     }
