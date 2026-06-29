@@ -78,19 +78,24 @@ spec:
               mountPath: /opt/symmetric-ds/tmp
           resources:
             {{- toYaml .Values.symmetricds.resources | nindent 12 }}
-          readinessProbe:
-            httpGet:
-              path: /sync/server
+          startupProbe:
+            tcpSocket:
               port: {{ .Values.symmetricds.service.port }}
-            initialDelaySeconds: 20
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.symmetricds.service.port }}
+            initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 12
+            failureThreshold: 6
           livenessProbe:
-            httpGet:
-              path: /sync/server
+            tcpSocket:
               port: {{ .Values.symmetricds.service.port }}
-            initialDelaySeconds: 60
+            initialDelaySeconds: 10
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 6
