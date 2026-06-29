@@ -2997,7 +2997,10 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
   if (session == null) {
     return raw_json_error(404, 'download session not found');
   }
-  const progress = job.progress < 30 ? 30 : job.progress;
+  let progress = job.progress;
+  if (progress < 30) {
+    progress = 30;
+  }
   const updated = db.update(SyncJob, { id: jobId }, {
     clientName: job.clientName,
     sourceClientName: job.sourceClientName,
