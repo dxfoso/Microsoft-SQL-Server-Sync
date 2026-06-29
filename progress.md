@@ -1,19 +1,18 @@
 Current
-- Heartbeat payload fix is implemented and tested locally.
-- Client restart updater now stops older `sync_windows_agent.exe` instances before relaunch.
-- Latest clean commit is `e5b389f` (`Harden client restart and bound heartbeat payloads`).
+- Live backend is deployed and healthy on commit `e195b26`.
+- The current public client manifest is wrong: it still points clients to a build that falls back to `http://127.0.0.1:6006`.
+- A fresh local portable build against `https://sync.velvet-leaf.com/call` logs in successfully, so the remaining break is the published client artifact.
 
 Doing now
-- Republish the Windows client update as version `1.0.34+38`.
-- Push the commit and redeploy the backend.
-- Verify live client heartbeats, sync progress, and `pt000` sync behavior.
+- Publish a corrected Windows client update as version `1.0.37+41`.
+- Replace the live `/client/latest.json` and ZIP on the frontend pod.
+- Retest auto-update and confirm the client stays on the production backend after restart.
 
 Remaining
-- Upload the clean client package and confirm `/client/latest.json` shows `1.0.34+38`.
-- Redeploy live backend with the bounded heartbeat fix.
-- Check live logs for heartbeat/runtime errors.
-- Run live sync checks for `c1` and `c2` and confirm progress updates move correctly.
+- Verify the new public manifest and downloaded ZIP match the corrected build.
+- Confirm at least one live client stays online after auto-update.
+- Re-run sync checks and inspect live logs/UI behavior for progress and table sync issues.
 
 Summary
-- Local fixes are done and tests passed.
-- Live verification and publish/redeploy are still pending.
+- Backend fix is live.
+- Client publish is still the blocker for full end-to-end verification.
