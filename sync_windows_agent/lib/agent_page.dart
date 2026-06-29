@@ -3471,7 +3471,7 @@ SELECT $columnList
 FROM page_source
 WHERE [__sync_agent_row_number] BETWEEN $firstRow AND $lastRow
 ORDER BY [__sync_agent_row_number]
-FOR JSON PATH, INCLUDE_NULL_VALUES;
+FOR JSON PATH;
 ''';
     final processResult = await _runSqlCmd(
       profile: profile,
