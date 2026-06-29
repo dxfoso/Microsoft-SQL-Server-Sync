@@ -203,7 +203,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "subscriberClientName: agent.clientName",
             "mergeRole: 'symmetricds'",
             "publisherServer: remote_source_server(sourceAgent)",
-            "publisherDatabase: sourceAgent.database",
+            "publisherDatabase: relay_publisher_database(sourceAgent, table)",
             "publicationName: ''",
             "publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true",
             "publisherUser: sourceAgent.replicationUser",

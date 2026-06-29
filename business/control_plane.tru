@@ -401,6 +401,14 @@ function remote_source_server(agent: map<json>): string {
   return server;
 }
 
+function relay_publisher_database(agent: map<json>, table: string): string {
+  const tableReference = sync_table_reference(table);
+  if (tableReference.database != null && string.from(tableReference.database).trim().length != 0) {
+    return string.from(tableReference.database).trim();
+  }
+  return string.from(agent.database ?? '').trim();
+}
+
 function table_sync_policy_database_name(policy: map<json>): string {
   if (policy.database != null && string.from(policy.database).trim().length != 0) {
     return string.from(policy.database).trim();
@@ -1843,7 +1851,7 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         direction: 'upload',
         mergeRole: 'symmetricds',
         publisherServer: sourceAgent.server,
-        publisherDatabase: sourceAgent.database,
+        publisherDatabase: relay_publisher_database(sourceAgent, table),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
         publisherUser: sourceAgent.replicationUser,
@@ -1871,7 +1879,7 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         direction: 'download',
         mergeRole: 'symmetricds',
         publisherServer: remote_source_server(sourceAgent),
-        publisherDatabase: sourceAgent.database,
+        publisherDatabase: relay_publisher_database(sourceAgent, table),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
         publisherUser: sourceAgent.replicationUser,
@@ -3181,7 +3189,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         direction: 'upload',
         mergeRole: 'symmetricds',
         publisherServer: sourceAgent.server,
-        publisherDatabase: sourceAgent.database,
+        publisherDatabase: relay_publisher_database(sourceAgent, table),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
         publisherUser: sourceAgent.replicationUser,
@@ -3209,7 +3217,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         direction: 'download',
         mergeRole: 'symmetricds',
         publisherServer: remote_source_server(sourceAgent),
-        publisherDatabase: sourceAgent.database,
+        publisherDatabase: relay_publisher_database(sourceAgent, table),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
         publisherUser: sourceAgent.replicationUser,
@@ -3238,7 +3246,7 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
     let publisherPassword = '';
     if (sourceAgent != null) {
       publisherServer = remote_source_server(sourceAgent);
-      publisherDatabase = sourceAgent.database;
+      publisherDatabase = relay_publisher_database(sourceAgent, table);
       publisherUseWindowsAuth = sourceAgent.replicationUseWindowsAuth == true;
       publisherUser = sourceAgent.replicationUser;
       publisherPassword = sourceAgent.replicationPassword;
@@ -3440,6 +3448,9 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   if (progress != null) {
     nextProgress = progress;
   }
+  db.delete(UploadSession, { jobId });
+  db.delete(DownloadSession, { jobId });
+  const completedAt = now_iso();
   const updated = db.update(SyncJob, { id: jobId }, {
     clientName: job.clientName,
     sourceClientName: job.sourceClientName,
@@ -3461,13 +3472,47 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     snapshotId: job.snapshotId,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
-    completedAt: now_iso(),
+    completedAt,
     error: message,
     message,
     clientUserId: job.clientUserId,
     ownerUserId: job.ownerUserId,
-    updatedAt: now_iso()
+    updatedAt: completedAt
   });
+  if (string.from(job.direction).trim() == 'upload') {
+    const targetJob = find_waiting_download_job(string.from(job.clientName), string.from(job.subscriberClientName), string.from(job.table));
+    if (targetJob != null) {
+      db.delete(DownloadSession, { jobId: targetJob.id });
+      db.update(SyncJob, { id: targetJob.id }, {
+        clientName: targetJob.clientName,
+        sourceClientName: targetJob.sourceClientName,
+        subscriberClientName: targetJob.subscriberClientName,
+        table: targetJob.table,
+        direction: targetJob.direction,
+        mergeRole: targetJob.mergeRole,
+        publisherServer: targetJob.publisherServer,
+        publisherDatabase: targetJob.publisherDatabase,
+        publicationName: targetJob.publicationName,
+        publisherUseWindowsAuth: targetJob.publisherUseWindowsAuth,
+        publisherUser: targetJob.publisherUser,
+        publisherPassword: targetJob.publisherPassword,
+        status: 'failed',
+        progress: 100,
+        rowCount: targetJob.rowCount,
+        snapshotBytes: targetJob.snapshotBytes,
+        snapshotCreatedAt: targetJob.snapshotCreatedAt,
+        snapshotId: targetJob.snapshotId,
+        createdAt: targetJob.createdAt,
+        startedAt: targetJob.startedAt,
+        completedAt,
+        error: string.concat('Source upload failed: ', message),
+        message: string.concat('Source upload failed: ', message),
+        clientUserId: targetJob.clientUserId,
+        ownerUserId: targetJob.ownerUserId,
+        updatedAt: completedAt
+      });
+    }
+  }
   let nextJob = job;
   if (updated != null) {
     nextJob = updated;
