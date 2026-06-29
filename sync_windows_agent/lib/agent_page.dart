@@ -2677,6 +2677,9 @@ ELSE
           status: 'failed',
           progress: 100,
           rowCount: job.rowCount,
+          snapshotBytes: job.snapshotBytes,
+          snapshotCreatedAt: job.snapshotCreatedAt,
+          snapshotId: job.snapshotId,
           createdAt: job.createdAt,
           updatedAt: DateTime.now().toIso8601String(),
           startedAt: job.startedAt,
@@ -2717,6 +2720,9 @@ ELSE
       status: 'failed',
       progress: 100,
       rowCount: job.rowCount,
+      snapshotBytes: job.snapshotBytes,
+      snapshotCreatedAt: job.snapshotCreatedAt,
+      snapshotId: job.snapshotId,
       createdAt: job.createdAt,
       updatedAt: DateTime.now().toIso8601String(),
       startedAt: job.startedAt,
@@ -2733,6 +2739,15 @@ ELSE
   }
 
   Future<void> _processSymmetricDsJob(RemoteSyncJob job) async {
+    if (job.direction == 'upload') {
+      await _processSnapshotRelayUploadJob(job);
+      return;
+    }
+    if (job.direction == 'download') {
+      await _processSnapshotRelayDownloadJob(job);
+      return;
+    }
+
     var activeJob = await _controlPlaneClient.startJob(
       job.id,
       status: 'applying',
@@ -2791,6 +2806,334 @@ ELSE
       overrideMessage:
           'Synced ${syncResult.sourceRowCount} source row${syncResult.sourceRowCount == 1 ? '' : 's'} into ${_localTableName(job.table)}.',
     );
+  }
+
+  Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {
+    var activeJob = await _controlPlaneClient.startJob(
+      job.id,
+      status: 'snapshotting',
+      progress: 10,
+      message: 'Creating a compressed snapshot for ${job.table}.',
+    );
+    _applyRemoteJobState(activeJob);
+
+    final snapshot = await _createRelaySnapshotForJob(job);
+
+    activeJob = await _controlPlaneClient.updateJobProgress(
+      job.id,
+      status: 'uploading',
+      progress: 35,
+      message: 'Uploading compressed snapshot for ${job.table}.',
+      rowCount: snapshot.rowCount,
+      direction: job.direction,
+    );
+    _applyRemoteJobState(activeJob);
+
+    final uploadResult = await _controlPlaneClient.uploadSnapshot(
+      job.id,
+      clientName: widget.clientName,
+      table: job.table,
+      rowCount: snapshot.rowCount,
+      snapshotCreatedAt: snapshot.createdAt,
+      snapshotBytes: snapshot.snapshotBytes,
+      snapshotJson: snapshot.snapshotJson,
+    );
+
+    _applyRemoteJobState(
+      uploadResult.job,
+      appendHistory: true,
+      success: true,
+      overrideMessage:
+          'Uploaded ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
+    );
+  }
+
+  Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {
+    var activeJob = await _controlPlaneClient.startJob(
+      job.id,
+      status: 'downloading',
+      progress: job.progress == 0 ? 10 : job.progress,
+      message: 'Downloading compressed snapshot for ${job.table}.',
+    );
+    _applyRemoteJobState(activeJob);
+
+    final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);
+
+    activeJob = await _controlPlaneClient.updateJobProgress(
+      job.id,
+      status: 'applying',
+      progress: 80,
+      message: 'Applying downloaded snapshot to ${_localTableName(job.table)}.',
+      rowCount: snapshot.rowCount,
+      direction: job.direction,
+    );
+    _applyRemoteJobState(activeJob);
+
+    final targetRowCount = await _applyDownloadedSnapshotToTarget(
+      job: job,
+      snapshot: snapshot,
+    );
+
+    activeJob = await _controlPlaneClient.completeJob(
+      job.id,
+      status: 'completed',
+      progress: 100,
+      message:
+          'Applied ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
+      rowCount: targetRowCount,
+      snapshotId: snapshot.id,
+      snapshotCreatedAt: snapshot.createdAt,
+      snapshotBytes: snapshot.snapshotBytes,
+    );
+    _applyRemoteJobState(
+      activeJob,
+      appendHistory: true,
+      success: true,
+      overrideMessage:
+          'Applied ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
+    );
+  }
+
+  Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(
+    RemoteSyncJob job,
+  ) async {
+    final database =
+        job.publisherDatabase.trim().isEmpty
+            ? _databaseNameFromSyncKey(job.table).trim()
+            : job.publisherDatabase.trim();
+    if (database.isEmpty) {
+      throw Exception(
+        'Snapshot upload for ${job.table} is missing a database.',
+      );
+    }
+
+    final localTableName = _localTableName(job.table);
+    final tableParts = _splitQualifiedName(localTableName);
+    final sourceProfile = _activeProfile();
+    final columnDefinitions = await _querySyncColumnDefinitions(
+      profile: sourceProfile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (columnDefinitions.isEmpty) {
+      throw Exception(
+        'No writable columns were found for ${tableParts.schema}.${tableParts.table}.',
+      );
+    }
+
+    final unsupportedColumns =
+        columnDefinitions.where((column) => !column.isSupported).toList();
+    if (unsupportedColumns.isNotEmpty) {
+      final names = unsupportedColumns.map((column) => column.name).join(', ');
+      throw Exception(
+        'Snapshot relay for ${tableParts.schema}.${tableParts.table} cannot run because these column types are not supported yet: $names.',
+      );
+    }
+
+    final syncColumns = columnDefinitions
+        .where((column) => column.isWritable)
+        .toList(growable: false);
+    if (syncColumns.isEmpty) {
+      throw Exception(
+        'Table ${tableParts.schema}.${tableParts.table} has no writable columns to sync.',
+      );
+    }
+
+    final primaryKeyColumns = await _queryPrimaryKeyColumns(
+      profile: sourceProfile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (primaryKeyColumns.isEmpty) {
+      throw Exception(
+        'Snapshot relay for ${tableParts.schema}.${tableParts.table} requires a primary key.',
+      );
+    }
+
+    final rowCountResult = await _queryTableRowCount(
+      profile: sourceProfile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (!rowCountResult.success) {
+      throw Exception(
+        rowCountResult.errorText ?? 'Source row count lookup failed.',
+      );
+    }
+
+    final rowCount = rowCountResult.value;
+    final rows = <Map<String, String?>>[];
+    const batchSize = 200;
+    var processed = 0;
+    while (processed < rowCount) {
+      final batch = await _fetchSourceTableBatch(
+        profile: sourceProfile,
+        database: database,
+        schema: tableParts.schema,
+        table: tableParts.table,
+        columns: syncColumns,
+        orderColumns: primaryKeyColumns,
+        offset: processed,
+        batchSize: math.min(batchSize, rowCount - processed),
+      );
+      for (final row in batch) {
+        rows.add({
+          for (final column in syncColumns)
+            column.name: row[column.name]?.toString(),
+        });
+      }
+      processed += batch.length;
+      if (batch.isEmpty) {
+        break;
+      }
+    }
+
+    final createdAt = DateTime.now().toIso8601String();
+    Map<String, dynamic> payload = {
+      'id': '',
+      'clientName': widget.clientName,
+      'table': job.table,
+      'createdAt': createdAt,
+      'rowCount': rows.length,
+      'checksum': '',
+      'snapshotBytes': 0,
+      'columns': syncColumns
+          .map((column) => column.name)
+          .toList(growable: false),
+      'rows': rows,
+      'sourceJobId': job.id,
+    };
+    var snapshotJson = jsonEncode(payload);
+    final snapshotBytes = utf8.encode(snapshotJson).length;
+    payload = {...payload, 'snapshotBytes': snapshotBytes};
+    snapshotJson = jsonEncode(payload);
+
+    return _RelaySnapshotDocument(
+      createdAt: createdAt,
+      rowCount: rows.length,
+      snapshotBytes: utf8.encode(snapshotJson).length,
+      snapshotJson: snapshotJson,
+    );
+  }
+
+  Future<int> _applyDownloadedSnapshotToTarget({
+    required RemoteSyncJob job,
+    required RemoteSnapshot snapshot,
+  }) async {
+    final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
+    if (targetDatabase.isEmpty) {
+      throw Exception(
+        'Downloaded snapshot for ${job.table} is missing the target database name.',
+      );
+    }
+
+    final localTableName = _localTableName(job.table);
+    final targetTable = _splitQualifiedName(localTableName);
+    final targetProfile = _activeProfile();
+    final columnDefinitions = await _querySyncColumnDefinitions(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (columnDefinitions.isEmpty) {
+      throw Exception(
+        'No writable columns were found for ${targetTable.schema}.${targetTable.table}.',
+      );
+    }
+
+    final unsupportedColumns =
+        columnDefinitions.where((column) => !column.isSupported).toList();
+    if (unsupportedColumns.isNotEmpty) {
+      final names = unsupportedColumns.map((column) => column.name).join(', ');
+      throw Exception(
+        'Snapshot apply for ${targetTable.schema}.${targetTable.table} cannot run because these column types are not supported yet: $names.',
+      );
+    }
+
+    final availableColumns = {
+      for (final column in columnDefinitions.where(
+        (column) => column.isWritable,
+      ))
+        column.name: column,
+    };
+    final syncColumns = snapshot.columns
+        .map((name) => availableColumns[name])
+        .whereType<_SqlColumnDefinition>()
+        .toList(growable: false);
+    if (snapshot.rows.isNotEmpty && syncColumns.isEmpty) {
+      throw Exception(
+        'Downloaded snapshot for ${job.table} does not contain any writable target columns.',
+      );
+    }
+
+    final primaryKeyColumns = await _queryPrimaryKeyColumns(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (primaryKeyColumns.isEmpty) {
+      throw Exception(
+        'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
+      );
+    }
+
+    const batchSize = 200;
+    for (var offset = 0; offset < snapshot.rows.length; offset += batchSize) {
+      final batch = snapshot.rows
+          .skip(offset)
+          .take(batchSize)
+          .map(
+            (row) => <String, dynamic>{
+              for (final column in syncColumns) column.name: row[column.name],
+            },
+          )
+          .toList(growable: false);
+      await _applySourceBatchToTarget(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        columns: syncColumns,
+        primaryKeyColumns: primaryKeyColumns,
+        rows: batch,
+      );
+    }
+
+    final targetRowCountResult = await _queryTableRowCount(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (!targetRowCountResult.success) {
+      throw Exception(
+        targetRowCountResult.errorText ?? 'Target row count lookup failed.',
+      );
+    }
+
+    if (_selectedDatabase == targetDatabase) {
+      final visibleTableName = _stripKnownDatabaseAndDefaultSchema(
+        localTableName,
+        database: targetDatabase,
+      );
+      _applyTableRowCounts(
+        database: targetDatabase,
+        rowCounts: {visibleTableName: targetRowCountResult.value},
+      );
+      if (_selectedTable == visibleTableName) {
+        setState(() {
+          _totalTableRows = targetRowCountResult.value;
+        });
+      }
+      unawaited(_syncWithControlPlane());
+    }
+
+    return targetRowCountResult.value;
   }
 
   Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {
@@ -6549,6 +6892,20 @@ class _RemoteTableSyncResult {
   final int sourceRowCount;
   final int processedRowCount;
   final int targetRowCount;
+}
+
+class _RelaySnapshotDocument {
+  const _RelaySnapshotDocument({
+    required this.createdAt,
+    required this.rowCount,
+    required this.snapshotBytes,
+    required this.snapshotJson,
+  });
+
+  final String createdAt;
+  final int rowCount;
+  final int snapshotBytes;
+  final String snapshotJson;
 }
 
 class _StringQueryResult {

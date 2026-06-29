@@ -64,24 +64,26 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Portable client update ZIP is missing required entry", publish_script)
         self.assertIn("SymmetricDsVersion = '3.16.10'", publish_script)
 
-    def test_windows_agent_removes_local_snapshot_apply_helpers(self):
+    def test_windows_agent_restores_local_snapshot_relay_helpers(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertNotIn("Future<void> _applySnapshotToTable(", agent_page)
-        self.assertNotIn("Future<_TableSnapshotResult> _createTableSnapshot(", agent_page)
-        self.assertNotIn("Future<_SnapshotPageResult> _querySnapshotPage(", agent_page)
-        self.assertNotIn("RemoteSnapshot snapshot", agent_page)
-        self.assertNotIn("Downloaded snapshot", agent_page)
+        self.assertIn("Future<void> _processSnapshotRelayUploadJob(", agent_page)
+        self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
+        self.assertIn("Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", agent_page)
+        self.assertIn("Future<int> _applyDownloadedSnapshotToTarget(", agent_page)
+        self.assertIn("required RemoteSnapshot snapshot", agent_page)
+        self.assertIn("Downloading compressed snapshot", agent_page)
 
-    def test_windows_agent_client_removes_snapshot_transport_endpoints(self):
+    def test_windows_agent_client_restores_snapshot_transport_endpoints(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertNotIn("Future<UploadSnapshotResult> uploadSnapshot(", client_api)
-        self.assertNotIn("Future<RemoteSnapshot> downloadSnapshot(", client_api)
-        self.assertNotIn("jobs_upload_chunk_start", client_api)
-        self.assertNotIn("jobs_download_snapshot_manifest", client_api)
-        self.assertNotIn("Future<void> _processUploadJob(RemoteSyncJob job)", agent_page)
+        self.assertIn("Future<UploadSnapshotResult> uploadSnapshot(", client_api)
+        self.assertIn("Future<RemoteSnapshot> downloadSnapshot(", client_api)
+        self.assertIn("jobs_upload_chunk_start", client_api)
+        self.assertIn("jobs_download_snapshot_manifest", client_api)
+        self.assertIn("Future<void> _processSnapshotRelayUploadJob(", agent_page)
+        self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
         self.assertIn("_processUnsupportedLegacyJob(job);", agent_page)
 
     def test_control_plane_defaults_to_symmetricds_sync_jobs(self):
@@ -126,8 +128,8 @@ class SyncContractsTests(unittest.TestCase):
             "value == 'download'",
         ):
             self.assertNotIn(legacy_condition, control_plane)
-        self.assertNotIn("uploadSnapshot(", client_api)
-        self.assertNotIn("downloadSnapshot(", client_api)
+        self.assertIn("uploadSnapshot(", client_api)
+        self.assertIn("downloadSnapshot(", client_api)
         self.assertNotIn("_processUploadJob(job)", agent_page)
         self.assertIn("SymmetricDS config", agent_page + read_text("sync_windows_agent/lib/symmetricds_service.dart"))
         self.assertNotIn("/api/snapshots/latest", node_server)

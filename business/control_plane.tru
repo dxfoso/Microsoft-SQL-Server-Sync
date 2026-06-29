@@ -103,6 +103,54 @@ class SyncJob {
   field ownerUserId: string? min=0 max=64
 }
 
+class SnapshotRecord {
+  field id: string min=1 max=64
+  field clientName: string min=1 max=128
+  field subscriberClientName: string min=0 max=128
+  field table: string min=1 max=256
+  field rowCount: int min=0 max=1000000000
+  field checksum: string min=1 max=128
+  field createdAt: datetime
+  field snapshotBytes: int min=0 max=2147483647
+  field compressedBytes: int min=0 max=2147483647
+  field chunkCount: int min=0 max=10000
+  field encoding: string min=1 max=16
+  field sourceJobId: string? min=0 max=64
+  field clientUserId: string? min=0 max=64
+  field ownerUserId: string? min=0 max=64
+}
+
+class UploadSession {
+  field id: string min=1 max=64
+  field jobId: string min=1 max=64
+  field uploadId: string min=1 max=128
+  field table: string min=1 max=256
+  field rowCount: int min=0 max=1000000000
+  field snapshotCreatedAt: datetime
+  field snapshotBytes: int min=0 max=2147483647
+  field compressedBytes: int min=0 max=2147483647
+  field chunkSizeBytes: int min=1 max=1048576
+  field chunkCount: int min=1 max=10000
+  field encoding: string min=1 max=16
+  field createdAt: datetime
+  field updatedAt: datetime
+  field chunks: array<json>
+}
+
+class DownloadSession {
+  field id: string min=1 max=64
+  field jobId: string min=1 max=64
+  field snapshotId: string min=1 max=64
+  field table: string min=1 max=256
+  field chunkSizeBytes: int min=1 max=1048576
+  field chunkCount: int min=1 max=10000
+  field compressedBytes: int min=0 max=2147483647
+  field encoding: string min=1 max=16
+  field createdAt: datetime
+  field updatedAt: datetime
+  field chunks: array<json>
+}
+
 index User_id on User(id)
 index User_username on User(username)
 index User_email on User(email)
@@ -115,6 +163,13 @@ index TableSyncPolicy_ownerUserId_database_table on TableSyncPolicy(ownerUserId,
 index SyncJob_id on SyncJob(id)
 index SyncJob_clientName_createdAt on SyncJob(clientName, createdAt)
 index SyncJob_createdAt on SyncJob(createdAt)
+index SnapshotRecord_id on SnapshotRecord(id)
+index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
+index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
+index UploadSession_jobId on UploadSession(jobId)
+index UploadSession_uploadId on UploadSession(uploadId)
+index DownloadSession_jobId on DownloadSession(jobId)
+index DownloadSession_snapshotId on DownloadSession(snapshotId)
 
 function now_iso(): datetime {
   return date.now();
@@ -223,6 +278,19 @@ function can_access_job(current: map<json>? = null, job: map<json>): bool {
 
 function max_chunk_count(): int {
   return 10000;
+}
+
+function kSnapshotTransferChunkSizeBytes(): int {
+  return 100 * 1024;
+}
+
+function kSnapshotTransferEncoding(): string {
+  return 'gzip';
+}
+
+function is_active_job_status(status: string? = null): bool {
+  const normalized = string.from(status ?? '').trim();
+  return normalized == 'queued' || normalized == 'running' || normalized == 'snapshotting' || normalized == 'uploading' || normalized == 'downloading' || normalized == 'applying';
 }
 
 function truncate_text(value: string, maxLength: int): string {
@@ -918,6 +986,147 @@ function find_job_by_id(jobId: string? = null): map<json>? {
   return db.selectOne(SyncJob, { id: jobId });
 }
 
+function find_snapshot_by_id(snapshotId: string? = null): map<json>? {
+  if (snapshotId == null || snapshotId.trim().length == 0) {
+    return null;
+  }
+  return db.selectOne(SnapshotRecord, { id: snapshotId });
+}
+
+function find_upload_session_by_upload_id(uploadId: string): map<json>? {
+  return db.selectOne(UploadSession, { uploadId });
+}
+
+function find_upload_session_for_job(jobId: string, uploadId: string): map<json>? {
+  const session = db.selectOne(UploadSession, { uploadId });
+  if (session == null) {
+    return null;
+  }
+  if (session.jobId != jobId) {
+    return null;
+  }
+  return session;
+}
+
+function find_active_download_session_for_job(jobId: string, snapshotId: string? = null): map<json>? {
+  if (snapshotId != null && snapshotId.trim().length != 0) {
+    return db.selectOne(DownloadSession, { jobId, snapshotId });
+  }
+  return db.selectOne(DownloadSession, { jobId });
+}
+
+function find_download_session_for_snapshot(snapshotId: string): map<json>? {
+  return db.selectOne(DownloadSession, { snapshotId });
+}
+
+function chunk_indexes(session: map<json>): array<int> {
+  let indexes = [];
+  for (const chunk of session.chunks) {
+    const idx = int.from(chunk.index);
+    if (idx >= 0) {
+      indexes = indexes.concat([idx]);
+    }
+  }
+  return indexes;
+}
+
+function has_chunk(session: map<json>, chunkIndex: int): bool {
+  for (const chunk of session.chunks) {
+    if (chunk.index == chunkIndex) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function chunk_data_for_index(session: map<json>, chunkIndex: int): string {
+  for (const chunk of session.chunks) {
+    if (chunk.index == chunkIndex) {
+      return string.from(chunk.data);
+    }
+  }
+  return '';
+}
+
+function upload_session_progress(session: map<json>): map<json> {
+  const received = chunk_indexes(session);
+  return {
+    uploadId: session.uploadId,
+    chunkCount: session.chunkCount,
+    compressedBytes: session.compressedBytes,
+    chunkSizeBytes: session.chunkSizeBytes,
+    receivedIndexes: received,
+    receivedCount: received.length
+  };
+}
+
+function download_session_payload(session: map<json>): map<json> {
+  return {
+    id: session.id,
+    chunkCount: session.chunkCount,
+    compressedBytes: session.compressedBytes,
+    chunkSizeBytes: session.chunkSizeBytes,
+    encoding: session.encoding,
+    snapshotId: session.snapshotId
+  };
+}
+
+function public_snapshot_payload(snapshot: map<json>): map<json> {
+  return {
+    id: snapshot.id,
+    clientName: snapshot.clientName,
+    subscriberClientName: snapshot.subscriberClientName,
+    clientUserId: snapshot.clientUserId,
+    ownerUserId: snapshot.ownerUserId,
+    table: snapshot.table,
+    rowCount: snapshot.rowCount,
+    checksum: snapshot.checksum,
+    createdAt: snapshot.createdAt,
+    snapshotBytes: snapshot.snapshotBytes,
+    compressedBytes: snapshot.compressedBytes,
+    chunkCount: snapshot.chunkCount,
+    encoding: snapshot.encoding,
+    sourceJobId: snapshot.sourceJobId
+  };
+}
+
+function latest_download_snapshot_for_job(job: map<json>): map<json>? {
+  if (job.snapshotId != null && string.from(job.snapshotId).trim().length != 0) {
+    return find_snapshot_by_id(job.snapshotId);
+  }
+  const session = find_active_download_session_for_job(job.id);
+  if (session != null) {
+    return find_snapshot_by_id(session.snapshotId);
+  }
+  return null;
+}
+
+function snapshot_checksum(snapshot: map<json>): string {
+  return crypto.hash(json.stringify(snapshot), 'sha256');
+}
+
+function find_waiting_download_job(sourceClientName: string, targetClientName: string, table: string): map<json>? {
+  const jobs = db.selectMany(SyncJob, {
+    where: { clientName: targetClientName, sourceClientName, table },
+    orderBy: { field: 'createdAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    limit: 20
+  });
+  if (jobs == null) {
+    return null;
+  }
+  for (const job of jobs) {
+    if (string.from(job.direction).trim() != 'download') {
+      continue;
+    }
+    const status = string.from(job.status).trim();
+    if (status == 'waiting' || (status == 'queued' && (job.snapshotId == null || string.from(job.snapshotId).trim().length == 0))) {
+      return job;
+    }
+  }
+  return null;
+}
+
 function current_user_record(token: string? = null): map<json>? {
   const session = find_active_session_by_token(token);
   if (session != null) {
@@ -1031,7 +1240,7 @@ function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1279,6 +1488,9 @@ function public_job_payload(job: map<json>): map<json> {
     status: job.status,
     progress: job.progress,
     rowCount: job.rowCount,
+    snapshotBytes: job.snapshotBytes,
+    snapshotCreatedAt: job.snapshotCreatedAt,
+    snapshotId: job.snapshotId,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     startedAt: job.startedAt,
@@ -1306,6 +1518,9 @@ function agent_job_payload(job: map<json>): map<json> {
     status: job.status,
     progress: job.progress,
     rowCount: job.rowCount,
+    snapshotBytes: job.snapshotBytes,
+    snapshotCreatedAt: job.snapshotCreatedAt,
+    snapshotId: job.snapshotId,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     startedAt: job.startedAt,
@@ -1354,7 +1569,7 @@ function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1476,7 +1691,7 @@ function active_jobs_for_client(clientName: string): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { clientName },
     orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1496,7 +1711,7 @@ function active_jobs_for_client(clientName: string): array<json> {
     }
 
     const status = string.from(job.status).trim();
-    if (status == 'queued' || status == 'running' || status == 'applying') {
+    if (is_active_job_status(status)) {
       jobs = jobs.concat([agent_job_payload(job)]);
       seenTables = seenTables.concat([job.table]);
     } else if (status == 'completed' || status == 'failed' || status == 'cancelled') {
@@ -1591,12 +1806,21 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
     }
   }
   const activeTables = active_job_tables_for_client(agent.clientName);
+  let sourceActiveTables = [];
+  if (sourceAgent != null) {
+    sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
+  }
   const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables);
   let tablesToCreate = [];
   for (const table of expandedTables) {
     let busy = false;
     for (const activeTable of activeTables) {
       if (activeTable == table) {
+        busy = true;
+      }
+    }
+    for (const sourceActiveTable of sourceActiveTables) {
+      if (sourceActiveTable == table) {
         busy = true;
       }
     }
@@ -1612,13 +1836,13 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
     for (const table of tablesToCreate) {
       rows = rows.concat([{
         id: uuid.v4(),
-        clientName: agent.clientName,
+        clientName: sourceAgent.clientName,
         sourceClientName: sourceAgent.clientName,
         subscriberClientName: agent.clientName,
         table,
-        direction: 'sync',
+        direction: 'upload',
         mergeRole: 'symmetricds',
-        publisherServer: remote_source_server(sourceAgent),
+        publisherServer: sourceAgent.server,
         publisherDatabase: sourceAgent.database,
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
@@ -1635,6 +1859,34 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         startedAt: null,
         completedAt: null,
         message: string.concat('Queued SymmetricDS sync for ', table, '.'),
+        error: null,
+        clientUserId: sourceAgent.clientUserId,
+        ownerUserId: sourceAgent.ownerUserId
+      }, {
+        id: uuid.v4(),
+        clientName: agent.clientName,
+        sourceClientName: sourceAgent.clientName,
+        subscriberClientName: agent.clientName,
+        table,
+        direction: 'download',
+        mergeRole: 'symmetricds',
+        publisherServer: remote_source_server(sourceAgent),
+        publisherDatabase: sourceAgent.database,
+        publicationName: '',
+        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
+        publisherUser: sourceAgent.replicationUser,
+        publisherPassword: sourceAgent.replicationPassword,
+        status: 'waiting',
+        progress: 0,
+        rowCount: 0,
+        snapshotBytes: 0,
+        snapshotCreatedAt: null,
+        snapshotId: null,
+        createdAt: now_iso(),
+        updatedAt: now_iso(),
+        startedAt: null,
+        completedAt: null,
+        message: string.concat('Waiting for source snapshot upload for ', table, '.'),
         error: null,
         clientUserId: agent.clientUserId,
         ownerUserId: agent.ownerUserId
@@ -2389,6 +2641,469 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
   };
 }
 
+function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: string = '', table: string = '', rowCount: int = 0, snapshotCreatedAt: string = '', snapshotBytes: int = 0, compressedBytes: int = 0, chunkSizeBytes: int = kSnapshotTransferChunkSizeBytes(), chunkCount: int = 0, encoding: string = kSnapshotTransferEncoding(), token: string? = null): map<json> {
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current_user_record(token), job)) {
+    return deny_job_access('jobs_upload_chunk_start', token, current_user_record(token), job);
+  }
+  if (chunkCount < 1 || chunkCount > max_chunk_count()) {
+    return raw_json_error(400, 'invalid chunk count');
+  }
+  let resolvedChunkSize = chunkSizeBytes;
+  if (resolvedChunkSize < 1) {
+    resolvedChunkSize = kSnapshotTransferChunkSizeBytes();
+  }
+  let resolvedUploadId = uploadId.trim();
+  if (resolvedUploadId.length == 0) {
+    resolvedUploadId = uuid.v4();
+  }
+  let resolvedCreatedAt = snapshotCreatedAt.trim();
+  if (resolvedCreatedAt.length == 0) {
+    resolvedCreatedAt = now_iso();
+  }
+  let resolvedTable = job.table;
+  if (table.trim().length != 0) {
+    resolvedTable = table.trim();
+  }
+  let resolvedEncoding = encoding.trim();
+  if (resolvedEncoding.length == 0) {
+    resolvedEncoding = kSnapshotTransferEncoding();
+  }
+  db.delete(UploadSession, { jobId });
+  const session = db.insert(UploadSession, {
+    id: uuid.v4(),
+    jobId,
+    uploadId: resolvedUploadId,
+    table: resolvedTable,
+    rowCount,
+    snapshotCreatedAt: resolvedCreatedAt,
+    snapshotBytes,
+    compressedBytes,
+    chunkSizeBytes: resolvedChunkSize,
+    chunkCount,
+    encoding: resolvedEncoding,
+    createdAt: now_iso(),
+    updatedAt: now_iso(),
+    chunks: []
+  });
+  const updated = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
+    status: 'uploading',
+    progress: 35,
+    rowCount,
+    snapshotBytes,
+    snapshotCreatedAt: resolvedCreatedAt,
+    snapshotId: null,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: null,
+    message: 'Ready to receive compressed snapshot chunks.',
+    error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
+    updatedAt: now_iso()
+  });
+  let nextJob = job;
+  if (updated != null) {
+    nextJob = updated;
+  }
+  return raw_json_success({
+    job: public_job_payload(nextJob),
+    uploadId: session.uploadId,
+    chunkSizeBytes: session.chunkSizeBytes,
+    chunkCount: session.chunkCount,
+    compressedBytes: session.compressedBytes,
+    receivedIndexes: []
+  });
+}
+
+function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_upload_chunk', token, current, job);
+  }
+  const session = find_upload_session_for_job(jobId, uploadId);
+  if (session == null) {
+    return raw_json_error(404, 'upload session not found');
+  }
+  if (chunkIndex < 0 || chunkIndex >= session.chunkCount) {
+    return raw_json_error(400, 'chunk index is out of range');
+  }
+  if (chunkData.trim().length == 0) {
+    return raw_json_error(400, 'chunkData is required');
+  }
+
+  let nextChunks = [];
+  let replaced = false;
+  for (const item of session.chunks) {
+    if (item.index == chunkIndex) {
+      nextChunks = nextChunks.concat([{
+        index: chunkIndex,
+        data: chunkData,
+        bytes: chunkData.length
+      }]);
+      replaced = true;
+    } else {
+      nextChunks = nextChunks.concat([item]);
+    }
+  }
+  if (!replaced) {
+    nextChunks = nextChunks.concat([{
+      index: chunkIndex,
+      data: chunkData,
+      bytes: chunkData.length
+    }]);
+  }
+
+  const updatedSession = db.update(UploadSession, { id: session.id }, {
+    chunks: nextChunks,
+    updatedAt: now_iso()
+  });
+  let nextSession = session;
+  if (updatedSession != null) {
+    nextSession = updatedSession;
+  }
+  const received = chunk_indexes(nextSession);
+  let progress = 35;
+  if (session.chunkCount > 0) {
+    const receivedCount = int.from(received.length);
+    const estimated = int.from((receivedCount * 50) / session.chunkCount);
+    progress = 35 + estimated;
+    if (progress < 35) {
+      progress = 35;
+    }
+    if (progress > 85) {
+      progress = 85;
+    }
+  }
+  const updatedJob = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
+    status: 'uploading',
+    progress,
+    rowCount: session.rowCount,
+    snapshotBytes: session.snapshotBytes,
+    snapshotCreatedAt: session.snapshotCreatedAt,
+    snapshotId: null,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: null,
+    message: string.concat('Received snapshot chunk ', string.from(chunkIndex + 1), '/', string.from(session.chunkCount), '.'),
+    error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
+    updatedAt: now_iso()
+  });
+  let nextJob = job;
+  if (updatedJob != null) {
+    nextJob = updatedJob;
+  }
+  return raw_json_success({
+    job: public_job_payload(nextJob),
+    uploadId: nextSession.uploadId,
+    chunkCount: nextSession.chunkCount,
+    receivedIndexes: received
+  });
+}
+
+function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_upload_chunk_complete', token, current, job);
+  }
+  const session = find_upload_session_by_upload_id(uploadId);
+  if (session == null || session.jobId != jobId) {
+    return raw_json_error(404, 'upload session not found');
+  }
+  const received = chunk_indexes(session);
+  if (received.length != session.chunkCount) {
+    return raw_json_success({
+      error: 'upload is missing chunks',
+      uploadId: session.uploadId,
+      chunkCount: session.chunkCount,
+      compressedBytes: session.compressedBytes,
+      chunkSizeBytes: session.chunkSizeBytes,
+      receivedIndexes: received,
+      receivedCount: received.length
+    }, 409);
+  }
+
+  const targetJob = find_waiting_download_job(job.clientName, job.subscriberClientName, job.table);
+  if (targetJob == null) {
+    return raw_json_error(409, 'target download job not found');
+  }
+
+  const snapshotId = uuid.v4();
+  let snapshotCreatedAt = now_iso();
+  if (session.snapshotCreatedAt != null) {
+    snapshotCreatedAt = session.snapshotCreatedAt;
+  }
+  const snapshot = db.insert(SnapshotRecord, {
+    id: snapshotId,
+    clientName: job.clientName,
+    subscriberClientName: job.subscriberClientName,
+    table: session.table,
+    rowCount: session.rowCount,
+    checksum: snapshot_checksum({ id: uploadId, sourceJobId: jobId, table: session.table, rowCount: session.rowCount, snapshotBytes: session.snapshotBytes, compressedBytes: session.compressedBytes }),
+    createdAt: snapshotCreatedAt,
+    snapshotBytes: session.snapshotBytes,
+    compressedBytes: session.compressedBytes,
+    chunkCount: session.chunkCount,
+    encoding: session.encoding,
+    sourceJobId: jobId,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId
+  });
+
+  const existingDownloadSession = find_active_download_session_for_job(targetJob.id, snapshotId);
+  if (existingDownloadSession != null) {
+    db.delete(DownloadSession, { id: existingDownloadSession.id });
+  }
+  db.insert(DownloadSession, {
+    id: uuid.v4(),
+    jobId: targetJob.id,
+    snapshotId,
+    table: session.table,
+    chunkSizeBytes: session.chunkSizeBytes,
+    chunkCount: session.chunkCount,
+    compressedBytes: session.compressedBytes,
+    encoding: session.encoding,
+    createdAt: now_iso(),
+    updatedAt: now_iso(),
+    chunks: session.chunks
+  });
+
+  const queuedTarget = db.update(SyncJob, { id: targetJob.id }, {
+    clientName: targetJob.clientName,
+    sourceClientName: targetJob.sourceClientName,
+    subscriberClientName: targetJob.subscriberClientName,
+    table: targetJob.table,
+    direction: targetJob.direction,
+    mergeRole: targetJob.mergeRole,
+    publisherServer: targetJob.publisherServer,
+    publisherDatabase: targetJob.publisherDatabase,
+    publicationName: targetJob.publicationName,
+    publisherUseWindowsAuth: targetJob.publisherUseWindowsAuth,
+    publisherUser: targetJob.publisherUser,
+    publisherPassword: targetJob.publisherPassword,
+    status: 'queued',
+    progress: 5,
+    rowCount: session.rowCount,
+    snapshotBytes: session.snapshotBytes,
+    snapshotCreatedAt,
+    snapshotId,
+    createdAt: targetJob.createdAt,
+    startedAt: null,
+    completedAt: null,
+    message: string.concat('Snapshot is ready for download for ', targetJob.table, '.'),
+    error: null,
+    clientUserId: targetJob.clientUserId,
+    ownerUserId: targetJob.ownerUserId,
+    updatedAt: now_iso()
+  });
+
+  const completed = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
+    status: 'completed',
+    progress: 100,
+    rowCount: session.rowCount,
+    snapshotBytes: session.snapshotBytes,
+    snapshotCreatedAt,
+    snapshotId,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: now_iso(),
+    message: string.concat('Uploaded snapshot with ', string.from(session.rowCount), ' rows for ', targetJob.clientName, '.'),
+    error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
+    updatedAt: now_iso()
+  });
+
+  db.delete(UploadSession, { jobId });
+
+  let nextJob = job;
+  if (completed != null) {
+    nextJob = completed;
+  }
+  let nextTargetJob = targetJob;
+  if (queuedTarget != null) {
+    nextTargetJob = queuedTarget;
+  }
+  return raw_json_success({
+    job: public_job_payload(nextJob),
+    targetJob: public_job_payload(nextTargetJob),
+    snapshot: public_snapshot_payload(snapshot)
+  });
+}
+
+function jobs_download_snapshot_manifest(jobId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_download_snapshot_manifest', token, current, job);
+  }
+  const snapshot = latest_download_snapshot_for_job(job);
+  if (snapshot == null) {
+    return raw_json_error(404, 'snapshot not found');
+  }
+  const session = find_active_download_session_for_job(jobId, snapshot.id);
+  if (session == null) {
+    return raw_json_error(404, 'download session not found');
+  }
+  const progress = job.progress < 30 ? 30 : job.progress;
+  const updated = db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
+    status: 'downloading',
+    progress,
+    rowCount: snapshot.rowCount,
+    snapshotBytes: snapshot.snapshotBytes,
+    snapshotCreatedAt: snapshot.createdAt,
+    snapshotId: snapshot.id,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: null,
+    message: string.concat('Prepared ', string.from(session.chunkCount), ' snapshot chunks for download.'),
+    error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
+    updatedAt: now_iso()
+  });
+  let nextJob = job;
+  if (updated != null) {
+    nextJob = updated;
+  }
+  return raw_json_success({
+    job: public_job_payload(nextJob),
+    snapshot: public_snapshot_payload(snapshot),
+    manifest: download_session_payload(session)
+  });
+}
+
+function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_download_snapshot_chunk', token, current, job);
+  }
+  if (chunkIndex == null) {
+    return raw_json_error(400, 'chunkIndex is required');
+  }
+  const snapshot = latest_download_snapshot_for_job(job);
+  if (snapshot == null) {
+    return raw_json_error(404, 'snapshot not found');
+  }
+  const session = find_active_download_session_for_job(jobId, snapshot.id);
+  if (session == null) {
+    return raw_json_error(404, 'download session not found');
+  }
+  if (chunkIndex < 0 || chunkIndex >= session.chunkCount) {
+    return raw_json_error(400, 'chunk index is out of range');
+  }
+  const chunkData = chunk_data_for_index(session, chunkIndex);
+  if (chunkData.length == 0) {
+    return raw_json_error(404, 'chunk not found');
+  }
+  let progress = 40;
+  if (session.chunkCount > 0) {
+    progress = 40 + int.from(((chunkIndex + 1) * 35) / session.chunkCount);
+  }
+  db.update(SyncJob, { id: jobId }, {
+    clientName: job.clientName,
+    sourceClientName: job.sourceClientName,
+    subscriberClientName: job.subscriberClientName,
+    table: job.table,
+    direction: job.direction,
+    mergeRole: job.mergeRole,
+    publisherServer: job.publisherServer,
+    publisherDatabase: job.publisherDatabase,
+    publicationName: job.publicationName,
+    publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+    publisherUser: job.publisherUser,
+    publisherPassword: job.publisherPassword,
+    status: 'downloading',
+    progress,
+    rowCount: snapshot.rowCount,
+    snapshotBytes: snapshot.snapshotBytes,
+    snapshotCreatedAt: snapshot.createdAt,
+    snapshotId: snapshot.id,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: null,
+    message: string.concat('Served snapshot chunk ', string.from(chunkIndex + 1), '/', string.from(session.chunkCount), '.'),
+    error: null,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
+    updatedAt: now_iso()
+  });
+  return raw_json_success({
+    transferId: session.id,
+    chunkIndex,
+    chunkCount: session.chunkCount,
+    chunkData
+  });
+}
+
 function jobs_create(clientName: string, tables: array<string>, direction: string = 'sync', sourceClientName: string = '', syncMode: string? = null, token: string? = null): map<json> {
   if (tables.length == 0) {
     return raw_json_error(400, 'tables are required.');
@@ -2418,11 +3133,28 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
     return raw_json_error(400, 'tables are required.');
   }
   const activeTables = active_job_tables_for_client(resolvedClientName);
+  let sourceActiveTables = [];
   let tablesToCreate = [];
+  let sourceAgent = null;
+  let resolvedSourceClientName = sourceClientName.trim();
+  if (resolvedSourceClientName.length != 0) {
+    sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
+    if (sourceAgent == null) {
+      return raw_json_error(404, 'source client not found');
+    }
+    if (resolvedSourceClientName != resolvedClientName) {
+      sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
+    }
+  }
   for (const table of expandedTables) {
     let busy = false;
     for (const activeTable of activeTables) {
       if (activeTable == table) {
+        busy = true;
+      }
+    }
+    for (const sourceActiveTable of sourceActiveTables) {
+      if (sourceActiveTable == table) {
         busy = true;
       }
     }
@@ -2433,27 +3165,19 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
   if (tablesToCreate.length == 0) {
     return raw_json_success({ jobs: [] }, 201);
   }
-  let sourceAgent = null;
-  let resolvedSourceClientName = sourceClientName.trim();
-  if (resolvedSourceClientName.length != 0) {
-    sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
-    if (sourceAgent == null) {
-      return raw_json_error(404, 'source client not found');
-    }
-  }
   let createdJobsRaw = [];
   for (const table of tablesToCreate) {
     const resolvedMode = normalize_sync_mode(syncMode, true);
     if (sourceAgent != null && resolvedSourceClientName != resolvedClientName) {
       createdJobsRaw = createdJobsRaw.concat([{
         id: uuid.v4(),
-        clientName: resolvedClientName,
+        clientName: sourceAgent.clientName,
         sourceClientName: resolvedSourceClientName,
         subscriberClientName: resolvedClientName,
         table,
-        direction: direction_for_sync_mode(resolvedMode),
+        direction: 'upload',
         mergeRole: 'symmetricds',
-        publisherServer: remote_source_server(sourceAgent),
+        publisherServer: sourceAgent.server,
         publisherDatabase: sourceAgent.database,
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
@@ -2470,6 +3194,34 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         startedAt: null,
         completedAt: null,
         message: string.concat('Queued SymmetricDS sync for ', table, '.'),
+        error: null,
+        clientUserId: sourceAgent.clientUserId,
+        ownerUserId: sourceAgent.ownerUserId
+      }, {
+        id: uuid.v4(),
+        clientName: resolvedClientName,
+        sourceClientName: resolvedSourceClientName,
+        subscriberClientName: resolvedClientName,
+        table,
+        direction: 'download',
+        mergeRole: 'symmetricds',
+        publisherServer: remote_source_server(sourceAgent),
+        publisherDatabase: sourceAgent.database,
+        publicationName: '',
+        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
+        publisherUser: sourceAgent.replicationUser,
+        publisherPassword: sourceAgent.replicationPassword,
+        status: 'waiting',
+        progress: 0,
+        rowCount: 0,
+        snapshotBytes: 0,
+        snapshotCreatedAt: null,
+        snapshotId: null,
+        createdAt: now_iso(),
+        updatedAt: now_iso(),
+        startedAt: null,
+        completedAt: null,
+        message: string.concat('Waiting for source snapshot upload for ', table, '.'),
         error: null,
         clientUserId,
         ownerUserId: ownerId
@@ -2616,7 +3368,7 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed SymmetricDS sync.', rowCount: int = 0, token: string? = null): map<json> {
+function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed SymmetricDS sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -2626,6 +3378,18 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   }
 
   const completedAt = now_iso();
+  let nextSnapshotId = job.snapshotId;
+  if (snapshotId != null && snapshotId.trim().length != 0) {
+    nextSnapshotId = snapshotId.trim();
+  }
+  let nextSnapshotCreatedAt = job.snapshotCreatedAt;
+  if (snapshotCreatedAt != null && snapshotCreatedAt.trim().length != 0) {
+    nextSnapshotCreatedAt = snapshotCreatedAt.trim();
+  }
+  let nextSnapshotBytes = job.snapshotBytes;
+  if (snapshotBytes != null && snapshotBytes >= 0) {
+    nextSnapshotBytes = snapshotBytes;
+  }
   const updated = db.update(SyncJob, { id: jobId }, {
     clientName: job.clientName,
     sourceClientName: job.sourceClientName,
@@ -2642,9 +3406,9 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     status,
     progress,
     rowCount,
-    snapshotBytes: job.snapshotBytes,
-    snapshotCreatedAt: job.snapshotCreatedAt,
-    snapshotId: job.snapshotId,
+    snapshotBytes: nextSnapshotBytes,
+    snapshotCreatedAt: nextSnapshotCreatedAt,
+    snapshotId: nextSnapshotId,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt,
@@ -2733,7 +3497,7 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
   const completedAt = now_iso();
   for (const job of visible_job_rows_for(current)) {
     const status = string.from(job.status).trim();
-    if (status != 'queued' && status != 'running' && status != 'applying') {
+    if (!is_active_job_status(status)) {
       continue;
     }
     const jobClientName = normalize_user_name(job.clientName);
@@ -2756,6 +3520,9 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
       status: 'cancelled',
       progress: 100,
       rowCount: job.rowCount,
+      snapshotBytes: job.snapshotBytes,
+      snapshotCreatedAt: job.snapshotCreatedAt,
+      snapshotId: job.snapshotId,
       createdAt: job.createdAt,
       updatedAt: completedAt,
       startedAt: job.startedAt,
