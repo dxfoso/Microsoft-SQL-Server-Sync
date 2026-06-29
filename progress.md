@@ -1,18 +1,18 @@
 Current
 - Live backend is deployed and healthy on commit `e195b26`.
-- The current public client manifest is wrong: it still points clients to a build that falls back to `http://127.0.0.1:6006`.
-- A fresh local portable build against `https://sync.velvet-leaf.com/call` logs in successfully, so the remaining break is the published client artifact.
+- The current public client manifest has been corrected once, but that publish reused a stale Windows runner and still crashes on startup.
+- The published artifact now contains the production backend URL, but the packaged EXE must be rebuilt cleanly with the right Flutter toolchain.
 
 Doing now
-- Publish a corrected Windows client update as version `1.0.37+41`.
-- Replace the live `/client/latest.json` and ZIP on the frontend pod.
-- Retest auto-update and confirm the client stays on the production backend after restart.
+- Guard the portable build script against stale runner reuse.
+- Publish a clean Windows client update as version `1.0.38+42` using the installed Flutter toolchain.
+- Retest the live artifact and client startup behavior after republish.
 
 Remaining
-- Verify the new public manifest and downloaded ZIP match the corrected build.
-- Confirm at least one live client stays online after auto-update.
+- Verify the new public manifest and downloaded ZIP match the clean build.
+- Confirm the published client starts and stays on the production backend.
 - Re-run sync checks and inspect live logs/UI behavior for progress and table sync issues.
 
 Summary
 - Backend fix is live.
-- Client publish is still the blocker for full end-to-end verification.
+- Client publish remains the blocker for full end-to-end verification until the republished runner starts cleanly.

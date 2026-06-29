@@ -970,6 +970,23 @@ function Get-DirectorySize {
     return [long] $sum.Sum
 }
 
+function Get-ExecutableProductVersion {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ''
+    }
+
+    $versionInfo = (Get-Item -LiteralPath $Path).VersionInfo
+    if (-not [string]::IsNullOrWhiteSpace([string] $versionInfo.ProductVersion)) {
+        return [string] $versionInfo.ProductVersion
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string] $versionInfo.FileVersion)) {
+        return [string] $versionInfo.FileVersion
+    }
+    return ''
+}
+
 Push-Location $PSScriptRoot
 try {
     $ProjectPath = Get-FullPath -Path (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent')
@@ -1004,6 +1021,7 @@ try {
     $zipPath = Join-Path -Path $OutputRoot -ChildPath "$PortableName.zip"
     $exeName = "$binaryName.exe"
     $exePath = Join-Path -Path $releaseDir -ChildPath $exeName
+    $expectedAppVersion = Get-WindowsAgentFlutterAppVersion -ProjectPath $ProjectPath
 
     New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
     Stop-ProcessesUnderPath -Path $portableDir
@@ -1022,6 +1040,10 @@ try {
             -ProjectPath $ProjectPath `
             -PreserveFlutterEphemeral `
             -PreserveWindowsBuildTree
+        if (Test-Path -LiteralPath $releaseDir -PathType Container) {
+            Write-Host "Removing stale release output: $releaseDir"
+            Remove-WindowsAgentBuildPath -Path $releaseDir -ProjectPath $ProjectPath
+        }
         $buildDartDefines = New-DartDefineArgs -ProjectPath $ProjectPath -BackendBaseUrl $BackendBaseUrl
         $buildArguments = @('build', 'windows', '--release', '--no-tree-shake-icons') + $buildDartDefines
         Write-Host 'Building Windows release...'
@@ -1036,6 +1058,12 @@ try {
 
             if (-not $canRecoverReleaseInstall) {
                 throw "Command failed with exit code $LASTEXITCODE`: Building Windows release..."
+            }
+
+            $recoveredVersion = Get-ExecutableProductVersion -Path $exePath
+            if ($recoveredVersion -ne $expectedAppVersion) {
+                throw ("Windows release build failed and recovery found executable version {0}, expected {1}. " +
+                       "Refusing to package a stale runner.") -f $recoveredVersion, $expectedAppVersion
             }
 
             $restoredAotLibrary = Restore-WindowsAgentAotLibrary -ProjectPath $ProjectPath
@@ -1054,6 +1082,11 @@ try {
 
     if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
         throw "Windows release build did not produce expected executable: $exePath"
+    }
+
+    $builtVersion = Get-ExecutableProductVersion -Path $exePath
+    if ($builtVersion -ne $expectedAppVersion) {
+        throw "Windows release executable version mismatch. Expected $expectedAppVersion but found $builtVersion at $exePath"
     }
 
     $flutterReleaseEngineDll = Get-FlutterReleaseEngineDllPath -FlutterCommand $flutterCommand
