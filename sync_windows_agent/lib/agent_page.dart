@@ -53,6 +53,7 @@ class AgentDashboardPage extends StatefulWidget {
     required this.initialServer,
     required this.onServerChanged,
     required this.lastAutoUpdateTarget,
+    required this.lastAutoUpdateAttemptedAt,
     required this.onAutoUpdateAttempted,
   });
 
@@ -75,6 +76,7 @@ class AgentDashboardPage extends StatefulWidget {
   final String initialServer;
   final ValueChanged<String> onServerChanged;
   final String? lastAutoUpdateTarget;
+  final String? lastAutoUpdateAttemptedAt;
   final Future<void> Function(String target) onAutoUpdateAttempted;
 
   @override
@@ -84,6 +86,7 @@ class AgentDashboardPage extends StatefulWidget {
 class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
+  static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
 
   late final TextEditingController _serverController;
   final TextEditingController _userController = TextEditingController();
@@ -1427,6 +1430,26 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return [version, commit, hash].where((part) => part.isNotEmpty).join('@');
   }
 
+  bool _hasRecentAutoUpdateAttempt(String targetId) {
+    final lastTarget = widget.lastAutoUpdateTarget?.trim() ?? '';
+    if (targetId.isEmpty || lastTarget != targetId) {
+      return false;
+    }
+
+    final attemptedAtRaw = widget.lastAutoUpdateAttemptedAt?.trim() ?? '';
+    if (attemptedAtRaw.isEmpty) {
+      return false;
+    }
+
+    final attemptedAt = DateTime.tryParse(attemptedAtRaw);
+    if (attemptedAt == null) {
+      return false;
+    }
+
+    return DateTime.now().difference(attemptedAt.toLocal()) <
+        _autoUpdateRetryCooldown;
+  }
+
   bool get _supportsAutomaticClientUpdate {
     if (!Platform.isWindows) {
       return false;
@@ -1465,7 +1488,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final targetId = _clientUpdateTargetId(updateInfo);
-    if (targetId.isEmpty || widget.lastAutoUpdateTarget == targetId) {
+    if (targetId.isEmpty || _hasRecentAutoUpdateAttempt(targetId)) {
       return;
     }
     if (_syncLoopBusy ||

@@ -839,6 +839,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 initialServer: _serverName,
                 onServerChanged: _updateServerName,
                 lastAutoUpdateTarget: _lastAutoUpdateTarget,
+                lastAutoUpdateAttemptedAt: _lastAutoUpdateAttemptedAt,
                 onAutoUpdateAttempted: _recordAutoUpdateAttempt,
               ),
     );
