@@ -103,6 +103,99 @@ function Get-DefaultInstallDir {
     return Join-Path -Path $env:LOCALAPPDATA -ChildPath 'MicrosoftSqlServerSync\sync_windows_agent'
 }
 
+function Format-UpdateBytes {
+    param([int64] $Value)
+
+    if ($Value -lt 1KB) {
+        return "$Value B"
+    }
+
+    $units = @('KB', 'MB', 'GB', 'TB')
+    $size = [double] $Value
+    $unitIndex = -1
+    while ($size -ge 1024 -and $unitIndex -lt ($units.Count - 1)) {
+        $size /= 1024
+        $unitIndex += 1
+    }
+
+    if ($unitIndex -lt 0) {
+        return "$Value B"
+    }
+
+    return ('{0:N1} {1}' -f $size, $units[$unitIndex])
+}
+
+function Get-UpdateDriveFreeBytes {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    try {
+        $fullPath = [System.IO.Path]::GetFullPath($Path)
+        $root = [System.IO.Path]::GetPathRoot($fullPath)
+        if ([string]::IsNullOrWhiteSpace($root)) {
+            return -1
+        }
+
+        $drive = [System.IO.DriveInfo]::new($root)
+        if (-not $drive.IsReady) {
+            return -1
+        }
+
+        return [int64] $drive.AvailableFreeSpace
+    }
+    catch {
+        return -1
+    }
+}
+
+function Select-UpdateWorkParent {
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [Parameter(Mandatory = $true)][int64] $RequiredBytes,
+        [string] $LogPath = ''
+    )
+
+    $candidatePaths = [System.Collections.Generic.List[string]]::new()
+    $seenCandidates = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($candidate in @(
+        [System.IO.Path]::GetTempPath(),
+        (Split-Path -Path $TargetInstallDir -Parent),
+        [System.IO.Path]::GetPathRoot($TargetInstallDir)
+    )) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        $normalized = [System.IO.Path]::GetFullPath($candidate)
+        if ($seenCandidates.Add($normalized)) {
+            [void] $candidatePaths.Add($normalized)
+        }
+    }
+
+    $freeSpaceSummaries = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidatePath in $candidatePaths) {
+        $availableBytes = Get-UpdateDriveFreeBytes -Path $candidatePath
+        $availableLabel = if ($availableBytes -ge 0) {
+            Format-UpdateBytes -Value $availableBytes
+        } else {
+            'unknown'
+        }
+        [void] $freeSpaceSummaries.Add("$candidatePath => $availableLabel")
+
+        if ($availableBytes -ge $RequiredBytes) {
+            $systemTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+            if (-not $candidatePath.Equals($systemTemp, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Write-UpdateLog -Message "Using update staging path $candidatePath because system temp does not have enough free space for $(Format-UpdateBytes -Value $RequiredBytes)." -LogPath $LogPath
+            }
+            return $candidatePath
+        }
+    }
+
+    $requiredLabel = Format-UpdateBytes -Value $RequiredBytes
+    $summary = $freeSpaceSummaries -join '; '
+    throw "Not enough free space for client update staging. Required at least $requiredLabel. Checked: $summary"
+}
+
 function Stop-AgentProcesses {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
@@ -249,7 +342,19 @@ $zipValue = if (-not [string]::IsNullOrWhiteSpace([string] $manifest.latestZipUr
 }
 $zipUrl = Resolve-UpdateUrl -BaseUrl $ManifestUrl -Value $zipValue
 
-$workRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("sync-windows-agent-update-{0}" -f ([guid]::NewGuid().ToString('N')))
+$requiredFreeBytes = 512MB
+try {
+    $declaredSizeBytes = [int64] $manifest.sizeBytes
+    if ($declaredSizeBytes -gt 0) {
+        $requiredFreeBytes = [int64] [Math]::Max($requiredFreeBytes, $declaredSizeBytes * 4)
+    }
+}
+catch {
+    $requiredFreeBytes = 512MB
+}
+
+$workParent = Select-UpdateWorkParent -TargetInstallDir $InstallDir -RequiredBytes $requiredFreeBytes -LogPath $mainLogPath
+$workRoot = Join-Path -Path $workParent -ChildPath ("sync-windows-agent-update-{0}" -f ([guid]::NewGuid().ToString('N')))
 $zipPath = Join-Path -Path $workRoot -ChildPath 'sync_windows_agent.zip'
 $extractDir = Join-Path -Path $workRoot -ChildPath 'extract'
 
