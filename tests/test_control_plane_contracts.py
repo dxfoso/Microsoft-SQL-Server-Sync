@@ -245,11 +245,23 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
 
         self.assertIn(
+            "function latest_completed_upload_row_count_for_source(clientName: string, table: string): int {",
+            source,
+        )
+        self.assertIn(
             "function latest_completed_source_for_target_table(targetClientName: string, table: string): string {",
             source,
         )
         self.assertIn(
             "function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>): string {",
+            source,
+        )
+        self.assertIn(
+            "const targetRowCount = latest_completed_upload_row_count_for_source(targetClientName, table);",
+            source,
+        )
+        self.assertIn(
+            "if (targetRowCount < 0 || bestKnownRowCount > targetRowCount) {",
             source,
         )
         self.assertIn(

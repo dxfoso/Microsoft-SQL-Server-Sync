@@ -1831,6 +1831,33 @@ function latest_completed_job_tables_for_client(clientName: string): array<strin
   return unique_string_values(tables);
 }
 
+function latest_completed_upload_row_count_for_source(clientName: string, table: string): int {
+  const rows = db.selectMany(SyncJob, {
+    where: {
+      clientName,
+      sourceClientName: clientName,
+      table,
+      direction: 'upload',
+      status: 'completed'
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['rowCount'],
+    limit: 20
+  });
+  if (rows == null) {
+    return -1;
+  }
+  for (const row of rows) {
+    if (row.rowCount != null) {
+      const rowCount = int.from(row.rowCount);
+      if (rowCount >= 0) {
+        return rowCount;
+      }
+    }
+  }
+  return -1;
+}
+
 function latest_completed_source_for_target_table(targetClientName: string, table: string): string {
   const rows = db.selectMany(SyncJob, {
     where: {
@@ -1857,6 +1884,37 @@ function latest_completed_source_for_target_table(targetClientName: string, tabl
 }
 
 function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>): string {
+  const targetClientName = string.from(targetAgent.clientName);
+  const targetRowCount = latest_completed_upload_row_count_for_source(targetClientName, table);
+  let bestKnownSource = '';
+  let bestKnownRowCount = targetRowCount;
+  let firstAvailableSource = '';
+  for (const candidate of visibleAgents) {
+    if (candidate.clientName == targetClientName
+      || candidate.ownerUserId != targetAgent.ownerUserId
+      || candidate.isOnline != true
+      || candidate.serverConnected != true
+      || candidate.sqlConnected != true) {
+      continue;
+    }
+    if (firstAvailableSource.length == 0) {
+      firstAvailableSource = string.from(candidate.clientName);
+    }
+    const candidateRowCount = latest_completed_upload_row_count_for_source(string.from(candidate.clientName), table);
+    if (candidateRowCount < 0) {
+      continue;
+    }
+    if (bestKnownSource.length == 0 || candidateRowCount > bestKnownRowCount) {
+      bestKnownSource = string.from(candidate.clientName);
+      bestKnownRowCount = candidateRowCount;
+    }
+  }
+  if (bestKnownSource.length != 0) {
+    if (targetRowCount < 0 || bestKnownRowCount > targetRowCount) {
+      return bestKnownSource;
+    }
+    return '';
+  }
   const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table);
   if (rememberedSource.length != 0) {
     for (const candidate of visibleAgents) {
@@ -1869,6 +1927,9 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
         return rememberedSource;
       }
     }
+  }
+  if (targetRowCount < 0) {
+    return firstAvailableSource;
   }
   return '';
 }
