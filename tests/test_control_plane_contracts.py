@@ -66,6 +66,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         body = agent_rows_match.group("body")
 
         self.assertIn("limit: limit + 1", body)
+        self.assertIn("'clientVersion'", body)
         self.assertNotIn("'tables'", body)
         self.assertNotIn("diagnosticPayload", body)
 
