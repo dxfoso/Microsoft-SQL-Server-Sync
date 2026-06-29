@@ -46,6 +46,54 @@ function Resolve-UpdateUrl {
     return ([System.Uri]::new([System.Uri]::new($BaseUrl), $Value)).AbsoluteUri
 }
 
+function Initialize-NetworkSecurityProtocol {
+    try {
+        $flags = [System.Net.SecurityProtocolType]::Tls12
+        if ([enum]::GetNames([System.Net.SecurityProtocolType]) -contains 'Tls13') {
+            $flags = $flags -bor [System.Net.SecurityProtocolType]::Tls13
+        }
+        [System.Net.ServicePointManager]::SecurityProtocol = $flags
+    }
+    catch {
+        # Best effort. Older frameworks may not expose every flag.
+    }
+}
+
+function New-UpdateWebClient {
+    Initialize-NetworkSecurityProtocol
+    $client = [System.Net.WebClient]::new()
+    $client.Headers[[System.Net.HttpRequestHeader]::UserAgent] = 'SqlSyncAgentUpdater/1.0'
+    return $client
+}
+
+function Invoke-UpdateRestMethod {
+    param([Parameter(Mandatory = $true)][string] $Uri)
+
+    $client = New-UpdateWebClient
+    try {
+        $content = $client.DownloadString($Uri)
+        return $content | ConvertFrom-Json
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
+function Invoke-UpdateWebRequest {
+    param(
+        [Parameter(Mandatory = $true)][string] $Uri,
+        [Parameter(Mandatory = $true)][string] $OutFile
+    )
+
+    $client = New-UpdateWebClient
+    try {
+        $client.DownloadFile($Uri, $OutFile)
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
 function Get-DefaultInstallDir {
     $portableExe = Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent.exe'
     if (Test-Path -LiteralPath $portableExe -PathType Leaf) {
@@ -193,7 +241,7 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $mainLogPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
 Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir noStart=$NoStart" -LogPath $mainLogPath
-$manifest = Invoke-RestMethod -UseBasicParsing -Uri $ManifestUrl
+$manifest = Invoke-UpdateRestMethod -Uri $ManifestUrl
 $zipValue = if (-not [string]::IsNullOrWhiteSpace([string] $manifest.latestZipUrl)) {
     [string] $manifest.latestZipUrl
 } else {
@@ -208,7 +256,7 @@ $extractDir = Join-Path -Path $workRoot -ChildPath 'extract'
 New-Item -Path $workRoot -ItemType Directory -Force | Out-Null
 try {
     Write-UpdateLog -Message "Downloading client package: $zipUrl" -LogPath $mainLogPath
-    Invoke-WebRequest -UseBasicParsing -Uri $zipUrl -OutFile $zipPath
+    Invoke-UpdateWebRequest -Uri $zipUrl -OutFile $zipPath
 
     $expectedHash = [string] $manifest.sha256
     if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
