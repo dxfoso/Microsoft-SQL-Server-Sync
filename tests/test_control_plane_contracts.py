@@ -280,6 +280,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("return date.diff(date.now(), heartbeat, 'min') <= agent_online_timeout_minutes(agent);", source)
         self.assertIn("isOnline: effective_agent_online(agent),", source)
         self.assertIn("if (!effective_agent_online(agent)) {", source)
+        self.assertIn("db.updateMany(Agent, { clientName: { in: requestedClientNames } }, {", source)
         self.assertIn("skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);", source)
 
     def test_snapshot_record_stays_backward_compatible_with_live_schema(self):

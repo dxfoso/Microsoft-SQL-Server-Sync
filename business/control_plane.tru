@@ -2607,13 +2607,6 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
     }
     const clientName = normalize_user_name(agent.clientName);
     if (clientName.length != 0) {
-      db.update(Agent, { clientName }, {
-        diagnosticRequestId: requestId,
-        diagnosticRequestedAt: requestedAt,
-        diagnosticRequestedByUserId: current.id,
-        diagnosticStatus: 'requested',
-        updatedAt: requestedAt
-      });
       requestedClientNames = requestedClientNames.concat([clientName]);
     }
   }
@@ -2627,6 +2620,13 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
       requestedClientNames: []
     };
   }
+  db.updateMany(Agent, { clientName: { in: requestedClientNames } }, {
+    diagnosticRequestId: requestId,
+    diagnosticRequestedAt: requestedAt,
+    diagnosticRequestedByUserId: current.id,
+    diagnosticStatus: 'requested',
+    updatedAt: requestedAt
+  });
 
   return {
     ok: true,
