@@ -215,19 +215,19 @@ class ControlPlaneContractsTests(unittest.TestCase):
         for expected in [
             "subscriberClientName: agent.clientName",
             "mergeRole: 'symmetricds'",
-            "publisherServer: remote_source_server(sourceAgent)",
-            "publisherDatabase: relay_publisher_database(sourceAgent, table)",
+            "publisherServer: sync_job_text(remote_source_server(sourceAgent))",
+            "publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table))",
             "publicationName: ''",
             "publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true",
-            "publisherUser: sourceAgent.replicationUser",
-            "publisherPassword: sourceAgent.replicationPassword",
+            "publisherUser: sync_job_text(sourceAgent.replicationUser)",
+            "publisherPassword: sync_job_text(sourceAgent.replicationPassword)",
             "clientName: agent.clientName",
             "sourceClientName: sourceAgent.clientName",
-            "publisherServer: agent.server",
-            "publisherDatabase,",
+            "publisherServer: sync_job_text(agent.server)",
+            "publisherDatabase: sync_job_text(publisherDatabase)",
             "publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true",
-            "publisherUser: agent.replicationUser",
-            "publisherPassword: agent.replicationPassword",
+            "publisherUser: sync_job_text(agent.replicationUser)",
+            "publisherPassword: sync_job_text(agent.replicationPassword)",
             "snapshotBytes: 0",
             "snapshotCreatedAt: null",
             "snapshotId: null",
@@ -235,6 +235,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             self.assertIn(expected, body)
 
         self.assertIn("function remote_source_server(agent: map<json>): string {", source)
+        self.assertIn("function sync_job_text(value: string? = null, maxLength: int = 256): string {", source)
 
     def test_bulk_sync_all_prefers_latest_completed_source_direction(self):
         source = (ROOT / "business" / "control_plane.tru").read_text(

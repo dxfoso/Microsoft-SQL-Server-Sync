@@ -303,6 +303,10 @@ function truncate_text(value: string, maxLength: int): string {
   return value.slice(0, maxLength);
 }
 
+function sync_job_text(value: string? = null, maxLength: int = 256): string {
+  return truncate_text(string.from(value ?? ''), maxLength);
+}
+
 function default_admin_username(): string {
   return 'dxfoso@gmail.com';
 }
@@ -2035,12 +2039,12 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         table,
         direction: 'upload',
         mergeRole: 'symmetricds',
-        publisherServer: sourceAgent.server,
-        publisherDatabase: relay_publisher_database(sourceAgent, table),
+        publisherServer: sync_job_text(sourceAgent.server),
+        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sourceAgent.replicationUser,
-        publisherPassword: sourceAgent.replicationPassword,
+        publisherUser: sync_job_text(sourceAgent.replicationUser),
+        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
         status: 'queued',
         progress: 0,
         rowCount: 0,
@@ -2063,12 +2067,12 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
         table,
         direction: 'download',
         mergeRole: 'symmetricds',
-        publisherServer: remote_source_server(sourceAgent),
-        publisherDatabase: relay_publisher_database(sourceAgent, table),
+        publisherServer: sync_job_text(remote_source_server(sourceAgent)),
+        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sourceAgent.replicationUser,
-        publisherPassword: sourceAgent.replicationPassword,
+        publisherUser: sync_job_text(sourceAgent.replicationUser),
+        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
         status: 'waiting',
         progress: 0,
         rowCount: 0,
@@ -2104,12 +2108,12 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
       table,
       direction: 'sync',
       mergeRole: 'symmetricds',
-      publisherServer: agent.server,
-      publisherDatabase,
+      publisherServer: sync_job_text(agent.server),
+      publisherDatabase: sync_job_text(publisherDatabase),
       publicationName: '',
       publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
-      publisherUser: agent.replicationUser,
-      publisherPassword: agent.replicationPassword,
+      publisherUser: sync_job_text(agent.replicationUser),
+      publisherPassword: sync_job_text(agent.replicationPassword),
       status: 'queued',
       progress: 0,
       rowCount: 0,
@@ -3373,12 +3377,12 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         table,
         direction: 'upload',
         mergeRole: 'symmetricds',
-        publisherServer: sourceAgent.server,
-        publisherDatabase: relay_publisher_database(sourceAgent, table),
+        publisherServer: sync_job_text(sourceAgent.server),
+        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sourceAgent.replicationUser,
-        publisherPassword: sourceAgent.replicationPassword,
+        publisherUser: sync_job_text(sourceAgent.replicationUser),
+        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
         status: 'queued',
         progress: 0,
         rowCount: 0,
@@ -3401,12 +3405,12 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
         table,
         direction: 'download',
         mergeRole: 'symmetricds',
-        publisherServer: remote_source_server(sourceAgent),
-        publisherDatabase: relay_publisher_database(sourceAgent, table),
+        publisherServer: sync_job_text(remote_source_server(sourceAgent)),
+        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
         publicationName: '',
         publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sourceAgent.replicationUser,
-        publisherPassword: sourceAgent.replicationPassword,
+        publisherUser: sync_job_text(sourceAgent.replicationUser),
+        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
         status: 'waiting',
         progress: 0,
         rowCount: 0,
@@ -3433,8 +3437,8 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       publisherServer = remote_source_server(sourceAgent);
       publisherDatabase = relay_publisher_database(sourceAgent, table);
       publisherUseWindowsAuth = sourceAgent.replicationUseWindowsAuth == true;
-      publisherUser = sourceAgent.replicationUser;
-      publisherPassword = sourceAgent.replicationPassword;
+      publisherUser = sync_job_text(sourceAgent.replicationUser);
+      publisherPassword = sync_job_text(sourceAgent.replicationPassword);
     }
     createdJobsRaw = createdJobsRaw.concat([{
       id: uuid.v4(),
@@ -3444,8 +3448,8 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
       table,
       direction: direction_for_sync_mode(resolvedMode),
       mergeRole: 'symmetricds',
-      publisherServer,
-      publisherDatabase,
+      publisherServer: sync_job_text(publisherServer),
+      publisherDatabase: sync_job_text(publisherDatabase),
       publicationName: '',
       publisherUseWindowsAuth,
       publisherUser,
