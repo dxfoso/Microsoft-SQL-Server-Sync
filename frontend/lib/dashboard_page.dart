@@ -88,8 +88,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   int _historyLimit = _defaultHistoryLimit;
   final Set<String> _busyTablePolicyKeys = <String>{};
   final Set<String> _requestingDiagnosticsClientNames = <String>{};
+  final Set<String> _requestingClientUpdateClientNames = <String>{};
   bool _bulkSyncBusy = false;
   bool _bulkDiagnosticsBusy = false;
+  bool _bulkClientUpdateBusy = false;
   bool _serverResetBusy = false;
   bool _handledLaunchAction = false;
   String? _bulkDiagnosticsRequestId;
@@ -2075,7 +2077,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         jobs.isEmpty
                             ? const EmptyStateCard(
                               message:
-                                  'No SymmetricDS jobs have been recorded yet for this client or table.',
+                                  'No sync jobs have been recorded yet for this client or table.',
                             )
                             : ListView.separated(
                               itemCount: jobs.length,
@@ -2234,7 +2236,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   const SizedBox(height: 12),
                   const EmptyStateCard(
                     message:
-                        'The control plane no longer stores row-level table payloads. Use SymmetricDS job history and the Windows client for table-level verification.',
+                        'The control plane no longer stores row-level table payloads. Use sync job history and the Windows client for table-level verification.',
                   ),
                 ],
               ),
@@ -2409,7 +2411,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'This deletes saved SymmetricDS job state and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
+                        'This deletes saved sync job state and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
                         style: Theme.of(
                           context,
                         ).textTheme.bodyMedium?.copyWith(height: 1.45),
@@ -2478,7 +2480,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Server sync state cleared. Deleted ${result.totalDeletedCount} records and reset ${result.agentResetCount} agents.',
+            'Server sync state cleared. Deleted ${result.jobDeletedCount} records and reset ${result.agentResetCount} agents.',
           ),
         ),
       );
@@ -2777,6 +2779,85 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
+  Future<void> _requestAgentClientUpdate(AdminAgent agent) async {
+    if (_requestingClientUpdateClientNames.contains(agent.clientName)) {
+      return;
+    }
+    setState(() {
+      _requestingClientUpdateClientNames.add(agent.clientName);
+    });
+    try {
+      await _api.requestAgentClientUpdate(clientName: agent.clientName);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Client update requested from ${agent.clientName}. The Windows agent will install the latest live version on its next heartbeat.',
+          ),
+        ),
+      );
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _requestingClientUpdateClientNames.remove(agent.clientName);
+        });
+      }
+    }
+  }
+
+  Future<void> _requestAllAgentClientUpdates() async {
+    if (_bulkClientUpdateBusy) {
+      return;
+    }
+    setState(() {
+      _bulkClientUpdateBusy = true;
+    });
+    try {
+      final result = await _api.requestAllAgentClientUpdates();
+      if (!mounted) {
+        return;
+      }
+      final names = result.requestedClientNames;
+      final detail =
+          names.isEmpty
+              ? 'No online clients were available.'
+              : names.length <= 5
+              ? ' Clients: ${names.join(', ')}.'
+              : ' Clients: ${names.take(5).join(', ')} and ${names.length - 5} more.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Client update requested for ${result.requestedClientCount} online client(s).$detail',
+          ),
+        ),
+      );
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bulkClientUpdateBusy = false;
+        });
+      }
+    }
+  }
+
   Future<void> _openDiagnosticsDialog(AdminAgent agent) async {
     try {
       final diagnostics = await _api.fetchAgentDiagnostics(
@@ -2890,7 +2971,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         clientName: agent.clientName,
         table: tableKey,
         enabled: enabled,
-        syncMode: tableState.syncMode,
       );
       if (!mounted) {
         return;
@@ -2977,9 +3057,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   String _roleLabel() => 'Participant';
 
-  String _syncModeDisplay(String syncMode) => 'SYMMETRICDS';
+  String _syncFlowDisplay() => 'SNAPSHOT';
 
-  String _syncDirectionDisplay(String direction) => 'SYNC';
+  String _syncDirectionDisplay() => 'SYNC';
 
   Color _userRoleColor(String role) {
     switch (role) {
@@ -3886,7 +3966,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: Icons.sync_rounded,
           countText: '${clients.length} / ${summary.clientCount}',
           meaning:
-              'This number counts clients that already have SymmetricDS activity for this table.',
+              'This number counts clients that already have sync activity for this table.',
           emptyMessage: 'No client has synced this table yet.',
           clients: clients,
         );
@@ -3897,9 +3977,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 .map((entry) {
                   return _TableMetricClientInfo(
                     name: entry.agent.clientName,
-                    subtitle: 'SymmetricDS participant',
+                    subtitle: 'Sync participant',
                     detail:
-                        '${_syncModeDisplay(entry.tableState.syncMode)} - ${entry.tableState.status}',
+                        '${_syncFlowDisplay()} - ${entry.tableState.status}',
                     active: entry.agent.isOnline,
                   );
                 })
@@ -3911,7 +3991,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: Icons.merge_type_rounded,
           countText: '${clients.length}',
           meaning:
-              'This number counts clients whose table data is configured for SymmetricDS, or clients that already synced this table.',
+              'This number counts clients whose table data is configured for sync, or clients that already synced this table.',
           emptyMessage: 'No client has merged data for this table yet.',
           clients: clients,
         );
@@ -3946,7 +4026,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   subtitle:
                       '${jobs.length} sync ${jobs.length == 1 ? 'attempt' : 'attempts'}',
                   detail:
-                      'Last ${_syncDirectionDisplay(latest.direction)} - ${latest.status.toUpperCase()} - ${_formatTimestamp(latest.completedAt ?? latest.updatedAt)}',
+                      'Last ${_syncDirectionDisplay()} - ${latest.status.toUpperCase()} - ${_formatTimestamp(latest.completedAt ?? latest.updatedAt)}',
                   active: agent?.agent.isOnline ?? false,
                 );
               }).toList()
@@ -4280,7 +4360,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             'Flow',
             tableState.enabled ? 'Merge participant' : 'Disabled',
           ),
-          const MapEntry('Mode', 'SYMMETRICDS'),
+          const MapEntry('Mode', 'SNAPSHOT'),
           const MapEntry('Direction', 'SYNC'),
           MapEntry('Database', agent.database),
           MapEntry(
@@ -6114,13 +6194,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       label: 'SQL',
                       value: agent.sqlConnected ? 'Connected' : 'Pending',
                     ),
-                    MetricPill(
-                      label: 'SymmetricDS',
-                      value:
-                          agent.symmetricDs.configured
-                              ? 'Configured'
-                              : agent.symmetricDs.status,
-                    ),
                   ],
                 ),
               ],
@@ -6200,7 +6273,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildClientHeroCard(AdminAgent agent) {
     final serverItem = _serverItemForClientName(agent.clientName);
     final diagnostics = agent.diagnostics;
+    final clientUpdate = agent.clientUpdate;
     final requestingDiagnostics = _requestingDiagnosticsClientNames.contains(
+      agent.clientName,
+    );
+    final requestingClientUpdate = _requestingClientUpdateClientNames.contains(
       agent.clientName,
     );
     return SurfaceCard(
@@ -6220,27 +6297,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               MetricPill(label: 'Version', value: _simpleClientVersion(agent)),
               MetricPill(label: 'Role', value: _roleLabel()),
               MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
-              MetricPill(
-                label: 'SymmetricDS',
-                value:
-                    agent.symmetricDs.configured
-                        ? 'Configured'
-                        : agent.symmetricDs.status,
-              ),
               MetricPill(label: 'Diagnostics', value: diagnostics.status),
+              MetricPill(label: 'Update', value: clientUpdate.status),
             ],
           ),
-          if (agent.symmetricDs.message.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              agent.symmetricDs.message,
-              style: const TextStyle(
-                color: Color(0xFF667085),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -6270,6 +6330,23 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
               FilledButton.tonalIcon(
                 onPressed:
+                    requestingClientUpdate
+                        ? null
+                        : () => unawaited(_requestAgentClientUpdate(agent)),
+                icon:
+                    requestingClientUpdate
+                        ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                        : const Icon(Icons.system_update_alt_rounded, size: 16),
+                label: Text(
+                  clientUpdate.pending ? 'Update Requested' : 'Update Client',
+                ),
+              ),
+              FilledButton.tonalIcon(
+                onPressed:
                     diagnostics.hasReport
                         ? () => unawaited(_openDiagnosticsDialog(agent))
                         : null,
@@ -6278,6 +6355,48 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ],
           ),
+          if (clientUpdate.pending ||
+              clientUpdate.message.trim().isNotEmpty ||
+              (clientUpdate.acknowledgedAt?.trim().isNotEmpty ?? false)) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFDDE3EA)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    clientUpdate.pending
+                        ? 'Client update request pending'
+                        : 'Latest client update status',
+                    style: const TextStyle(
+                      color: Color(0xFF101828),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Status ${clientUpdate.status} • Requested ${_formatTimestamp(clientUpdate.requestedAt ?? '')} • Acknowledged ${_formatTimestamp(clientUpdate.acknowledgedAt ?? '')}',
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (clientUpdate.message.trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    SelectableText(clientUpdate.message),
+                  ],
+                ],
+              ),
+            ),
+          ],
           if (diagnostics.pending ||
               diagnostics.summary.trim().isNotEmpty ||
               (diagnostics.uploadedAt?.trim().isNotEmpty ?? false)) ...[
@@ -6459,7 +6578,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${_syncDirectionDisplay(job.direction)} - ${_formatTimestamp(job.updatedAt)}',
+                  '${_syncDirectionDisplay()} - ${_formatTimestamp(job.updatedAt)}',
                   style: const TextStyle(
                     color: Color(0xFF667085),
                     fontSize: 12,
@@ -6711,7 +6830,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             color: _statusColor(job.status),
                           ),
                           Text(
-                            _syncDirectionDisplay(job.direction),
+                            _syncDirectionDisplay(),
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                               fontSize: 11.5,
@@ -6751,7 +6870,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     SizedBox(
                       width: 84,
                       child: Text(
-                        _syncDirectionDisplay(job.direction),
+                        _syncDirectionDisplay(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -6993,6 +7112,52 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   size: 16,
                                 ),
                         label: const Text('Reset Server Data'),
+                      ),
+            ),
+          if (widget.authenticatedUser.canManageUsers)
+            Padding(
+              padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
+              child:
+                  compactAppBar
+                      ? IconButton(
+                        tooltip:
+                            'Request latest client update on all online clients',
+                        onPressed:
+                            _bulkClientUpdateBusy
+                                ? null
+                                : () =>
+                                    unawaited(_requestAllAgentClientUpdates()),
+                        icon:
+                            _bulkClientUpdateBusy
+                                ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.system_update_alt_rounded),
+                      )
+                      : FilledButton.tonalIcon(
+                        onPressed:
+                            _bulkClientUpdateBusy
+                                ? null
+                                : () =>
+                                    unawaited(_requestAllAgentClientUpdates()),
+                        icon:
+                            _bulkClientUpdateBusy
+                                ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(
+                                  Icons.system_update_alt_rounded,
+                                  size: 16,
+                                ),
+                        label: const Text('Update All Clients'),
                       ),
             ),
           if (widget.authenticatedUser.canManageUsers)

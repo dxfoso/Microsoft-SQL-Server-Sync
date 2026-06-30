@@ -375,10 +375,6 @@ class AgentControlPlaneClient {
     required Map<String, SyncTableState> tables,
     required List<Map<String, String>> tableRelationships,
     required String clientVersion,
-    required String symmetricDsStatus,
-    required String symmetricDsConfigPath,
-    required String symmetricDsMessage,
-    required bool symmetricDsConfigured,
   }) async {
     final response = await _invokeFunction('agents_heartbeat', {
       'clientName': clientName,
@@ -398,10 +394,6 @@ class AgentControlPlaneClient {
           .map((entry) => {'table': entry.key, ...entry.value.toJson()})
           .toList(growable: false),
       'tableRelationships': tableRelationships,
-      'symmetricDsStatus': symmetricDsStatus,
-      'symmetricDsConfigPath': symmetricDsConfigPath,
-      'symmetricDsMessage': symmetricDsMessage,
-      'symmetricDsConfigured': symmetricDsConfigured,
     }, 'sending heartbeat');
 
     if (response is! Map) {
@@ -451,6 +443,36 @@ class AgentControlPlaneClient {
                 Map<String, dynamic>.from(decoded['diagnostics'] as Map),
               )
               : const RemoteAgentDiagnostics(),
+      clientUpdate:
+          decoded['clientUpdate'] is Map
+              ? RemoteAgentClientUpdate.fromJson(
+                Map<String, dynamic>.from(decoded['clientUpdate'] as Map),
+              )
+              : const RemoteAgentClientUpdate(),
+    );
+  }
+
+  Future<RemoteAgentClientUpdate> acknowledgeClientUpdate({
+    required String clientName,
+    String? requestId,
+    required String status,
+    String installedVersion = '',
+    String message = '',
+  }) async {
+    final response = await _invokeFunction('agent_client_update_ack', {
+      'clientName': clientName,
+      'requestId': requestId,
+      'status': status,
+      'installedVersion': installedVersion,
+      'message': message,
+    }, 'acknowledging client update request');
+    if (response is! Map || response['clientUpdate'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected client update acknowledgement payload.',
+      );
+    }
+    return RemoteAgentClientUpdate.fromJson(
+      Map<String, dynamic>.from(response['clientUpdate'] as Map),
     );
   }
 
@@ -480,12 +502,12 @@ class AgentControlPlaneClient {
   Future<RemoteTableSyncPolicy> updateTableSyncPolicy({
     required String table,
     required bool enabled,
-    String? syncMode,
+    bool cascadeRelated = true,
   }) async {
     final response = await _invokeFunction('table_sync_policy_set', {
       'table': table,
       'enabled': enabled,
-      if (syncMode != null && syncMode.trim().isNotEmpty) 'syncMode': syncMode,
+      'cascadeRelated': cascadeRelated,
     }, 'updating table sync policy');
     if (response is! Map || response['policy'] is! Map) {
       throw const AgentControlPlaneException(
@@ -500,16 +522,12 @@ class AgentControlPlaneClient {
   Future<List<RemoteSyncJob>> createJobs({
     required String clientName,
     required List<String> tables,
-    required String direction,
     String? sourceClientName,
-    String? syncMode,
   }) async {
     final response = await _invokeFunction('jobs_create', {
       'clientName': clientName,
       if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
         'sourceClientName': sourceClientName,
-      if (syncMode != null && syncMode.trim().isNotEmpty) 'syncMode': syncMode,
-      'direction': direction,
       'tables': tables,
     }, 'creating jobs');
 
@@ -547,7 +565,6 @@ class AgentControlPlaneClient {
     required int progress,
     required String message,
     required int rowCount,
-    required String direction,
   }) async {
     final response = await _invokeFunction('jobs_progress', {
       'jobId': jobId,
@@ -555,7 +572,6 @@ class AgentControlPlaneClient {
       'progress': progress,
       'message': message,
       'rowCount': rowCount,
-      'direction': direction,
     }, 'updating job progress');
     return _parseJobPayload(response, 'job progress');
   }
@@ -890,6 +906,7 @@ class HeartbeatResult {
     required this.tableDependencies,
     required this.jobs,
     required this.diagnostics,
+    required this.clientUpdate,
   });
 
   final RemoteAgentSyncSettings syncSettings;
@@ -897,6 +914,7 @@ class HeartbeatResult {
   final List<RemoteTableDependency> tableDependencies;
   final List<RemoteSyncJob> jobs;
   final RemoteAgentDiagnostics diagnostics;
+  final RemoteAgentClientUpdate clientUpdate;
 }
 
 class RemoteTableDependency {
@@ -929,14 +947,12 @@ class RemoteTableSyncPolicy {
   const RemoteTableSyncPolicy({
     required this.table,
     required this.enabled,
-    required this.syncMode,
     required this.updatedAt,
     required this.updatedByClientName,
   });
 
   final String table;
   final bool enabled;
-  final String syncMode;
   final String updatedAt;
   final String updatedByClientName;
 
@@ -944,7 +960,6 @@ class RemoteTableSyncPolicy {
     return RemoteTableSyncPolicy(
       table: json['table'] as String? ?? '',
       enabled: json['enabled'] as bool? ?? false,
-      syncMode: normalizeSyncMode(json['syncMode'] as String?),
       updatedAt: json['updatedAt'] as String? ?? '',
       updatedByClientName: json['updatedByClientName'] as String? ?? '',
     );
@@ -1015,6 +1030,44 @@ class RemoteAgentDiagnostics {
   }
 }
 
+class RemoteAgentClientUpdate {
+  const RemoteAgentClientUpdate({
+    this.pending = false,
+    this.requestId,
+    this.requestedAt,
+    this.requestedByUserId,
+    this.targetVersion,
+    this.lastRequestId,
+    this.acknowledgedAt,
+    this.status = 'idle',
+    this.message = '',
+  });
+
+  final bool pending;
+  final String? requestId;
+  final String? requestedAt;
+  final String? requestedByUserId;
+  final String? targetVersion;
+  final String? lastRequestId;
+  final String? acknowledgedAt;
+  final String status;
+  final String message;
+
+  factory RemoteAgentClientUpdate.fromJson(Map<String, dynamic> json) {
+    return RemoteAgentClientUpdate(
+      pending: json['pending'] as bool? ?? false,
+      requestId: json['requestId'] as String?,
+      requestedAt: json['requestedAt'] as String?,
+      requestedByUserId: json['requestedByUserId'] as String?,
+      targetVersion: json['targetVersion'] as String?,
+      lastRequestId: json['lastRequestId'] as String?,
+      acknowledgedAt: json['acknowledgedAt'] as String?,
+      status: json['status'] as String? ?? 'idle',
+      message: json['message'] as String? ?? '',
+    );
+  }
+}
+
 class AgentAuthenticatedUser {
   const AgentAuthenticatedUser({
     required this.token,
@@ -1049,10 +1102,8 @@ class RemoteSyncJob {
     required this.subscriberClientName,
     required this.table,
     required this.direction,
-    required this.mergeRole,
     required this.publisherServer,
     required this.publisherDatabase,
-    required this.publicationName,
     required this.publisherUseWindowsAuth,
     required this.publisherUser,
     required this.publisherPassword,
@@ -1076,10 +1127,8 @@ class RemoteSyncJob {
   final String subscriberClientName;
   final String table;
   final String direction;
-  final String mergeRole;
   final String publisherServer;
   final String publisherDatabase;
-  final String publicationName;
   final bool publisherUseWindowsAuth;
   final String publisherUser;
   final String publisherPassword;
@@ -1103,11 +1152,9 @@ class RemoteSyncJob {
       sourceClientName: json['sourceClientName'] as String? ?? '',
       subscriberClientName: json['subscriberClientName'] as String? ?? '',
       table: json['table'] as String? ?? '',
-      direction: json['direction'] as String? ?? 'sync',
-      mergeRole: json['mergeRole'] as String? ?? '',
+      direction: json['direction'] as String? ?? '',
       publisherServer: json['publisherServer'] as String? ?? '',
       publisherDatabase: json['publisherDatabase'] as String? ?? '',
-      publicationName: json['publicationName'] as String? ?? '',
       publisherUseWindowsAuth: json['publisherUseWindowsAuth'] as bool? ?? true,
       publisherUser: json['publisherUser'] as String? ?? '',
       publisherPassword: json['publisherPassword'] as String? ?? '',

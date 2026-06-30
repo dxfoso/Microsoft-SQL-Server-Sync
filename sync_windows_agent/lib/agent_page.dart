@@ -11,7 +11,6 @@ import 'package:path/path.dart' as path;
 import 'agent_widgets.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
-import 'symmetricds_service.dart';
 import 'startup_log.dart';
 
 const String _agentAppVersion = String.fromEnvironment(
@@ -129,11 +128,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _clientUpdateError;
   bool _checkingClientUpdate = false;
   bool _applyingClientUpdate = false;
-  final SymmetricDsService _symmetricDsService = const SymmetricDsService();
-  String _symmetricDsStatus = 'unknown';
-  String _symmetricDsConfigPath = '';
-  String _symmetricDsMessage = '';
-  bool _symmetricDsConfigured = false;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -141,6 +135,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<String> _tables = const [];
   Map<String, Set<String>> _localRelatedSyncTables = const {};
   Map<String, Set<String>> _relatedSyncTables = const {};
+  List<RemoteTableDependency> _remoteTableDependencies = const [];
   String? _selectedTable;
   List<String> _tableColumns = const [];
   List<List<String>> _tableRows = const [];
@@ -150,7 +145,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Duration get _autoSyncInterval =>
       Duration(minutes: _syncState.autoSyncIntervalMinutes);
-  String get _defaultTableSyncMode => kSyncModeMerge;
 
   @override
   void initState() {
@@ -286,18 +280,36 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   void _updateSyncTableState(String table, SyncTableState state) {
     final tables = Map<String, SyncTableState>.from(_syncState.tables);
     tables[table] = state;
-    final nextState = _syncState.copyWith(tables: tables);
-    setState(() {
-      _syncState = nextState;
-    });
-    widget.onSyncStateChanged(nextState);
+    _replaceSyncState(_syncState.copyWith(tables: tables));
   }
 
   void _replaceSyncState(SyncClientState nextState) {
     setState(() {
       _syncState = nextState;
+      _refreshVisibleTablesForSelectedDatabaseInState();
     });
     widget.onSyncStateChanged(nextState);
+  }
+
+  void _refreshVisibleTablesForSelectedDatabaseInState() {
+    final selectedDatabase = _selectedDatabase?.trim() ?? '';
+    if (selectedDatabase.isEmpty) {
+      return;
+    }
+    final visibleTables = _stableVisibleTablesForDatabase(
+      selectedDatabase,
+      _tables,
+    );
+    final previousSelectedTable = _selectedTable;
+    final nextSelectedTable =
+        previousSelectedTable != null &&
+                visibleTables.contains(previousSelectedTable)
+            ? previousSelectedTable
+            : visibleTables.isNotEmpty
+            ? visibleTables.first
+            : null;
+    _tables = visibleTables;
+    _selectedTable = nextSelectedTable;
   }
 
   List<SyncHistoryEntry> _appendHistory(
@@ -465,6 +477,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           .map((job) => job.table)
           .where((key) => _syncKeyMatchesDatabase(key, database))
           .map(_localTableName),
+      ..._relatedSyncTables.keys
+          .where((key) => _syncKeyMatchesDatabase(key, database))
+          .map(_localTableName),
+      ..._relatedSyncTables.values
+          .expand((values) => values)
+          .where((key) => _syncKeyMatchesDatabase(key, database))
+          .map(_localTableName),
     };
     final tables = visible.toList(growable: false);
     tables.sort((left, right) {
@@ -481,35 +500,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   bool _isPrioritySyncTable(SyncTableState state) {
-    return state.enabled || state.lastSync.trim().isNotEmpty;
+    return _isTableSelectedForSync(state) || state.lastSync.trim().isNotEmpty;
   }
 
   SyncTableState _syncTableState(String table, {String? syncKey}) {
     final key = syncKey ?? _syncTableKey(table);
-    final databaseName = _databaseNameFromSyncKey(key);
-    final localTable = _localTableName(key);
-    final compatibleKey =
-        databaseName.isEmpty
-            ? 'dbo.$localTable'
-            : '$databaseName$_syncTableKeySeparator'
-                'dbo.$localTable';
-    return _syncState.tables[key] ??
-        _syncState.tables[table] ??
-        _syncState.tables[compatibleKey] ??
-        _defaultSyncTableState(key);
+    return _syncState.tables[key] ?? _defaultSyncTableState(key);
   }
 
-  void _updateSyncEnabledTable(
-    String table,
-    bool enabled, {
-    String? selectedSyncMode,
-  }) {
+  void _updateSyncEnabledTable(String table, bool enabled) {
     final syncKey = _syncTableKey(table);
     final current = _syncTableState(table, syncKey: syncKey);
     final now = DateTime.now().toIso8601String();
     final nextStatus = enabled ? 'Queued' : 'Paused';
-    final syncMode = normalizeSyncMode(selectedSyncMode ?? current.syncMode);
-    final syncDirection = syncDirectionForMode(syncMode);
     final nextHistory = _appendHistory(
       current.history,
       SyncHistoryEntry(
@@ -519,9 +522,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         success: enabled,
         message:
             enabled
-                ? 'SymmetricDS sync enabled for ${widget.clientName}.'
+                ? 'Sync enabled for ${widget.clientName}.'
                 : 'Remote sync paused for ${widget.clientName}.',
-        direction: syncDirection,
         rowCount: current.rowCount,
         progress: enabled ? 0 : current.progress,
       ),
@@ -533,12 +535,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         status: nextStatus,
         lastSync: enabled ? current.lastSync : now,
         progress: enabled ? 0 : current.progress,
-        direction: syncDirection,
-        syncMode: syncMode,
-        message:
-            enabled
-                ? 'Waiting for the next SymmetricDS sync.'
-                : 'Sync disabled.',
+        autoRequired:
+            current.autoRequired && enabled ? false : current.autoRequired,
+        message: enabled ? 'Waiting for the next sync.' : 'Sync disabled.',
         history: nextHistory,
       ),
     );
@@ -565,76 +564,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return related;
   }
 
-  Future<void> _enableRelatedTablesForCustomSyncPackage({
-    required String syncKey,
-    required String syncMode,
-  }) async {
-    final related = _relatedSyncKeysFor(syncKey);
-    if (related.isEmpty) {
-      return;
-    }
-
-    final newlyEnabled = <String>{};
-    for (final relatedSyncKey in related) {
-      final current = _syncTableState(relatedSyncKey, syncKey: relatedSyncKey);
-      if (current.enabled) {
-        continue;
-      }
-      await _controlPlaneClient.updateTableSyncPolicy(
-        table: relatedSyncKey,
-        enabled: true,
-        syncMode: syncMode,
-      );
-      final localTable = _localTableName(relatedSyncKey);
-      _updateSyncEnabledTable(localTable, true, selectedSyncMode: syncMode);
-      newlyEnabled.add(relatedSyncKey);
-    }
-
-    if (newlyEnabled.isNotEmpty && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: SelectableText(
-            'Enabled ${newlyEnabled.length} related table'
-            '${newlyEnabled.length == 1 ? '' : 's'} for SymmetricDS sync.',
-          ),
-        ),
-      );
-    }
-  }
-
   Future<void> _handleSyncEnabledChange(String table, bool enabled) async {
-    final current = _syncTableState(table);
-    String? selectedMode = current.syncMode;
-    if (enabled) {
-      selectedMode = await _openSyncModeDialog(
-        table: table,
-        initialMode: current.syncMode,
-        title: 'Start SymmetricDS sync',
-        confirmLabel: 'Enable sync',
-      );
-      if (!mounted || selectedMode == null) {
-        return;
-      }
-    }
-
-    final normalizedMode = normalizeSyncMode(selectedMode);
     final syncKey = _syncTableKey(table);
     try {
       await _controlPlaneClient.updateTableSyncPolicy(
         table: syncKey,
         enabled: enabled,
-        syncMode: normalizedMode,
+        cascadeRelated: false,
       );
       if (!mounted) {
         return;
       }
-      _updateSyncEnabledTable(table, enabled, selectedSyncMode: normalizedMode);
-      if (enabled) {
-        await _enableRelatedTablesForCustomSyncPackage(
-          syncKey: syncKey,
-          syncMode: normalizedMode,
-        );
-      }
+      _updateSyncEnabledTable(table, enabled);
+      _refreshAutoRequiredTables();
     } catch (error) {
       if (!mounted) {
         return;
@@ -648,11 +590,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   SyncTableState _defaultSyncTableState(String table) {
     return SyncTableState(
       enabled: false,
+      autoRequired: false,
       status: 'Paused',
       lastSync: '',
       progress: 0,
-      direction: syncDirectionForMode(_defaultTableSyncMode),
-      syncMode: _defaultTableSyncMode,
       rowCount: 0,
       savedRowCount: null,
       message: 'Remote sync disabled.',
@@ -666,22 +607,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     for (final table in tableNames) {
       final syncKey = _syncTableKey(table);
       if (!nextTables.containsKey(syncKey)) {
-        final databaseName = _databaseNameFromSyncKey(syncKey);
-        final localTable = _localTableName(syncKey);
-        final compatibleKey =
-            databaseName.isEmpty
-                ? 'dbo.$localTable'
-                : '$databaseName$_syncTableKeySeparator'
-                    'dbo.$localTable';
-        nextTables[syncKey] =
-            nextTables[table] ??
-            nextTables[compatibleKey] ??
-            _defaultSyncTableState(syncKey);
+        nextTables[syncKey] = _defaultSyncTableState(syncKey);
         changed = true;
       }
     }
     if (changed) {
-      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+      _replaceSyncState(
+        _syncState.copyWith(tables: _nextTablesWithAutoRequired(nextTables)),
+      );
     }
   }
 
@@ -706,8 +639,81 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     if (changed) {
-      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+      _replaceSyncState(
+        _syncState.copyWith(tables: _nextTablesWithAutoRequired(nextTables)),
+      );
     }
+  }
+
+  bool _isTableSelectedForSync(SyncTableState state) {
+    return state.enabled || state.autoRequired;
+  }
+
+  Set<String> _autoRequiredSyncKeys([Map<String, SyncTableState>? tables]) {
+    final states = tables ?? _syncState.tables;
+    final autoRequired = <String>{};
+    final manualRoots = states.entries
+        .where((entry) => entry.value.enabled)
+        .map((entry) => entry.key.trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+    for (final root in manualRoots) {
+      autoRequired.addAll(_relatedSyncKeysFor(root));
+    }
+    autoRequired.removeAll(manualRoots);
+    return autoRequired;
+  }
+
+  Map<String, SyncTableState> _nextTablesWithAutoRequired(
+    Map<String, SyncTableState> sourceTables,
+  ) {
+    final nextTables = Map<String, SyncTableState>.from(sourceTables);
+    final autoRequiredSyncKeys = _autoRequiredSyncKeys(nextTables);
+    final knownKeys = <String>{
+      ...nextTables.keys,
+      ..._relatedSyncTables.keys,
+      ..._relatedSyncTables.values.expand((values) => values),
+    };
+    for (final syncKey in knownKeys) {
+      final current = nextTables[syncKey] ?? _defaultSyncTableState(syncKey);
+      final nextAutoRequired =
+          !current.enabled && autoRequiredSyncKeys.contains(syncKey);
+      var nextStatus = current.status;
+      var nextMessage = current.message;
+      if (nextAutoRequired && current.status == 'Paused') {
+        nextStatus = 'Auto';
+        nextMessage = 'Required automatically by table dependency.';
+      } else if (!nextAutoRequired &&
+          current.autoRequired &&
+          current.status == 'Auto') {
+        nextStatus = 'Paused';
+        nextMessage = 'Remote sync disabled.';
+      }
+      nextTables[syncKey] = current.copyWith(
+        autoRequired: nextAutoRequired,
+        status: nextStatus,
+        message: nextMessage,
+      );
+    }
+    return nextTables;
+  }
+
+  void _refreshAutoRequiredTables() {
+    final nextTables = _nextTablesWithAutoRequired(_syncState.tables);
+    if (_syncState.tables.length == nextTables.length) {
+      var changed = false;
+      for (final entry in nextTables.entries) {
+        final current = _syncState.tables[entry.key];
+        if (current == null || !_syncTableStatesEqual(current, entry.value)) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) {
+        return;
+      }
+    }
+    _replaceSyncState(_syncState.copyWith(tables: nextTables));
   }
 
   @override
@@ -894,7 +900,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     setState(() {
       _localRelatedSyncTables = relationships;
       _relatedSyncTables = _mergeRelationshipGraphs([relationships]);
+      _refreshVisibleTablesForSelectedDatabaseInState();
     });
+    _refreshAutoRequiredTables();
 
     if (autoLoadRows && selectedTable != null) {
       await _loadTableRows(
@@ -1267,7 +1275,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   bool _isTableDueForRoleSync(SyncTableState state) {
-    if (!state.enabled) {
+    if (!_isTableSelectedForSync(state)) {
       return false;
     }
     if (state.lastSync.trim().isEmpty) {
@@ -1307,7 +1315,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       status: nextStatus,
       lastSync: timestamp.trim().isEmpty ? current.lastSync : timestamp,
       progress: job.progress,
-      direction: job.direction,
       rowCount: job.rowCount,
       message: nextMessage,
       history:
@@ -1320,7 +1327,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   status: nextStatus,
                   success: success,
                   message: nextMessage,
-                  direction: job.direction,
                   rowCount: job.rowCount,
                   progress: job.progress,
                 ),
@@ -1719,148 +1725,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  String _syncModeLabel(String syncMode) {
-    return 'Custom sync';
+  String _syncFlowLabel() {
+    return 'Snapshot sync';
   }
 
-  IconData _syncModeIcon(String syncMode) {
+  IconData _syncFlowIcon() {
     return Icons.sync_rounded;
   }
 
-  Color _syncModeColor(String syncMode) {
+  Color _syncFlowColor() {
     return const Color(0xFF0F766E);
   }
 
-  String _syncModeDescription(String syncMode) {
+  String _syncFlowDescription() {
     return 'Upload local rows and insert only missing cloud rows.';
-  }
-
-  Future<void> _updateTableSyncMode(String table, String syncMode) async {
-    final normalizedMode = normalizeSyncMode(syncMode);
-    final syncKey = _syncTableKey(table);
-    final current = _syncTableState(table, syncKey: syncKey);
-    try {
-      await _controlPlaneClient.updateTableSyncPolicy(
-        table: syncKey,
-        enabled: current.enabled,
-        syncMode: normalizedMode,
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
-      return;
-    }
-    final direction = syncDirectionForMode(normalizedMode);
-    _updateSyncTableState(
-      syncKey,
-      current.copyWith(
-        syncMode: normalizedMode,
-        direction: direction,
-        status: current.enabled ? 'Queued' : current.status,
-        progress: current.enabled ? 0 : current.progress,
-        message:
-            current.enabled
-                ? _syncModeDescription(normalizedMode)
-                : current.message,
-      ),
-    );
-    if (current.enabled) {
-      unawaited(_queueEnabledRoleJobs(forceTables: {syncKey}));
-    }
-  }
-
-  Future<void> _showSyncModeEditDialog(_SyncTableRowData row) async {
-    final selectedMode = await _openSyncModeDialog(
-      table: row.table,
-      initialMode: row.state.syncMode,
-      title: 'Custom sync',
-      confirmLabel: 'Apply',
-    );
-    if (!mounted || selectedMode == null) {
-      return;
-    }
-
-    await _updateTableSyncMode(row.table, selectedMode);
-  }
-
-  Future<String?> _openSyncModeDialog({
-    required String table,
-    required String initialMode,
-    required String title,
-    required String confirmLabel,
-  }) {
-    const modes = [kSyncModeMerge];
-    var selectedMode = normalizeSyncMode(initialMode);
-
-    return showDialog<String>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Text(title),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      table,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    ...modes.map(
-                      (mode) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _buildSyncModeChoice(
-                          mode: mode,
-                          selected: selectedMode == mode,
-                          onTap: () {
-                            setDialogState(() {
-                              selectedMode = mode;
-                            });
-                          },
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Choose the sync behavior before this table starts. You can change it later from the three-dot menu.',
-                      style: TextStyle(
-                        color: Color(0xFF667085),
-                        fontSize: 12,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(selectedMode),
-                  child: Text(confirmLabel),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
   }
 
   Color _statusColor(String status) {
@@ -1913,13 +1791,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       case 'Queued':
         return 'Queued: this table is waiting for the next sync job.';
       case 'Snapshotting':
-        return 'Preparing: writing SymmetricDS node metadata.';
+        return 'Preparing: writing sync metadata.';
       case 'Uploading':
-        return 'Uploading: SymmetricDS is sending local table changes.';
+        return 'Uploading: sending local table changes.';
       case 'Downloading':
-        return 'Downloading: SymmetricDS is receiving remote table changes.';
+        return 'Downloading: receiving remote table changes.';
       case 'Applying':
-        return 'Applying: waiting for SymmetricDS background processing.';
+        return 'Applying: waiting for background processing.';
       case 'Completed':
       case 'Success':
         return 'Success: the last sync completed successfully.';
@@ -2196,14 +2074,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   : 'Queued')
               : 'Paused';
       final nextMessage =
-          policy.enabled
-              ? 'Waiting for the next SymmetricDS sync.'
-              : 'Sync disabled.';
-      final nextDirection = syncDirectionForMode(policy.syncMode);
+          policy.enabled ? 'Waiting for the next sync.' : 'Sync disabled.';
       final nextState = current.copyWith(
         enabled: policy.enabled,
-        syncMode: policy.syncMode,
-        direction: nextDirection,
         status: nextStatus,
         progress:
             policy.enabled
@@ -2222,25 +2095,27 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     if (changed) {
-      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+      _replaceSyncState(
+        _syncState.copyWith(tables: _nextTablesWithAutoRequired(nextTables)),
+      );
+    } else {
+      _refreshAutoRequiredTables();
     }
     return newlyEnabled;
   }
 
   bool _syncTableStatesEqual(SyncTableState left, SyncTableState right) {
     return left.enabled == right.enabled &&
+        left.autoRequired == right.autoRequired &&
         left.status == right.status &&
         left.lastSync == right.lastSync &&
         left.progress == right.progress &&
-        left.direction == right.direction &&
-        left.syncMode == right.syncMode &&
         left.rowCount == right.rowCount &&
         left.message == right.message;
   }
 
-  Widget _buildSyncModeBadge(String syncMode, {bool showLabel = true}) {
-    final normalizedMode = normalizeSyncMode(syncMode);
-    final color = _syncModeColor(normalizedMode);
+  Widget _buildSyncFlowBadge({bool showLabel = true}) {
+    final color = _syncFlowColor();
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: showLabel ? 10 : 6,
@@ -2253,11 +2128,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(_syncModeIcon(normalizedMode), size: 16, color: color),
+          Icon(_syncFlowIcon(), size: 16, color: color),
           if (showLabel) ...[
             const SizedBox(width: 6),
             Text(
-              _syncModeLabel(normalizedMode),
+              _syncFlowLabel(),
               style: TextStyle(color: color, fontWeight: FontWeight.w700),
             ),
           ],
@@ -2327,7 +2202,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     for (final table in _tables) {
       final syncKey = _syncTableKey(table);
       final state = _syncTableState(table, syncKey: syncKey);
-      if (!state.enabled) {
+      if (!_isTableSelectedForSync(state)) {
         continue;
       }
       final isDue =
@@ -2348,8 +2223,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final queuedJobs = await _controlPlaneClient.createJobs(
       clientName: widget.clientName,
       tables: dueTables,
-      direction: 'sync',
-      syncMode: kSyncModeMerge,
     );
 
     if (!mounted) {
@@ -2380,7 +2253,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _syncLoopBusy = true;
     try {
-      await _writeSymmetricDsConfig();
       final heartbeat = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
@@ -2398,10 +2270,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         tables: _heartbeatTablesPayload(),
         tableRelationships: _tableRelationshipsPayload(),
         clientVersion: _agentAppVersion,
-        symmetricDsStatus: _symmetricDsStatus,
-        symmetricDsConfigPath: _symmetricDsConfigPath,
-        symmetricDsMessage: _symmetricDsMessage,
-        symmetricDsConfigured: _symmetricDsConfigured,
       );
 
       if (!mounted) {
@@ -2425,18 +2293,26 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           _localRelatedSyncTables,
           remoteRelationships,
         ]);
+        _remoteTableDependencies = heartbeat.tableDependencies;
         _activeJobs = heartbeat.jobs;
+        _refreshVisibleTablesForSelectedDatabaseInState();
       });
 
       if (heartbeat.diagnostics.pending) {
         await _uploadRequestedDiagnostics(heartbeat.diagnostics);
       }
 
+      if (heartbeat.clientUpdate.pending) {
+        await _handleRequestedClientUpdate(heartbeat.clientUpdate);
+      }
+
       for (final job in heartbeat.jobs) {
         _applyRemoteJobState(job);
       }
 
-      // SymmetricDS jobs need source-client metadata, so the control plane must
+      _refreshAutoRequiredTables();
+
+      // Sync jobs need source-client metadata, so the control plane must
       // queue them. The agent should only execute jobs it receives.
       await _processPendingJobs();
     } catch (error) {
@@ -2456,144 +2332,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _syncLoopBusy = false;
       _retryAutomaticClientUpdateIfReady();
     }
-  }
-
-  Future<SymmetricDsConfigResult?> _writeSymmetricDsConfig() async {
-    final database = _selectedDatabase;
-    if (database == null || database.trim().isEmpty) {
-      _symmetricDsStatus = 'waiting-for-database';
-      _symmetricDsMessage =
-          'Select a SQL Server database before SymmetricDS can be configured.';
-      _symmetricDsConfigured = false;
-      return null;
-    }
-    final selectedTables = _syncState.tables.entries.map((entry) {
-      return SymmetricDsTableConfig(
-        syncKey: entry.key,
-        tableName: _localTableName(entry.key),
-        enabled: entry.value.enabled,
-      );
-    });
-    final controlPlaneUri = Uri.parse(_controlPlaneClient.baseUrl);
-    final registrationUrl = controlPlaneUri.replace(
-      path: '/sync/server',
-      query: null,
-      fragment: null,
-    );
-    final result = await _symmetricDsService.writeNodeConfig(
-      clientName: widget.clientName,
-      machineName: Platform.localHostname,
-      server: _serverController.text.trim(),
-      database: database,
-      useWindowsAuth: _useWindowsAuth,
-      username: _userController.text.trim(),
-      password: _passwordController.text,
-      registrationUrl: registrationUrl,
-      tables: selectedTables,
-    );
-    final bootstrapResult =
-        result.configured
-            ? await _applySymmetricDsBootstrapIfReady(
-              database: database,
-              result: result,
-            )
-            : const _SymmetricDsBootstrapApplyResult(
-              applied: false,
-              message: '',
-            );
-    _symmetricDsStatus =
-        bootstrapResult.applied
-            ? 'bootstrap-applied'
-            : result.configured
-            ? result.runtimeStatus
-            : 'no-selected-tables';
-    _symmetricDsConfigPath = result.propertiesPath;
-    _symmetricDsMessage =
-        bootstrapResult.message.isEmpty
-            ? result.message
-            : '${result.message} ${bootstrapResult.message}';
-    _symmetricDsConfigured = result.configured;
-    if (!mounted || !result.configured) {
-      return result;
-    }
-    logStartupEvent(result.message);
-    return result;
-  }
-
-  Future<_SymmetricDsBootstrapApplyResult> _applySymmetricDsBootstrapIfReady({
-    required String database,
-    required SymmetricDsConfigResult result,
-  }) async {
-    final bootstrapFile = File(result.bootstrapSqlPath);
-    if (!await bootstrapFile.exists()) {
-      return const _SymmetricDsBootstrapApplyResult(
-        applied: false,
-        message: 'SymmetricDS bootstrap SQL file is missing.',
-      );
-    }
-
-    final readinessResult = await _runSqlCmd(
-      profile: _activeProfile(),
-      database: database,
-      query: '''
-SET NOCOUNT ON;
-IF OBJECT_ID(N'dbo.sym_trigger', N'U') IS NOT NULL
-  AND OBJECT_ID(N'dbo.sym_router', N'U') IS NOT NULL
-  AND OBJECT_ID(N'dbo.sym_trigger_router', N'U') IS NOT NULL
-  SELECT 1;
-ELSE
-  SELECT 0;
-''',
-    );
-    if (readinessResult == null) {
-      return _SymmetricDsBootstrapApplyResult(
-        applied: false,
-        message:
-            _lastSqlCmdLaunchError ??
-            _sqlCmdUnavailableMessage(_activeProfile()),
-      );
-    }
-    if (readinessResult.exitCode != 0) {
-      return _SymmetricDsBootstrapApplyResult(
-        applied: false,
-        message: _sqlCmdFailed(
-          'SymmetricDS metadata readiness check',
-          readinessResult,
-        ),
-      );
-    }
-    if (!readinessResult.stdout.toString().trim().contains('1')) {
-      return const _SymmetricDsBootstrapApplyResult(
-        applied: false,
-        message:
-            'Waiting for SymmetricDS to create local sym_* metadata tables before applying bootstrap SQL.',
-      );
-    }
-
-    final bootstrapSql = await bootstrapFile.readAsString();
-    final applyResult = await _runSqlCmd(
-      profile: _activeProfile(),
-      database: database,
-      query: bootstrapSql,
-    );
-    if (applyResult == null) {
-      return _SymmetricDsBootstrapApplyResult(
-        applied: false,
-        message:
-            _lastSqlCmdLaunchError ??
-            _sqlCmdUnavailableMessage(_activeProfile()),
-      );
-    }
-    if (applyResult.exitCode != 0) {
-      return _SymmetricDsBootstrapApplyResult(
-        applied: false,
-        message: _sqlCmdFailed('SymmetricDS bootstrap apply', applyResult),
-      );
-    }
-    return const _SymmetricDsBootstrapApplyResult(
-      applied: true,
-      message: 'SymmetricDS bootstrap SQL applied.',
-    );
   }
 
   Future<void> _uploadRequestedDiagnostics(
@@ -2618,6 +2356,80 @@ ELSE
     logStartupEvent(
       'Uploaded diagnostics for ${widget.clientName} request ${diagnostics.requestId ?? 'manual'}.',
     );
+  }
+
+  Future<void> _handleRequestedClientUpdate(
+    RemoteAgentClientUpdate clientUpdate,
+  ) async {
+    final requestId = clientUpdate.requestId?.trim() ?? '';
+    if (requestId.isEmpty || !_supportsAutomaticClientUpdate) {
+      return;
+    }
+
+    try {
+      final updateInfo = await _controlPlaneClient.fetchClientUpdateInfo(
+        manifestUrl: _clientUpdateManifestUrl(),
+      );
+      if (updateInfo == null) {
+        await _controlPlaneClient.acknowledgeClientUpdate(
+          clientName: widget.clientName,
+          requestId: requestId,
+          status: 'failed',
+          installedVersion: _agentAppVersion,
+          message: 'No live client update manifest is available on the server.',
+        );
+        return;
+      }
+
+      final targetVersion = clientUpdate.targetVersion?.trim() ?? '';
+      final manifestVersion = updateInfo.version.trim();
+      if (targetVersion.isNotEmpty && manifestVersion != targetVersion) {
+        await _controlPlaneClient.acknowledgeClientUpdate(
+          clientName: widget.clientName,
+          requestId: requestId,
+          status: 'failed',
+          installedVersion: _agentAppVersion,
+          message:
+              'Requested version $targetVersion is not the current live version $manifestVersion.',
+        );
+        return;
+      }
+
+      final currentVersion = _agentAppVersion.trim();
+      if (currentVersion.isNotEmpty && currentVersion == manifestVersion) {
+        await _controlPlaneClient.acknowledgeClientUpdate(
+          clientName: widget.clientName,
+          requestId: requestId,
+          status: 'current',
+          installedVersion: currentVersion,
+          message: 'Client already matches live version $manifestVersion.',
+        );
+        return;
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _clientUpdateInfo = updateInfo;
+        _clientUpdateError = null;
+      });
+      logStartupEvent(
+        'Server requested client update $requestId for ${widget.clientName}; live version=$manifestVersion current=${currentVersion.isEmpty ? 'unknown' : currentVersion}.',
+      );
+      await _maybeAutoApplyClientUpdate(updateInfo);
+    } catch (error) {
+      logStartupEvent('Server-requested client update failed: $error');
+      try {
+        await _controlPlaneClient.acknowledgeClientUpdate(
+          clientName: widget.clientName,
+          requestId: requestId,
+          status: 'failed',
+          installedVersion: _agentAppVersion,
+          message: error.toString(),
+        );
+      } catch (_) {}
+    }
   }
 
   String _buildDiagnosticsPayload() {
@@ -2697,12 +2509,6 @@ ELSE
         'historyLimit': _syncState.historyLimit,
         'autoSyncIntervalMinutes': _syncState.autoSyncIntervalMinutes,
       },
-      'symmetricDs': {
-        'status': _symmetricDsStatus,
-        'configPath': _symmetricDsConfigPath,
-        'message': _symmetricDsMessage,
-        'configured': _symmetricDsConfigured,
-      },
       'errors': {
         'errorMessage': _errorMessage,
         'lastSqlCmdLaunchError': _lastSqlCmdLaunchError,
@@ -2737,23 +2543,19 @@ ELSE
     final pendingJobs = _activeJobs
         .where((job) => job.isActive)
         .toList(growable: false);
+    final orderedPendingJobs = _sortPendingJobsByDependencies(pendingJobs);
 
-    for (final job in pendingJobs) {
+    for (final job in orderedPendingJobs) {
       if (_processingJobIds.contains(job.id)) {
         continue;
       }
       _processingJobIds.add(job.id);
       try {
-        if (job.mergeRole == 'symmetricds') {
-          await _processSymmetricDsJob(job);
-        } else {
-          await _processUnsupportedLegacyJob(job);
-        }
+        await _processSnapshotJob(job);
       } catch (error, stackTrace) {
         final errorMessage = error.toString();
         logStartupEvent(
-          'Remote job ${job.id} failed during ${job.mergeRole} processing: '
-          '$errorMessage',
+          'Remote job ${job.id} failed during snapshot processing: $errorMessage',
         );
         logStartupEvent(stackTrace.toString());
         await _markRemoteJobFailed(job, error);
@@ -2764,10 +2566,8 @@ ELSE
           subscriberClientName: job.subscriberClientName,
           table: job.table,
           direction: job.direction,
-          mergeRole: job.mergeRole,
           publisherServer: job.publisherServer,
           publisherDatabase: job.publisherDatabase,
-          publicationName: job.publicationName,
           publisherUseWindowsAuth: job.publisherUseWindowsAuth,
           publisherUser: job.publisherUser,
           publisherPassword: job.publisherPassword,
@@ -2796,46 +2596,79 @@ ELSE
     }
   }
 
-  Future<void> _processUnsupportedLegacyJob(RemoteSyncJob job) async {
-    final message =
-        'Unsupported sync job role ${job.mergeRole}. Requeue this table through SymmetricDS sync.';
-    await _markRemoteJobFailed(job, Exception(message));
-    final failedJob = RemoteSyncJob(
-      id: job.id,
-      clientName: job.clientName,
-      sourceClientName: job.sourceClientName,
-      subscriberClientName: job.subscriberClientName,
-      table: job.table,
-      direction: job.direction,
-      mergeRole: job.mergeRole,
-      publisherServer: job.publisherServer,
-      publisherDatabase: job.publisherDatabase,
-      publicationName: job.publicationName,
-      publisherUseWindowsAuth: job.publisherUseWindowsAuth,
-      publisherUser: job.publisherUser,
-      publisherPassword: job.publisherPassword,
-      status: 'failed',
-      progress: 100,
-      rowCount: job.rowCount,
-      snapshotBytes: job.snapshotBytes,
-      snapshotCreatedAt: job.snapshotCreatedAt,
-      snapshotId: job.snapshotId,
-      createdAt: job.createdAt,
-      updatedAt: DateTime.now().toIso8601String(),
-      startedAt: job.startedAt,
-      completedAt: DateTime.now().toIso8601String(),
-      message: message,
-      error: message,
-    );
-    _applyRemoteJobState(
-      failedJob,
-      appendHistory: true,
-      success: false,
-      overrideMessage: message,
-    );
+  List<RemoteSyncJob> _sortPendingJobsByDependencies(List<RemoteSyncJob> jobs) {
+    if (jobs.length < 2 || _remoteTableDependencies.isEmpty) {
+      return jobs;
+    }
+
+    final dependencyGraph = <String, Set<String>>{};
+    for (final dependency in _remoteTableDependencies) {
+      final table = dependency.table.trim();
+      final relatedTable = dependency.relatedTable.trim();
+      if (table.isEmpty || relatedTable.isEmpty || table == relatedTable) {
+        continue;
+      }
+      dependencyGraph.putIfAbsent(table, () => <String>{}).add(relatedTable);
+    }
+
+    final depthCache = <String, int>{};
+    final orderedJobs = jobs.toList(growable: false);
+    orderedJobs.sort((left, right) {
+      final leftDepth = _tableDependencyDepth(
+        left.table,
+        dependencyGraph,
+        depthCache,
+      );
+      final rightDepth = _tableDependencyDepth(
+        right.table,
+        dependencyGraph,
+        depthCache,
+      );
+      if (leftDepth != rightDepth) {
+        return leftDepth.compareTo(rightDepth);
+      }
+      return left.createdAt.compareTo(right.createdAt);
+    });
+    return orderedJobs;
   }
 
-  Future<void> _processSymmetricDsJob(RemoteSyncJob job) async {
+  int _tableDependencyDepth(
+    String table,
+    Map<String, Set<String>> dependencyGraph,
+    Map<String, int> cache, {
+    Set<String>? visiting,
+  }) {
+    final normalizedTable = table.trim();
+    final cached = cache[normalizedTable];
+    if (cached != null) {
+      return cached;
+    }
+    final activeStack = visiting ?? <String>{};
+    if (!activeStack.add(normalizedTable)) {
+      return 0;
+    }
+
+    var depth = 0;
+    for (final relatedTable
+        in dependencyGraph[normalizedTable] ?? const <String>{}) {
+      depth = math.max(
+        depth,
+        1 +
+            _tableDependencyDepth(
+              relatedTable,
+              dependencyGraph,
+              cache,
+              visiting: activeStack,
+            ),
+      );
+    }
+
+    activeStack.remove(normalizedTable);
+    cache[normalizedTable] = depth;
+    return depth;
+  }
+
+  Future<void> _processSnapshotJob(RemoteSyncJob job) async {
     if (job.direction == 'upload') {
       await _processSnapshotRelayUploadJob(job);
       return;
@@ -2844,65 +2677,7 @@ ELSE
       await _processSnapshotRelayDownloadJob(job);
       return;
     }
-
-    var activeJob = await _controlPlaneClient.startJob(
-      job.id,
-      status: 'applying',
-      progress: 10,
-      message: 'Preparing SymmetricDS node configuration.',
-    );
-    _applyRemoteJobState(activeJob);
-
-    final configResult = await _writeSymmetricDsConfig();
-
-    activeJob = await _controlPlaneClient.updateJobProgress(
-      job.id,
-      status: 'applying',
-      progress: 25,
-      message:
-          'SymmetricDS configuration is ready. Copying rows for ${job.table}.',
-      rowCount: job.rowCount,
-      direction: job.direction,
-    );
-    _applyRemoteJobState(activeJob);
-
-    Future<void> reportProgress(
-      int progress,
-      String message,
-      int rowCount,
-    ) async {
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'applying',
-        progress: progress,
-        message: message,
-        rowCount: rowCount,
-        direction: job.direction,
-      );
-      _applyRemoteJobState(activeJob);
-    }
-
-    final syncResult = await _runDirectQueuedTableSync(
-      job: job,
-      onProgress: reportProgress,
-    );
-
-    activeJob = await _controlPlaneClient.completeJob(
-      job.id,
-      status: 'completed',
-      progress: 100,
-      message:
-          'Synced ${syncResult.sourceRowCount} source row${syncResult.sourceRowCount == 1 ? '' : 's'} into ${_localTableName(job.table)}. ${configResult?.message ?? ''}'
-              .trim(),
-      rowCount: syncResult.targetRowCount,
-    );
-    _applyRemoteJobState(
-      activeJob,
-      appendHistory: true,
-      success: true,
-      overrideMessage:
-          'Synced ${syncResult.sourceRowCount} source row${syncResult.sourceRowCount == 1 ? '' : 's'} into ${_localTableName(job.table)}.',
-    );
+    throw Exception('Unsupported sync job direction: ${job.direction}');
   }
 
   Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {
@@ -2922,7 +2697,6 @@ ELSE
       progress: 35,
       message: 'Uploading compressed snapshot for ${job.table}.',
       rowCount: snapshot.rowCount,
-      direction: job.direction,
     );
     _applyRemoteJobState(activeJob);
 
@@ -2962,7 +2736,6 @@ ELSE
       progress: 80,
       message: 'Applying downloaded snapshot to ${_localTableName(job.table)}.',
       rowCount: snapshot.rowCount,
-      direction: job.direction,
     );
     _applyRemoteJobState(activeJob);
 
@@ -2996,9 +2769,7 @@ ELSE
   ) async {
     final tableDatabase = _databaseNameFromSyncKey(job.table).trim();
     final database =
-        tableDatabase.isNotEmpty
-            ? tableDatabase
-            : job.publisherDatabase.trim();
+        tableDatabase.isNotEmpty ? tableDatabase : job.publisherDatabase.trim();
     if (database.isEmpty) {
       throw Exception(
         'Snapshot upload for ${job.table} is missing a database.',
@@ -3179,6 +2950,12 @@ ELSE
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
+    final alternateUniqueKeys = await _queryAlternateUniqueKeys(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
 
     const batchSize = 200;
     for (var offset = 0; offset < snapshot.rows.length; offset += batchSize) {
@@ -3198,6 +2975,7 @@ ELSE
         table: targetTable.table,
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
+        alternateUniqueKeys: alternateUniqueKeys,
         rows: batch,
       );
     }
@@ -3244,196 +3022,6 @@ ELSE
     } catch (failError) {
       logStartupEvent('Unable to mark remote job ${job.id} failed: $failError');
     }
-  }
-
-  _SqlConnectionProfile _sourceProfileForJob(RemoteSyncJob job) =>
-      _SqlConnectionProfile(
-        server: job.publisherServer.trim(),
-        useWindowsAuth: job.publisherUseWindowsAuth,
-        user: job.publisherUser.trim(),
-        password: job.publisherPassword,
-      );
-
-  Future<_RemoteTableSyncResult> _runDirectQueuedTableSync({
-    required RemoteSyncJob job,
-    required Future<void> Function(int progress, String message, int rowCount)
-    onProgress,
-  }) async {
-    final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
-    if (targetDatabase.isEmpty) {
-      throw Exception(
-        'Queued sync for ${job.table} is missing the target database name.',
-      );
-    }
-
-    final localTableName = _localTableName(job.table);
-    final targetTable = _splitQualifiedName(localTableName);
-    final sourceDatabase =
-        job.publisherDatabase.trim().isEmpty
-            ? targetDatabase
-            : job.publisherDatabase.trim();
-    final sourceProfile = await _resolveSqlConnectionProfile(
-      _sourceProfileForJob(job),
-    );
-    if (sourceProfile.server.isEmpty) {
-      throw Exception(
-        'Queued sync for ${job.table} is missing the source SQL Server name.',
-      );
-    }
-
-    final targetProfile = _activeProfile();
-    final columnDefinitions = await _querySyncColumnDefinitions(
-      profile: targetProfile,
-      database: targetDatabase,
-      schema: targetTable.schema,
-      table: targetTable.table,
-    );
-    if (columnDefinitions.isEmpty) {
-      throw Exception(
-        'No writable columns were found for ${targetTable.schema}.${targetTable.table}.',
-      );
-    }
-
-    final unsupportedColumns =
-        columnDefinitions.where((column) => !column.isSupported).toList();
-    if (unsupportedColumns.isNotEmpty) {
-      final names = unsupportedColumns.map((column) => column.name).join(', ');
-      throw Exception(
-        'Queued sync for ${targetTable.schema}.${targetTable.table} cannot run because these column types are not supported yet: $names.',
-      );
-    }
-
-    final syncColumns = columnDefinitions
-        .where((column) => column.isWritable)
-        .toList(growable: false);
-    if (syncColumns.isEmpty) {
-      throw Exception(
-        'Table ${targetTable.schema}.${targetTable.table} has no writable columns to sync.',
-      );
-    }
-
-    final primaryKeyColumns = await _queryPrimaryKeyColumns(
-      profile: targetProfile,
-      database: targetDatabase,
-      schema: targetTable.schema,
-      table: targetTable.table,
-    );
-    if (primaryKeyColumns.isEmpty) {
-      throw Exception(
-        'Queued sync for ${targetTable.schema}.${targetTable.table} requires a primary key.',
-      );
-    }
-
-    final sourceRowCountResult = await _queryTableRowCount(
-      profile: sourceProfile,
-      database: sourceDatabase,
-      schema: targetTable.schema,
-      table: targetTable.table,
-    );
-    if (!sourceRowCountResult.success) {
-      throw Exception(
-        sourceRowCountResult.errorText ?? 'Source row count failed.',
-      );
-    }
-
-    final sourceRowCount = sourceRowCountResult.value;
-    await onProgress(
-      30,
-      'Found $sourceRowCount source row${sourceRowCount == 1 ? '' : 's'} for ${_localTableName(job.table)}.',
-      0,
-    );
-
-    if (sourceRowCount == 0) {
-      final targetRowCountResult = await _queryTableRowCount(
-        profile: targetProfile,
-        database: targetDatabase,
-        schema: targetTable.schema,
-        table: targetTable.table,
-      );
-      if (!targetRowCountResult.success) {
-        throw Exception(
-          targetRowCountResult.errorText ?? 'Target row count lookup failed.',
-        );
-      }
-      return _RemoteTableSyncResult(
-        sourceRowCount: 0,
-        processedRowCount: 0,
-        targetRowCount: targetRowCountResult.value,
-      );
-    }
-
-    const batchSize = 200;
-    var processedRowCount = 0;
-    while (processedRowCount < sourceRowCount) {
-      final rows = await _fetchSourceTableBatch(
-        profile: sourceProfile,
-        database: sourceDatabase,
-        schema: targetTable.schema,
-        table: targetTable.table,
-        columns: syncColumns,
-        orderColumns: primaryKeyColumns,
-        offset: processedRowCount,
-        batchSize: math.min(batchSize, sourceRowCount - processedRowCount),
-      );
-      if (rows.isEmpty) {
-        throw Exception(
-          'Source query for ${_localTableName(job.table)} returned no rows before all source data was read.',
-        );
-      }
-
-      await _applySourceBatchToTarget(
-        profile: targetProfile,
-        database: targetDatabase,
-        schema: targetTable.schema,
-        table: targetTable.table,
-        columns: syncColumns,
-        primaryKeyColumns: primaryKeyColumns,
-        rows: rows,
-      );
-
-      processedRowCount += rows.length;
-      final progress = 30 + ((processedRowCount * 65) ~/ sourceRowCount);
-      await onProgress(
-        progress.clamp(30, 95).toInt(),
-        'Synced $processedRowCount / $sourceRowCount row${sourceRowCount == 1 ? '' : 's'} for ${_localTableName(job.table)}.',
-        processedRowCount,
-      );
-    }
-
-    final targetRowCountResult = await _queryTableRowCount(
-      profile: targetProfile,
-      database: targetDatabase,
-      schema: targetTable.schema,
-      table: targetTable.table,
-    );
-    if (!targetRowCountResult.success) {
-      throw Exception(
-        targetRowCountResult.errorText ?? 'Target row count lookup failed.',
-      );
-    }
-
-    if (_selectedDatabase == targetDatabase) {
-      final visibleTableName = _stripKnownDatabaseAndDefaultSchema(
-        localTableName,
-        database: targetDatabase,
-      );
-      _applyTableRowCounts(
-        database: targetDatabase,
-        rowCounts: {visibleTableName: targetRowCountResult.value},
-      );
-      if (_selectedTable == visibleTableName) {
-        setState(() {
-          _totalTableRows = targetRowCountResult.value;
-        });
-      }
-      unawaited(_syncWithControlPlane());
-    }
-
-    return _RemoteTableSyncResult(
-      sourceRowCount: sourceRowCount,
-      processedRowCount: processedRowCount,
-      targetRowCount: targetRowCountResult.value,
-    );
   }
 
   Future<List<_SqlColumnDefinition>> _querySyncColumnDefinitions({
@@ -3530,6 +3118,65 @@ ORDER BY ic.key_ordinal;
       throw Exception(_sqlCmdFailed('primary key lookup', processResult));
     }
     return _parseSingleColumnOutput(processResult.stdout.toString());
+  }
+
+  Future<List<_SqlKeyDefinition>> _queryAlternateUniqueKeys({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+  }) async {
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT
+  i.name,
+  c.name
+FROM sys.indexes AS i
+INNER JOIN sys.index_columns AS ic
+  ON ic.object_id = i.object_id
+ AND ic.index_id = i.index_id
+INNER JOIN sys.columns AS c
+  ON c.object_id = ic.object_id
+ AND c.column_id = ic.column_id
+WHERE i.is_unique = 1
+  AND i.is_primary_key = 0
+  AND i.is_disabled = 0
+  AND i.has_filter = 0
+  AND ic.is_included_column = 0
+  AND i.object_id = OBJECT_ID(N'${_escapeSqlLiteral(_quoteIdentifier(schema))}.${_escapeSqlLiteral(_quoteIdentifier(table))}')
+ORDER BY i.name, ic.key_ordinal;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('unique index lookup', processResult));
+    }
+
+    final definitions = <_SqlKeyDefinition>[];
+    final byName = <String, List<String>>{};
+    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      final parts = _splitRowValues(trimmedLine);
+      if (parts.length < 2) {
+        continue;
+      }
+      byName.putIfAbsent(parts[0], () => <String>[]).add(parts[1]);
+    }
+    for (final entry in byName.entries) {
+      definitions.add(_SqlKeyDefinition(name: entry.key, columns: entry.value));
+    }
+    return definitions;
   }
 
   Future<List<Map<String, dynamic>>> _fetchSourceTableBatch({
@@ -3726,6 +3373,7 @@ END
     required String table,
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
+    required List<_SqlKeyDefinition> alternateUniqueKeys,
     required List<Map<String, dynamic>> rows,
   }) async {
     if (rows.isEmpty) {
@@ -3741,12 +3389,24 @@ END
               !primaryKeyColumns.contains(column.name) && !column.isIdentity,
         )
         .toList(growable: false);
-    final joinClause = primaryKeyColumns
-        .map(
-          (column) =>
-              'target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}',
+    final insertColumnNames = {for (final column in insertColumns) column.name};
+    final alternateJoinClauses = alternateUniqueKeys
+        .where(
+          (key) =>
+              key.columns.isNotEmpty &&
+              key.columns.every(insertColumnNames.contains) &&
+              !key.hasSameColumnsAs(primaryKeyColumns),
         )
-        .join(' AND ');
+        .map((key) => _matchClauseForColumns(key.columns))
+        .toList(growable: false);
+    final joinClauses = [
+      _matchClauseForColumns(primaryKeyColumns),
+      ...alternateJoinClauses,
+    ];
+    final joinClause =
+        joinClauses.length == 1
+            ? joinClauses.first
+            : joinClauses.map((clause) => '($clause)').join(' OR ');
     final insertColumnList = insertColumns
         .map((column) => _quoteIdentifier(column.name))
         .join(', ');
@@ -3758,7 +3418,8 @@ END
         .join(', ');
     final sourceValueTuples = rows
         .map(
-          (row) => '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
+          (row) =>
+              '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
         )
         .join(',\n      ');
     final updateClause =
@@ -3811,10 +3472,7 @@ $identityInsertOff
     }
   }
 
-  String _sourceBatchTargetLiteral(
-    _SqlColumnDefinition column,
-    Object? value,
-  ) {
+  String _sourceBatchTargetLiteral(_SqlColumnDefinition column, Object? value) {
     if (value == null) {
       return 'NULL';
     }
@@ -3827,7 +3485,44 @@ $identityInsertOff
     if (_textLikeSqlTypes.contains(normalized)) {
       return "N'${_escapeSqlLiteral(stringValue)}'";
     }
+    if (column.isDateOrTimeType) {
+      return _dateTimeTargetLiteral(column, stringValue);
+    }
     return "CAST(N'${_escapeSqlLiteral(stringValue)}' AS ${column.sqlCastType})";
+  }
+
+  String _dateTimeTargetLiteral(_SqlColumnDefinition column, String value) {
+    final escapedValue = _escapeSqlLiteral(value);
+    final literal = "N'$escapedValue'";
+    final trimmedLiteral = "NULLIF(LTRIM(RTRIM($literal)), N'')";
+    final targetType = column.sqlCastType;
+    final normalized = column.sqlType.trim().toLowerCase();
+
+    final expression = switch (normalized) {
+      'date' => 'CONVERT($targetType, $literal, 23)',
+      'datetimeoffset' => 'CONVERT($targetType, $literal, 127)',
+      'datetime' ||
+      'smalldatetime' ||
+      'datetime2' => 'CONVERT($targetType, $literal, 126)',
+      'time' => 'CAST($literal AS $targetType)',
+      _ => 'CAST($literal AS $targetType)',
+    };
+
+    return '''
+CASE
+  WHEN $trimmedLiteral IS NULL THEN NULL
+  ELSE $expression
+END
+''';
+  }
+
+  String _matchClauseForColumns(List<String> columns) {
+    return columns
+        .map(
+          (column) =>
+              'source.${_quoteIdentifier(column)} IS NOT NULL AND target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}',
+        )
+        .join(' AND ');
   }
 
   Future<_StringQueryResult> _queryDatabases({
@@ -4328,9 +4023,12 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       '-b',
       '-h',
       '-1',
-      '-W',
       '-w',
       '32767',
+      '-y',
+      '0',
+      '-Y',
+      '0',
       '-u',
       '-f',
       '65001',
@@ -5299,6 +4997,19 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     final statusColor = _statusColor(row.state.status);
     final lastSync = _formatTimestamp(row.state.lastSync);
     final progress = row.state.progress.clamp(0, 100);
+    final autoRequired = row.state.autoRequired && !row.state.enabled;
+    final cardColor =
+        selected
+            ? const Color(0xFFE6F4F1)
+            : autoRequired
+            ? const Color(0xFFEFF6FF)
+            : Colors.white;
+    final borderColor =
+        selected
+            ? const Color(0xFF85C7BC)
+            : autoRequired
+            ? const Color(0xFF93C5FD)
+            : const Color(0xFFDDE3EA);
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
@@ -5312,11 +5023,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         constraints: const BoxConstraints(minHeight: 50),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFE6F4F1) : Colors.white,
+          color: cardColor,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
-          ),
+          border: Border.all(color: borderColor),
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -5326,7 +5035,8 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
               runSpacing: 6,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _buildSyncModeBadge(row.state.syncMode, showLabel: false),
+                if (autoRequired) _buildAutoRequiredBadge(),
+                _buildSyncFlowBadge(showLabel: false),
                 _buildSyncStatusSymbol(row.state.status, size: 26),
                 _buildSyncTableRowCountMetric(row.state),
                 _buildFixedProgressPill(progress, statusColor),
@@ -5345,7 +5055,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                           ? Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildSyncTableTitle(row.table),
+                              _buildSyncTableTitle(
+                                row.table,
+                                autoRequired: autoRequired,
+                              ),
                               const SizedBox(height: 4),
                               _buildSyncTableSubline(lastSync),
                               const SizedBox(height: 8),
@@ -5358,7 +5071,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    _buildSyncTableTitle(row.table),
+                                    _buildSyncTableTitle(
+                                      row.table,
+                                      autoRequired: autoRequired,
+                                    ),
                                     const SizedBox(height: 4),
                                     _buildSyncTableSubline(lastSync),
                                   ],
@@ -5403,43 +5119,59 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   Widget _buildSyncTableCheckbox(_SyncTableRowData row) {
+    final autoRequired = row.state.autoRequired && !row.state.enabled;
+    final checkboxValue = row.state.enabled || row.state.autoRequired;
     return Container(
       width: 34,
       height: 34,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: row.state.enabled ? const Color(0xFFE6F4F1) : Colors.white,
+        color:
+            row.state.enabled
+                ? const Color(0xFFE6F4F1)
+                : autoRequired
+                ? const Color(0xFFEFF6FF)
+                : Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color:
               row.state.enabled
                   ? const Color(0xFF85C7BC)
+                  : autoRequired
+                  ? const Color(0xFF93C5FD)
                   : const Color(0xFFDDE3EA),
         ),
       ),
       child: Transform.scale(
         scale: 1.05,
         child: Checkbox(
-          value: row.state.enabled,
+          value: checkboxValue,
           visualDensity: VisualDensity.compact,
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          onChanged: (value) {
-            if (value == null) {
-              return;
-            }
-            unawaited(_handleSyncEnabledChange(row.table, value));
-          },
+          onChanged:
+              autoRequired
+                  ? null
+                  : (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    unawaited(_handleSyncEnabledChange(row.table, value));
+                  },
         ),
       ),
     );
   }
 
-  Widget _buildSyncTableTitle(String table) {
+  Widget _buildSyncTableTitle(String table, {bool autoRequired = false}) {
     return Text(
       table,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+      style: TextStyle(
+        fontWeight: FontWeight.w800,
+        fontSize: 13,
+        color: autoRequired ? const Color(0xFF1D4ED8) : const Color(0xFF18212B),
+      ),
     );
   }
 
@@ -5488,6 +5220,33 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildAutoRequiredBadge() {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 26),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF93C5FD)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.auto_awesome_rounded, size: 14, color: Color(0xFF1D4ED8)),
+          SizedBox(width: 5),
+          Text(
+            'AUTO',
+            style: TextStyle(
+              color: Color(0xFF1D4ED8),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5560,7 +5319,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   Widget _buildUnifiedSyncDetailHeader(_SyncTableRowData row) {
     final statusColor = _statusColor(row.state.status);
     final normalizedProgress = row.state.progress.clamp(0, 100);
-    final canRunSync = row.state.enabled;
+    final canRunSync = _isTableSelectedForSync(row.state);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -5731,7 +5490,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         await _controlPlaneClient.updateTableSyncPolicy(
           table: row.syncKey,
           enabled: shouldEnable,
-          syncMode: kSyncModeMerge,
+          cascadeRelated: false,
         );
       }
 
@@ -5744,13 +5503,12 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         final shouldEnable = _hasSavedRowCountChange(row.state);
         nextTables[row.syncKey] = row.state.copyWith(
           enabled: shouldEnable,
+          autoRequired: false,
           status: shouldEnable ? 'Queued' : 'Paused',
           progress: shouldEnable ? 0 : row.state.progress,
-          direction: syncDirectionForMode(kSyncModeMerge),
-          syncMode: kSyncModeMerge,
           message:
               shouldEnable
-                  ? 'Row counter changed. Waiting for selected merge sync.'
+                  ? 'Row counter changed. Waiting for snapshot sync.'
                   : 'Counter unchanged. Sync disabled.',
         );
       }
@@ -5780,8 +5538,15 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   Widget _buildSyncEnabledToolbarControl(_SyncTableRowData row) {
+    final autoRequired = row.state.autoRequired && !row.state.enabled;
+    final checkboxValue = row.state.enabled || row.state.autoRequired;
     return Tooltip(
-      message: row.state.enabled ? 'Disable sync' : 'Enable sync',
+      message:
+          row.state.enabled
+              ? 'Disable sync'
+              : autoRequired
+              ? 'Required automatically by dependency discovery'
+              : 'Enable sync',
       child: Container(
         width: 42,
         height: 42,
@@ -5790,27 +5555,34 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           color:
               row.state.enabled
                   ? const Color(0xFFE6F4F1)
+                  : autoRequired
+                  ? const Color(0xFFEFF6FF)
                   : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color:
                 row.state.enabled
                     ? const Color(0xFF85C7BC)
+                    : autoRequired
+                    ? const Color(0xFF93C5FD)
                     : const Color(0xFFDDE3EA),
           ),
         ),
         child: Transform.scale(
           scale: 1.18,
           child: Checkbox(
-            value: row.state.enabled,
+            value: checkboxValue,
             visualDensity: VisualDensity.compact,
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            onChanged: (value) {
-              if (value == null) {
-                return;
-              }
-              unawaited(_handleSyncEnabledChange(row.table, value));
-            },
+            onChanged:
+                autoRequired
+                    ? null
+                    : (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      unawaited(_handleSyncEnabledChange(row.table, value));
+                    },
           ),
         ),
       ),
@@ -5819,140 +5591,21 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
   Widget _buildSyncDetailMenu(_SyncTableRowData row) {
     return Tooltip(
-      message: 'More table actions',
-      child: PopupMenuButton<String>(
-        tooltip: '',
-        onSelected: (value) {
-          if (value == 'syncType') {
-            unawaited(_showSyncModeEditDialog(row));
-          }
-        },
-        itemBuilder:
-            (context) => [
-              PopupMenuItem<String>(
-                value: 'syncType',
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.tune_rounded,
-                      size: 18,
-                      color: Color(0xFF475467),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            'Change merge settings',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _syncModeLabel(row.state.syncMode),
-                            style: const TextStyle(
-                              color: Color(0xFF667085),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-        child: Container(
-          width: 38,
-          height: 38,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(color: const Color(0xFFDDE3EA)),
-          ),
-          child: const Icon(
-            Icons.more_vert_rounded,
-            size: 20,
-            color: Color(0xFF475467),
-          ),
+      message:
+          '${_syncFlowLabel()} for ${row.table}: ${_syncFlowDescription()}',
+      child: Container(
+        width: 38,
+        height: 38,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: const Color(0xFFDDE3EA)),
         ),
-      ),
-    );
-  }
-
-  Widget _buildSyncModeChoice({
-    required String mode,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    final color = _syncModeColor(mode);
-    return Material(
-      color: selected ? color.withValues(alpha: 0.11) : const Color(0xFFF8FAFC),
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color:
-                  selected
-                      ? color.withValues(alpha: 0.55)
-                      : const Color(0xFFDDE3EA),
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.13),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(_syncModeIcon(mode), size: 18, color: color),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _syncModeLabel(mode),
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      _syncModeDescription(mode),
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              Icon(
-                selected
-                    ? Icons.radio_button_checked_rounded
-                    : Icons.radio_button_unchecked_rounded,
-                size: 20,
-                color: selected ? color : const Color(0xFF98A2B3),
-              ),
-            ],
-          ),
+        child: Icon(
+          Icons.info_outline_rounded,
+          size: 20,
+          color: _syncFlowColor(),
         ),
       ),
     );
@@ -6036,8 +5689,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       final queuedJobs = await _controlPlaneClient.createJobs(
         clientName: widget.clientName,
         tables: tablesToQueue,
-        direction: 'sync',
-        syncMode: kSyncModeMerge,
       );
 
       if (!mounted) {
@@ -7070,6 +6721,16 @@ class _SqlColumnDefinition {
 
   bool get isWritable => !isComputed && !isRowVersion;
 
+  bool get isDateOrTimeType {
+    final normalized = sqlType.trim().toLowerCase();
+    return normalized == 'date' ||
+        normalized == 'datetime' ||
+        normalized == 'smalldatetime' ||
+        normalized == 'datetime2' ||
+        normalized == 'datetimeoffset' ||
+        normalized == 'time';
+  }
+
   String get openJsonType {
     final normalized = sqlType.trim().toLowerCase();
     if (normalized == 'nvarchar' || normalized == 'nchar') {
@@ -7142,16 +6803,23 @@ class _SqlColumnDefinition {
   }
 }
 
-class _RemoteTableSyncResult {
-  const _RemoteTableSyncResult({
-    required this.sourceRowCount,
-    required this.processedRowCount,
-    required this.targetRowCount,
-  });
+class _SqlKeyDefinition {
+  const _SqlKeyDefinition({required this.name, required this.columns});
 
-  final int sourceRowCount;
-  final int processedRowCount;
-  final int targetRowCount;
+  final String name;
+  final List<String> columns;
+
+  bool hasSameColumnsAs(List<String> otherColumns) {
+    if (columns.length != otherColumns.length) {
+      return false;
+    }
+    for (var index = 0; index < columns.length; index++) {
+      if (columns[index] != otherColumns[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 class _RelaySnapshotDocument {
@@ -7190,16 +6858,6 @@ class _QualifiedTableName {
   final String database;
   final String schema;
   final String table;
-}
-
-class _SymmetricDsBootstrapApplyResult {
-  const _SymmetricDsBootstrapApplyResult({
-    required this.applied,
-    required this.message,
-  });
-
-  final bool applied;
-  final String message;
 }
 
 class _InfoLine extends StatelessWidget {

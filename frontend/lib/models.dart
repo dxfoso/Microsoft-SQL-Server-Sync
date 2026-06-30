@@ -113,8 +113,8 @@ class AdminAgent {
     required this.clientVersion,
     required this.lastHeartbeat,
     required this.selectedTable,
-    required this.symmetricDs,
     required this.diagnostics,
+    required this.clientUpdate,
     required this.tables,
   });
 
@@ -132,8 +132,8 @@ class AdminAgent {
   final String clientVersion;
   final String lastHeartbeat;
   final String? selectedTable;
-  final AdminAgentSymmetricDs symmetricDs;
   final AdminAgentDiagnostics diagnostics;
+  final AdminAgentClientUpdate clientUpdate;
   final List<AdminTableState> tables;
 
   factory AdminAgent.fromJson(Map<String, dynamic> json) {
@@ -153,18 +153,18 @@ class AdminAgent {
       clientVersion: json['clientVersion'] as String? ?? '',
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
       selectedTable: json['selectedTable'] as String?,
-      symmetricDs:
-          json['symmetricDs'] is Map
-              ? AdminAgentSymmetricDs.fromJson(
-                Map<String, dynamic>.from(json['symmetricDs'] as Map),
-              )
-              : const AdminAgentSymmetricDs(),
       diagnostics:
           json['diagnostics'] is Map
               ? AdminAgentDiagnostics.fromJson(
                 Map<String, dynamic>.from(json['diagnostics'] as Map),
               )
               : const AdminAgentDiagnostics(),
+      clientUpdate:
+          json['clientUpdate'] is Map
+              ? AdminAgentClientUpdate.fromJson(
+                Map<String, dynamic>.from(json['clientUpdate'] as Map),
+              )
+              : const AdminAgentClientUpdate(),
       tables: (json['tables'] as List<dynamic>? ?? const [])
           .map(
             (item) => AdminTableState.fromJson(
@@ -176,27 +176,40 @@ class AdminAgent {
   }
 }
 
-class AdminAgentSymmetricDs {
-  const AdminAgentSymmetricDs({
-    this.status = 'unknown',
-    this.configPath = '',
+class AdminAgentClientUpdate {
+  const AdminAgentClientUpdate({
+    this.pending = false,
+    this.requestId,
+    this.requestedAt,
+    this.requestedByUserId,
+    this.targetVersion,
+    this.lastRequestId,
+    this.acknowledgedAt,
+    this.status = 'idle',
     this.message = '',
-    this.configuredAt,
   });
 
+  final bool pending;
+  final String? requestId;
+  final String? requestedAt;
+  final String? requestedByUserId;
+  final String? targetVersion;
+  final String? lastRequestId;
+  final String? acknowledgedAt;
   final String status;
-  final String configPath;
   final String message;
-  final String? configuredAt;
 
-  bool get configured => status == 'configured';
-
-  factory AdminAgentSymmetricDs.fromJson(Map<String, dynamic> json) {
-    return AdminAgentSymmetricDs(
-      status: json['status'] as String? ?? 'unknown',
-      configPath: json['configPath'] as String? ?? '',
+  factory AdminAgentClientUpdate.fromJson(Map<String, dynamic> json) {
+    return AdminAgentClientUpdate(
+      pending: json['pending'] as bool? ?? false,
+      requestId: json['requestId'] as String? ?? '',
+      requestedAt: json['requestedAt'] as String?,
+      requestedByUserId: json['requestedByUserId'] as String?,
+      targetVersion: json['targetVersion'] as String?,
+      lastRequestId: json['lastRequestId'] as String?,
+      acknowledgedAt: json['acknowledgedAt'] as String?,
+      status: json['status'] as String? ?? 'idle',
       message: json['message'] as String? ?? '',
-      configuredAt: json['configuredAt'] as String?,
     );
   }
 }
@@ -304,25 +317,50 @@ class AdminBulkDiagnosticsRequestResult {
   }
 }
 
+class AdminBulkClientUpdateRequestResult {
+  const AdminBulkClientUpdateRequestResult({
+    required this.requestId,
+    required this.requestedAt,
+    required this.requestedByUserId,
+    required this.requestedClientCount,
+    required this.requestedClientNames,
+  });
+
+  final String requestId;
+  final String requestedAt;
+  final String? requestedByUserId;
+  final int requestedClientCount;
+  final List<String> requestedClientNames;
+
+  factory AdminBulkClientUpdateRequestResult.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return AdminBulkClientUpdateRequestResult(
+      requestId: json['requestId'] as String? ?? '',
+      requestedAt: json['requestedAt'] as String? ?? '',
+      requestedByUserId: json['requestedByUserId'] as String?,
+      requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
+      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+    );
+  }
+}
+
 class AdminServerResetResult {
   const AdminServerResetResult({
     required this.jobDeletedCount,
     required this.agentResetCount,
-    required this.hasMore,
-    required this.totalDeletedCount,
   });
 
   final int jobDeletedCount;
   final int agentResetCount;
-  final bool hasMore;
-  final int totalDeletedCount;
 
   factory AdminServerResetResult.fromJson(Map<String, dynamic> json) {
     return AdminServerResetResult(
       jobDeletedCount: (json['jobDeletedCount'] as num? ?? 0).round(),
       agentResetCount: (json['agentResetCount'] as num? ?? 0).round(),
-      hasMore: json['hasMore'] as bool? ?? false,
-      totalDeletedCount: (json['totalDeletedCount'] as num? ?? 0).round(),
     );
   }
 }
@@ -334,8 +372,6 @@ class AdminTableState {
     required this.status,
     required this.lastSync,
     required this.progress,
-    required this.direction,
-    required this.syncMode,
     required this.rowCount,
     required this.message,
   });
@@ -345,8 +381,6 @@ class AdminTableState {
   final String status;
   final String lastSync;
   final int progress;
-  final String direction;
-  final String syncMode;
   final int rowCount;
   final String message;
 
@@ -357,8 +391,6 @@ class AdminTableState {
       status: json['status'] as String? ?? 'Paused',
       lastSync: json['lastSync'] as String? ?? '',
       progress: (json['progress'] as num? ?? 0).round(),
-      direction: json['direction'] as String? ?? 'sync',
-      syncMode: json['syncMode'] as String? ?? 'sync',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       message: json['message'] as String? ?? '',
     );
@@ -380,10 +412,8 @@ class AdminJob {
     required this.subscriberClientName,
     required this.table,
     required this.direction,
-    required this.mergeRole,
     required this.publisherServer,
     required this.publisherDatabase,
-    required this.publicationName,
     required this.publisherUseWindowsAuth,
     required this.status,
     required this.progress,
@@ -402,10 +432,8 @@ class AdminJob {
   final String subscriberClientName;
   final String table;
   final String direction;
-  final String mergeRole;
   final String publisherServer;
   final String publisherDatabase;
-  final String publicationName;
   final bool publisherUseWindowsAuth;
   final String status;
   final int progress;
@@ -424,11 +452,9 @@ class AdminJob {
       sourceClientName: json['sourceClientName'] as String? ?? '',
       subscriberClientName: json['subscriberClientName'] as String? ?? '',
       table: json['table'] as String? ?? '',
-      direction: json['direction'] as String? ?? 'sync',
-      mergeRole: json['mergeRole'] as String? ?? '',
+      direction: json['direction'] as String? ?? '',
       publisherServer: json['publisherServer'] as String? ?? '',
       publisherDatabase: json['publisherDatabase'] as String? ?? '',
-      publicationName: json['publicationName'] as String? ?? '',
       publisherUseWindowsAuth: json['publisherUseWindowsAuth'] as bool? ?? true,
       status: json['status'] as String? ?? 'queued',
       progress: (json['progress'] as num? ?? 0).round(),

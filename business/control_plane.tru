@@ -54,10 +54,14 @@ class Agent {
   field diagnosticStatus: string min=0 max=32
   field diagnosticSummary: string min=0 max=4000
   field diagnosticPayload: string min=0 max=64000
-  field symmetricDsStatus: string min=0 max=64
-  field symmetricDsConfigPath: string min=0 max=512
-  field symmetricDsMessage: string min=0 max=4000
-  field symmetricDsConfiguredAt: datetime?
+  field clientUpdateRequestId: string? min=0 max=64
+  field clientUpdateRequestedAt: datetime?
+  field clientUpdateRequestedByUserId: string? min=0 max=64
+  field clientUpdateTargetVersion: string? min=0 max=32
+  field clientUpdateLastRequestId: string? min=0 max=64
+  field clientUpdateLastAcknowledgedAt: datetime?
+  field clientUpdateStatus: string min=0 max=32
+  field clientUpdateMessage: string min=0 max=4000
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field updatedAt: datetime
@@ -68,7 +72,6 @@ class TableSyncPolicy {
   field database: string? min=0 max=256
   field table: string min=1 max=256
   field enabled: bool
-  field syncMode: string min=1 max=32
   field updatedAt: datetime
   field updatedByClientName: string min=0 max=128
 }
@@ -80,10 +83,8 @@ class SyncJob {
   field subscriberClientName: string min=0 max=128
   field table: string min=1 max=256
   field direction: string min=1 max=32
-  field mergeRole: string min=0 max=32
   field publisherServer: string min=0 max=256
   field publisherDatabase: string min=0 max=256
-  field publicationName: string min=0 max=256
   field publisherUseWindowsAuth: bool
   field publisherUser: string min=0 max=256
   field publisherPassword: string min=0 max=256
@@ -184,18 +185,6 @@ function raw_json_error(status: int, message: string): json {
     content_type: "application/json",
     body: json.stringify({ error: message })
   });
-}
-
-function sync_engine_metadata(): map<json> {
-  return {
-    mode: 'symmetricDs',
-    centralStore: 'symmetricds',
-    sqlServerMergeReplication: false,
-    symmetricDs: true,
-    backgroundService: true,
-    legacySnapshotCompatibility: false,
-    conflictPolicy: 'symmetricds-default'
-  };
 }
 
 function raw_json_success(payload: map<json>, status: int = 200): json {
@@ -365,20 +354,6 @@ function clamp_auto_sync_interval(value: int? = null): int {
   return value;
 }
 
-function normalize_sync_mode(value: string? = null, fallbackIsSync: bool = true): string {
-  return 'sync';
-}
-
-function merge_publication_name(clientName: string, table: string): string {
-  const normalizedClientName = clientName.trim();
-  const normalizedTable = table.trim();
-  return string.concat('merge_', normalizedClientName, '_', normalizedTable).slice(0, 240);
-}
-
-function direction_for_sync_mode(syncMode: string): string {
-  return 'sync';
-}
-
 function kSyncTableKeySeparator(): string {
   return '::';
 }
@@ -439,22 +414,11 @@ function relay_publisher_database(agent: map<json>, table: string): string {
 }
 
 function table_sync_policy_database_name(policy: map<json>): string {
-  if (policy.database != null && string.from(policy.database).trim().length != 0) {
-    return string.from(policy.database).trim();
-  }
-  return string.from(sync_table_reference(string.from(policy.table)).database);
+  return string.from(policy.database ?? '').trim();
 }
 
 function table_sync_policy_local_name(policy: map<json>): string {
-  const storedTable = string.from(policy.table).trim();
-  if (policy.database != null && string.from(policy.database).trim().length != 0) {
-    return storedTable;
-  }
-  const localTable = string.from(sync_table_reference(storedTable).table).trim();
-  if (localTable.length == 0) {
-    return storedTable;
-  }
-  return localTable;
+  return string.from(policy.table).trim();
 }
 
 function table_sync_policy_sync_key(policy: map<json>): string {
@@ -464,42 +428,6 @@ function table_sync_policy_sync_key(policy: map<json>): string {
     return localTable;
   }
   return string.concat(databaseName, kSyncTableKeySeparator(), localTable);
-}
-
-function normalize_stored_table_sync_policy(policy: map<json>): map<json> {
-  const databaseName = table_sync_policy_database_name(policy);
-  const localTable = table_sync_policy_local_name(policy);
-  const storedTable = string.from(policy.table).trim();
-  if (databaseName.length == 0 || localTable.length == 0 || storedTable == localTable) {
-    return policy;
-  }
-  const existing = db.selectOne(TableSyncPolicy, {
-    ownerUserId: policy.ownerUserId,
-    database: databaseName,
-    table: localTable
-  });
-  if (existing != null) {
-    db.delete(TableSyncPolicy, {
-      ownerUserId: policy.ownerUserId,
-      table: storedTable
-    });
-    return existing;
-  }
-  const updated = db.update(TableSyncPolicy, {
-    ownerUserId: policy.ownerUserId,
-    table: storedTable
-  }, {
-    database: databaseName,
-    table: localTable,
-    enabled: policy.enabled,
-    syncMode: normalize_sync_mode(policy.syncMode, true),
-    updatedAt: policy.updatedAt,
-    updatedByClientName: policy.updatedByClientName
-  });
-  if (updated != null) {
-    return updated;
-  }
-  return policy;
 }
 
 function table_sync_policy_scope(ownerUserId: string? = null): string {
@@ -513,7 +441,7 @@ function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<
   const rows = db.selectMany(TableSyncPolicy, {
     where: { ownerUserId: table_sync_policy_scope(ownerUserId) },
     orderBy: { field: 'table', dir: 'asc' },
-    fields: ['ownerUserId', 'database', 'table', 'enabled', 'syncMode', 'updatedAt', 'updatedByClientName'],
+    fields: ['ownerUserId', 'database', 'table', 'enabled', 'updatedAt', 'updatedByClientName'],
     limit: 1000
   });
   if (rows == null) {
@@ -523,7 +451,7 @@ function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<
 }
 
 function table_sync_policies_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
-  const rows = list_table_sync_policies_for_scope(ownerUserId).map((row) => normalize_stored_table_sync_policy(row));
+  const rows = list_table_sync_policies_for_scope(ownerUserId);
   const trimmedDatabase = database.trim();
   if (trimmedDatabase.length == 0) {
     return rows;
@@ -535,7 +463,6 @@ function table_sync_policy_payload(policy: map<json>): map<json> {
   return {
     table: table_sync_policy_sync_key(policy),
     enabled: policy.enabled,
-    syncMode: normalize_sync_mode(policy.syncMode, true),
     updatedAt: policy.updatedAt,
     updatedByClientName: policy.updatedByClientName
   };
@@ -718,30 +645,16 @@ function table_sync_policy_for_table(ownerUserId: string? = null, database: stri
     return null;
   }
   if (databaseName.length != 0) {
-    const exact = db.selectOne(TableSyncPolicy, {
+    return db.selectOne(TableSyncPolicy, {
       ownerUserId: scope,
       database: databaseName,
       table: localTable
     });
-    if (exact != null) {
-      return exact;
-    }
-    const keyed = db.selectOne(TableSyncPolicy, {
-      ownerUserId: scope,
-      table: string.concat(databaseName, kSyncTableKeySeparator(), localTable)
-    });
-    if (keyed != null) {
-      return normalize_stored_table_sync_policy(keyed);
-    }
   }
-  const plain = db.selectOne(TableSyncPolicy, {
+  return db.selectOne(TableSyncPolicy, {
     ownerUserId: scope,
     table: localTable
   });
-  if (plain != null) {
-    return normalize_stored_table_sync_policy(plain);
-  }
-  return null;
 }
 
 function find_table_sync_policy(ownerUserId: string? = null, syncTable: string): map<json>? {
@@ -750,37 +663,23 @@ function find_table_sync_policy(ownerUserId: string? = null, syncTable: string):
   const databaseName = string.from(reference.database).trim();
   const localTable = string.from(reference.table).trim();
   if (databaseName.length != 0 && localTable.length != 0) {
-    const exact = db.selectOne(TableSyncPolicy, {
+    return db.selectOne(TableSyncPolicy, {
       ownerUserId: scope,
       database: databaseName,
       table: localTable
     });
-    if (exact != null) {
-      return exact;
-    }
   }
-  const compatible = db.selectOne(TableSyncPolicy, {
-    ownerUserId: scope,
-    table: syncTable.trim()
-  });
-  if (compatible != null) {
-    return normalize_stored_table_sync_policy(compatible);
-  }
-  if (databaseName.length == 0 && localTable.length != 0) {
-    const plain = db.selectOne(TableSyncPolicy, {
+  if (localTable.length != 0) {
+    return db.selectOne(TableSyncPolicy, {
       ownerUserId: scope,
       table: localTable
     });
-    if (plain != null) {
-      return normalize_stored_table_sync_policy(plain);
-    }
   }
   return null;
 }
 
-function upsert_table_sync_policy(ownerUserId: string? = null, table: string, enabled: bool, syncMode: string? = null, updatedByClientName: string = ''): map<json> {
+function upsert_table_sync_policy(ownerUserId: string? = null, table: string, enabled: bool, updatedByClientName: string = ''): map<json> {
   const scope = table_sync_policy_scope(ownerUserId);
-  const normalizedMode = normalize_sync_mode(syncMode, true);
   const reference = sync_table_reference(table);
   const databaseName = string.from(reference.database).trim();
   const localTable = string.from(reference.table).trim();
@@ -799,7 +698,6 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
         database: storedDatabase,
         table: localTable,
         enabled,
-        syncMode: normalizedMode,
         updatedAt: now_iso(),
         updatedByClientName
       });
@@ -814,7 +712,6 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
         database: storedDatabase,
         table: localTable,
         enabled,
-        syncMode: normalizedMode,
         updatedAt: now_iso(),
         updatedByClientName
       });
@@ -828,7 +725,6 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
     database: storedDatabase,
     table: localTable,
     enabled,
-    syncMode: normalizedMode,
     updatedAt: now_iso(),
     updatedByClientName
   });
@@ -853,8 +749,6 @@ function apply_table_sync_policies(ownerUserId: string? = null, tables: array<js
         status: tableState.status,
         lastSync: tableState.lastSync,
         progress: tableState.progress,
-        direction: direction_for_sync_mode(policy.syncMode),
-        syncMode: normalize_sync_mode(policy.syncMode, true),
         rowCount: tableState.rowCount,
         message: tableState.message,
         history: tableState.history
@@ -902,8 +796,6 @@ function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: st
       status: string.from(tableState.status ?? ''),
       lastSync: string.from(tableState.lastSync ?? ''),
       progress: int.from(tableState.progress ?? 0),
-      direction: string.from(tableState.direction ?? 'sync'),
-      syncMode: normalize_sync_mode(tableState.syncMode, true),
       rowCount: int.from(tableState.rowCount ?? 0),
       message: string.from(tableState.message ?? ''),
       history: []
@@ -1225,7 +1117,7 @@ function find_waiting_download_job(sourceClientName: string, targetClientName: s
   const jobs = db.selectMany(SyncJob, {
     where: { clientName: targetClientName, sourceClientName, table },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 20
   });
   if (jobs == null) {
@@ -1343,7 +1235,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'symmetricDsStatus', 'symmetricDsConfigPath', 'symmetricDsMessage', 'symmetricDsConfiguredAt', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1356,7 +1248,7 @@ function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1408,7 +1300,6 @@ function public_agent_payload(agent: map<json>): map<json> {
   let payloadAgent = agent;
   if (
     (payloadAgent.tables == null
-      || payloadAgent.symmetricDsStatus == null
       || payloadAgent.diagnosticStatus == null)
     && payloadAgent.clientName != null
   ) {
@@ -1439,13 +1330,8 @@ function public_agent_payload(agent: map<json>): map<json> {
     clientVersion: payloadAgent.clientVersion ?? '',
     lastHeartbeat: payloadAgent.lastHeartbeat,
     selectedTable: payloadAgent.selectedTable,
-    symmetricDs: {
-      status: payloadAgent.symmetricDsStatus,
-      configPath: payloadAgent.symmetricDsConfigPath,
-      message: payloadAgent.symmetricDsMessage,
-      configuredAt: payloadAgent.symmetricDsConfiguredAt
-    },
     diagnostics: agent_diagnostics_payload(payloadAgent),
+    clientUpdate: agent_client_update_payload(payloadAgent),
     tables: nextTables,
     clientUserId: payloadAgent.clientUserId,
     ownerUserId: payloadAgent.ownerUserId
@@ -1484,7 +1370,35 @@ function agent_diagnostics_payload(agent: map<json>, includePayload: bool = fals
   };
 }
 
-function table_sync_policy_set(table: string, enabled: bool, syncMode: string? = null, clientName: string? = null, token: string? = null): map<json> {
+function client_update_request_pending(agent: map<json>): bool {
+  if (agent.clientUpdateRequestId == null) {
+    return false;
+  }
+  const requestId = string.from(agent.clientUpdateRequestId).trim();
+  if (requestId.length == 0) {
+    return false;
+  }
+  if (agent.clientUpdateLastRequestId == null) {
+    return true;
+  }
+  return string.from(agent.clientUpdateLastRequestId).trim() != requestId;
+}
+
+function agent_client_update_payload(agent: map<json>): map<json> {
+  return {
+    pending: client_update_request_pending(agent),
+    requestId: agent.clientUpdateRequestId,
+    requestedAt: agent.clientUpdateRequestedAt,
+    requestedByUserId: agent.clientUpdateRequestedByUserId,
+    targetVersion: agent.clientUpdateTargetVersion,
+    lastRequestId: agent.clientUpdateLastRequestId,
+    acknowledgedAt: agent.clientUpdateLastAcknowledgedAt,
+    status: agent.clientUpdateStatus,
+    message: agent.clientUpdateMessage
+  };
+}
+
+function table_sync_policy_set(table: string, enabled: bool, cascadeRelated: bool = true, clientName: string? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -1519,17 +1433,15 @@ function table_sync_policy_set(table: string, enabled: bool, syncMode: string? =
     ownerUserId,
     normalizedTable,
     enabled,
-    syncMode,
     current.username
   );
-  if (enabled) {
+  if (enabled && cascadeRelated) {
     const relatedTables = related_table_sync_keys_for_policy(ownerUserId, normalizedTable);
     for (const relatedTable of relatedTables) {
       upsert_table_sync_policy(
         ownerUserId,
         string.from(relatedTable),
         true,
-        syncMode,
         current.username
       );
     }
@@ -1613,10 +1525,8 @@ function public_job_payload(job: map<json>): map<json> {
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     status: job.status,
     progress: job.progress,
@@ -1641,10 +1551,8 @@ function agent_job_payload(job: map<json>): map<json> {
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -1702,7 +1610,7 @@ function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1763,10 +1671,14 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       diagnosticStatus: 'idle',
       diagnosticSummary: '',
       diagnosticPayload: '',
-      symmetricDsStatus: 'unknown',
-      symmetricDsConfigPath: '',
-      symmetricDsMessage: '',
-      symmetricDsConfiguredAt: null,
+      clientUpdateRequestId: null,
+      clientUpdateRequestedAt: null,
+      clientUpdateRequestedByUserId: null,
+      clientUpdateTargetVersion: null,
+      clientUpdateLastRequestId: null,
+      clientUpdateLastAcknowledgedAt: null,
+      clientUpdateStatus: 'idle',
+      clientUpdateMessage: '',
       clientVersion: '',
       clientUserId,
       ownerUserId,
@@ -1803,10 +1715,14 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     diagnosticStatus: 'idle',
     diagnosticSummary: '',
     diagnosticPayload: '',
-    symmetricDsStatus: 'unknown',
-    symmetricDsConfigPath: '',
-    symmetricDsMessage: '',
-    symmetricDsConfiguredAt: null,
+    clientUpdateRequestId: null,
+    clientUpdateRequestedAt: null,
+    clientUpdateRequestedByUserId: null,
+    clientUpdateTargetVersion: null,
+    clientUpdateLastRequestId: null,
+    clientUpdateLastAcknowledgedAt: null,
+    clientUpdateStatus: 'idle',
+    clientUpdateMessage: '',
     clientUserId,
     ownerUserId,
     updatedAt: now_iso()
@@ -1824,7 +1740,7 @@ function active_jobs_for_client(clientName: string): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { clientName },
     orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'mergeRole', 'publisherServer', 'publisherDatabase', 'publicationName', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1895,7 +1811,7 @@ function enabled_sync_tables_for_agent(agent: map<json>): array<string> {
 
 function enabled_sync_policy_tables_for_agent(agent: map<json>): array<string> {
   let enabledTables = [];
-  const policies = list_table_sync_policies_for_scope(agent.ownerUserId).map((row) => normalize_stored_table_sync_policy(row));
+  const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
   for (const policy of policies) {
     if (policy.enabled == true) {
       const table = table_sync_policy_sync_key(policy);
@@ -1905,25 +1821,6 @@ function enabled_sync_policy_tables_for_agent(agent: map<json>): array<string> {
     }
   }
   return unique_string_values(enabledTables);
-}
-
-function latest_completed_job_tables_for_client(clientName: string): array<string> {
-  const rows = db.selectMany(SyncJob, {
-    where: { clientName },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['table', 'status'],
-    limit: 1000
-  });
-  if (rows == null) {
-    return [];
-  }
-  let tables = [];
-  for (const row of rows) {
-    if (row.status == 'completed' && row.table != null) {
-      tables = tables.concat([string.from(row.table)]);
-    }
-  }
-  return unique_string_values(tables);
 }
 
 function latest_completed_upload_row_count_for_source(clientName: string, table: string): int {
@@ -2025,6 +1922,66 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
   return '';
 }
 
+function build_snapshot_relay_job_rows(sourceAgent: map<json>, targetClientName: string, targetClientUserId: string? = null, targetOwnerUserId: string? = null, tables: array<string>): array<json> {
+  let rows = [];
+  for (const table of tables) {
+    rows = rows.concat([{
+      id: uuid.v4(),
+      clientName: sourceAgent.clientName,
+      sourceClientName: sourceAgent.clientName,
+      subscriberClientName: targetClientName,
+      table,
+      direction: 'upload',
+      publisherServer: sync_job_text(sourceAgent.server),
+      publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
+      publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
+      publisherUser: sync_job_text(sourceAgent.replicationUser),
+      publisherPassword: sync_job_text(sourceAgent.replicationPassword),
+      status: 'queued',
+      progress: 0,
+      rowCount: 0,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
+      createdAt: now_iso(),
+      updatedAt: now_iso(),
+      startedAt: null,
+      completedAt: null,
+      message: string.concat('Queued sync for ', table, '.'),
+      error: null,
+      clientUserId: sourceAgent.clientUserId,
+      ownerUserId: sourceAgent.ownerUserId
+    }, {
+      id: uuid.v4(),
+      clientName: targetClientName,
+      sourceClientName: sourceAgent.clientName,
+      subscriberClientName: targetClientName,
+      table,
+      direction: 'download',
+      publisherServer: sync_job_text(remote_source_server(sourceAgent)),
+      publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
+      publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
+      publisherUser: sync_job_text(sourceAgent.replicationUser),
+      publisherPassword: sync_job_text(sourceAgent.replicationPassword),
+      status: 'waiting',
+      progress: 0,
+      rowCount: 0,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
+      createdAt: now_iso(),
+      updatedAt: now_iso(),
+      startedAt: null,
+      completedAt: null,
+      message: string.concat('Waiting for source snapshot upload for ', table, '.'),
+      error: null,
+      clientUserId: targetClientUserId,
+      ownerUserId: targetOwnerUserId
+    }]);
+  }
+  return rows;
+}
+
 function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sourceClientName: string = ''): array<json> {
   if (tables.length == 0) {
     return [];
@@ -2063,108 +2020,16 @@ function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sou
   if (tablesToCreate.length == 0) {
     return [];
   }
-  if (sourceAgent != null) {
-    let rows = [];
-    for (const table of tablesToCreate) {
-      rows = rows.concat([{
-        id: uuid.v4(),
-        clientName: sourceAgent.clientName,
-        sourceClientName: sourceAgent.clientName,
-        subscriberClientName: agent.clientName,
-        table,
-        direction: 'upload',
-        mergeRole: 'symmetricds',
-        publisherServer: sync_job_text(sourceAgent.server),
-        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
-        publicationName: '',
-        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sync_job_text(sourceAgent.replicationUser),
-        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
-        status: 'queued',
-        progress: 0,
-        rowCount: 0,
-        snapshotBytes: 0,
-        snapshotCreatedAt: null,
-        snapshotId: null,
-        createdAt: now_iso(),
-        updatedAt: now_iso(),
-        startedAt: null,
-        completedAt: null,
-        message: string.concat('Queued SymmetricDS sync for ', table, '.'),
-        error: null,
-        clientUserId: sourceAgent.clientUserId,
-        ownerUserId: sourceAgent.ownerUserId
-      }, {
-        id: uuid.v4(),
-        clientName: agent.clientName,
-        sourceClientName: sourceAgent.clientName,
-        subscriberClientName: agent.clientName,
-        table,
-        direction: 'download',
-        mergeRole: 'symmetricds',
-        publisherServer: sync_job_text(remote_source_server(sourceAgent)),
-        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
-        publicationName: '',
-        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sync_job_text(sourceAgent.replicationUser),
-        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
-        status: 'waiting',
-        progress: 0,
-        rowCount: 0,
-        snapshotBytes: 0,
-        snapshotCreatedAt: null,
-        snapshotId: null,
-        createdAt: now_iso(),
-        updatedAt: now_iso(),
-        startedAt: null,
-        completedAt: null,
-        message: string.concat('Waiting for source snapshot upload for ', table, '.'),
-        error: null,
-        clientUserId: agent.clientUserId,
-        ownerUserId: agent.ownerUserId
-      }]);
-    }
-    if (rows.length == 0) {
-      return [];
-    }
-    return db.insertMany(SyncJob, rows);
+  if (sourceAgent == null) {
+    return [];
   }
-  const rows = tablesToCreate.map((table) => {
-    const tableReference = sync_table_reference(table);
-    let publisherDatabase = agent.database;
-    if (tableReference.database != null && string.from(tableReference.database).trim().length != 0) {
-      publisherDatabase = string.from(tableReference.database).trim();
-    }
-    return {
-      id: uuid.v4(),
-      clientName: agent.clientName,
-      sourceClientName,
-      subscriberClientName: agent.clientName,
-      table,
-      direction: 'sync',
-      mergeRole: 'symmetricds',
-      publisherServer: sync_job_text(agent.server),
-      publisherDatabase: sync_job_text(publisherDatabase),
-      publicationName: '',
-      publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
-      publisherUser: sync_job_text(agent.replicationUser),
-      publisherPassword: sync_job_text(agent.replicationPassword),
-      status: 'queued',
-      progress: 0,
-      rowCount: 0,
-      snapshotBytes: 0,
-      snapshotCreatedAt: null,
-      snapshotId: null,
-      createdAt: now_iso(),
-      updatedAt: now_iso(),
-      startedAt: null,
-      completedAt: null,
-      message: string.concat('Queued SymmetricDS sync for ', table, '.'),
-      error: null,
-      clientUserId: agent.clientUserId,
-      ownerUserId: agent.ownerUserId
-    };
-  });
+  const rows = build_snapshot_relay_job_rows(
+    sourceAgent,
+    agent.clientName,
+    agent.clientUserId,
+    agent.ownerUserId,
+    tablesToCreate
+  );
   return db.insertMany(SyncJob, rows);
 }
 
@@ -2378,7 +2243,6 @@ function live_state(token: string? = null): map<json> {
   );
   return {
     generatedAt: now_iso(),
-    syncEngine: sync_engine_metadata(),
     agents: agentPage.items,
     jobs: jobPage.items,
     limits: {
@@ -2396,7 +2260,7 @@ function live_state(token: string? = null): map<json> {
   };
 }
 
-function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, clientVersion: string = '', symmetricDsStatus: string = 'unknown', symmetricDsConfigPath: string = '', symmetricDsMessage: string = '', symmetricDsConfigured: bool = false, token: string? = null): map<json> {
+function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, clientVersion: string = '', token: string? = null): map<json> {
   let resolvedClientName = '';
   const current = current_user_record(token);
   if (current == null) {
@@ -2429,10 +2293,6 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   }
   const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
   nextTables = bounded_heartbeat_tables(nextTables, selectedTable);
-  let nextSymmetricDsConfiguredAt = agent.symmetricDsConfiguredAt;
-  if (symmetricDsConfigured) {
-    nextSymmetricDsConfiguredAt = now_iso();
-  }
   const updated = db.update(Agent, { clientName: resolvedClientName }, {
     machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
     server,
@@ -2446,10 +2306,6 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     serverConnected,
     sqlConnected,
     clientVersion: truncate_text(clientVersion.trim(), 32),
-    symmetricDsStatus: truncate_text(symmetricDsStatus.trim(), 64),
-    symmetricDsConfigPath: truncate_text(symmetricDsConfigPath.trim(), 512),
-    symmetricDsMessage: truncate_text(symmetricDsMessage.trim(), 4000),
-    symmetricDsConfiguredAt: nextSymmetricDsConfiguredAt,
     lastHeartbeat: now_iso(),
     selectedTable,
     tables: nextTables,
@@ -2465,54 +2321,12 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   }
   return {
     ok: true,
-    syncEngine: sync_engine_metadata(),
     syncSettings: sync_settings_payload(nextAgent),
     tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
     tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),
     jobs: active_jobs_for_client(resolvedClientName),
-    diagnostics: agent_diagnostics_payload(nextAgent)
-  };
-}
-
-function agent_symmetricds_status_post(clientName: string? = null, status: string = 'unknown', configPath: string = '', message: string = '', configured: bool = false, token: string? = null): map<json> {
-  const current = current_user_record(token);
-  if (current == null) {
-    return raw_json_error(401, 'permission denied');
-  }
-  let resolvedClientName = '';
-  if (clientName == null || clientName.trim().length == 0) {
-    if (current.username == null) {
-      resolvedClientName = normalize_user_name(current.name);
-    } else {
-      resolvedClientName = current.username;
-    }
-  } else {
-    resolvedClientName = normalize_user_name(clientName);
-  }
-  const clientUser = find_user_by_identity(resolvedClientName);
-  if (clientUser != null && !can_manage_user(current, clientUser)) {
-    return raw_json_error(403, 'permission denied');
-  }
-  let userId = current.id;
-  let ownerUserId = owner_namespace_for_user(current);
-  const agent = ensure_agent(resolvedClientName, userId, ownerUserId);
-  let nextSymmetricDsConfiguredAt = agent.symmetricDsConfiguredAt;
-  if (configured) {
-    nextSymmetricDsConfiguredAt = now_iso();
-  }
-  const updated = db.update(Agent, { clientName: resolvedClientName }, {
-    symmetricDsStatus: truncate_text(status.trim(), 64),
-    symmetricDsConfigPath: truncate_text(configPath.trim(), 512),
-    symmetricDsMessage: truncate_text(message.trim(), 4000),
-    symmetricDsConfiguredAt: nextSymmetricDsConfiguredAt,
-    updatedAt: now_iso()
-  });
-  if (updated == null) {
-    return raw_json_error(500, 'agent symmetricds status unavailable');
-  }
-  return {
-    ok: true,
-    agent: public_agent_payload(updated)
+    diagnostics: agent_diagnostics_payload(nextAgent),
+    clientUpdate: agent_client_update_payload(nextAgent)
   };
 }
 
@@ -2655,6 +2469,169 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
   };
 }
 
+function agent_client_update_request(clientName: string, targetVersion: string? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const targetUser = find_user_by_identity(normalizedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let targetOwnerUserId = null;
+  if (targetUser != null) {
+    targetOwnerUserId = targetUser.ownerUserId;
+  }
+  let targetClientUserId = null;
+  if (targetUser != null) {
+    targetClientUserId = targetUser.id;
+  }
+  ensure_agent(normalizedClientName, targetClientUserId, targetOwnerUserId);
+  const requestedAt = now_iso();
+  let normalizedTargetVersion = '';
+  if (targetVersion != null) {
+    normalizedTargetVersion = truncate_text(string.from(targetVersion).trim(), 32);
+  }
+  let targetVersionOrNull = null;
+  if (normalizedTargetVersion.length != 0) {
+    targetVersionOrNull = normalizedTargetVersion;
+  }
+  const updated = db.update(Agent, { clientName: normalizedClientName }, {
+    clientUpdateRequestId: uuid.v4(),
+    clientUpdateRequestedAt: requestedAt,
+    clientUpdateRequestedByUserId: current.id,
+    clientUpdateTargetVersion: targetVersionOrNull,
+    clientUpdateStatus: 'requested',
+    clientUpdateMessage: '',
+    updatedAt: requestedAt
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: normalizedClientName,
+    clientUpdate: agent_client_update_payload(updated)
+  };
+}
+
+function agent_client_update_request_all(targetVersion: string? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const requestId = uuid.v4();
+  const requestedAt = now_iso();
+  let normalizedTargetVersion = '';
+  if (targetVersion != null) {
+    normalizedTargetVersion = truncate_text(string.from(targetVersion).trim(), 32);
+  }
+  let targetVersionOrNull = null;
+  if (normalizedTargetVersion.length != 0) {
+    targetVersionOrNull = normalizedTargetVersion;
+  }
+  const visibleAgents = visible_agent_rows_for(current);
+  let requestedClientNames = [];
+  for (const agent of visibleAgents) {
+    if (!effective_agent_online(agent)) {
+      continue;
+    }
+    const clientName = normalize_user_name(agent.clientName);
+    if (clientName.length != 0) {
+      requestedClientNames = requestedClientNames.concat([clientName]);
+    }
+  }
+  if (requestedClientNames.length == 0) {
+    return {
+      ok: true,
+      requestId,
+      requestedAt,
+      requestedByUserId: current.id,
+      requestedClientCount: 0,
+      requestedClientNames: []
+    };
+  }
+  db.updateMany(Agent, { clientName: { in: requestedClientNames } }, {
+    clientUpdateRequestId: requestId,
+    clientUpdateRequestedAt: requestedAt,
+    clientUpdateRequestedByUserId: current.id,
+    clientUpdateTargetVersion: targetVersionOrNull,
+    clientUpdateStatus: 'requested',
+    clientUpdateMessage: '',
+    updatedAt: requestedAt
+  });
+  return {
+    ok: true,
+    requestId,
+    requestedAt,
+    requestedByUserId: current.id,
+    requestedClientCount: requestedClientNames.length,
+    requestedClientNames
+  };
+}
+
+function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  let resolvedClientName = '';
+  if (clientName == null || clientName.trim().length == 0) {
+    if (current.username == null) {
+      resolvedClientName = normalize_user_name(current.name);
+    } else {
+      resolvedClientName = normalize_user_name(current.username);
+    }
+  } else {
+    resolvedClientName = normalize_user_name(clientName);
+  }
+  const targetUser = find_user_by_identity(resolvedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let targetOwnerUserId = owner_namespace_for_user(current);
+  let targetClientUserId = current.id;
+  if (targetUser != null) {
+    targetOwnerUserId = targetUser.ownerUserId;
+    targetClientUserId = targetUser.id;
+  }
+  const agent = ensure_agent(resolvedClientName, targetClientUserId, targetOwnerUserId);
+  let resolvedRequestId = '';
+  if (requestId != null) {
+    resolvedRequestId = string.from(requestId).trim();
+  }
+  if (resolvedRequestId.length == 0 && agent.clientUpdateRequestId != null) {
+    resolvedRequestId = string.from(agent.clientUpdateRequestId).trim();
+  }
+  let resolvedRequestIdOrNull = null;
+  if (resolvedRequestId.length != 0) {
+    resolvedRequestIdOrNull = resolvedRequestId;
+  }
+  const updated = db.update(Agent, { clientName: resolvedClientName }, {
+    clientUpdateLastRequestId: resolvedRequestIdOrNull,
+    clientUpdateLastAcknowledgedAt: now_iso(),
+    clientUpdateStatus: truncate_text(status.trim(), 32),
+    clientUpdateMessage: truncate_text(message, 4000),
+    clientVersion: installedVersion.trim().length == 0 ? agent.clientVersion : truncate_text(installedVersion.trim(), 32),
+    updatedAt: now_iso()
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: resolvedClientName,
+    clientUpdate: agent_client_update_payload(updated)
+  };
+}
+
 function agent_diagnostics_upload(clientName: string? = null, requestId: string? = null, summary: string = '', payload: string = '', token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -2748,9 +2725,6 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   for (const agent of visibleAgents) {
     let enabledTables = unique_string_values(enabled_sync_tables_for_agent(agent).concat(enabled_sync_policy_tables_for_agent(agent)));
     if (enabledTables.length == 0) {
-      enabledTables = latest_completed_job_tables_for_client(agent.clientName);
-    }
-    if (enabledTables.length == 0) {
       continue;
     }
     if (!effective_agent_online(agent)) {
@@ -2800,26 +2774,6 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   };
 }
 
-function sync_job_reset_batch(limit: int = 200): map<json> {
-  const rows = db.selectMany(SyncJob, {
-    where: { id: { gte: '' } },
-    orderBy: { field: 'id', dir: 'asc' },
-    fields: ['id'],
-    limit
-  });
-  if (rows == null || rows.length == 0) {
-    return { deletedCount: 0, hasMore: false };
-  }
-  let ids = [];
-  for (const row of rows) {
-    ids = ids.concat([string.from(row.id)]);
-  }
-  return {
-    deletedCount: db.deleteMany(SyncJob, { id: { in: ids } }),
-    hasMore: rows.length >= limit
-  };
-}
-
 function reset_all_agent_saved_state(): int {
   return db.updateMany(Agent, { clientName: { gte: '' } }, {
     selectedTable: null,
@@ -2845,20 +2799,16 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
     return raw_json_error(403, 'permission denied');
   }
 
-  const syncJobBatch = sync_job_reset_batch();
+  const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });
   let agentResetCount = 0;
   if (resetAgents) {
     agentResetCount = reset_all_agent_saved_state();
   }
-  const jobDeletedCount = syncJobBatch.deletedCount;
-  const hasMore = syncJobBatch.hasMore == true;
 
   return {
     ok: true,
     jobDeletedCount,
-    agentResetCount,
-    hasMore,
-    totalDeletedCount: jobDeletedCount
+    agentResetCount
   };
 }
 
@@ -2916,10 +2866,8 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3021,10 +2969,8 @@ function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chu
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3135,10 +3081,8 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: stri
     subscriberClientName: targetJob.subscriberClientName,
     table: targetJob.table,
     direction: targetJob.direction,
-    mergeRole: targetJob.mergeRole,
     publisherServer: targetJob.publisherServer,
     publisherDatabase: targetJob.publisherDatabase,
-    publicationName: targetJob.publicationName,
     publisherUseWindowsAuth: targetJob.publisherUseWindowsAuth,
     publisherUser: targetJob.publisherUser,
     publisherPassword: targetJob.publisherPassword,
@@ -3164,10 +3108,8 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: stri
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3231,10 +3173,8 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3301,10 +3241,8 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3331,7 +3269,7 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
   });
 }
 
-function jobs_create(clientName: string, tables: array<string>, direction: string = 'sync', sourceClientName: string = '', syncMode: string? = null, token: string? = null): map<json> {
+function jobs_create(clientName: string, tables: array<string>, sourceClientName: string = '', token: string? = null): map<json> {
   if (tables.length == 0) {
     return raw_json_error(400, 'tables are required.');
   }
@@ -3355,153 +3293,33 @@ function jobs_create(clientName: string, tables: array<string>, direction: strin
     clientUserId = clientUser.id;
     ownerId = owner_namespace_for_user(clientUser);
   }
-  const expandedTables = expand_sync_job_tables_for_owner(ownerId, tables);
-  if (expandedTables.length == 0) {
-    return raw_json_error(400, 'tables are required.');
+  const targetAgent = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (targetAgent == null) {
+    return raw_json_error(404, 'client not found');
   }
-  const activeTables = active_job_tables_for_client(resolvedClientName);
-  let sourceActiveTables = [];
-  let tablesToCreate = [];
-  let sourceAgent = null;
   let resolvedSourceClientName = sourceClientName.trim();
   if (resolvedSourceClientName.length != 0) {
-    sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
+    const sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
     if (sourceAgent == null) {
       return raw_json_error(404, 'source client not found');
     }
-    if (resolvedSourceClientName != resolvedClientName) {
-      sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
+  }
+  const visibleAgents = visible_agent_rows_for(current);
+  let createdJobs = [];
+  for (const table of tables) {
+    let nextSourceClientName = resolvedSourceClientName;
+    if (nextSourceClientName.length == 0) {
+      nextSourceClientName = preferred_source_client_name_for_agent_table(targetAgent, table, visibleAgents);
+    }
+    const nextJobs = create_sync_jobs_for_agent(targetAgent, [table], nextSourceClientName);
+    if (nextJobs.length > 0) {
+      createdJobs = createdJobs.concat(nextJobs);
     }
   }
-  for (const table of expandedTables) {
-    let busy = false;
-    for (const activeTable of activeTables) {
-      if (activeTable == table) {
-        busy = true;
-      }
-    }
-    for (const sourceActiveTable of sourceActiveTables) {
-      if (sourceActiveTable == table) {
-        busy = true;
-      }
-    }
-    if (!busy) {
-      tablesToCreate = tablesToCreate.concat([table]);
-    }
-  }
-  if (tablesToCreate.length == 0) {
-    return raw_json_success({ jobs: [] }, 201);
-  }
-  let createdJobsRaw = [];
-  for (const table of tablesToCreate) {
-    const resolvedMode = normalize_sync_mode(syncMode, true);
-    if (sourceAgent != null && resolvedSourceClientName != resolvedClientName) {
-      createdJobsRaw = createdJobsRaw.concat([{
-        id: uuid.v4(),
-        clientName: sourceAgent.clientName,
-        sourceClientName: resolvedSourceClientName,
-        subscriberClientName: resolvedClientName,
-        table,
-        direction: 'upload',
-        mergeRole: 'symmetricds',
-        publisherServer: sync_job_text(sourceAgent.server),
-        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
-        publicationName: '',
-        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sync_job_text(sourceAgent.replicationUser),
-        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
-        status: 'queued',
-        progress: 0,
-        rowCount: 0,
-        snapshotBytes: 0,
-        snapshotCreatedAt: null,
-        snapshotId: null,
-        createdAt: now_iso(),
-        updatedAt: now_iso(),
-        startedAt: null,
-        completedAt: null,
-        message: string.concat('Queued SymmetricDS sync for ', table, '.'),
-        error: null,
-        clientUserId: sourceAgent.clientUserId,
-        ownerUserId: sourceAgent.ownerUserId
-      }, {
-        id: uuid.v4(),
-        clientName: resolvedClientName,
-        sourceClientName: resolvedSourceClientName,
-        subscriberClientName: resolvedClientName,
-        table,
-        direction: 'download',
-        mergeRole: 'symmetricds',
-        publisherServer: sync_job_text(remote_source_server(sourceAgent)),
-        publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
-        publicationName: '',
-        publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-        publisherUser: sync_job_text(sourceAgent.replicationUser),
-        publisherPassword: sync_job_text(sourceAgent.replicationPassword),
-        status: 'waiting',
-        progress: 0,
-        rowCount: 0,
-        snapshotBytes: 0,
-        snapshotCreatedAt: null,
-        snapshotId: null,
-        createdAt: now_iso(),
-        updatedAt: now_iso(),
-        startedAt: null,
-        completedAt: null,
-        message: string.concat('Waiting for source snapshot upload for ', table, '.'),
-        error: null,
-        clientUserId,
-        ownerUserId: ownerId
-      }]);
-      continue;
-    }
-    let publisherServer = '';
-    let publisherDatabase = '';
-    let publisherUseWindowsAuth = false;
-    let publisherUser = '';
-    let publisherPassword = '';
-    if (sourceAgent != null) {
-      publisherServer = remote_source_server(sourceAgent);
-      publisherDatabase = relay_publisher_database(sourceAgent, table);
-      publisherUseWindowsAuth = sourceAgent.replicationUseWindowsAuth == true;
-      publisherUser = sync_job_text(sourceAgent.replicationUser);
-      publisherPassword = sync_job_text(sourceAgent.replicationPassword);
-    }
-    createdJobsRaw = createdJobsRaw.concat([{
-      id: uuid.v4(),
-      clientName: resolvedClientName,
-      sourceClientName: resolvedSourceClientName,
-      subscriberClientName: resolvedClientName,
-      table,
-      direction: direction_for_sync_mode(resolvedMode),
-      mergeRole: 'symmetricds',
-      publisherServer: sync_job_text(publisherServer),
-      publisherDatabase: sync_job_text(publisherDatabase),
-      publicationName: '',
-      publisherUseWindowsAuth,
-      publisherUser,
-      publisherPassword,
-      status: 'queued',
-      progress: 0,
-      rowCount: 0,
-      snapshotBytes: 0,
-      snapshotCreatedAt: null,
-      snapshotId: null,
-      createdAt: now_iso(),
-      updatedAt: now_iso(),
-      startedAt: null,
-      completedAt: null,
-      message: string.concat('Queued SymmetricDS sync for ', table, '.'),
-      error: null,
-      clientUserId,
-      ownerUserId: ownerId
-    }]);
-  }
-  const createdJobs = db.insertMany(SyncJob, createdJobsRaw);
   return raw_json_success({ jobs: createdJobs.map((job) => public_job_payload(job)) }, 201);
 }
 
-function jobs_start(jobId: string, status: string = 'running', progress: int? = null, message: string = 'Started SymmetricDS sync.', token: string? = null): map<json> {
+function jobs_start(jobId: string, status: string = 'running', progress: int? = null, message: string = 'Started sync.', token: string? = null): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -3521,10 +3339,8 @@ function jobs_start(jobId: string, status: string = 'running', progress: int? = 
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3550,7 +3366,7 @@ function jobs_start(jobId: string, status: string = 'running', progress: int? = 
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_progress(jobId: string, status: string = 'running', progress: int, message: string, rowCount: int, direction: string, token: string? = null): map<json> {
+function jobs_progress(jobId: string, status: string = 'running', progress: int, message: string, rowCount: int, token: string? = null): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -3569,11 +3385,9 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
     progress,
     message,
     rowCount,
-    direction,
-    mergeRole: job.mergeRole,
+    direction: job.direction,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3595,7 +3409,7 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed SymmetricDS sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, token: string? = null): map<json> {
+function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -3623,10 +3437,8 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3673,10 +3485,8 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     subscriberClientName: job.subscriberClientName,
     table: job.table,
     direction: job.direction,
-    mergeRole: job.mergeRole,
     publisherServer: job.publisherServer,
     publisherDatabase: job.publisherDatabase,
-    publicationName: job.publicationName,
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
@@ -3705,10 +3515,8 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
         subscriberClientName: targetJob.subscriberClientName,
         table: targetJob.table,
         direction: targetJob.direction,
-        mergeRole: targetJob.mergeRole,
         publisherServer: targetJob.publisherServer,
         publisherDatabase: targetJob.publisherDatabase,
-        publicationName: targetJob.publicationName,
         publisherUseWindowsAuth: targetJob.publisherUseWindowsAuth,
         publisherUser: targetJob.publisherUser,
         publisherPassword: targetJob.publisherPassword,
@@ -3776,10 +3584,8 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
       subscriberClientName: job.subscriberClientName,
       table: job.table,
       direction: job.direction,
-      mergeRole: job.mergeRole,
       publisherServer: job.publisherServer,
       publisherDatabase: job.publisherDatabase,
-      publicationName: job.publicationName,
       publisherUseWindowsAuth: job.publisherUseWindowsAuth,
       status: 'cancelled',
       progress: 100,

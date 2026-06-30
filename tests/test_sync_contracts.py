@@ -10,217 +10,141 @@ def read_text(relative_path: str) -> str:
 
 
 class SyncContractsTests(unittest.TestCase):
-    def test_windows_agent_writes_symmetricds_config_without_snapshot_apply(self):
+    def test_legacy_sync_migration_records_are_removed(self):
+        self.assertFalse((ROOT / "business/migration/mig_20260619_221054.json").exists())
+        self.assertFalse((ROOT / "business/migration/mig_20260626_151213.json").exists())
+        self.assertFalse((ROOT / "business/migration/mig_20260628_232845.json").exists())
+        self.assertFalse((ROOT / "business/migration/mig_20260630_181319.json").exists())
+
+    def test_windows_agent_uses_snapshot_transport_only(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-        symmetricds_service = read_text("sync_windows_agent/lib/symmetricds_service.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
 
-        self.assertIn("SymmetricDsService", agent_page)
-        self.assertIn("writeNodeConfig", agent_page)
-        self.assertIn("registrationUrl", symmetricds_service)
-        self.assertIn("path: '/sync/server'", agent_page)
-        self.assertIn("db.driver=com.microsoft.sqlserver.jdbc.SQLServerDriver", symmetricds_service)
-        self.assertIn("sqlsync.table.selection.file", symmetricds_service)
-        self.assertIn("bootstrapSqlPath", symmetricds_service)
-        self.assertIn("runtimeStatus", symmetricds_service)
-        self.assertIn("Process.start", symmetricds_service)
-        self.assertIn("'--properties', propertiesPath", symmetricds_service)
-        self.assertIn("'--server'", symmetricds_service)
-        self.assertIn("workingDirectory: command.installRoot", symmetricds_service)
-        self.assertIn("class _SymmetricDsCommand", symmetricds_service)
-        self.assertIn("runtime-missing", symmetricds_service)
-        self.assertIn("sym_trigger", symmetricds_service)
-        self.assertIn("sym_router", symmetricds_service)
-        self.assertIn("sym_trigger_router", symmetricds_service)
-        self.assertIn("client_2_server", symmetricds_service)
-        self.assertIn("server_2_client", symmetricds_service)
-        self.assertIn("_applySymmetricDsBootstrapIfReady", agent_page)
-        self.assertIn("OBJECT_ID(N'dbo.sym_trigger'", agent_page)
-        self.assertIn("OBJECT_ID(N'dbo.sym_router'", agent_page)
-        self.assertIn("OBJECT_ID(N'dbo.sym_trigger_router'", agent_page)
-        self.assertIn("bootstrap-applied", agent_page)
-        self.assertIn("SymmetricDS bootstrap SQL applied.", agent_page)
-        self.assertNotIn("MERGE $qualifiedTable AS target", agent_page)
-        self.assertNotIn("DELETE FROM $qualifiedTable", agent_page)
-        self.assertNotIn("TRUNCATE TABLE", agent_page)
-
-    def test_portable_build_bundles_symmetricds_runtime(self):
-        build_script = read_text("build_portable.ps1")
-        publish_script = read_text("scripts/publish_windows_client_update.ps1")
-        windows_build_script = read_text("scripts/windows_agent_build.ps1")
-
-        self.assertIn("^Flutter\\s+[0-9]+\\.[0-9]+\\.[0-9]+\\b", build_script)
-        self.assertIn("$SymmetricDsVersion = '3.16.10'", build_script)
-        self.assertIn("Install-SymmetricDsRuntime", build_script)
-        self.assertIn("symmetric-server-$Version.zip", build_script)
-        self.assertIn("Test-ZipFileSignature", build_script)
-        self.assertIn("Resolve-SourceForgeMirrorUrl", build_script)
-        self.assertIn("Save-VerifiedZip", build_script)
-        self.assertIn("symmetricds-$minorVersion", build_script)
-        self.assertIn('return "$commit-dirty"', windows_build_script)
-        self.assertIn('return "$commit-dirty"', publish_script)
-        self.assertIn("symmetricds\\bin\\sym.bat", build_script)
-        self.assertIn("$PortableName/symmetricds/bin/sym.bat", build_script)
-        self.assertIn("Assert-ClientUpdateZipContents", publish_script)
-        self.assertIn("$PortableName/symmetricds/bin/sym.bat", publish_script)
-        self.assertIn("Portable client update ZIP is missing required entry", publish_script)
-        self.assertIn("SymmetricDsVersion = '3.16.10'", publish_script)
-        self.assertIn("Remove-Item -LiteralPath $debugKernelPath -Force", build_script)
-        self.assertIn("Command = $currentFlutter.Source", build_script)
-        self.assertIn("-PreserveFlutterEphemeral `", build_script)
-        self.assertIn("-PreserveWindowsBuildTree", build_script)
-        self.assertIn("-arch=x64 -host_arch=x64", windows_build_script)
-        self.assertIn(
-            "Invoke-FlutterCommand `\n            -FlutterCommand $flutterCommand `\n            -Arguments $buildArguments `\n            -WorkingDirectory $ProjectPath",
-            build_script,
-        )
-
-    def test_windows_agent_restores_local_snapshot_relay_helpers(self):
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-
+        self.assertIn("Future<void> _processSnapshotJob(", agent_page)
         self.assertIn("Future<void> _processSnapshotRelayUploadJob(", agent_page)
         self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
-        self.assertIn("Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", agent_page)
-        self.assertIn("Future<int> _applyDownloadedSnapshotToTarget(", agent_page)
-        self.assertIn("required RemoteSnapshot snapshot", agent_page)
-        self.assertIn("Downloading compressed snapshot", agent_page)
-
-    def test_windows_agent_prefers_server_published_update_script(self):
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-
-        self.assertIn("List<String> _clientUpdatePowerShellArgs(ClientUpdateInfo updateInfo)", agent_page)
-        self.assertIn("if (scriptUrl.isNotEmpty) {", agent_page)
-        self.assertIn("Invoke-WebRequest -UseBasicParsing ", agent_page)
-        self.assertIn("if (localScriptPath != null) {", agent_page)
-
-    def test_windows_agent_checks_for_updates_before_dashboard_login(self):
-        app_shell = read_text("sync_windows_agent/lib/app.dart")
-
-        self.assertIn("Future<void> _checkShellClientUpdate() async {", app_shell)
-        self.assertIn("Future<void> _maybeAutoApplyShellClientUpdate(", app_shell)
         self.assertIn(
-            "Installing the latest client update. The agent will restart automatically.",
-            app_shell,
-        )
-        self.assertIn(
-            "Client update v${_shellClientUpdateInfo!.version} is available. The agent will install it automatically.",
-            app_shell,
-        )
-        self.assertIn("unawaited(_checkShellClientUpdate());", app_shell)
-
-    def test_windows_agent_bounds_heartbeat_table_payloads(self):
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-
-        self.assertIn(
-            "static const int _heartbeatTablePayloadLimit = 150;",
+            "throw Exception('Unsupported sync job direction: ${job.direction}')",
             agent_page,
         )
-        self.assertIn("List<String> _boundedHeartbeatTableNames() {", agent_page)
-        self.assertIn("for (final job in _activeJobs) {", agent_page)
-        self.assertIn("if (entry.value.enabled) {", agent_page)
-        self.assertIn(
-            "if (ordered.length >= _heartbeatTablePayloadLimit) {",
-            agent_page,
-        )
-        self.assertIn("return ordered.sublist(0, _heartbeatTablePayloadLimit);", agent_page)
-
-    def test_windows_update_script_stops_existing_instances_before_relaunch(self):
-        update_script = read_text("update.ps1")
-
-        self.assertIn("function Get-AgentProcesses {", update_script)
-        self.assertGreaterEqual(update_script.count("function Stop-AgentProcesses {"), 2)
-        self.assertIn("$agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)", update_script)
-        self.assertIn("$remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)", update_script)
-        self.assertIn(
-            "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir",
-            update_script,
-        )
-        self.assertIn(
-            'Write-UpdateLog -Message "Ensuring prior client instances are stopped before install." -LogPath $logPath',
-            update_script,
-        )
-        self.assertIn(
-            'Write-UpdateLog -Message "Stopping any remaining client instances before relaunch." -LogPath $logPath',
-            update_script,
-        )
-        self.assertGreaterEqual(
-            update_script.count("Stop-AgentProcesses -TargetInstallDir $InstallDir"),
-            2,
-        )
-        self.assertIn(
-            'Write-UpdateLog -Message "Finalize update helper started. payload=$PayloadDir install=$InstallDir parent=$ParentProcessId" -LogPath $logPath',
-            update_script,
-        )
-
-    def test_windows_runner_enforces_single_instance(self):
-        main_cpp = read_text("sync_windows_agent/windows/runner/main.cpp")
-
-        self.assertIn("CreateMutexW(nullptr, FALSE, L\"Local\\\\MicrosoftSqlServerSyncAgent\")", main_cpp)
-        self.assertIn("if (GetLastError() == ERROR_ALREADY_EXISTS)", main_cpp)
-        self.assertIn("Another sync_windows_agent instance is already running. Exiting duplicate launch.", main_cpp)
-        self.assertIn("ReleaseSingleInstanceMutex();", main_cpp)
-
-    def test_windows_agent_client_restores_snapshot_transport_endpoints(self):
-        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-
-        self.assertIn("Future<UploadSnapshotResult> uploadSnapshot(", client_api)
-        self.assertIn("Future<RemoteSnapshot> downloadSnapshot(", client_api)
-        self.assertIn("jobs_upload_chunk_start", client_api)
-        self.assertIn("jobs_download_snapshot_manifest", client_api)
-        self.assertIn("Future<void> _processSnapshotRelayUploadJob(", agent_page)
-        self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
-        self.assertIn("_processUnsupportedLegacyJob(job);", agent_page)
-
-    def test_control_plane_defaults_to_symmetricds_sync_jobs(self):
-        control_plane = read_text("business/control_plane.tru")
-
-        self.assertIn(
-            "function jobs_create(clientName: string, tables: array<string>, direction: string = 'sync'",
-            control_plane,
-        )
-        self.assertIn("direction: direction_for_sync_mode(resolvedMode)", control_plane)
-        self.assertIn("message: string.concat('Queued SymmetricDS sync for ', table, '.')", control_plane)
-        self.assertIn("mergeRole: 'symmetricds'", control_plane)
-        self.assertIn("function merge_publication_name(clientName: string, table: string): string", control_plane)
-
-    def test_legacy_sync_modes_and_custom_transport_fallback_are_removed(self):
-        control_plane = read_text("business/control_plane.tru")
-        sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
-        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-        node_server = read_text("frontend/server.js")
-
-        self.assertNotIn("function jobs_upload(", control_plane)
-        for legacy_alias in (
-            "'bidirectional'",
-            "'twoWay'",
-            "'masterMix'",
-            "'mix'",
-            "'master'",
-            "'upload'",
-            "'client'",
-            "'download'",
-        ):
-            self.assertNotIn(legacy_alias, sync_state)
-        for legacy_condition in (
-            "value == 'bidirectional'",
-            "value == 'twoWay'",
-            "value == 'masterMix'",
-            "value == 'mix'",
-            "value == 'master'",
-            "value == 'upload'",
-            "value == 'client'",
-            "value == 'download'",
-        ):
-            self.assertNotIn(legacy_condition, control_plane)
         self.assertIn("uploadSnapshot(", client_api)
         self.assertIn("downloadSnapshot(", client_api)
-        self.assertNotIn("_processUploadJob(job)", agent_page)
-        self.assertIn("SymmetricDS config", agent_page + read_text("sync_windows_agent/lib/symmetricds_service.dart"))
-        self.assertNotIn("/api/snapshots/latest", node_server)
-        self.assertNotIn("/api/snapshots/import", node_server)
-        self.assertNotIn("download-snapshot-manifest", node_server)
-        self.assertNotIn("upload-chunk-start", node_server)
+        self.assertNotIn("_processUnsupportedLegacyJob(job)", agent_page)
+        self.assertNotIn("job.mergeRole == 'snapshot'", agent_page)
+        self.assertNotIn("_runDirectQueuedTableSync(", agent_page)
+        self.assertNotIn("_RemoteTableSyncResult", agent_page)
+
+    def test_symmetricds_client_service_is_removed(self):
+        self.assertFalse(
+            (ROOT / "sync_windows_agent/lib/symmetricds_service.dart").exists()
+        )
+
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        self.assertNotIn("SymmetricDsService", agent_page)
+        self.assertNotIn("_writeSymmetricDsConfig", agent_page)
+        self.assertNotIn("_applySymmetricDsBootstrapIfReady", agent_page)
+
+    def test_portable_build_no_longer_bundles_symmetricds(self):
+        build_script = read_text("build_portable.ps1")
+        publish_script = read_text("scripts/publish_windows_client_update.ps1")
+
+        self.assertNotIn("SymmetricDsVersion", build_script)
+        self.assertNotIn("SymmetricDsDownloadUrl", build_script)
+        self.assertNotIn("Install-SymmetricDsRuntime", build_script)
+        self.assertNotIn("symmetricds\\bin\\sym.bat", build_script)
+        self.assertNotIn("symmetricds/bin/sym.bat", publish_script)
+
+    def test_frontend_server_only_serves_static_assets_and_client_updates(self):
+        node_server = read_text("frontend/server.js")
+
+        self.assertIn("async function tryServeClientUpdate(", node_server)
+        self.assertIn("async function tryServeStatic(", node_server)
+        self.assertIn('pathname === "/api/env"', node_server)
+        self.assertIn('pathname === "/health"', node_server)
+        self.assertNotIn('pathname === "/api/health"', node_server)
+        self.assertNotIn('pathname === "/api/ready"', node_server)
+        self.assertNotIn('pathname === "/env.js"', node_server)
+        self.assertNotIn('pathname === "/api/jobs"', node_server)
+        self.assertNotIn('pathname === "/api/auth/login"', node_server)
+        self.assertNotIn('pathname === "/api/agents/heartbeat"', node_server)
+
+    def test_flutter_web_uses_tru_call_endpoint(self):
+        web_api = read_text("frontend/lib/live_sync_api.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        web_models = read_text("frontend/lib/models.dart")
+        sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
+
+        self.assertIn("defaultValue: '/call'", web_api)
+        self.assertIn("_invokeFunction('live_state', {})", web_api)
+        self.assertNotIn('"/api/jobs"', web_api)
+        self.assertNotIn("SYMMETRICDS", dashboard)
+        self.assertNotIn("'syncMode': 'sync'", web_api)
+        self.assertNotIn("final String syncMode;", web_models)
+        admin_table_state = web_models.split("class AdminTableState {", 1)[1].split(
+            "class AdminJob {", 1
+        )[0]
+        sync_table_state = sync_state.split("class SyncTableState {", 1)[1].split(
+            "class SyncClientState {", 1
+        )[0]
+        self.assertNotIn("required this.direction,", admin_table_state)
+        self.assertNotIn("final String direction;", admin_table_state)
+        self.assertNotIn("required this.direction,", sync_table_state)
+        self.assertNotIn("final String direction;", sync_table_state)
+        self.assertNotIn("this.direction = 'sync'", sync_state)
+        self.assertNotIn("'direction': direction", sync_state)
+        self.assertNotIn("json['direction'] as String? ?? 'sync'", sync_state)
+        self.assertNotIn("final bool hasMore;", web_models)
+        self.assertNotIn("final int totalDeletedCount;", web_models)
+
+    def test_control_plane_exposes_snapshot_sync_jobs(self):
+        control_plane = read_text("business/control_plane.tru")
+
+        self.assertIn(
+            "function jobs_create(clientName: string, tables: array<string>, sourceClientName: string = ''",
+            control_plane,
+        )
+        self.assertIn("function jobs_upload_chunk_start(", control_plane)
+        self.assertIn("function jobs_download_snapshot_manifest(", control_plane)
+        self.assertNotIn("mergeRole", control_plane)
+        self.assertNotIn("publicationName", control_plane)
+        self.assertNotIn("syncMode", control_plane)
+        self.assertNotIn("direction: 'sync'", control_plane)
+        self.assertNotIn("Queued SymmetricDS sync", control_plane)
+
+    def test_unused_business_info_route_is_removed(self):
+        self.assertFalse((ROOT / "business" / "sql_sync_api.tru").exists())
+
+    def test_backend_health_file_only_keeps_current_health_routes(self):
+        health = read_text("business/health.tru")
+
+        self.assertIn("route GET /call/health", health)
+        self.assertIn("route GET /call/ready", health)
+        self.assertNotIn("/call/api/health", health)
+        self.assertNotIn("/call/api/ready", health)
+
+    def test_control_plane_no_longer_exposes_old_engine_metadata(self):
+        control_plane = read_text("business/control_plane.tru")
+
+        self.assertNotIn("function sync_engine_metadata(): map<json>", control_plane)
+        self.assertNotIn("syncEngine: sync_engine_metadata()", control_plane)
+        self.assertNotIn("agent_symmetricds_status_post", control_plane)
+
+    def test_live_job_models_no_longer_require_merge_role_or_publication_name(self):
+        web_models = read_text("frontend/lib/models.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+
+        self.assertNotIn("required this.mergeRole", web_models)
+        self.assertNotIn("required this.publicationName", web_models)
+        self.assertNotIn("final String mergeRole;", web_models)
+        self.assertNotIn("final String publicationName;", web_models)
+        self.assertNotIn("required this.mergeRole", client_api)
+        self.assertNotIn("required this.publicationName", client_api)
+        create_jobs_signature = client_api.split(
+            "Future<List<RemoteSyncJob>> createJobs({", 1
+        )[1].split("}) async {", 1)[0]
+        self.assertNotIn("required String direction,", create_jobs_signature)
+        self.assertNotIn("String? syncMode,", create_jobs_signature)
+        self.assertNotIn("final String syncMode;", client_api)
 
     def test_related_table_metadata_stays_in_app_state(self):
         control_plane = read_text("business/control_plane.tru")
@@ -233,111 +157,138 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("tableRelationships: _tableRelationshipsPayload()", agent_page)
         self.assertIn("RemoteTableDependency", client_api)
 
-    def test_selected_sync_queues_related_table_package(self):
+    def test_selected_sync_queues_related_tables(self):
         control_plane = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
         self.assertIn("function expand_sync_job_tables_for_owner", control_plane)
-        self.assertIn("related_table_sync_keys_for_policy(ownerUserId, normalizedTable)", control_plane)
-        self.assertIn("const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables)", control_plane)
-        self.assertIn("const rows = tablesToCreate.map((table) =>", control_plane)
-        self.assertIn("const expandedTables = expand_sync_job_tables_for_owner(ownerId, tables)", control_plane)
-        self.assertIn("let createdJobsRaw = [];", control_plane)
-        self.assertIn("for (const table of tablesToCreate) {", control_plane)
-        self.assertIn("return raw_json_success({ jobs: [] }, 201);", control_plane)
-        self.assertIn("final tablesToQueue = <String>{", agent_page)
-        self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
-        self.assertIn("tables: tablesToQueue", agent_page)
-        self.assertIn("Queue sync for $selectedTable and related tables", agent_page)
-        self.assertIn("for (const dependency of dependencies)", control_plane)
-        self.assertIn("state.related.length == previousRelatedCount", control_plane)
-        self.assertNotIn(
-            "state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
-            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
-            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
-            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
-            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
-            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
-            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);\n"
-            "  state = expand_related_table_sync_keys_once(dependencies, databaseName, state.visited, state.related);",
+        self.assertIn(
+            "const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables)",
             control_plane,
         )
+        self.assertIn("final tablesToQueue = <String>{", agent_page)
+        self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
 
-    def test_windows_agent_normalizes_database_qualified_table_names(self):
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+    def test_windows_update_script_stops_existing_instances(self):
+        update_script = read_text("update.ps1")
+        publish_script = read_text("scripts/publish_windows_client_update.ps1")
 
-        self.assertIn("String _stripKnownDatabaseAndDefaultSchema(", agent_page)
-        self.assertIn("final databasePrefix = '$databaseName.';", agent_page)
-        self.assertIn("tableName = tableName.substring(databasePrefix.length);", agent_page)
+        self.assertIn("function Get-AgentProcesses {", update_script)
+        self.assertIn("function Stop-AgentProcesses {", update_script)
         self.assertIn(
-            "_stripKnownDatabaseAndDefaultSchema(\n      table,\n      database: databaseName,",
-            agent_page,
+            "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir",
+            update_script,
         )
-        self.assertNotIn("velvet::velvet.dbo", agent_page)
+        self.assertNotIn("manifest.latestZipUrl", update_script)
+        self.assertNotIn("latestZipUrl =", publish_script)
 
-    def test_windows_agent_does_not_execute_legacy_merge_roles(self):
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-        symmetricds_service = read_text("sync_windows_agent/lib/symmetricds_service.dart")
-
-        self.assertNotIn("CASE WHEN uk.column_id IS NULL THEN 0 ELSE 1 END AS is_unique_key", agent_page)
-        self.assertNotIn("uniqueKeyOrdinal", agent_page)
-        self.assertNotIn("job.mergeRole == 'publisher'", agent_page)
-        self.assertNotIn("job.mergeRole == 'subscriber'", agent_page)
-        self.assertIn("sym_trigger", symmetricds_service)
-        self.assertIn("sym_trigger_router", symmetricds_service)
-
-    def test_web_dashboard_exposes_merge_sync_not_push_pull_jobs(self):
-        dashboard = read_text("frontend/lib/dashboard_page.dart")
-        web_api = read_text("frontend/lib/live_sync_api.dart")
-        models = read_text("frontend/lib/models.dart")
-
-        self.assertIn("label: 'Sync'", dashboard)
-        self.assertIn("Merge sync queued", dashboard)
-        self.assertIn("'direction': 'sync'", web_api)
-        self.assertIn("'syncMode': 'sync'", web_api)
-        self.assertIn("syncMode: json['syncMode'] as String? ?? 'sync'", models)
-        self.assertNotIn("label: 'Push'", dashboard)
-        self.assertNotIn("label: 'Pull'", dashboard)
-        self.assertNotIn("direction: 'upload'", dashboard)
-        self.assertNotIn("direction: 'download'", dashboard)
-
-    def test_visible_sync_copy_uses_symmetricds_namespace_terms(self):
-        dashboard = read_text("frontend/lib/dashboard_page.dart")
-        sample_data = read_text("sync_windows_agent/lib/sample_data.dart")
-        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-        visible_copy = dashboard + sample_data + agent_page
-
-        self.assertIn("SymmetricDS", agent_page)
-        self.assertIn("SymmetricDS config", visible_copy)
-        self.assertIn("SymmetricDS", dashboard)
-        self.assertIn("agent.symmetricDs", dashboard)
-        for legacy_text in (
-            "finance-master",
-            "sink agents",
-            "batches pushed",
-            "POSTGRES CUSTOM SYNC",
-            "cloud namespace snapshot sources",
-            "Uploaded by namespace source",
-            "master snapshot",
-        ):
-            self.assertNotIn(legacy_text, visible_copy)
-
-    def test_helm_declares_symmetricds_engine_mode(self):
-        values = read_text("deployment/chart/values.yaml")
-        backend_deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
-        frontend_deployment = read_text("deployment/chart/templates/deployment.yaml")
+    def test_windows_agent_can_apply_server_requested_client_updates(self):
         control_plane = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        web_api = read_text("frontend/lib/live_sync_api.dart")
+        web_models = read_text("frontend/lib/models.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
 
-        self.assertIn("syncEngine:\n  mode: symmetricDs", values)
-        self.assertNotIn("postgresCustomSync", values)
-        self.assertIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
-        self.assertIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
-        self.assertIn("function sync_engine_metadata(): map<json>", control_plane)
-        self.assertIn("mode: 'symmetricDs'", control_plane)
-        self.assertIn("centralStore: 'symmetricds'", control_plane)
-        self.assertIn("sqlServerMergeReplication: false", control_plane)
-        self.assertIn("symmetricDs: true", control_plane)
-        self.assertIn("syncEngine: sync_engine_metadata()", control_plane)
+        self.assertIn("agent_client_update_request", control_plane)
+        self.assertIn("agent_client_update_request_all", control_plane)
+        self.assertIn("agent_client_update_ack", control_plane)
+        self.assertIn("await _handleRequestedClientUpdate(heartbeat.clientUpdate);", agent_page)
+        self.assertIn("Future<void> _handleRequestedClientUpdate(", agent_page)
+        self.assertIn("Future<RemoteAgentClientUpdate> acknowledgeClientUpdate(", client_api)
+        self.assertIn("class RemoteAgentClientUpdate {", client_api)
+        self.assertIn("Future<AdminBulkClientUpdateRequestResult> requestAllAgentClientUpdates() async {", web_api)
+        self.assertIn("Future<AdminAgentClientUpdate> requestAgentClientUpdate({", web_api)
+        self.assertIn("class AdminAgentClientUpdate {", web_models)
+        self.assertIn("class AdminBulkClientUpdateRequestResult {", web_models)
+        self.assertIn("Update All Clients", dashboard)
+        self.assertIn("Update Client", dashboard)
+
+    def test_repo_uses_run_ps1_as_single_local_launcher(self):
+        build_helpers = read_text("scripts/windows_agent_build.ps1")
+
+        self.assertFalse((ROOT / "client.ps1").exists())
+        self.assertNotIn("client.ps1", build_helpers)
+
+    def test_unused_windows_agent_sample_data_is_removed(self):
+        self.assertFalse((ROOT / "sync_windows_agent/lib/sample_data.dart").exists())
+
+    def test_obsolete_root_debug_artifacts_are_removed(self):
+        self.assertFalse((ROOT / "control_plane.b64").exists())
+        self.assertFalse((ROOT / "agent_fix.sql").exists())
+        self.assertFalse((ROOT / "agents_fix.sql").exists())
+        self.assertFalse((ROOT / "agents_schema.sql").exists())
+        self.assertFalse((ROOT / "agents_probe.sql").exists())
+        self.assertFalse((ROOT / "user_probe.sql").exists())
+        self.assertFalse((ROOT / "inject_velvet_random_data.ps1").exists())
+        self.assertFalse((ROOT / "file_selector_windows_plugin.dll").exists())
+        self.assertFalse((ROOT / "sync_windows_agent-windows-portable.zip").exists())
+        self.assertFalse((ROOT / "PRODUCT.md").exists())
+        self.assertFalse((ROOT / "database" / "env.template").exists())
+        self.assertFalse((ROOT / "database" / "seed.ps1").exists())
+        self.assertFalse((ROOT / "database" / "seed_velvet.sql").exists())
+
+    def test_repo_docs_no_longer_describe_mock_or_prototype_state(self):
+        root_readme = read_text("README.md")
+        frontend_readme = read_text("frontend/README.md")
+        client_readme = read_text("sync_windows_agent/README.md")
+
+        self.assertNotIn("mock data", root_readme.lower())
+        self.assertNotIn("ui prototype", root_readme.lower())
+        self.assertNotIn("mock data", frontend_readme.lower())
+        self.assertNotIn("prototype", frontend_readme.lower())
+        self.assertNotIn("mock", client_readme.lower())
+        self.assertNotIn("prototype", client_readme.lower())
+
+    def test_windows_runner_no_longer_ships_default_flutter_company_metadata(self):
+        runner_rc = read_text("sync_windows_agent/windows/runner/Runner.rc")
+
+        self.assertNotIn("com.example", runner_rc)
+
+    def test_run_launcher_backend_health_wait_uses_health_endpoint_only(self):
+        launcher = read_text("run.ps1")
+        backend_wait = launcher.split("function Wait-BackendHealthy {", 1)[1].split(
+            "function Start-LocalDatabase {", 1
+        )[0]
+
+        self.assertIn(
+            'Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 3',
+            backend_wait,
+        )
+        self.assertNotIn("[System.Diagnostics.Process]$Process = $null", backend_wait)
+        self.assertNotIn("$Process.HasExited", backend_wait)
+
+    def test_run_launcher_clears_stale_repo_backend_processes_before_restart(self):
+        launcher = read_text("run.ps1")
+
+        self.assertIn("function Get-RepoBackendProcesses {", launcher)
+        self.assertIn("function Stop-RepoBackendProcesses {", launcher)
+        self.assertIn("Stop-RepoBackendProcesses", launcher.split("function Start-Stack {", 1)[1])
+        self.assertIn("Stopping stale backend process", launcher)
+
+    def test_windows_state_loader_no_longer_backfills_old_login_fields(self):
+        sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
+
+        self.assertNotIn(
+            "json['accountUsername'] as String? ??\n            json['accountEmail'] as String?",
+            sync_state,
+        )
+        self.assertNotIn(
+            "json['rememberedLoginName'] as String? ??\n            json['accountUsername'] as String? ??\n            json['accountEmail'] as String?",
+            sync_state,
+        )
+
+    def test_helm_does_not_keep_dead_sync_engine_mode(self):
+        values = read_text("deployment/chart/values.yaml")
+        frontend_deployment = read_text("deployment/chart/templates/deployment.yaml")
+        backend_deployment = read_text(
+            "deployment/chart/templates/backend-deployment.yaml"
+        )
+
+        self.assertNotIn("syncEngine:", values)
+        self.assertNotIn("SQL_SYNC_ENGINE_MODE", frontend_deployment)
+        self.assertNotIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
+        self.assertNotIn("symmetricds:", values)
 
 
 if __name__ == "__main__":

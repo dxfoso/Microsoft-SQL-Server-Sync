@@ -209,8 +209,6 @@ class LiveSyncApiClient {
       'clientName': clientName,
       if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
         'sourceClientName': sourceClientName,
-      'direction': 'sync',
-      'syncMode': 'sync',
       'tables': [table],
     });
     if (decoded is! Map || decoded['jobs'] is! List) {
@@ -238,38 +236,30 @@ class LiveSyncApiClient {
     );
   }
 
-  Future<AdminServerResetResult> _resetServerSavedDataBatch({
-    required bool resetAgents,
-  }) async {
+  Future<AdminBulkClientUpdateRequestResult>
+  requestAllAgentClientUpdates() async {
+    final decoded = await _invokeFunction(
+      'agent_client_update_request_all',
+      {},
+    );
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected bulk client update request payload.',
+      );
+    }
+    return AdminBulkClientUpdateRequestResult.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
+  Future<AdminServerResetResult> resetServerSavedData() async {
     final decoded = await _invokeFunction('server_saved_data_reset', {
-      'resetAgents': resetAgents,
+      'resetAgents': true,
     });
     if (decoded is! Map) {
       throw const LiveSyncApiException('Unexpected server reset payload.');
     }
     return AdminServerResetResult.fromJson(Map<String, dynamic>.from(decoded));
-  }
-
-  Future<AdminServerResetResult> resetServerSavedData() async {
-    var jobDeletedCount = 0;
-    var agentResetCount = 0;
-    var resetAgents = true;
-    while (true) {
-      final batch = await _resetServerSavedDataBatch(resetAgents: resetAgents);
-      jobDeletedCount += batch.jobDeletedCount;
-      if (batch.agentResetCount > agentResetCount) {
-        agentResetCount = batch.agentResetCount;
-      }
-      resetAgents = false;
-      if (!batch.hasMore) {
-        return AdminServerResetResult(
-          jobDeletedCount: jobDeletedCount,
-          agentResetCount: agentResetCount,
-          hasMore: false,
-          totalDeletedCount: jobDeletedCount,
-        );
-      }
-    }
   }
 
   Future<AdminAgentDiagnostics> requestAgentDiagnostics({
@@ -285,6 +275,22 @@ class LiveSyncApiClient {
     }
     return AdminAgentDiagnostics.fromJson(
       Map<String, dynamic>.from(decoded['diagnostics'] as Map),
+    );
+  }
+
+  Future<AdminAgentClientUpdate> requestAgentClientUpdate({
+    required String clientName,
+  }) async {
+    final decoded = await _invokeFunction('agent_client_update_request', {
+      'clientName': clientName.trim(),
+    });
+    if (decoded is! Map || decoded['clientUpdate'] is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected client update request payload.',
+      );
+    }
+    return AdminAgentClientUpdate.fromJson(
+      Map<String, dynamic>.from(decoded['clientUpdate'] as Map),
     );
   }
 
@@ -318,7 +324,6 @@ class LiveSyncApiClient {
     required String clientName,
     required String table,
     required bool enabled,
-    String? syncMode,
   }) async {
     final trimmedTable = table.trim();
     final trimmedClientName = clientName.trim();
@@ -329,7 +334,6 @@ class LiveSyncApiClient {
       if (trimmedClientName.isNotEmpty) 'clientName': trimmedClientName,
       'table': trimmedTable,
       'enabled': enabled,
-      if (syncMode != null && syncMode.trim().isNotEmpty) 'syncMode': syncMode,
     });
   }
 

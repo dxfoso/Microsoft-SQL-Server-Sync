@@ -6,11 +6,13 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def read_text(relative_path: str) -> str:
+    return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
 class ControlPlaneContractsTests(unittest.TestCase):
     def test_live_state_uses_bounded_payload_helpers(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
+        source = read_text("business/control_plane.tru")
         live_state_match = re.search(
             r"function live_state\(.*?\): map<json> \{(?P<body>.*?)\n\}",
             source,
@@ -23,17 +25,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("bounded_public_job_payloads", body)
         self.assertIn("live_state_agent_rows_for(current, agentLimit)", body)
         self.assertIn("live_state_job_rows_for(current, jobLimit)", body)
-        self.assertNotIn("visible_agent_rows_for(current)", body)
-        self.assertNotIn("visible_job_rows_for(current)", body)
-        self.assertNotIn(".map((job) => public_job_payload(job))", body)
-        self.assertNotIn("snapshots:", body)
-        self.assertIn("limits:", body)
-        self.assertIn("truncated:", body)
+        self.assertNotIn("syncEngine:", body)
 
-    def test_live_state_limits_stay_small_enough_for_dashboard_polling(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
+    def test_live_state_limits_stay_bounded(self):
+        source = read_text("business/control_plane.tru")
         limits = {
             name: int(value)
             for name, value in re.findall(
@@ -46,280 +41,151 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertEqual(limits["agent"], 100)
         self.assertLessEqual(limits["job"], 50)
 
-    def test_live_state_removes_snapshot_queries(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("function live_state_snapshot_limit()", source)
-        self.assertNotIn("function live_state_snapshot_rows_for(", source)
-
-    def test_live_state_agent_query_omits_heavy_agent_json(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-        agent_rows_match = re.search(
+    def test_agent_rows_omit_heavy_payload_fields(self):
+        source = read_text("business/control_plane.tru")
+        match = re.search(
             r"function live_state_agent_rows_for\(.*?\): array<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
-        self.assertIsNotNone(agent_rows_match)
-        body = agent_rows_match.group("body")
-
-        self.assertIn("limit: limit + 1", body)
-        self.assertIn("'clientVersion'", body)
-        self.assertNotIn("'tables'", body)
-        self.assertNotIn("diagnosticPayload", body)
-
-    def test_bounded_agent_tables_prioritizes_enabled_tables(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-        match = re.search(
-            r"function bounded_agent_tables\(.*?\): array<json> \{(?P<body>.*?)\n\}",
-            source,
-            flags=re.S,
-        )
         self.assertIsNotNone(match)
         body = match.group("body")
 
-        self.assertIn("if (tableState.enabled == true) {", body)
-        self.assertIn("if (existing.table == tableState.table) {", body)
+        self.assertIn("limit: limit + 1", body)
+        self.assertNotIn("'tables'", body)
+        self.assertNotIn("diagnosticPayload", body)
 
-    def test_sync_jobs_carry_merge_replication_metadata(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-        client_api = (
-            ROOT / "sync_windows_agent" / "lib" / "live_sync_api.dart"
-        ).read_text(encoding="utf-8")
+    def test_job_schema_keeps_only_current_snapshot_fields(self):
+        source = read_text("business/control_plane.tru")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
 
-        self.assertIn("field replicationUseWindowsAuth: bool", source)
-        self.assertIn("field replicationUser: string min=0 max=256", source)
-        self.assertIn("field replicationPassword: string min=0 max=256", source)
-        self.assertIn("field mergeRole: string min=0 max=32", source)
+        self.assertIn("field sourceClientName: string min=0 max=128", source)
+        self.assertIn("field subscriberClientName: string min=0 max=128", source)
         self.assertIn("field publisherServer: string min=0 max=256", source)
         self.assertIn("field publisherDatabase: string min=0 max=256", source)
-        self.assertIn("field publicationName: string min=0 max=256", source)
         self.assertIn("field publisherUseWindowsAuth: bool", source)
-        self.assertIn("publisherUser: job.publisherUser", source)
-        self.assertIn("publisherPassword: job.publisherPassword", source)
+        self.assertIn("field publisherUser: string min=0 max=256", source)
+        self.assertIn("field publisherPassword: string min=0 max=256", source)
+        self.assertNotIn("field mergeRole: string min=0 max=32", source)
+        self.assertNotIn("field publicationName: string min=0 max=256", source)
         self.assertIn("required this.publisherServer,", client_api)
         self.assertIn("required this.publisherDatabase,", client_api)
-        self.assertIn("required this.publicationName,", client_api)
-
-    def test_agent_payloads_bound_table_lists_before_persisting_heartbeat_state(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("function agent_table_payload_limit(): int", source)
-        self.assertIn("return 150;", source)
-        self.assertIn("function bounded_agent_tables", source)
-        self.assertIn(
-            "apply_table_sync_policies(agent.ownerUserId, bounded_agent_tables(agent.tables, agent.selectedTable), string.from(agent.database))",
-            source,
-        )
-        self.assertIn("function bounded_heartbeat_tables", source)
-
-        heartbeat_match = re.search(
-            r"function agents_heartbeat\(.*?\): map<json> \{(?P<body>.*?)\n\}",
-            source,
-            flags=re.S,
-        )
-        self.assertIsNotNone(heartbeat_match)
-        heartbeat_body = heartbeat_match.group("body")
-
-        self.assertIn(
-            "nextTables = bounded_heartbeat_tables(nextTables, selectedTable);",
-            heartbeat_body,
-        )
-        self.assertNotIn(
-            "nextTables = apply_table_sync_policies(ownerUserId, nextTables, database);",
-            heartbeat_body,
-        )
+        self.assertNotIn("required this.mergeRole,", client_api)
+        self.assertNotIn("required this.publicationName,", client_api)
+        self.assertNotIn("final String syncMode;", client_api)
+        self.assertNotIn("required String direction,", client_api)
 
     def test_agent_heartbeat_persists_replication_connection_settings(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
+        source = read_text("business/control_plane.tru")
 
         self.assertIn("replicationUseWindowsAuth: bool = true", source)
         self.assertIn("replicationUser: string = ''", source)
         self.assertIn("replicationPassword: string = ''", source)
-        self.assertIn("replicationUseWindowsAuth,", source)
-        self.assertIn("replicationUser,", source)
-        self.assertIn("replicationPassword,", source)
+        self.assertIn("clientUpdate: agent_client_update_payload(nextAgent)", source)
+        self.assertNotIn("symmetricDsStatus", source)
+        self.assertNotIn("agent_symmetricds_status_post", source)
 
-    def test_agent_heartbeat_persists_symmetricds_status(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-        client_api = (
-            ROOT / "sync_windows_agent" / "lib" / "live_sync_api.dart"
-        ).read_text(encoding="utf-8")
-        frontend_models = (ROOT / "frontend" / "lib" / "models.dart").read_text(
-            encoding="utf-8"
-        )
+    def test_control_plane_exposes_server_requested_client_updates(self):
+        source = read_text("business/control_plane.tru")
 
-        self.assertIn("field symmetricDsStatus: string min=0 max=64", source)
-        self.assertIn("field symmetricDsConfigPath: string min=0 max=512", source)
-        self.assertIn("symmetricDsStatus: truncate_text(symmetricDsStatus.trim(), 64)", source)
-        self.assertIn("function agent_symmetricds_status_post", source)
-        self.assertIn("'symmetricDsStatus': symmetricDsStatus", client_api)
-        self.assertIn("class AdminAgentSymmetricDs", frontend_models)
-        self.assertIn("symmetricDs: {", source)
+        self.assertIn("field clientUpdateRequestId: string? min=0 max=64", source)
+        self.assertIn("field clientUpdateStatus: string min=0 max=32", source)
+        self.assertIn("function agent_client_update_payload(agent: map<json>): map<json> {", source)
+        self.assertIn("function agent_client_update_request(clientName: string, targetVersion: string? = null, token: string? = null): map<json> {", source)
+        self.assertIn("function agent_client_update_request_all(targetVersion: string? = null, token: string? = null): map<json> {", source)
+        self.assertIn("function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', token: string? = null): map<json> {", source)
 
     def test_ensure_agent_repairs_stale_rows_before_recreating_them(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-        ensure_agent_match = re.search(
-            r"function ensure_agent\(.*?\): map<json> \{(?P<body>.*?)\n\}",
-            source,
-            flags=re.S,
-        )
-        self.assertIsNotNone(ensure_agent_match)
-        body = ensure_agent_match.group("body")
-
-        self.assertIn("try {", body)
-        self.assertIn("const existing = db.selectOne(Agent, { clientName });", body)
-        self.assertIn("} catch (err) {", body)
-        self.assertIn("const repaired = db.update(Agent, { clientName }, {", body)
-        self.assertIn("tableRelationships: [],", body)
-        self.assertIn("diagnosticStatus: 'idle',", body)
-        self.assertIn("db.delete(Agent, { clientName });", body)
-        self.assertIn("return db.insert(Agent, {", body)
-
-    def test_jobs_create_queues_symmetricds_sync_for_remote_source(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });", source)
-        self.assertIn("return raw_json_error(404, 'source client not found');", source)
-        self.assertIn("mergeRole: 'symmetricds'", source)
-        self.assertIn("message: string.concat('Queued SymmetricDS sync for ', table, '.')", source)
-
-    def test_bulk_sync_all_jobs_include_required_sync_job_fields(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
+        source = read_text("business/control_plane.tru")
         match = re.search(
-            r"function create_sync_jobs_for_agent\(.*?\): array<json> \{(?P<body>.*?)\n\}",
+            r"function ensure_agent\(.*?\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
         self.assertIsNotNone(match)
         body = match.group("body")
 
-        for expected in [
-            "subscriberClientName: agent.clientName",
-            "mergeRole: 'symmetricds'",
-            "publisherServer: sync_job_text(remote_source_server(sourceAgent))",
-            "publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table))",
-            "publicationName: ''",
-            "publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true",
-            "publisherUser: sync_job_text(sourceAgent.replicationUser)",
-            "publisherPassword: sync_job_text(sourceAgent.replicationPassword)",
-            "clientName: agent.clientName",
-            "sourceClientName: sourceAgent.clientName",
-            "publisherServer: sync_job_text(agent.server)",
-            "publisherDatabase: sync_job_text(publisherDatabase)",
-            "publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true",
-            "publisherUser: sync_job_text(agent.replicationUser)",
-            "publisherPassword: sync_job_text(agent.replicationPassword)",
-            "snapshotBytes: 0",
-            "snapshotCreatedAt: null",
-            "snapshotId: null",
-        ]:
-            self.assertIn(expected, body)
+        self.assertIn("const repaired = db.update(Agent, { clientName }, {", body)
+        self.assertIn("tableRelationships: [],", body)
+        self.assertIn("diagnosticStatus: 'idle',", body)
+        self.assertNotIn("symmetricDsStatus", body)
 
-        self.assertIn("function remote_source_server(agent: map<json>): string {", source)
-        self.assertIn("function sync_job_text(value: string? = null, maxLength: int = 256): string {", source)
+    def test_table_policy_path_no_longer_keeps_legacy_key_normalizers(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-    def test_bulk_sync_all_prefers_latest_completed_source_direction(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
+        self.assertNotIn("function normalize_stored_table_sync_policy(", source)
+        self.assertNotIn("const compatible = db.selectOne(TableSyncPolicy", source)
+        self.assertNotIn("const keyed = db.selectOne(TableSyncPolicy", source)
+        self.assertNotIn("compatibleKey =", agent_page)
+        self.assertNotIn("dbo.$localTable", agent_page)
+
+    def test_jobs_create_queues_snapshot_sync_for_remote_source(self):
+        source = read_text("business/control_plane.tru")
 
         self.assertIn(
-            "function latest_completed_upload_row_count_for_source(clientName: string, table: string): int {",
+            "const targetAgent = db.selectOne(Agent, { clientName: resolvedClientName });",
             source,
         )
         self.assertIn(
-            "function latest_completed_source_for_target_table(targetClientName: string, table: string): string {",
+            "nextSourceClientName = preferred_source_client_name_for_agent_table(targetAgent, table, visibleAgents);",
             source,
         )
+        self.assertIn(
+            "const nextJobs = create_sync_jobs_for_agent(targetAgent, [table], nextSourceClientName);",
+            source,
+        )
+        self.assertIn(
+            "function jobs_progress(jobId: string, status: string = 'running', progress: int, message: string, rowCount: int, token: string? = null): map<json> {",
+            source,
+        )
+        self.assertIn("return raw_json_error(404, 'source client not found');", source)
+        self.assertIn(
+            "message: string.concat('Waiting for source snapshot upload for ', table, '.')",
+            source,
+        )
+        self.assertNotIn("field syncMode: string min=1 max=32", source)
+        self.assertNotIn("mergeRole", source)
+        self.assertNotIn("publicationName", source)
+        self.assertNotIn("direction: 'sync'", source)
+        self.assertNotIn("rowCount: int, direction: string, token: string? = null", source)
+        self.assertNotIn("Queued SymmetricDS sync", source)
+
+    def test_snapshot_transport_contract_remains_present(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("function jobs_upload_chunk_start(", source)
+        self.assertIn("function jobs_upload_chunk_complete(", source)
+        self.assertIn("function jobs_download_snapshot_manifest(", source)
+        self.assertIn("function jobs_download_snapshot_chunk(", source)
+        self.assertIn("Future<void> _processSnapshotJob(", agent_page)
+        self.assertIn("Future<void> _processSnapshotRelayUploadJob(", agent_page)
+        self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
+        self.assertNotIn("_runDirectQueuedTableSync(", agent_page)
+
+    def test_source_selection_and_related_tables_remain_active(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
         self.assertIn(
             "function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>): string {",
             source,
         )
-        self.assertIn(
-            "const targetRowCount = latest_completed_upload_row_count_for_source(targetClientName, table);",
-            source,
-        )
-        self.assertIn(
-            "if (targetRowCount < 0 || bestKnownRowCount > targetRowCount) {",
-            source,
-        )
-        self.assertIn(
-            "const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, visibleAgents);",
-            source,
-        )
-        self.assertIn("skippedSourceResolutionTables", source)
-        self.assertIn("function effective_agent_online(agent: map<json>): bool {", source)
-        self.assertIn("|| !effective_agent_online(candidate)) {", source)
-        self.assertIn("&& effective_agent_online(candidate)) {", source)
+        self.assertIn("const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, visibleAgents);", source)
+        self.assertIn("function expand_sync_job_tables_for_owner", source)
+        self.assertNotIn("latest_completed_job_tables_for_client", source)
+        self.assertNotIn("enabledTables = latest_completed_job_tables_for_client(agent.clientName);", source)
+        self.assertIn("final tablesToQueue = <String>{", agent_page)
+        self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
 
-    def test_live_state_and_bulk_requests_ignore_stale_online_flags(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
+    def test_control_plane_no_longer_advertises_old_sync_engine(self):
+        source = read_text("business/control_plane.tru")
 
-        self.assertIn("function agent_online_timeout_minutes(agent: map<json>): int {", source)
-        self.assertIn("return date.diff(date.now(), heartbeat, 'min') <= agent_online_timeout_minutes(agent);", source)
-        self.assertIn("isOnline: effective_agent_online(agent),", source)
-        self.assertIn("if (!effective_agent_online(agent)) {", source)
-        self.assertIn("db.updateMany(Agent, { clientName: { in: requestedClientNames } }, {", source)
-        self.assertIn("skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);", source)
-
-    def test_snapshot_record_stays_backward_compatible_with_live_schema(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("field columns: array<json>", source)
-        self.assertIn("field rows: array<json>", source)
-        self.assertIn("field previewRows: array<json>", source)
-        self.assertIn("columns: [],", source)
-        self.assertIn("rows: [],", source)
-        self.assertIn("previewRows: [],", source)
-
-    def test_windows_agent_handles_symmetricds_jobs_instead_of_snapshot_transport(self):
-        source = (ROOT / "sync_windows_agent" / "lib" / "agent_page.dart").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("Future<void> _processSymmetricDsJob(RemoteSyncJob job) async {", source)
-        self.assertIn("job.mergeRole == 'symmetricds'", source)
-        self.assertIn("writeNodeConfig", source)
-        self.assertNotIn("job.mergeRole == 'publisher'", source)
-        self.assertNotIn("job.mergeRole == 'subscriber'", source)
-        self.assertIn("Unsupported sync job role", source)
-        self.assertNotIn("Future<void> _processUploadJob(RemoteSyncJob job) async {", source)
-
-    def test_control_plane_advertises_symmetricds_engine(self):
-        source = (ROOT / "business" / "control_plane.tru").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("function sync_engine_metadata(): map<json>", source)
-        self.assertIn("mode: 'symmetricDs'", source)
-        self.assertIn("centralStore: 'symmetricds'", source)
-        self.assertIn("sqlServerMergeReplication: false", source)
-        self.assertIn("symmetricDs: true", source)
-        self.assertIn("legacySnapshotCompatibility: false", source)
-        self.assertIn("syncEngine: sync_engine_metadata()", source)
+        self.assertNotIn("function sync_engine_metadata(): map<json>", source)
+        self.assertNotIn("syncEngine: sync_engine_metadata()", source)
+        self.assertNotIn("centralStore: 'symmetricds'", source)
+        self.assertNotIn("mode: 'symmetricDs'", source)
 
 
 if __name__ == "__main__":
