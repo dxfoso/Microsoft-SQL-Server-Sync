@@ -2614,12 +2614,20 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
   if (resolvedRequestId.length != 0) {
     resolvedRequestIdOrNull = resolvedRequestId;
   }
+  let nextClientVersion = '';
+  if (installedVersion.trim().length == 0) {
+    if (agent.clientVersion != null) {
+      nextClientVersion = truncate_text(string.from(agent.clientVersion).trim(), 32);
+    }
+  } else {
+    nextClientVersion = truncate_text(installedVersion.trim(), 32);
+  }
   const updated = db.update(Agent, { clientName: resolvedClientName }, {
     clientUpdateLastRequestId: resolvedRequestIdOrNull,
     clientUpdateLastAcknowledgedAt: now_iso(),
     clientUpdateStatus: truncate_text(status.trim(), 32),
     clientUpdateMessage: truncate_text(message, 4000),
-    clientVersion: installedVersion.trim().length == 0 ? agent.clientVersion : truncate_text(installedVersion.trim(), 32),
+    clientVersion: nextClientVersion,
     updatedAt: now_iso()
   });
   if (updated == null) {
