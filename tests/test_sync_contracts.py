@@ -284,6 +284,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("BEGIN TRANSACTION;", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
         self.assertIn("sourceInsertBatchSize = 200", target_apply)
+        self.assertIn("_matchClauseForColumns(primaryKeyColumns, columns)", target_apply)
+        self.assertNotIn("alternateUniqueKeys", target_apply)
+        self.assertIn("COLLATE DATABASE_DEFAULT", agent_page)
         self.assertLess(
             target_apply.index("BEGIN TRANSACTION;"),
             target_apply.index("MERGE ${_quoteIdentifier(database)}"),
@@ -292,6 +295,16 @@ class SyncContractsTests(unittest.TestCase):
             target_apply.index("MERGE ${_quoteIdentifier(database)}"),
             target_apply.index("COMMIT TRANSACTION;"),
         )
+
+    def test_table_policy_upsert_updates_existing_stored_key(self):
+        control_plane = read_text("business/control_plane.tru")
+        upsert_body = control_plane.split("function upsert_table_sync_policy(", 1)[1].split(
+            "function apply_table_sync_policies(", 1
+        )[0]
+
+        self.assertIn("const existing = find_table_sync_policy(scope, table);", upsert_body)
+        self.assertIn("table: string.from(existing.table).trim()", upsert_body)
+        self.assertNotIn("table: table.trim()", upsert_body)
 
     def test_server_owns_periodic_sync_job_creation(self):
         control_plane = read_text("business/control_plane.tru")

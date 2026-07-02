@@ -2951,13 +2951,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
-    final alternateUniqueKeys = await _queryAlternateUniqueKeys(
-      profile: targetProfile,
-      database: targetDatabase,
-      schema: targetTable.schema,
-      table: targetTable.table,
-    );
-
     if (snapshot.rows.isNotEmpty) {
       final rows = snapshot.rows
           .map(
@@ -2973,7 +2966,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         table: targetTable.table,
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
-        alternateUniqueKeys: alternateUniqueKeys,
         rows: rows,
       );
     }
@@ -3116,65 +3108,6 @@ ORDER BY ic.key_ordinal;
       throw Exception(_sqlCmdFailed('primary key lookup', processResult));
     }
     return _parseSingleColumnOutput(processResult.stdout.toString());
-  }
-
-  Future<List<_SqlKeyDefinition>> _queryAlternateUniqueKeys({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String schema,
-    required String table,
-  }) async {
-    final query = '''
-SET NOCOUNT ON;
-USE ${_quoteIdentifier(database)};
-SELECT
-  i.name,
-  c.name
-FROM sys.indexes AS i
-INNER JOIN sys.index_columns AS ic
-  ON ic.object_id = i.object_id
- AND ic.index_id = i.index_id
-INNER JOIN sys.columns AS c
-  ON c.object_id = ic.object_id
- AND c.column_id = ic.column_id
-WHERE i.is_unique = 1
-  AND i.is_primary_key = 0
-  AND i.is_disabled = 0
-  AND i.has_filter = 0
-  AND ic.is_included_column = 0
-  AND i.object_id = OBJECT_ID(N'${_escapeSqlLiteral(_quoteIdentifier(schema))}.${_escapeSqlLiteral(_quoteIdentifier(table))}')
-ORDER BY i.name, ic.key_ordinal;
-''';
-    final processResult = await _runSqlCmd(
-      profile: profile,
-      database: database,
-      query: query,
-    );
-    if (processResult == null) {
-      throw Exception(_sqlCmdUnavailableMessage(profile));
-    }
-    if (processResult.exitCode != 0) {
-      throw Exception(_sqlCmdFailed('unique index lookup', processResult));
-    }
-
-    final definitions = <_SqlKeyDefinition>[];
-    final byName = <String, List<String>>{};
-    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
-    for (final line in lines) {
-      final trimmedLine = line.trim();
-      if (_isSkippableOutputLine(trimmedLine)) {
-        continue;
-      }
-      final parts = _splitRowValues(trimmedLine);
-      if (parts.length < 2) {
-        continue;
-      }
-      byName.putIfAbsent(parts[0], () => <String>[]).add(parts[1]);
-    }
-    for (final entry in byName.entries) {
-      definitions.add(_SqlKeyDefinition(name: entry.key, columns: entry.value));
-    }
-    return definitions;
   }
 
   Future<List<Map<String, dynamic>>> _fetchSourceTableBatch({
@@ -3371,7 +3304,6 @@ END
     required String table,
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
-    required List<_SqlKeyDefinition> alternateUniqueKeys,
     required List<Map<String, dynamic>> rows,
   }) async {
     if (rows.isEmpty) {
@@ -3387,24 +3319,7 @@ END
               !primaryKeyColumns.contains(column.name) && !column.isIdentity,
         )
         .toList(growable: false);
-    final insertColumnNames = {for (final column in insertColumns) column.name};
-    final alternateJoinClauses = alternateUniqueKeys
-        .where(
-          (key) =>
-              key.columns.isNotEmpty &&
-              key.columns.every(insertColumnNames.contains) &&
-              !key.hasSameColumnsAs(primaryKeyColumns),
-        )
-        .map((key) => _matchClauseForColumns(key.columns))
-        .toList(growable: false);
-    final joinClauses = [
-      _matchClauseForColumns(primaryKeyColumns),
-      ...alternateJoinClauses,
-    ];
-    final joinClause =
-        joinClauses.length == 1
-            ? joinClauses.first
-            : joinClauses.map((clause) => '($clause)').join(' OR ');
+    final joinClause = _matchClauseForColumns(primaryKeyColumns, columns);
     final insertColumnList = insertColumns
         .map((column) => _quoteIdentifier(column.name))
         .join(', ');
@@ -3541,12 +3456,24 @@ END
 ''';
   }
 
-  String _matchClauseForColumns(List<String> columns) {
-    return columns
-        .map(
-          (column) =>
-              'source.${_quoteIdentifier(column)} IS NOT NULL AND target.${_quoteIdentifier(column)} = source.${_quoteIdentifier(column)}',
-        )
+  String _matchClauseForColumns(
+    List<String> matchColumns,
+    List<_SqlColumnDefinition> columns,
+  ) {
+    final definitionsByName = {
+      for (final column in columns) column.name.toLowerCase(): column,
+    };
+    return matchColumns
+        .map((column) {
+          final quotedColumn = _quoteIdentifier(column);
+          final sourceExpression = 'source.$quotedColumn';
+          var targetExpression = 'target.$quotedColumn';
+          final definition = definitionsByName[column.toLowerCase()];
+          if (definition != null && definition.isTextLike) {
+            targetExpression = '$targetExpression COLLATE DATABASE_DEFAULT';
+          }
+          return '$sourceExpression IS NOT NULL AND $targetExpression = $sourceExpression';
+        })
         .join(' AND ');
   }
 
@@ -6786,6 +6713,9 @@ class _SqlColumnDefinition {
         normalized == 'time';
   }
 
+  bool get isTextLike =>
+      _textLikeSqlTypes.contains(sqlType.trim().toLowerCase());
+
   String get openJsonType {
     final normalized = sqlType.trim().toLowerCase();
     if (normalized == 'nvarchar' || normalized == 'nchar') {
@@ -6855,25 +6785,6 @@ class _SqlColumnDefinition {
       return 'nvarchar(128)';
     }
     return normalized;
-  }
-}
-
-class _SqlKeyDefinition {
-  const _SqlKeyDefinition({required this.name, required this.columns});
-
-  final String name;
-  final List<String> columns;
-
-  bool hasSameColumnsAs(List<String> otherColumns) {
-    if (columns.length != otherColumns.length) {
-      return false;
-    }
-    for (var index = 0; index < columns.length; index++) {
-      if (columns[index] != otherColumns[index]) {
-        return false;
-      }
-    }
-    return true;
   }
 }
 

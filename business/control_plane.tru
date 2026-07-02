@@ -721,7 +721,7 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
     } else {
       const updated = db.update(TableSyncPolicy, {
         ownerUserId: scope,
-        table: table.trim()
+        table: string.from(existing.table).trim()
       }, {
         database: storedDatabase,
         table: localTable,
