@@ -867,29 +867,9 @@ function Assert-PortableZipContents {
     }
 }
 
-function Get-Portable7ZipPath {
-    $candidates = @(
-        'C:\Program Files\7-Zip\7z.exe',
-        'C:\Program Files (x86)\7-Zip\7z.exe'
-    )
-
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            return $candidate
-        }
-    }
-
-    $command = Get-Command 7z -ErrorAction SilentlyContinue
-    if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
-        return $command.Source
-    }
-
-    throw '7-Zip is required to create a true multipart ZIP archive (.z01/.zip), but 7z.exe was not found.'
-}
-
 function New-PortableZipParts {
     param(
-        [Parameter(Mandatory = $true)][string] $PortableDir,
+        [Parameter(Mandatory = $true)][string] $ZipPath,
         [Parameter(Mandatory = $true)][string] $BaseZipName,
         [Parameter(Mandatory = $true)][string] $PartsDir,
         [int] $PartCount = 10
@@ -901,51 +881,97 @@ function New-PortableZipParts {
 
     New-Item -Path $PartsDir -ItemType Directory -Force | Out-Null
 
-    $portableRoot = [System.IO.Path]::GetFullPath($PortableDir)
-    if (-not (Test-Path -LiteralPath $portableRoot -PathType Container)) {
-        throw "Cannot create split zip packages from a missing portable directory: $PortableDir"
+    $sourceZip = [System.IO.Path]::GetFullPath($ZipPath)
+    if (-not (Test-Path -LiteralPath $sourceZip -PathType Leaf)) {
+        throw "Cannot split missing portable ZIP archive: $ZipPath"
     }
 
-    $portableFiles = @(Get-ChildItem -LiteralPath $portableRoot -Recurse -File -Force)
-    if ($portableFiles.Count -eq 0) {
-        throw "Cannot create split zip packages from an empty portable directory: $PortableDir"
+    $zipSizeBytes = [int64] (Get-Item -LiteralPath $sourceZip).Length
+    if ($zipSizeBytes -le 0) {
+        throw "Cannot split zero-byte portable ZIP archive: $ZipPath"
     }
 
-    $portableSizeBytes = [int64] (($portableFiles | Measure-Object -Property Length -Sum).Sum)
-    if ($portableSizeBytes -le 0) {
-        throw "Cannot create split zip packages from a zero-byte portable directory: $PortableDir"
-    }
+    Get-ChildItem -LiteralPath $PartsDir -File -Force |
+        Where-Object { $_.Name -match ('^{0}\.zip\.part\d{{2}}$' -f [regex]::Escape($BaseZipName)) -or $_.Name -in @('combine.ps1', 'extract_all.ps1', 'parts-manifest.txt') } |
+        Remove-Item -Force
 
-    $sevenZipPath = Get-Portable7ZipPath
-    $partSizeBytes = [int64] [Math]::Ceiling($portableSizeBytes / [double] $PartCount)
-    if ($partSizeBytes -lt 1) {
-        $partSizeBytes = 1
-    }
+    $basePartSize = [int64] [Math]::Floor($zipSizeBytes / [double] $PartCount)
+    $remainder = [int64] ($zipSizeBytes % $PartCount)
+    $bufferSize = 1024 * 1024
+    $buffer = [byte[]]::new($bufferSize)
+    $createdPartNames = [System.Collections.Generic.List[string]]::new()
 
-    $archivePath = Join-Path -Path $PartsDir -ChildPath "$BaseZipName.zip"
-    $archiveParent = Split-Path -Path $portableRoot -Parent
-    $archiveInputName = Split-Path -Path $portableRoot -Leaf
-
-    Push-Location $archiveParent
+    $inputStream = [System.IO.File]::Open($sourceZip, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    $bytesConsumed = [int64] 0
     try {
-        [void] (& $sevenZipPath a -tzip "-v${partSizeBytes}b" $archivePath $archiveInputName)
-        if ($LASTEXITCODE -ne 0) {
-            throw "7-Zip failed with exit code $LASTEXITCODE while creating multipart ZIP archive."
+        for ($index = 1; $index -le $PartCount; $index++) {
+            $partSize = $basePartSize
+            if ($index -le $remainder) {
+                $partSize++
+            }
+
+            $partName = '{0}.zip.part{1:D2}' -f $BaseZipName, $index
+            $partPath = Join-Path -Path $PartsDir -ChildPath $partName
+            $outputStream = [System.IO.File]::Open($partPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            try {
+                $remaining = [int64] $partSize
+                while ($remaining -gt 0) {
+                    $readLength = [int] [Math]::Min($buffer.Length, $remaining)
+                    $bytesRead = $inputStream.Read($buffer, 0, $readLength)
+                    if ($bytesRead -le 0) {
+                        throw "Unexpected end of ZIP archive while writing $partName."
+                    }
+                    $outputStream.Write($buffer, 0, $bytesRead)
+                    $remaining -= $bytesRead
+                }
+            }
+            finally {
+                $outputStream.Dispose()
+            }
+            [void] $createdPartNames.Add($partName)
         }
+        $bytesConsumed = $inputStream.Position
     }
     finally {
-        Pop-Location
+        $inputStream.Dispose()
     }
 
-    $createdPartNames = [System.Collections.Generic.List[string]]::new()
-    Get-ChildItem -LiteralPath $PartsDir -File -Force |
-        Where-Object { $_.Name -match ('^{0}\.zip\.\d{{3}}$' -f [regex]::Escape($BaseZipName)) } |
-        Sort-Object Name |
-        ForEach-Object { [void] $createdPartNames.Add($_.Name) }
-
-    if ($createdPartNames.Count -lt 2) {
-        throw "Expected multipart ZIP outputs for $BaseZipName, but 7-Zip did not create them."
+    if ($bytesConsumed -ne $zipSizeBytes) {
+        throw "ZIP split did not consume the complete archive. Read $bytesConsumed of $zipSizeBytes bytes."
     }
+
+    if ($createdPartNames.Count -ne $PartCount) {
+        throw "Expected $PartCount ZIP parts for $BaseZipName, created $($createdPartNames.Count)."
+    }
+
+    $combineScriptPath = Join-Path -Path $PartsDir -ChildPath 'combine.ps1'
+    $combineScript = @(
+        'param(',
+        "    [string] `$OutputZip = '$BaseZipName.zip'",
+        ')',
+        '',
+        "`$ErrorActionPreference = 'Stop'",
+        "`$root = `$PSScriptRoot",
+        "`$destination = Join-Path -Path `$root -ChildPath `$OutputZip",
+        "if (Test-Path -LiteralPath `$destination) { Remove-Item -LiteralPath `$destination -Force }",
+        "`$parts = 1..$PartCount | ForEach-Object { Join-Path -Path `$root -ChildPath ('{0}.zip.part{1:D2}' -f '$BaseZipName', `$_) }",
+        "foreach (`$part in `$parts) { if (-not (Test-Path -LiteralPath `$part -PathType Leaf)) { throw ('Missing ZIP part: {0}' -f `$part) } }",
+        "`$output = [System.IO.File]::Open(`$destination, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)",
+        'try {',
+        "    foreach (`$part in `$parts) {",
+        "        `$input = [System.IO.File]::Open(`$part, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)",
+        '        try {',
+        "            `$input.CopyTo(`$output)",
+        '        } finally {',
+        "            `$input.Dispose()",
+        '        }',
+        '    }',
+        '} finally {',
+        "    `$output.Dispose()",
+        '}',
+        "Write-Host ('Combined ZIP: {0}' -f `$destination)"
+    )
+    Set-Content -LiteralPath $combineScriptPath -Value $combineScript -Encoding ASCII
 
     $extractScriptPath = Join-Path -Path $PartsDir -ChildPath 'extract_all.ps1'
     $extractScript = @(
@@ -955,24 +981,24 @@ function New-PortableZipParts {
         '',
         "`$ErrorActionPreference = 'Stop'",
         "`$root = `$PSScriptRoot",
+        "`$archive = Join-Path -Path `$root -ChildPath '$BaseZipName.zip'",
+        "if (-not (Test-Path -LiteralPath `$archive -PathType Leaf)) { & (Join-Path -Path `$root -ChildPath 'combine.ps1') -OutputZip '$BaseZipName.zip' }",
         "`$destination = Join-Path -Path `$root -ChildPath `$OutputDir",
-        "New-Item -Path `$destination -ItemType Directory -Force | Out-Null",
-        "`$archive = Join-Path -Path `$root -ChildPath '$BaseZipName.zip.001'",
-        "if (-not (Test-Path -LiteralPath `$archive -PathType Leaf)) { throw 'First multipart zip segment (.zip.001) is missing.' }",
-        "`$sevenZip = '$(($sevenZipPath -replace '\\', '\\'))'",
-        "& `$sevenZip x `$archive ""-o`$destination"" -y",
-        "if (`$LASTEXITCODE -ne 0) { throw ('7-Zip extraction failed with exit code {0}.' -f `$LASTEXITCODE) }",
+        "if (Test-Path -LiteralPath `$destination) { Remove-Item -LiteralPath `$destination -Recurse -Force }",
+        "Expand-Archive -LiteralPath `$archive -DestinationPath `$destination -Force",
         "Write-Host ('Extracted multipart ZIP to {0}' -f `$destination)"
     )
     Set-Content -LiteralPath $extractScriptPath -Value $extractScript -Encoding ASCII
 
     $partsManifestPath = Join-Path -Path $PartsDir -ChildPath 'parts-manifest.txt'
     $manifestLines = @(
-        "PortableDir: $PortableDir",
+        "SourceZip: $ZipPath",
         "PartCount: $($createdPartNames.Count)",
         "RequestedPartCount: $PartCount",
-        "PartSizeBytes: $partSizeBytes",
-        "7Zip: $sevenZipPath",
+        "ZipSizeBytes: $zipSizeBytes",
+        "Format: raw-byte-split",
+        "CombineScript: combine.ps1",
+        "ExtractScript: extract_all.ps1",
         ''
     ) + @(
         foreach ($partName in $createdPartNames) {
@@ -1147,7 +1173,7 @@ try {
     Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime
     Write-Host "Splitting zip archive into 10 parts..."
     $zipPartsInfo = New-PortableZipParts `
-        -PortableDir $portableDir `
+        -ZipPath $zipPath `
         -BaseZipName $PortableName `
         -PartsDir $zipPartsDir `
         -PartCount 10
