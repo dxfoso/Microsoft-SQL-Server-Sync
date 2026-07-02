@@ -120,7 +120,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _syncLoopBusy = false;
   bool _rowCountsRefreshing = false;
   bool _markChangedTablesBusy = false;
-  DateTime? _lastAutomaticSyncQueueCheck;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
@@ -142,9 +141,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   int _rowOffset = 0;
   String _tableSearchQuery = '';
   final ScrollController _tableHorizontalScrollController = ScrollController();
-
-  Duration get _autoSyncInterval =>
-      Duration(minutes: _syncState.autoSyncIntervalMinutes);
 
   @override
   void initState() {
@@ -542,7 +538,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       ),
     );
     if (enabled) {
-      unawaited(_queueEnabledRoleJobs(forceTables: {syncKey}));
+      unawaited(_syncWithControlPlane());
     }
   }
 
@@ -1291,20 +1287,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return normalized.isEmpty
         ? 'Idle'
         : normalized[0].toUpperCase() + normalized.substring(1);
-  }
-
-  bool _isTableDueForRoleSync(SyncTableState state) {
-    if (!_isTableSelectedForSync(state)) {
-      return false;
-    }
-    if (state.lastSync.trim().isEmpty) {
-      return true;
-    }
-    final parsed = DateTime.tryParse(state.lastSync);
-    if (parsed == null) {
-      return true;
-    }
-    return DateTime.now().difference(parsed).abs() >= _autoSyncInterval;
   }
 
   void _applyRemoteJobState(
@@ -2227,68 +2209,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  Future<void> _queueEnabledRoleJobs({Set<String>? forceTables}) async {
-    if (_tables.isEmpty || _selectedDatabase == null) {
-      return;
-    }
-
-    final activeTables = {for (final job in _activeJobs) job.table};
-    final dueTables = <String>[];
-    for (final table in _tables) {
-      final syncKey = _syncTableKey(table);
-      final state = _syncTableState(table, syncKey: syncKey);
-      if (!_isTableSelectedForSync(state)) {
-        continue;
-      }
-      final isDue =
-          forceTables?.contains(syncKey) ?? _isTableDueForRoleSync(state);
-      if (!isDue) {
-        continue;
-      }
-      if (activeTables.contains(syncKey)) {
-        continue;
-      }
-      dueTables.add(syncKey);
-    }
-
-    if (dueTables.isEmpty) {
-      return;
-    }
-
-    final queuedJobs = await _controlPlaneClient.createJobs(
-      clientName: widget.clientName,
-      tables: dueTables,
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      final merged = <String, RemoteSyncJob>{
-        for (final job in _activeJobs) job.id: job,
-        for (final job in queuedJobs) job.id: job,
-      };
-      _activeJobs = merged.values.toList(growable: false);
-    });
-
-    for (final job in queuedJobs) {
-      _applyRemoteJobState(job);
-    }
-  }
-
-  Future<bool> _prepareAutomaticSyncQueueIfDue() async {
-    final now = DateTime.now();
-    final lastCheck = _lastAutomaticSyncQueueCheck;
-    if (lastCheck != null &&
-        now.difference(lastCheck).abs() < _autoSyncInterval) {
-      return false;
-    }
-    _lastAutomaticSyncQueueCheck = now;
-    await _refreshSelectedTableFingerprints();
-    return true;
-  }
-
   Future<void> _refreshSelectedTableFingerprints() async {
     final tablesByDatabase = <String, List<String>>{};
     for (final entry in _syncState.tables.entries) {
@@ -2330,7 +2250,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _syncLoopBusy = true;
     try {
-      final shouldQueueDueRoleJobs = await _prepareAutomaticSyncQueueIfDue();
+      await _refreshSelectedTableFingerprints();
       final heartbeat = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
@@ -2390,11 +2310,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       _refreshAutoRequiredTables();
 
-      // Sync jobs need source-client metadata, so the control plane must
-      // queue them. The agent should only execute jobs it receives.
-      if (shouldQueueDueRoleJobs) {
-        await _queueEnabledRoleJobs();
-      }
       await _processPendingJobs();
     } catch (error) {
       if (!mounted) {
@@ -3043,18 +2958,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       table: targetTable.table,
     );
 
-    const batchSize = 200;
-    for (var offset = 0; offset < snapshot.rows.length; offset += batchSize) {
-      final batch = snapshot.rows
-          .skip(offset)
-          .take(batchSize)
+    if (snapshot.rows.isNotEmpty) {
+      final rows = snapshot.rows
           .map(
             (row) => <String, dynamic>{
               for (final column in syncColumns) column.name: row[column.name],
             },
           )
           .toList(growable: false);
-      await _applySourceBatchToTarget(
+      await _applySourceRowsToTarget(
         profile: targetProfile,
         database: targetDatabase,
         schema: targetTable.schema,
@@ -3062,7 +2974,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
         alternateUniqueKeys: alternateUniqueKeys,
-        rows: batch,
+        rows: rows,
       );
     }
 
@@ -3452,7 +3364,7 @@ END
     return buffer.toString();
   }
 
-  Future<void> _applySourceBatchToTarget({
+  Future<void> _applySourceRowsToTarget({
     required _SqlConnectionProfile profile,
     required String database,
     required String schema,
@@ -3508,12 +3420,28 @@ END
               '${_quoteIdentifier(column.name)} ${column.sqlCastType} NULL',
         )
         .join(',\n    ');
-    final sourceValueTuples = rows
-        .map(
-          (row) =>
-              '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
-        )
-        .join(',\n      ');
+    const sourceInsertBatchSize = 200;
+    final sourceInsertStatements = <String>[];
+    for (
+      var offset = 0;
+      offset < rows.length;
+      offset += sourceInsertBatchSize
+    ) {
+      final sourceValueTuples = rows
+          .skip(offset)
+          .take(sourceInsertBatchSize)
+          .map(
+            (row) =>
+                '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
+          )
+          .join(',\n      ');
+      sourceInsertStatements.add('''
+INSERT INTO #source_rows ($sourceColumnList)
+VALUES
+    $sourceValueTuples;
+''');
+    }
+    final sourceInsertSql = sourceInsertStatements.join('\n');
     final updateClause =
         updatableColumns.isEmpty
             ? ''
@@ -3537,12 +3465,12 @@ WHEN MATCHED THEN
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
     final query = '''
 SET NOCOUNT ON;
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
 CREATE TABLE #source_rows (
   $sourceTempColumnDefinitions
 );
-INSERT INTO #source_rows ($sourceColumnList)
-VALUES
-    $sourceValueTuples;
+$sourceInsertSql
 ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
 $identityInsertOn
 MERGE ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} AS target
@@ -3554,6 +3482,7 @@ WHEN NOT MATCHED BY TARGET THEN
   VALUES ($insertValueList);
 $identityInsertOff
 ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
+COMMIT TRANSACTION;
 ''';
     final processResult = await _runSqlCmd(
       profile: profile,

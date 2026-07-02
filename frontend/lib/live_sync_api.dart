@@ -320,6 +320,16 @@ class LiveSyncApiClient {
     });
   }
 
+  Future<void> updateAllAgentSyncSettings({
+    required int historyLimit,
+    required int autoSyncIntervalMinutes,
+  }) async {
+    await _invokeFunction('agent_sync_settings_post_all', {
+      'historyLimit': historyLimit,
+      'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+    });
+  }
+
   Future<void> updateTableSyncPolicy({
     required String clientName,
     required String table,

@@ -1890,6 +1890,62 @@ function enabled_sync_policy_tables_for_agent(agent: map<json>): array<string> {
   return unique_string_values(enabledTables);
 }
 
+function sync_table_state_due_for_interval(tableState: map<json>? = null, intervalMinutes: int? = null): bool {
+  const interval = clamp_auto_sync_interval(intervalMinutes);
+  if (tableState == null || tableState.lastSync == null) {
+    return true;
+  }
+  const lastSync = string.from(tableState.lastSync).trim();
+  if (lastSync.length == 0) {
+    return true;
+  }
+  return date.diff(date.now(), lastSync, 'min') >= interval;
+}
+
+function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
+  const enabledTables = unique_string_values(enabled_sync_tables_for_agent(agent).concat(enabled_sync_policy_tables_for_agent(agent)));
+  let dueTables = [];
+  for (const table of enabledTables) {
+    if (sync_table_state_due_for_interval(agent_sync_table_state(agent, table), agent.autoSyncIntervalMinutes)) {
+      dueTables = dueTables.concat([table]);
+    }
+  }
+  return unique_string_values(dueTables);
+}
+
+function sync_peer_agents_for_agent(agent: map<json>): array<json> {
+  let peers = [];
+  for (const candidate of list_agent_rows()) {
+    if (candidate.ownerUserId == agent.ownerUserId) {
+      peers = peers.concat([candidate]);
+    }
+  }
+  return peers;
+}
+
+function queue_due_periodic_sync_jobs_for_agent(agent: map<json>): array<json> {
+  if (!effective_agent_online(agent)) {
+    return [];
+  }
+  const peerAgents = sync_peer_agents_for_agent(agent);
+  const dueTables = due_periodic_sync_tables_for_agent(agent);
+  if (dueTables.length == 0) {
+    return [];
+  }
+  let createdJobs = [];
+  for (const table of dueTables) {
+    const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents);
+    if (sourceClientName.length == 0) {
+      continue;
+    }
+    const clientJobs = create_sync_jobs_for_agent(agent, [table], sourceClientName);
+    if (clientJobs.length > 0) {
+      createdJobs = createdJobs.concat(clientJobs);
+    }
+  }
+  return createdJobs;
+}
+
 function latest_completed_upload_row_count_for_source(clientName: string, table: string): int {
   const rows = db.selectMany(SyncJob, {
     where: {
@@ -2447,6 +2503,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   if (nextAgent == null) {
     return raw_json_error(500, 'agent heartbeat state unavailable');
   }
+  queue_due_periodic_sync_jobs_for_agent(nextAgent);
   return {
     ok: true,
     syncSettings: sync_settings_payload(nextAgent),
@@ -2502,6 +2559,48 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
     return raw_json_error(404, 'agent not found');
   }
   return { ok: true, syncSettings: sync_settings_payload(updated) };
+}
+
+function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (is_client_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const nextHistoryLimit = clamp_history_limit(historyLimit);
+  const nextAutoSyncIntervalMinutes = clamp_auto_sync_interval(autoSyncIntervalMinutes);
+  let targetClientNames = [];
+  for (const agent of visible_agent_rows_for(current)) {
+    if (agent.clientName == null) {
+      continue;
+    }
+    const clientName = string.from(agent.clientName).trim();
+    if (clientName.length == 0) {
+      continue;
+    }
+    targetClientNames = targetClientNames.concat([clientName]);
+  }
+
+  if (targetClientNames.length != 0) {
+    db.updateMany(Agent, { clientName: { in: targetClientNames } }, {
+      historyLimit: nextHistoryLimit,
+      autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
+      updatedAt: now_iso()
+    });
+  }
+
+  return {
+    ok: true,
+    updatedCount: targetClientNames.length,
+    updatedClients: targetClientNames,
+    syncSettings: {
+      historyLimit: nextHistoryLimit,
+      autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes
+    }
+  };
 }
 
 function agent_jobs(clientName: string): map<json> {

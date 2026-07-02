@@ -244,11 +244,16 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_auto_sync_interval_is_web_owned_not_heartbeat_owned(self):
         control_plane = read_text("business/control_plane.tru")
+        web_api = read_text("frontend/lib/live_sync_api.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
         heartbeat_body = control_plane.split("function agents_heartbeat(", 1)[1].split(
             "function agent_sync_settings_get(", 1
         )[0]
         settings_post_body = control_plane.split(
             "function agent_sync_settings_post(", 1
+        )[1].split("function agent_jobs(", 1)[0]
+        settings_post_all_body = control_plane.split(
+            "function agent_sync_settings_post_all(", 1
         )[1].split("function agent_jobs(", 1)[0]
 
         self.assertIn(
@@ -263,6 +268,43 @@ class SyncContractsTests(unittest.TestCase):
             "autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes)",
             settings_post_body,
         )
+        self.assertIn("agent_sync_settings_post_all", web_api)
+        self.assertIn("updateAllAgentSyncSettings", dashboard)
+        self.assertIn("Applies to all ${agents.length} client", dashboard)
+        self.assertNotIn("labelText: 'Sync Client'", dashboard)
+        self.assertIn("for (const agent of visible_agent_rows_for(current))", settings_post_all_body)
+
+    def test_windows_client_target_apply_is_transactional(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        target_apply = agent_page.split("Future<void> _applySourceRowsToTarget(", 1)[1].split(
+            "String _sourceBatchTargetLiteral(", 1
+        )[0]
+
+        self.assertIn("SET XACT_ABORT ON;", target_apply)
+        self.assertIn("BEGIN TRANSACTION;", target_apply)
+        self.assertIn("COMMIT TRANSACTION;", target_apply)
+        self.assertIn("sourceInsertBatchSize = 200", target_apply)
+        self.assertLess(
+            target_apply.index("BEGIN TRANSACTION;"),
+            target_apply.index("MERGE ${_quoteIdentifier(database)}"),
+        )
+        self.assertLess(
+            target_apply.index("MERGE ${_quoteIdentifier(database)}"),
+            target_apply.index("COMMIT TRANSACTION;"),
+        )
+
+    def test_server_owns_periodic_sync_job_creation(self):
+        control_plane = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        heartbeat_body = control_plane.split("function agents_heartbeat(", 1)[1].split(
+            "function agent_sync_settings_get(", 1
+        )[0]
+
+        self.assertIn("function queue_due_periodic_sync_jobs_for_agent", control_plane)
+        self.assertIn("queue_due_periodic_sync_jobs_for_agent(nextAgent);", heartbeat_body)
+        self.assertIn("await _refreshSelectedTableFingerprints();", agent_page)
+        self.assertNotIn("_prepareAutomaticSyncQueueIfDue", agent_page)
+        self.assertNotIn("_queueEnabledRoleJobs", agent_page)
 
     def test_repo_uses_run_ps1_as_single_local_launcher(self):
         build_helpers = read_text("scripts/windows_agent_build.ps1")

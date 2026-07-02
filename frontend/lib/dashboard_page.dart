@@ -988,27 +988,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
     final agents = List<AdminAgent>.from(_state?.agents ?? const [])
       ..sort((left, right) => left.clientName.compareTo(right.clientName));
-    AdminAgent? findAgent(String? clientName) {
-      if (clientName == null) {
-        return null;
-      }
-      for (final agent in agents) {
-        if (agent.clientName == clientName) {
-          return agent;
-        }
-      }
-      return null;
-    }
-
-    var selectedAgent = findAgent(_selectedClientName);
-    selectedAgent ??= agents.isEmpty ? null : agents.first;
-    var selectedClientName = selectedAgent?.clientName;
+    final firstAgent = agents.isEmpty ? null : agents.first;
     final agentHistoryController = TextEditingController(
-      text: (selectedAgent?.historyLimit ?? _defaultHistoryLimit).toString(),
+      text: (firstAgent?.historyLimit ?? _defaultHistoryLimit).toString(),
     );
     final autoSyncIntervalController = TextEditingController(
       text:
-          (selectedAgent?.autoSyncIntervalMinutes ??
+          (firstAgent?.autoSyncIntervalMinutes ??
                   _defaultAutoSyncIntervalMinutes)
               .toString(),
     );
@@ -1017,17 +1003,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     String? agentHistoryError;
     String? autoSyncIntervalError;
     String? saveError;
-
-    void selectAgent(AdminAgent agent) {
-      selectedAgent = agent;
-      selectedClientName = agent.clientName;
-      agentHistoryController.text = agent.historyLimit.toString();
-      autoSyncIntervalController.text =
-          agent.autoSyncIntervalMinutes.toString();
-      agentHistoryError = null;
-      autoSyncIntervalError = null;
-      saveError = null;
-    }
 
     await showDialog<void>(
       context: context,
@@ -1062,39 +1037,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       if (agents.isEmpty)
                         const Text('No client agents are available yet.')
                       else ...[
-                        DropdownButtonFormField<String>(
-                          initialValue: selectedClientName,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Sync Client',
-                            prefixIcon: Icon(Icons.desktop_windows_rounded),
+                        Text(
+                          'Applies to all ${agents.length} client${agents.length == 1 ? '' : 's'}.',
+                          style: const TextStyle(
+                            color: Color(0xFF667085),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
                           ),
-                          selectedItemBuilder:
-                              (context) => agents
-                                  .map(
-                                    (agent) => _buildAgentDropdownOption(
-                                      agent,
-                                      selected: true,
-                                    ),
-                                  )
-                                  .toList(growable: false),
-                          items: agents
-                              .map(
-                                (agent) => DropdownMenuItem<String>(
-                                  value: agent.clientName,
-                                  child: _buildAgentDropdownOption(agent),
-                                ),
-                              )
-                              .toList(growable: false),
-                          onChanged: (value) {
-                            final agent = findAgent(value);
-                            if (agent == null) {
-                              return;
-                            }
-                            setDialogState(() {
-                              selectAgent(agent);
-                            });
-                          },
                         ),
                         const SizedBox(height: 12),
                         TextField(
@@ -1160,7 +1109,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
                             int? nextAgentHistoryLimit;
                             int? nextAutoSyncInterval;
-                            if (selectedClientName != null) {
+                            if (agents.isNotEmpty) {
                               nextAgentHistoryLimit = int.tryParse(
                                 agentHistoryController.text.trim(),
                               );
@@ -1205,11 +1154,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             });
 
                             try {
-                              if (selectedClientName != null &&
+                              if (agents.isNotEmpty &&
                                   nextAgentHistoryLimit != null &&
                                   nextAutoSyncInterval != null) {
-                                await _api.updateAgentSyncSettings(
-                                  clientName: selectedClientName!,
+                                await _api.updateAllAgentSyncSettings(
                                   historyLimit: nextAgentHistoryLimit,
                                   autoSyncIntervalMinutes: nextAutoSyncInterval,
                                 );
@@ -3171,16 +3119,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       label: _userRoleLabel(role),
       description: _userRoleDescription(role),
       color: _userRoleColor(role),
-      selected: selected,
-    );
-  }
-
-  Widget _buildAgentDropdownOption(AdminAgent agent, {bool selected = false}) {
-    return _buildIconDropdownOption(
-      icon: Icons.sync_rounded,
-      label: agent.clientName,
-      description: '${_roleLabel()} - ${agent.isOnline ? 'Online' : 'Offline'}',
-      color: _roleColor(),
       selected: selected,
     );
   }
