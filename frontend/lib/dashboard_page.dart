@@ -2985,6 +2985,36 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return '$day.$month.$year  $hour:$minute:$second  $zoneLabel';
   }
 
+  String _formatCompactTimestamp(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) {
+      return raw.isEmpty ? 'Never' : raw;
+    }
+    final local = parsed.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    const monthNames = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final month = monthNames[local.month - 1];
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    if (local.year == DateTime.now().year) {
+      return '$day $month $hour:$minute';
+    }
+    return '$day $month ${local.year} $hour:$minute';
+  }
+
   Color _statusColor(String status) {
     switch (status.toLowerCase()) {
       case 'completed':
@@ -5383,7 +5413,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       agents[index],
                       closeAfterSelection: false,
                     ),
-                    if (index != agents.length - 1) const SizedBox(height: 8),
+                    if (index != agents.length - 1) const SizedBox(height: 6),
                   ],
                 ],
               ),
@@ -5608,6 +5638,36 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  String _newerTimestamp(String left, String right) {
+    if (left.trim().isEmpty) {
+      return right;
+    }
+    if (right.trim().isEmpty) {
+      return left;
+    }
+    final leftParsed = DateTime.tryParse(left);
+    final rightParsed = DateTime.tryParse(right);
+    if (leftParsed == null || rightParsed == null) {
+      return left.compareTo(right) >= 0 ? left : right;
+    }
+    return leftParsed.isAfter(rightParsed) ? left : right;
+  }
+
+  String _latestSyncTimestampForClient(AdminAgent agent) {
+    var latest = '';
+    for (final job in _jobs) {
+      if (job.clientName != agent.clientName ||
+          job.status.toLowerCase() != 'completed') {
+        continue;
+      }
+      latest = _newerTimestamp(latest, job.completedAt ?? job.updatedAt);
+    }
+    for (final tableState in agent.tables) {
+      latest = _newerTimestamp(latest, tableState.lastSync);
+    }
+    return latest;
+  }
+
   String _formatCompactCount(int value) {
     final raw = value.toString();
     final buffer = StringBuffer();
@@ -5661,8 +5721,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildClientSyncProgressBar(AdminAgent agent) {
     final progress = _syncProgressForClient(agent);
     final delta = _latestSuccessfulRowDeltaForClient(agent);
+    final lastSync = _latestSyncTimestampForClient(agent);
+    final lastSyncLabel = _formatCompactTimestamp(lastSync);
     return Tooltip(
-      message: progress.detail,
+      message: '${progress.detail}\nLast sync: ${_formatTimestamp(lastSync)}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -5696,6 +5758,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              Text(
+                'Last sync $lastSyncLabel',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF475467),
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
               Text(
                 progress.label,
                 maxLines: 1,
@@ -5960,39 +6032,101 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required bool closeAfterSelection,
   }) {
     final selected = _selectedPageClientName == agent.clientName;
+    final statusColor =
+        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
     final database =
         agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
     final version = _simpleClientVersion(agent);
     final versionLabel = version == '-' ? 'version unknown' : 'v$version';
+    final lastSync = _formatCompactTimestamp(
+      _latestSyncTimestampForClient(agent),
+    );
     final subtitle =
-        '$database - ${agent.tables.length} tables - $versionLabel';
-    return Column(
-      children: [
-        _buildNavigationTile(
-          icon: Icons.computer_rounded,
-          iconColor:
-              agent.isOnline
-                  ? const Color(0xFF0F766E)
-                  : const Color(0xFFB42318),
-          label: agent.clientName,
-          subtitle: subtitle,
-          selected: selected,
-          onTap:
-              () => _handleNavigationSelection(
-                () => _openClientPage(agent.clientName),
-                closeAfterSelection: closeAfterSelection,
+        '$database - ${agent.tables.length} tables - $versionLabel - Sync $lastSync';
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap:
+            () => _handleNavigationSelection(
+              () => _openClientPage(agent.clientName),
+              closeAfterSelection: closeAfterSelection,
+            ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFE6F4F1) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color:
+                  selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: const Color(0xFFDDE3EA)),
+                ),
+                child: Icon(
+                  Icons.computer_rounded,
+                  size: 16,
+                  color: statusColor,
+                ),
               ),
-          trailing: StatusBadge(
-            label: agent.isOnline ? 'Online' : 'Offline',
-            color:
-                agent.isOnline
-                    ? const Color(0xFF0F766E)
-                    : const Color(0xFFB42318),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            agent.clientName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF101828),
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        StatusBadge(
+                          label: agent.isOnline ? 'Online' : 'Offline',
+                          color: statusColor,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    _buildClientSyncProgressBar(agent),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 6),
-        _buildClientSyncProgressBar(agent),
-      ],
+      ),
     );
   }
 
@@ -6048,7 +6182,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       for (var index = 0; index < agents.length; index++) ...[
                         _buildServerClientTile(item, agents[index]),
                         if (index != agents.length - 1)
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 6),
                       ],
                     ],
                   ),
@@ -6060,69 +6194,80 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildServerClientTile(_ServerInventoryItem item, AdminAgent agent) {
     final statusColor =
         agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    final database =
+        agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
+    final lastSync = _formatCompactTimestamp(
+      _latestSyncTimestampForClient(agent),
+    );
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 34,
-            height: 34,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(9),
+              borderRadius: BorderRadius.circular(7),
               border: Border.all(color: const Color(0xFFDDE3EA)),
             ),
-            child: const Icon(
-              Icons.computer_rounded,
-              size: 18,
-              color: Color(0xFF2563EB),
-            ),
+            child: Icon(Icons.computer_rounded, size: 16, color: statusColor),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  agent.clientName,
-                  style: const TextStyle(
-                    color: Color(0xFF101828),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        agent.clientName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF101828),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    StatusBadge(
+                      label: agent.isOnline ? 'Online' : 'Offline',
+                      color: statusColor,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
-                  '${agent.database} - ${agent.tables.length} tables - ${item.serverName}',
+                  '$database - ${agent.tables.length} tables - ${item.serverName} - Sync $lastSync',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Color(0xFF667085),
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: FontWeight.w600,
+                    height: 1.2,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 _buildClientSyncProgressBar(agent),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
-                  runSpacing: 6,
+                  runSpacing: 4,
                   children: [
                     _buildRoleBadge(),
                     MetricPill(
                       label: 'Version',
                       value: _simpleClientVersion(agent),
-                    ),
-                    StatusBadge(
-                      label: agent.isOnline ? 'Online' : 'Offline',
-                      color: statusColor,
                     ),
                     MetricPill(
                       label: 'Server Link',
@@ -6137,11 +6282,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ],
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           FilledButton.tonalIcon(
             onPressed: () => _openClientPage(agent.clientName),
             icon: const Icon(Icons.open_in_new_rounded, size: 16),
-            label: const Text('Open Client'),
+            label: const Text('Open'),
           ),
         ],
       ),
