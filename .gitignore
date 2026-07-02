@@ -6,6 +6,8 @@ sync_windows_agent/portable_release/
 sync_windows_agent/release/
 sync_windows_agent-windows-portable/
 sync_windows_agent-windows-portable.zip
+sync_windows_agent-windows-portable-zip-parts/
+update.log
 business/logs/
 .codex-run/
 __pycache__/

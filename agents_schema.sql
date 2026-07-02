@@ -1,1 +1,0 @@
-select column_name, is_nullable, column_default from information_schema.columns where table_name = 'agents' order by ordinal_position;

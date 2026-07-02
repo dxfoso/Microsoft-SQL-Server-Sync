@@ -464,6 +464,11 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     final latestVersion = updateInfo.version.trim();
     final currentCommit = _shellAgentBuildCommitHash.trim().toLowerCase();
     final latestCommit = updateInfo.commit.trim().toLowerCase();
+    if (latestVersion.isNotEmpty &&
+        currentVersion.isNotEmpty &&
+        latestVersion != currentVersion) {
+      return true;
+    }
     if (latestCommit.isNotEmpty && currentCommit.isNotEmpty) {
       return latestCommit != currentCommit;
     }
@@ -581,8 +586,9 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   }
 
   Future<void> _maybeAutoApplyShellClientUpdate(
-    ClientUpdateInfo updateInfo,
-  ) async {
+    ClientUpdateInfo updateInfo, {
+    bool force = false,
+  }) async {
     if (!mounted ||
         !_shellHasClientUpdate ||
         !_supportsShellAutomaticClientUpdate ||
@@ -593,7 +599,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     }
 
     final targetId = _shellClientUpdateTargetId(updateInfo);
-    if (targetId.isEmpty || _hasRecentShellAutoUpdateAttempt(targetId)) {
+    if (targetId.isEmpty) {
+      return;
+    }
+    if (!force && _hasRecentShellAutoUpdateAttempt(targetId)) {
       return;
     }
 
@@ -607,7 +616,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       });
       await _recordAutoUpdateAttempt(targetId);
       logStartupEvent(
-        'Applying shell client update automatically: $targetId from $manifestUrl',
+        'Applying shell client update automatically: $targetId from $manifestUrl force=$force',
       );
       await Process.start('cmd.exe', [
         '/c',

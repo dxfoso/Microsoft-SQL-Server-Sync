@@ -44,8 +44,6 @@ spec:
           env:
             - name: BACKEND_BASE_URL
               value: "/call"
-            - name: SQL_SYNC_ENGINE_MODE
-              value: {{ .Values.syncEngine.mode | quote }}
           volumeMounts:
             - name: frontend-client-updates
               mountPath: /app/data/client-updates

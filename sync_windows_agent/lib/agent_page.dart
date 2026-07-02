@@ -120,6 +120,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _syncLoopBusy = false;
   bool _rowCountsRefreshing = false;
   bool _markChangedTablesBusy = false;
+  DateTime? _lastAutomaticSyncQueueCheck;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
@@ -131,7 +132,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   String? _selectedDatabase;
   List<String> _databases = const [];
-  Map<String, int> _databaseTableCounts = const {};
   List<String> _tables = const [];
   Map<String, Set<String>> _localRelatedSyncTables = const {};
   Map<String, Set<String>> _relatedSyncTables = const {};
@@ -596,6 +596,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       progress: 0,
       rowCount: 0,
       savedRowCount: null,
+      tableChecksum: '',
       message: 'Remote sync disabled.',
       history: const [],
     );
@@ -635,6 +636,38 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         continue;
       }
       nextTables[syncKey] = current.copyWith(rowCount: entry.value);
+      changed = true;
+    }
+
+    if (changed) {
+      _replaceSyncState(
+        _syncState.copyWith(tables: _nextTablesWithAutoRequired(nextTables)),
+      );
+    }
+  }
+
+  void _applyTableFingerprints({
+    required String database,
+    required Map<String, _TableFingerprint> fingerprints,
+  }) {
+    if (fingerprints.isEmpty) {
+      return;
+    }
+
+    final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+    var changed = false;
+    for (final entry in fingerprints.entries) {
+      final syncKey = _syncTableKey(entry.key, database: database);
+      final current = _syncTableState(entry.key, syncKey: syncKey);
+      final fingerprint = entry.value;
+      if (current.rowCount == fingerprint.rowCount &&
+          current.tableChecksum == fingerprint.checksum) {
+        continue;
+      }
+      nextTables[syncKey] = current.copyWith(
+        rowCount: fingerprint.rowCount,
+        tableChecksum: fingerprint.checksum,
+      );
       changed = true;
     }
 
@@ -768,7 +801,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _errorMessage = null;
       _selectedDatabase = preserveSelection ? _selectedDatabase : null;
       _databases = const [];
-      _databaseTableCounts = const {};
       _tables = const [];
       _selectedTable = null;
       _tableColumns = const [];
@@ -788,7 +820,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _errorMessage = result.errorText;
         _selectedDatabase = null;
         _databases = const [];
-        _databaseTableCounts = const {};
       });
       return;
     }
@@ -800,17 +831,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       selectedDatabase = _preferredDatabase(result.values);
     }
 
-    final tableCounts = await _queryDatabaseTableCounts(
-      profile: resolvedProfile,
-      databases: result.values,
-    );
-    if (!mounted) {
-      return;
-    }
-
     setState(() {
       _databases = result.values;
-      _databaseTableCounts = tableCounts;
       _selectedDatabase = selectedDatabase;
       if (selectedDatabase != previousDatabase) {
         _selectedTable = null;
@@ -1204,8 +1226,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         if (related.isEmpty || related == table) {
           continue;
         }
-        final parts = [table, related]..sort();
-        final signature = '${parts[0]}\u0000${parts[1]}';
+        final signature = '$table\u0000$related';
         if (!seen.add(signature)) {
           continue;
         }
@@ -1235,7 +1256,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             continue;
           }
           merged.putIfAbsent(table, () => <String>{}).add(related);
-          merged.putIfAbsent(related, () => <String>{}).add(table);
         }
       }
     }
@@ -1253,7 +1273,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         continue;
       }
       graph.putIfAbsent(table, () => <String>{}).add(related);
-      graph.putIfAbsent(related, () => <String>{}).add(table);
     }
     return graph;
   }
@@ -1310,12 +1329,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final timestamp = job.completedAt ?? job.updatedAt;
     final nextStatus = _displayStatus(job.status);
     final nextMessage = overrideMessage ?? job.error ?? job.message;
+    final shouldApplyLocalRowCount =
+        success && job.status.trim().toLowerCase() == 'completed';
+    final nextRowCount =
+        shouldApplyLocalRowCount ? job.rowCount : current.rowCount;
     final nextState = current.copyWith(
       enabled: current.enabled,
       status: nextStatus,
       lastSync: timestamp.trim().isEmpty ? current.lastSync : timestamp,
       progress: job.progress,
-      rowCount: job.rowCount,
+      rowCount: nextRowCount,
       message: nextMessage,
       history:
           appendHistory
@@ -1423,6 +1446,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final latestVersion = updateInfo.version.trim();
     final currentCommit = _agentBuildCommitHash.trim().toLowerCase();
     final latestCommit = updateInfo.commit.trim().toLowerCase();
+    if (latestVersion.isNotEmpty &&
+        currentVersion.isNotEmpty &&
+        latestVersion != currentVersion) {
+      return true;
+    }
     if (latestCommit.isNotEmpty && currentCommit.isNotEmpty) {
       return latestCommit != currentCommit;
     }
@@ -1580,7 +1608,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     unawaited(_maybeAutoApplyClientUpdate(updateInfo));
   }
 
-  Future<void> _maybeAutoApplyClientUpdate(ClientUpdateInfo updateInfo) async {
+  Future<void> _maybeAutoApplyClientUpdate(
+    ClientUpdateInfo updateInfo, {
+    bool force = false,
+  }) async {
     if (!mounted ||
         !_hasClientUpdate ||
         !_supportsAutomaticClientUpdate ||
@@ -1590,7 +1621,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final targetId = _clientUpdateTargetId(updateInfo);
-    if (targetId.isEmpty || _hasRecentAutoUpdateAttempt(targetId)) {
+    if (targetId.isEmpty) {
+      return;
+    }
+    if (!force && _hasRecentAutoUpdateAttempt(targetId)) {
       return;
     }
     if (_syncLoopBusy ||
@@ -1612,7 +1646,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       });
       await widget.onAutoUpdateAttempted(targetId);
       logStartupEvent(
-        'Applying client update automatically: $targetId from $manifestUrl',
+        'Applying client update automatically: $targetId from $manifestUrl force=$force',
       );
       final updaterCommandLine = [
         'start',
@@ -2111,6 +2145,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         left.lastSync == right.lastSync &&
         left.progress == right.progress &&
         left.rowCount == right.rowCount &&
+        left.tableChecksum == right.tableChecksum &&
         left.message == right.message;
   }
 
@@ -2242,6 +2277,48 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
+  Future<bool> _prepareAutomaticSyncQueueIfDue() async {
+    final now = DateTime.now();
+    final lastCheck = _lastAutomaticSyncQueueCheck;
+    if (lastCheck != null &&
+        now.difference(lastCheck).abs() < _autoSyncInterval) {
+      return false;
+    }
+    _lastAutomaticSyncQueueCheck = now;
+    await _refreshSelectedTableFingerprints();
+    return true;
+  }
+
+  Future<void> _refreshSelectedTableFingerprints() async {
+    final tablesByDatabase = <String, List<String>>{};
+    for (final entry in _syncState.tables.entries) {
+      if (!_isTableSelectedForSync(entry.value)) {
+        continue;
+      }
+      final database = _databaseNameFromSyncKey(entry.key).trim();
+      final table = _localTableName(entry.key).trim();
+      if (database.isEmpty || table.isEmpty) {
+        continue;
+      }
+      tablesByDatabase.putIfAbsent(database, () => <String>[]).add(table);
+    }
+    if (tablesByDatabase.isEmpty) {
+      return;
+    }
+    final profile = _activeProfile();
+    for (final entry in tablesByDatabase.entries) {
+      final fingerprints = await _queryTableFingerprints(
+        profile: profile,
+        database: entry.key,
+        tables: entry.value,
+      );
+      if (!mounted) {
+        return;
+      }
+      _applyTableFingerprints(database: entry.key, fingerprints: fingerprints);
+    }
+  }
+
   bool _isTemporaryControlPlaneUnavailable(Object error) {
     return error is AgentControlPlaneException && error.statusCode == 503;
   }
@@ -2253,6 +2330,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _syncLoopBusy = true;
     try {
+      final shouldQueueDueRoleJobs = await _prepareAutomaticSyncQueueIfDue();
       final heartbeat = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
@@ -2314,6 +2392,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       // Sync jobs need source-client metadata, so the control plane must
       // queue them. The agent should only execute jobs it receives.
+      if (shouldQueueDueRoleJobs) {
+        await _queueEnabledRoleJobs();
+      }
       await _processPendingJobs();
     } catch (error) {
       if (!mounted) {
@@ -2417,7 +2498,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       logStartupEvent(
         'Server requested client update $requestId for ${widget.clientName}; live version=$manifestVersion current=${currentVersion.isEmpty ? 'unknown' : currentVersion}.',
       );
-      await _maybeAutoApplyClientUpdate(updateInfo);
+      await _maybeAutoApplyClientUpdate(updateInfo, force: true);
     } catch (error) {
       logStartupEvent('Server-requested client update failed: $error');
       try {
@@ -2443,6 +2524,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             'lastSync': entry.value.lastSync,
             'progress': entry.value.progress,
             'rowCount': entry.value.rowCount,
+            'tableChecksum': entry.value.tableChecksum,
             'message': entry.value.message,
           },
         )
@@ -2472,6 +2554,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             'lastSync': entry.value.lastSync,
             'progress': entry.value.progress,
             'rowCount': entry.value.rowCount,
+            'tableChecksum': entry.value.tableChecksum,
             'message': entry.value.message,
           },
         )
@@ -2590,6 +2673,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           success: false,
           overrideMessage: errorMessage,
         );
+        if (job.direction == 'download') {
+          unawaited(_refreshLocalRowCounts());
+        }
       } finally {
         _processingJobIds.remove(job.id);
       }
@@ -3416,6 +3502,12 @@ END
     final sourceColumnList = insertColumns
         .map((column) => _quoteIdentifier(column.name))
         .join(', ');
+    final sourceTempColumnDefinitions = insertColumns
+        .map(
+          (column) =>
+              '${_quoteIdentifier(column.name)} ${column.sqlCastType} NULL',
+        )
+        .join(',\n    ');
     final sourceValueTuples = rows
         .map(
           (row) =>
@@ -3441,23 +3533,27 @@ WHEN MATCHED THEN
         identityColumns.isEmpty
             ? ''
             : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
+    final triggerTarget =
+        '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
     final query = '''
 SET NOCOUNT ON;
+CREATE TABLE #source_rows (
+  $sourceTempColumnDefinitions
+);
+INSERT INTO #source_rows ($sourceColumnList)
+VALUES
+    $sourceValueTuples;
+ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
 $identityInsertOn
-WITH source_rows AS (
-  SELECT *
-  FROM (VALUES
-      $sourceValueTuples
-  ) AS source($sourceColumnList)
-)
 MERGE ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} AS target
-USING source_rows AS source
+USING #source_rows AS source
 ON $joinClause
 $updateClause
 WHEN NOT MATCHED BY TARGET THEN
   INSERT ($insertColumnList)
   VALUES ($insertValueList);
 $identityInsertOff
+ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
 ''';
     final processResult = await _runSqlCmd(
       profile: profile,
@@ -3619,33 +3715,6 @@ ORDER BY table_name;
     return _StringQueryResult(success: true, values: values, errorText: null);
   }
 
-  Future<Map<String, int>> _queryDatabaseTableCounts({
-    required _SqlConnectionProfile profile,
-    required List<String> databases,
-  }) async {
-    final counts = <String, int>{};
-    for (final database in databases) {
-      final query = '''
-SET NOCOUNT ON;
-USE ${_quoteIdentifier(database)};
-SELECT COUNT(1)
-FROM sys.tables;
-''';
-      final processResult = await _runSqlCmd(
-        profile: profile,
-        database: database,
-        query: query,
-      );
-      if (processResult == null || processResult.exitCode != 0) {
-        counts[database] = 0;
-        continue;
-      }
-      final values = _parseSingleColumnOutput(processResult.stdout.toString());
-      counts[database] = int.tryParse(values.isEmpty ? '' : values.first) ?? 0;
-    }
-    return counts;
-  }
-
   Future<Map<String, int>> _queryTableRowCounts({
     required _SqlConnectionProfile profile,
     required String database,
@@ -3715,6 +3784,58 @@ ORDER BY r.display_name;
     return counts;
   }
 
+  Future<Map<String, _TableFingerprint>> _queryTableFingerprints({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required List<String> tables,
+  }) async {
+    if (database.isEmpty || tables.isEmpty) {
+      return const <String, _TableFingerprint>{};
+    }
+
+    final fingerprints = <String, _TableFingerprint>{};
+    for (final tableName in tables) {
+      final parts = _splitQualifiedName(tableName);
+      final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT
+  CONVERT(varchar(40), COUNT_BIG(1)) AS row_count,
+  CONVERT(varchar(40), COALESCE(CHECKSUM_AGG(BINARY_CHECKSUM(*)), 0)) AS table_checksum
+FROM ${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)};
+''';
+      final processResult = await _runSqlCmd(
+        profile: profile,
+        database: database,
+        query: query,
+      );
+      if (processResult == null || processResult.exitCode != 0) {
+        continue;
+      }
+
+      final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        if (_isSkippableOutputLine(trimmedLine)) {
+          continue;
+        }
+        final values = _splitRowValues(trimmedLine);
+        if (values.length < 2) {
+          continue;
+        }
+        final rowCount = int.tryParse(values[0]) ?? 0;
+        final checksum = '$rowCount:${values[1].trim()}';
+        fingerprints[tableName] = _TableFingerprint(
+          rowCount: rowCount,
+          checksum: checksum,
+        );
+        break;
+      }
+    }
+
+    return fingerprints;
+  }
+
   Future<Map<String, Set<String>>> _queryTableRelationships({
     required _SqlConnectionProfile profile,
     required String database,
@@ -3779,7 +3900,6 @@ ORDER BY child_table, parent_table;
       final childKey = _syncTableKey(child, database: database);
       final parentKey = _syncTableKey(parent, database: database);
       relationships.putIfAbsent(childKey, () => <String>{}).add(parentKey);
-      relationships.putIfAbsent(parentKey, () => <String>{}).add(childKey);
     }
 
     return relationships;
@@ -4558,7 +4678,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                               _serverController.text = dialogProfile.server;
                               _selectedDatabase = null;
                               _databases = const [];
-                              _databaseTableCounts = const {};
                               _tables = const [];
                               _selectedTable = null;
                               _tableColumns = const [];
@@ -4628,8 +4747,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     );
   }
 
-  String _databaseDropdownLabel(String database) =>
-      '$database (${_databaseTableCounts[database] ?? 0})';
+  String _databaseDropdownLabel(String database) => database;
 
   Widget _buildSyncTablesHeader() {
     final title = Text(
@@ -6675,6 +6793,13 @@ class _SqlConnectionProfile {
   final bool useWindowsAuth;
   final String user;
   final String password;
+}
+
+class _TableFingerprint {
+  const _TableFingerprint({required this.rowCount, required this.checksum});
+
+  final int rowCount;
+  final String checksum;
 }
 
 class _SqlColumnDefinition {

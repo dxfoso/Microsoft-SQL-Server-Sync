@@ -297,14 +297,7 @@ function sync_job_text(value: string? = null, maxLength: int = 256): string {
 }
 
 function agent_online_timeout_minutes(agent: map<json>): int {
-  let timeout = clamp_auto_sync_interval(int.from(agent.autoSyncIntervalMinutes ?? 15)) * 3;
-  if (timeout < 5) {
-    timeout = 5;
-  }
-  if (timeout > 60) {
-    timeout = 60;
-  }
-  return timeout;
+  return 5;
 }
 
 function effective_agent_online(agent: map<json>): bool {
@@ -750,6 +743,7 @@ function apply_table_sync_policies(ownerUserId: string? = null, tables: array<js
         lastSync: tableState.lastSync,
         progress: tableState.progress,
         rowCount: tableState.rowCount,
+        tableChecksum: tableState.tableChecksum,
         message: tableState.message,
         history: tableState.history
       }]);
@@ -797,6 +791,7 @@ function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: st
       lastSync: string.from(tableState.lastSync ?? ''),
       progress: int.from(tableState.progress ?? 0),
       rowCount: int.from(tableState.rowCount ?? 0),
+      tableChecksum: string.from(tableState.tableChecksum ?? ''),
       message: string.from(tableState.message ?? ''),
       history: []
     };
@@ -1317,6 +1312,7 @@ function public_agent_payload(agent: map<json>): map<json> {
   if (payloadAgent.tables != null) {
     nextTables = apply_table_sync_policies(payloadAgent.ownerUserId, bounded_agent_tables(payloadAgent.tables, payloadAgent.selectedTable), string.from(payloadAgent.database));
   }
+  nextTables = normalize_agent_tables_payload(payloadAgent, nextTables);
   return {
     clientName: payloadAgent.clientName,
     machineName: payloadAgent.machineName,
@@ -1795,6 +1791,77 @@ function active_job_tables_for_client(clientName: string): array<string> {
   return unique_string_values(tables);
 }
 
+function active_job_for_client_table(clientName: string, table: string): map<json>? {
+  const rows = db.selectMany(SyncJob, {
+    where: { clientName, table },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'status', 'progress', 'rowCount', 'updatedAt', 'completedAt', 'message', 'error'],
+    limit: 10
+  });
+  if (rows == null) {
+    return null;
+  }
+  for (const job of rows) {
+    const status = string.from(job.status).trim();
+    if (is_active_job_status(status)) {
+      return job;
+    }
+    if (status == 'completed' || status == 'failed' || status == 'cancelled') {
+      return null;
+    }
+  }
+  return null;
+}
+
+function normalize_agent_table_payload_state(agent: map<json>, tableState: map<json>): map<json> {
+  if (tableState.table == null) {
+    return tableState;
+  }
+  const table = string.from(tableState.table).trim();
+  if (table.length == 0) {
+    return tableState;
+  }
+  const activeJob = active_job_for_client_table(string.from(agent.clientName), table);
+  if (activeJob != null) {
+    return {
+      table: tableState.table,
+      enabled: tableState.enabled,
+      status: activeJob.status,
+      lastSync: activeJob.updatedAt,
+      progress: activeJob.progress,
+      rowCount: activeJob.rowCount,
+      tableChecksum: tableState.tableChecksum,
+      message: activeJob.message,
+      history: tableState.history
+    };
+  }
+
+  const status = string.from(tableState.status ?? '').trim().toLowerCase();
+  if (tableState.enabled == true
+    && (status == 'queued' || status == 'waiting' || status == 'running' || status == 'uploading' || status == 'downloading')) {
+    return {
+      table: tableState.table,
+      enabled: tableState.enabled,
+      status: 'Completed',
+      lastSync: tableState.lastSync,
+      progress: 100,
+      rowCount: tableState.rowCount,
+      tableChecksum: tableState.tableChecksum,
+      message: 'Up to date.',
+      history: tableState.history
+    };
+  }
+  return tableState;
+}
+
+function normalize_agent_tables_payload(agent: map<json>, tables: array<json>): array<json> {
+  let normalized = [];
+  for (const tableState of tables) {
+    normalized = normalized.concat([normalize_agent_table_payload_state(agent, tableState)]);
+  }
+  return normalized;
+}
+
 function enabled_sync_tables_for_agent(agent: map<json>): array<string> {
   let enabledTables = [];
   let tables = [];
@@ -1875,11 +1942,56 @@ function latest_completed_source_for_target_table(targetClientName: string, tabl
   return '';
 }
 
+function agent_sync_table_state(agent: map<json>, table: string): map<json>? {
+  if (agent.tables == null) {
+    return null;
+  }
+  const tables = apply_table_sync_policies(agent.ownerUserId, agent.tables, string.from(agent.database));
+  for (const tableState of tables) {
+    if (tableState.table == null) {
+      continue;
+    }
+    if (string.from(tableState.table).trim() == table) {
+      return tableState;
+    }
+  }
+  return null;
+}
+
+function live_row_count_for_agent_table(agent: map<json>, table: string): int {
+  const tableState = agent_sync_table_state(agent, table);
+  if (tableState != null && tableState.rowCount != null) {
+    const rowCount = int.from(tableState.rowCount);
+    if (rowCount >= 0) {
+      return rowCount;
+    }
+  }
+  return latest_completed_upload_row_count_for_source(string.from(agent.clientName), table);
+}
+
+function live_checksum_for_agent_table(agent: map<json>, table: string): string {
+  const tableState = agent_sync_table_state(agent, table);
+  if (tableState != null && tableState.tableChecksum != null) {
+    return string.from(tableState.tableChecksum).trim();
+  }
+  return '';
+}
+
+function agent_table_sync_enabled(agent: map<json>, table: string): bool {
+  const tableState = agent_sync_table_state(agent, table);
+  if (tableState == null) {
+    return false;
+  }
+  return tableState.enabled == true;
+}
+
 function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>): string {
   const targetClientName = string.from(targetAgent.clientName);
-  const targetRowCount = latest_completed_upload_row_count_for_source(targetClientName, table);
+  const targetRowCount = live_row_count_for_agent_table(targetAgent, table);
+  const targetChecksum = live_checksum_for_agent_table(targetAgent, table);
   let bestKnownSource = '';
   let bestKnownRowCount = targetRowCount;
+  let bestChecksumSource = '';
   let firstAvailableSource = '';
   for (const candidate of visibleAgents) {
     if (candidate.clientName == targetClientName
@@ -1887,10 +1999,13 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
       || !effective_agent_online(candidate)) {
       continue;
     }
+    if (!agent_table_sync_enabled(candidate, table)) {
+      continue;
+    }
     if (firstAvailableSource.length == 0) {
       firstAvailableSource = string.from(candidate.clientName);
     }
-    const candidateRowCount = latest_completed_upload_row_count_for_source(string.from(candidate.clientName), table);
+    const candidateRowCount = live_row_count_for_agent_table(candidate, table);
     if (candidateRowCount < 0) {
       continue;
     }
@@ -1898,10 +2013,22 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
       bestKnownSource = string.from(candidate.clientName);
       bestKnownRowCount = candidateRowCount;
     }
+    const candidateChecksum = live_checksum_for_agent_table(candidate, table);
+    if (candidateRowCount == targetRowCount
+      && targetChecksum.length != 0
+      && candidateChecksum.length != 0
+      && candidateChecksum != targetChecksum
+      && string.from(candidate.clientName) > targetClientName
+      && (bestChecksumSource.length == 0 || string.from(candidate.clientName) > bestChecksumSource)) {
+      bestChecksumSource = string.from(candidate.clientName);
+    }
   }
   if (bestKnownSource.length != 0) {
     if (targetRowCount < 0 || bestKnownRowCount > targetRowCount) {
       return bestKnownSource;
+    }
+    if (bestChecksumSource.length != 0) {
+      return bestChecksumSource;
     }
     return '';
   }
@@ -1911,7 +2038,8 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
       if (candidate.clientName == rememberedSource
         && candidate.clientName != targetAgent.clientName
         && candidate.ownerUserId == targetAgent.ownerUserId
-        && effective_agent_online(candidate)) {
+        && effective_agent_online(candidate)
+        && agent_table_sync_enabled(candidate, table)) {
         return rememberedSource;
       }
     }
@@ -2302,7 +2430,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     replicationPassword,
     isOnline: true,
     historyLimit: clamp_history_limit(historyLimit),
-    autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes),
+    autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
     serverConnected,
     sqlConnected,
     clientVersion: truncate_text(clientVersion.trim(), 32),

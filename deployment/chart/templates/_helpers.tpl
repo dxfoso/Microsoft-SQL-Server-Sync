@@ -28,10 +28,6 @@ sql-sync
 {{- include "sync-admin-web.componentFullname" (list . "postgres") -}}
 {{- end -}}
 
-{{- define "sync-admin-web.symmetricdsFullname" -}}
-{{- include "sync-admin-web.componentFullname" (list . "symmetricds") -}}
-{{- end -}}
-
 {{- define "sync-admin-web.backendDataPvcName" -}}
 {{- include "sync-admin-web.componentFullname" (list . "back-data") -}}
 {{- end -}}
@@ -42,10 +38,6 @@ sql-sync
 
 {{- define "sync-admin-web.postgresPvcName" -}}
 {{- include "sync-admin-web.componentFullname" (list . "postgres-data") -}}
-{{- end -}}
-
-{{- define "sync-admin-web.symmetricdsPvcName" -}}
-{{- include "sync-admin-web.componentFullname" (list . "symmetricds-data") -}}
 {{- end -}}
 
 {{- define "sync-admin-web.postgresSecretName" -}}

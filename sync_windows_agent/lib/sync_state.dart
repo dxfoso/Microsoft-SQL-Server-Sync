@@ -6,16 +6,7 @@ const int kMaxHistoryLimit = 100;
 const int kDefaultAutoSyncIntervalMinutes = 15;
 const int kMinAutoSyncIntervalMinutes = 1;
 const int kMaxAutoSyncIntervalMinutes = 1440;
-const String kSyncModeMerge = 'sync';
 const Object _syncTableStateUnset = Object();
-
-String normalizeSyncMode(String? value) {
-  return kSyncModeMerge;
-}
-
-String syncDirectionForMode(String syncMode) {
-  return 'sync';
-}
 
 class SyncHistoryEntry {
   const SyncHistoryEntry({
@@ -24,7 +15,6 @@ class SyncHistoryEntry {
     required this.status,
     required this.success,
     required this.message,
-    this.direction = 'sync',
     this.rowCount = 0,
     this.progress = 0,
   });
@@ -34,7 +24,6 @@ class SyncHistoryEntry {
   final String status;
   final bool success;
   final String message;
-  final String direction;
   final int rowCount;
   final int progress;
 
@@ -45,7 +34,6 @@ class SyncHistoryEntry {
       status: json['status'] as String? ?? '',
       success: json['success'] as bool? ?? false,
       message: json['message'] as String? ?? '',
-      direction: json['direction'] as String? ?? 'sync',
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       progress: (json['progress'] as num? ?? 0).round(),
     );
@@ -57,7 +45,6 @@ class SyncHistoryEntry {
     'status': status,
     'success': success,
     'message': message,
-    'direction': direction,
     'rowCount': rowCount,
     'progress': progress,
   };
@@ -66,25 +53,25 @@ class SyncHistoryEntry {
 class SyncTableState {
   const SyncTableState({
     required this.enabled,
+    required this.autoRequired,
     required this.status,
     required this.lastSync,
     required this.progress,
-    required this.direction,
-    required this.syncMode,
     required this.rowCount,
     required this.savedRowCount,
+    required this.tableChecksum,
     required this.message,
     required this.history,
   });
 
   final bool enabled;
+  final bool autoRequired;
   final String status;
   final String lastSync;
   final int progress;
-  final String direction;
-  final String syncMode;
   final int rowCount;
   final int? savedRowCount;
+  final String tableChecksum;
   final String message;
   final List<SyncHistoryEntry> history;
 
@@ -97,13 +84,13 @@ class SyncTableState {
         .toList(growable: false);
     return SyncTableState(
       enabled: json['enabled'] as bool? ?? false,
+      autoRequired: json['autoRequired'] as bool? ?? false,
       status: json['status'] as String? ?? 'Paused',
       lastSync: json['lastSync'] as String? ?? '--',
       progress: (json['progress'] as num? ?? 0).round(),
-      direction: json['direction'] as String? ?? 'sync',
-      syncMode: normalizeSyncMode(json['syncMode'] as String?),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       savedRowCount: (json['savedRowCount'] as num?)?.round(),
+      tableChecksum: json['tableChecksum'] as String? ?? '',
       message: json['message'] as String? ?? '',
       history: history,
     );
@@ -111,41 +98,41 @@ class SyncTableState {
 
   Map<String, dynamic> toJson() => {
     'enabled': enabled,
+    'autoRequired': autoRequired,
     'status': status,
     'lastSync': lastSync,
     'progress': progress,
-    'direction': direction,
-    'syncMode': syncMode,
     'rowCount': rowCount,
     'savedRowCount': savedRowCount,
+    'tableChecksum': tableChecksum,
     'message': message,
     'history': history.map((entry) => entry.toJson()).toList(growable: false),
   };
 
   SyncTableState copyWith({
     bool? enabled,
+    bool? autoRequired,
     String? status,
     String? lastSync,
     int? progress,
-    String? direction,
-    String? syncMode,
     int? rowCount,
     Object? savedRowCount = _syncTableStateUnset,
+    String? tableChecksum,
     String? message,
     List<SyncHistoryEntry>? history,
   }) {
     return SyncTableState(
       enabled: enabled ?? this.enabled,
+      autoRequired: autoRequired ?? this.autoRequired,
       status: status ?? this.status,
       lastSync: lastSync ?? this.lastSync,
       progress: progress ?? this.progress,
-      direction: direction ?? this.direction,
-      syncMode: syncMode ?? this.syncMode,
       rowCount: rowCount ?? this.rowCount,
       savedRowCount:
           identical(savedRowCount, _syncTableStateUnset)
               ? this.savedRowCount
               : savedRowCount as int?,
+      tableChecksum: tableChecksum ?? this.tableChecksum,
       message: message ?? this.message,
       history: history ?? this.history,
     );
@@ -296,15 +283,10 @@ class SyncAppStateStore {
         startOnStartup: json['startOnStartup'] as bool? ?? false,
         server: json['server'] as String? ?? 'localhost',
         authToken: json['authToken'] as String?,
-        accountUsername:
-            json['accountUsername'] as String? ??
-            json['accountEmail'] as String?,
+        accountUsername: json['accountUsername'] as String?,
         accountEmail: json['accountEmail'] as String?,
         accountName: json['accountName'] as String?,
-        rememberedLoginName:
-            json['rememberedLoginName'] as String? ??
-            json['accountUsername'] as String? ??
-            json['accountEmail'] as String?,
+        rememberedLoginName: json['rememberedLoginName'] as String?,
         rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
         lastAutoUpdateTarget: json['lastAutoUpdateTarget'] as String?,
         lastAutoUpdateAttemptedAt: json['lastAutoUpdateAttemptedAt'] as String?,
@@ -344,15 +326,10 @@ class SyncAppStateStore {
         startOnStartup: json['startOnStartup'] as bool? ?? false,
         server: json['server'] as String? ?? 'localhost',
         authToken: json['authToken'] as String?,
-        accountUsername:
-            json['accountUsername'] as String? ??
-            json['accountEmail'] as String?,
+        accountUsername: json['accountUsername'] as String?,
         accountEmail: json['accountEmail'] as String?,
         accountName: json['accountName'] as String?,
-        rememberedLoginName:
-            json['rememberedLoginName'] as String? ??
-            json['accountUsername'] as String? ??
-            json['accountEmail'] as String?,
+        rememberedLoginName: json['rememberedLoginName'] as String?,
         rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
         lastAutoUpdateTarget: json['lastAutoUpdateTarget'] as String?,
         lastAutoUpdateAttemptedAt: json['lastAutoUpdateAttemptedAt'] as String?,

@@ -411,7 +411,6 @@ function Get-WindowsAgentConflictingDevProcesses {
     )
     $projectRootPrefix = $projectRoot.TrimEnd($trimChars) + [System.IO.Path]::DirectorySeparatorChar
     $runScriptPath = [System.IO.Path]::GetFullPath((Join-Path -Path $repoRoot -ChildPath 'run.ps1'))
-    $clientScriptPath = [System.IO.Path]::GetFullPath((Join-Path -Path $repoRoot -ChildPath 'client.ps1'))
 
     $allProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
     $directConflicts = @($allProcesses |
@@ -435,8 +434,7 @@ function Get-WindowsAgentConflictingDevProcesses {
             }
 
             return $commandLine.IndexOf($projectRootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $commandLine.IndexOf($runScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $commandLine.IndexOf($clientScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                $commandLine.IndexOf($runScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
         })
 
     $processById = @{}
@@ -618,7 +616,10 @@ function Remove-WindowsAgentBuildArtifacts {
         [switch] $PreserveWindowsBuildTree
     )
 
-    $paths = @((Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so'))
+    $paths = @(
+        (Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so'),
+        (Join-Path -Path $ProjectPath -ChildPath '.dart_tool\flutter_build')
+    )
 
     if (-not $PreserveWindowsBuildTree) {
         $paths += (Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64')

@@ -3,8 +3,6 @@ param(
     [string] $ClientUpdateBaseUrl = '',
     [string] $FlutterVersion = '',
     [string] $FlutterCacheRoot = '',
-    [string] $SymmetricDsVersion = '3.16.10',
-    [string] $SymmetricDsDownloadUrl = '',
     [switch] $RequireFlutterVersion
 )
 
@@ -105,6 +103,59 @@ function Invoke-NativeCommand {
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code $LASTEXITCODE`: $Description"
     }
+}
+
+function Get-FileContentSha256 {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ''
+    }
+
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-FlutterPubGetInputsSignature {
+    param([Parameter(Mandatory = $true)][string] $ProjectPath)
+
+    $pubspecPath = Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml'
+    $pubspecLockPath = Join-Path -Path $ProjectPath -ChildPath 'pubspec.lock'
+    $pubspecHash = Get-FileContentSha256 -Path $pubspecPath
+    $pubspecLockHash = Get-FileContentSha256 -Path $pubspecLockPath
+
+    return "pubspec.yaml=$pubspecHash`npubspec.lock=$pubspecLockHash"
+}
+
+function Get-FlutterPubGetStampPath {
+    param([Parameter(Mandatory = $true)][string] $ProjectPath)
+
+    return Join-Path -Path $ProjectPath -ChildPath '.dart_tool\portable_build_pubget_inputs.txt'
+}
+
+function Test-FlutterPubGetRequired {
+    param([Parameter(Mandatory = $true)][string] $ProjectPath)
+
+    $stampPath = Get-FlutterPubGetStampPath -ProjectPath $ProjectPath
+    $currentSignature = (Get-FlutterPubGetInputsSignature -ProjectPath $ProjectPath).Trim()
+    if (-not (Test-Path -LiteralPath $stampPath -PathType Leaf)) {
+        return $true
+    }
+
+    $savedSignature = (Get-Content -LiteralPath $stampPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+    return $savedSignature -ne $currentSignature
+}
+
+function Save-FlutterPubGetStamp {
+    param([Parameter(Mandatory = $true)][string] $ProjectPath)
+
+    $stampPath = Get-FlutterPubGetStampPath -ProjectPath $ProjectPath
+    $stampDir = Split-Path -Path $stampPath -Parent
+    if (-not [string]::IsNullOrWhiteSpace($stampDir)) {
+        New-Item -Path $stampDir -ItemType Directory -Force | Out-Null
+    }
+
+    $signature = Get-FlutterPubGetInputsSignature -ProjectPath $ProjectPath
+    Set-Content -LiteralPath $stampPath -Value $signature -Encoding ASCII
 }
 
 function Get-FlutterVersion {
@@ -445,14 +496,14 @@ function Invoke-FlutterCommand {
         [Parameter(Mandatory = $true)][string] $WorkingDirectory
     )
 
-    $process = Start-Process -FilePath $FlutterCommand `
-        -ArgumentList $Arguments `
-        -WorkingDirectory $WorkingDirectory `
-        -Wait `
-        -PassThru `
-        -NoNewWindow
-
-    $script:LASTEXITCODE = $process.ExitCode
+    Push-Location $WorkingDirectory
+    try {
+        & $FlutterCommand @Arguments
+        $script:LASTEXITCODE = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 function Add-SearchDir {
@@ -551,150 +602,6 @@ function Copy-VCRuntimeDlls {
     }
 }
 
-function Get-SymmetricDsDownloadUrl {
-    param([Parameter(Mandatory = $true)][string] $Version)
-
-    $minorVersion = [regex]::Match($Version, '^([0-9]+\.[0-9]+)').Groups[1].Value
-    if ([string]::IsNullOrWhiteSpace($minorVersion)) {
-        throw "Could not derive SymmetricDS minor version from: $Version"
-    }
-    return "https://sourceforge.net/projects/symmetricds/files/symmetricds/symmetricds-$minorVersion/symmetric-server-$Version.zip/download"
-}
-
-function Test-ZipFileSignature {
-    param([Parameter(Mandatory = $true)][string] $Path)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $false
-    }
-    $stream = [System.IO.File]::OpenRead($Path)
-    try {
-        if ($stream.Length -lt 4) {
-            return $false
-        }
-        $buffer = New-Object byte[] 4
-        [void] $stream.Read($buffer, 0, 4)
-        return $buffer[0] -eq 0x50 -and $buffer[1] -eq 0x4B
-    }
-    finally {
-        $stream.Dispose()
-    }
-}
-
-function Resolve-SourceForgeMirrorUrl {
-    param([Parameter(Mandatory = $true)][string] $HtmlContent)
-
-    $match = [regex]::Match($HtmlContent, 'url=(https://downloads\.sourceforge\.net/[^"'']+)')
-    if (-not $match.Success) {
-        return ''
-    }
-    return [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value)
-}
-
-function Save-VerifiedZip {
-    param(
-        [Parameter(Mandatory = $true)][string] $Url,
-        [Parameter(Mandatory = $true)][string] $OutFile,
-        [Parameter(Mandatory = $true)][string] $Description
-    )
-
-    $tempFile = "$OutFile.tmp"
-    if (Test-Path -LiteralPath $tempFile) {
-        Remove-Item -LiteralPath $tempFile -Force
-    }
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $tempFile -MaximumRedirection 10
-    if (Test-ZipFileSignature -Path $tempFile) {
-        Move-Item -LiteralPath $tempFile -Destination $OutFile -Force
-        return
-    }
-
-    $content = Get-Content -LiteralPath $tempFile -Raw -ErrorAction SilentlyContinue
-    $mirrorUrl = if ($content) { Resolve-SourceForgeMirrorUrl -HtmlContent $content } else { '' }
-    if (-not [string]::IsNullOrWhiteSpace($mirrorUrl)) {
-        Invoke-WebRequest -UseBasicParsing -Uri $mirrorUrl -OutFile $tempFile -MaximumRedirection 10
-        if (Test-ZipFileSignature -Path $tempFile) {
-            Move-Item -LiteralPath $tempFile -Destination $OutFile -Force
-            return
-        }
-    }
-
-    if (Test-Path -LiteralPath $tempFile) {
-        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
-    }
-    throw "$Description did not download as a ZIP archive."
-}
-
-function Install-SymmetricDsRuntime {
-    param(
-        [Parameter(Mandatory = $true)][string] $Version,
-        [AllowEmptyString()][string] $DownloadUrl,
-        [Parameter(Mandatory = $true)][string] $PortableDir,
-        [Parameter(Mandatory = $true)][string] $CacheRoot
-    )
-
-    if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
-        $DownloadUrl = Get-SymmetricDsDownloadUrl -Version $Version
-    }
-
-    $downloadsDir = Join-Path -Path $CacheRoot -ChildPath 'downloads'
-    $archivePath = Join-Path -Path $downloadsDir -ChildPath "symmetric-server-$Version.zip"
-    $extractRoot = Join-Path -Path $CacheRoot -ChildPath "symmetricds-$Version"
-    $tempRoot = Join-Path -Path $CacheRoot -ChildPath ("tmp-symmetricds-$Version-" + [guid]::NewGuid().ToString('N'))
-    $destination = Join-Path -Path $PortableDir -ChildPath 'symmetricds'
-
-    New-Item -ItemType Directory -Path $downloadsDir -Force | Out-Null
-    New-Item -ItemType Directory -Path $CacheRoot -Force | Out-Null
-
-    if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
-        Write-Host "Downloading SymmetricDS $Version from $DownloadUrl"
-        Save-VerifiedZip -Url $DownloadUrl -OutFile $archivePath -Description "SymmetricDS $Version"
-    } else {
-        Write-Host "Using cached SymmetricDS archive: $archivePath"
-        if (-not (Test-ZipFileSignature -Path $archivePath)) {
-            Write-Warning "Cached SymmetricDS archive is not a ZIP. Removing and downloading a fresh copy."
-            Remove-Item -LiteralPath $archivePath -Force
-            Save-VerifiedZip -Url $DownloadUrl -OutFile $archivePath -Description "SymmetricDS $Version"
-        }
-    }
-
-    if (-not (Test-Path -LiteralPath (Join-Path -Path $extractRoot -ChildPath 'bin') -PathType Container)) {
-        if (Test-Path -LiteralPath $tempRoot) {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force
-        }
-        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-        try {
-            Write-Host "Extracting SymmetricDS $Version..."
-            Expand-Archive -LiteralPath $archivePath -DestinationPath $tempRoot -Force
-            $extractedRoot = Get-ChildItem -LiteralPath $tempRoot -Directory -Recurse -ErrorAction Stop |
-                Where-Object { Test-Path -LiteralPath (Join-Path -Path $_.FullName -ChildPath 'bin') -PathType Container } |
-                Select-Object -First 1
-            if ($null -eq $extractedRoot) {
-                throw "SymmetricDS archive did not contain a directory with a bin folder: $archivePath"
-            }
-            if (Test-Path -LiteralPath $extractRoot) {
-                Remove-Item -LiteralPath $extractRoot -Recurse -Force
-            }
-            Move-Item -LiteralPath $extractedRoot.FullName -Destination $extractRoot
-        }
-        finally {
-            if (Test-Path -LiteralPath $tempRoot) {
-                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
-
-    $symBat = Join-Path -Path $extractRoot -ChildPath 'bin\sym.bat'
-    if (-not (Test-Path -LiteralPath $symBat -PathType Leaf)) {
-        throw "SymmetricDS runtime is missing bin\sym.bat after extraction: $extractRoot"
-    }
-
-    if (Test-Path -LiteralPath $destination) {
-        Remove-Item -LiteralPath $destination -Recurse -Force
-    }
-    Copy-Item -LiteralPath $extractRoot -Destination $destination -Recurse -Force
-    Write-Host "Included SymmetricDS runtime: $destination"
-}
-
 function New-PortableLauncher {
     param(
         [Parameter(Mandatory = $true)][string] $Destination,
@@ -741,8 +648,7 @@ function Get-PortableRequiredFiles {
         $ExeName,
         'flutter_windows.dll',
         'run_portable.bat',
-        'update.ps1',
-        'symmetricds\bin\sym.bat'
+        'update.ps1'
     )
 }
 
@@ -935,8 +841,7 @@ function Assert-PortableZipContents {
             "$PortableName/data/app.so",
             "$PortableName/run_portable.bat",
             "$PortableName/update.ps1",
-            "$PortableName/portable-manifest.txt",
-            "$PortableName/symmetricds/bin/sym.bat"
+            "$PortableName/portable-manifest.txt"
         )
         if ($RequireVCRuntime) {
             $requiredEntries += @(
@@ -959,6 +864,127 @@ function Assert-PortableZipContents {
     }
     finally {
         $archive.Dispose()
+    }
+}
+
+function Get-Portable7ZipPath {
+    $candidates = @(
+        'C:\Program Files\7-Zip\7z.exe',
+        'C:\Program Files (x86)\7-Zip\7z.exe'
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    $command = Get-Command 7z -ErrorAction SilentlyContinue
+    if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+        return $command.Source
+    }
+
+    throw '7-Zip is required to create a true multipart ZIP archive (.z01/.zip), but 7z.exe was not found.'
+}
+
+function New-PortableZipParts {
+    param(
+        [Parameter(Mandatory = $true)][string] $PortableDir,
+        [Parameter(Mandatory = $true)][string] $BaseZipName,
+        [Parameter(Mandatory = $true)][string] $PartsDir,
+        [int] $PartCount = 10
+    )
+
+    if ($PartCount -lt 1) {
+        throw "PartCount must be at least 1. Actual: $PartCount"
+    }
+
+    New-Item -Path $PartsDir -ItemType Directory -Force | Out-Null
+
+    $portableRoot = [System.IO.Path]::GetFullPath($PortableDir)
+    if (-not (Test-Path -LiteralPath $portableRoot -PathType Container)) {
+        throw "Cannot create split zip packages from a missing portable directory: $PortableDir"
+    }
+
+    $portableFiles = @(Get-ChildItem -LiteralPath $portableRoot -Recurse -File -Force)
+    if ($portableFiles.Count -eq 0) {
+        throw "Cannot create split zip packages from an empty portable directory: $PortableDir"
+    }
+
+    $portableSizeBytes = [int64] (($portableFiles | Measure-Object -Property Length -Sum).Sum)
+    if ($portableSizeBytes -le 0) {
+        throw "Cannot create split zip packages from a zero-byte portable directory: $PortableDir"
+    }
+
+    $sevenZipPath = Get-Portable7ZipPath
+    $partSizeBytes = [int64] [Math]::Ceiling($portableSizeBytes / [double] $PartCount)
+    if ($partSizeBytes -lt 1) {
+        $partSizeBytes = 1
+    }
+
+    $archivePath = Join-Path -Path $PartsDir -ChildPath "$BaseZipName.zip"
+    $archiveParent = Split-Path -Path $portableRoot -Parent
+    $archiveInputName = Split-Path -Path $portableRoot -Leaf
+
+    Push-Location $archiveParent
+    try {
+        [void] (& $sevenZipPath a -tzip "-v${partSizeBytes}b" $archivePath $archiveInputName)
+        if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip failed with exit code $LASTEXITCODE while creating multipart ZIP archive."
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    $createdPartNames = [System.Collections.Generic.List[string]]::new()
+    Get-ChildItem -LiteralPath $PartsDir -File -Force |
+        Where-Object { $_.Name -match ('^{0}\.zip\.\d{{3}}$' -f [regex]::Escape($BaseZipName)) } |
+        Sort-Object Name |
+        ForEach-Object { [void] $createdPartNames.Add($_.Name) }
+
+    if ($createdPartNames.Count -lt 2) {
+        throw "Expected multipart ZIP outputs for $BaseZipName, but 7-Zip did not create them."
+    }
+
+    $extractScriptPath = Join-Path -Path $PartsDir -ChildPath 'extract_all.ps1'
+    $extractScript = @(
+        'param(',
+        "    [string] `$OutputDir = 'extracted'",
+        ')',
+        '',
+        "`$ErrorActionPreference = 'Stop'",
+        "`$root = `$PSScriptRoot",
+        "`$destination = Join-Path -Path `$root -ChildPath `$OutputDir",
+        "New-Item -Path `$destination -ItemType Directory -Force | Out-Null",
+        "`$archive = Join-Path -Path `$root -ChildPath '$BaseZipName.zip.001'",
+        "if (-not (Test-Path -LiteralPath `$archive -PathType Leaf)) { throw 'First multipart zip segment (.zip.001) is missing.' }",
+        "`$sevenZip = '$(($sevenZipPath -replace '\\', '\\'))'",
+        "& `$sevenZip x `$archive ""-o`$destination"" -y",
+        "if (`$LASTEXITCODE -ne 0) { throw ('7-Zip extraction failed with exit code {0}.' -f `$LASTEXITCODE) }",
+        "Write-Host ('Extracted multipart ZIP to {0}' -f `$destination)"
+    )
+    Set-Content -LiteralPath $extractScriptPath -Value $extractScript -Encoding ASCII
+
+    $partsManifestPath = Join-Path -Path $PartsDir -ChildPath 'parts-manifest.txt'
+    $manifestLines = @(
+        "PortableDir: $PortableDir",
+        "PartCount: $($createdPartNames.Count)",
+        "RequestedPartCount: $PartCount",
+        "PartSizeBytes: $partSizeBytes",
+        "7Zip: $sevenZipPath",
+        ''
+    ) + @(
+        foreach ($partName in $createdPartNames) {
+            $partPath = Join-Path -Path $PartsDir -ChildPath $partName
+            '{0} {1}' -f $partName, (Get-Item -LiteralPath $partPath).Length
+        }
+    )
+    Set-Content -LiteralPath $partsManifestPath -Value $manifestLines -Encoding ASCII
+
+    return [pscustomobject]@{
+        PartsDir = $PartsDir
+        PartCount = $createdPartNames.Count
     }
 }
 
@@ -1019,6 +1045,7 @@ try {
     $releaseDir = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\runner\Release'
     $portableDir = Join-Path -Path $OutputRoot -ChildPath $PortableName
     $zipPath = Join-Path -Path $OutputRoot -ChildPath "$PortableName.zip"
+    $zipPartsDir = Join-Path -Path $OutputRoot -ChildPath "$PortableName-zip-parts"
     $exeName = "$binaryName.exe"
     $exePath = Join-Path -Path $releaseDir -ChildPath $exeName
     $expectedAppVersion = Get-WindowsAgentFlutterAppVersion -ProjectPath $ProjectPath
@@ -1027,13 +1054,19 @@ try {
     Stop-ProcessesUnderPath -Path $portableDir
     Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory before build'
     Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive before build'
+    Remove-OutputPath -Path $zipPartsDir -OutputRoot $OutputRoot -Purpose 'to remove the old split zip parts directory before build'
 
     Push-Location $ProjectPath
     try {
         Stop-WindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
         Assert-NoWindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath
-        Invoke-NativeCommand -Description 'Running flutter pub get...' -Command {
-            Invoke-FlutterCommand -FlutterCommand $flutterCommand -Arguments @('pub', 'get') -WorkingDirectory $ProjectPath
+        if (Test-FlutterPubGetRequired -ProjectPath $ProjectPath) {
+            Invoke-NativeCommand -Description 'Running flutter pub get...' -Command {
+                Invoke-FlutterCommand -FlutterCommand $flutterCommand -Arguments @('pub', 'get') -WorkingDirectory $ProjectPath
+            }
+            Save-FlutterPubGetStamp -ProjectPath $ProjectPath
+        } else {
+            Write-Host 'Skipping flutter pub get because pubspec inputs are unchanged.'
         }
         Write-Host "Portable backend URL: $BackendBaseUrl"
         Remove-WindowsAgentBuildArtifacts `
@@ -1104,12 +1137,6 @@ try {
         -Description 'Portable Flutter release engine DLL'
 
     Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
-    Install-SymmetricDsRuntime `
-        -Version $SymmetricDsVersion `
-        -DownloadUrl $SymmetricDsDownloadUrl `
-        -PortableDir $portableDir `
-        -CacheRoot (Join-Path -Path $FlutterCacheRoot -ChildPath 'symmetricds')
-
     New-PortableLauncher -Destination $portableDir -ExeName $exeName
     Copy-Item -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'update.ps1') -Destination (Join-Path -Path $portableDir -ChildPath 'update.ps1') -Force
     Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -FlutterVersionInfo $flutterVersionInfo
@@ -1118,6 +1145,12 @@ try {
     Write-Host "Creating zip archive..."
     Compress-Archive -LiteralPath $portableDir -DestinationPath $zipPath -Force
     Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime
+    Write-Host "Splitting zip archive into 10 parts..."
+    $zipPartsInfo = New-PortableZipParts `
+        -PortableDir $portableDir `
+        -BaseZipName $PortableName `
+        -PartsDir $zipPartsDir `
+        -PartCount 10
 
     $portableSize = Get-DirectorySize -Path $portableDir
     $zipSize = (Get-Item -LiteralPath $zipPath).Length
@@ -1126,9 +1159,11 @@ try {
     Write-Host 'Portable Windows build complete.'
     Write-Host "Folder: $portableDir"
     Write-Host "Zip:    $zipPath"
+    Write-Host "Parts:  $($zipPartsInfo.PartsDir)"
     Write-Host "EXE:    $(Join-Path -Path $portableDir -ChildPath $exeName)"
     Write-Host ("Folder size: {0:N1} MB" -f ($portableSize / 1MB))
     Write-Host ("Zip size:    {0:N1} MB" -f ($zipSize / 1MB))
+    Write-Host ("Zip parts:   {0} files" -f $zipPartsInfo.PartCount)
 }
 finally {
     Pop-Location

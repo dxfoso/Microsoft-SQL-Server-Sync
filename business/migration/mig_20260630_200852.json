@@ -1,0 +1,109 @@
+{
+  "name": "mig_20260630_200852",
+  "timestamp": "2026-06-30T20:08:52.079468900+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "clientUpdateTargetVersion",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "32",
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateLastAcknowledgedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateLastRequestId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateRequestedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateStatus",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "32",
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateMessage",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "4000",
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateRequestId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateRequestedByUserId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

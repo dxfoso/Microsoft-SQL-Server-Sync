@@ -204,6 +204,66 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Update All Clients", dashboard)
         self.assertIn("Update Client", dashboard)
 
+    def test_windows_client_production_build_uses_live_control_plane(self):
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        build_helpers = read_text("scripts/windows_agent_build.ps1")
+        publish_script = read_text("scripts/publish_windows_client_update.ps1")
+        build_script = read_text("build_portable.ps1")
+
+        self.assertIn(
+            "defaultValue: 'https://sync.velvet-leaf.com/call'",
+            client_api,
+        )
+        self.assertIn("'--dart-define', \"BACKEND_BASE_URL=$BackendBaseUrl\"", build_helpers)
+        self.assertIn(
+            "[string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call'",
+            publish_script,
+        )
+        self.assertIn(
+            "[string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call'",
+            build_script,
+        )
+        self.assertNotIn(
+            "defaultValue: 'http://127.0.0.1:6006/call'",
+            client_api,
+        )
+
+    def test_windows_client_build_clears_stale_flutter_aot_cache(self):
+        build_helpers = read_text("scripts/windows_agent_build.ps1")
+
+        self.assertIn(
+            "(Join-Path -Path $ProjectPath -ChildPath '.dart_tool\\flutter_build')",
+            build_helpers,
+        )
+        cleanup_function = build_helpers.split(
+            "function Remove-WindowsAgentBuildArtifacts {", 1
+        )[1].split("function Initialize-WindowsAgentBuildEnvironment {", 1)[0]
+        self.assertIn(".dart_tool\\flutter_build", cleanup_function)
+        self.assertIn("Remove-WindowsAgentBuildPath -Path $path", cleanup_function)
+        self.assertIn("Restore-WindowsAgentAotLibrary", build_helpers)
+
+    def test_auto_sync_interval_is_web_owned_not_heartbeat_owned(self):
+        control_plane = read_text("business/control_plane.tru")
+        heartbeat_body = control_plane.split("function agents_heartbeat(", 1)[1].split(
+            "function agent_sync_settings_get(", 1
+        )[0]
+        settings_post_body = control_plane.split(
+            "function agent_sync_settings_post(", 1
+        )[1].split("function agent_jobs(", 1)[0]
+
+        self.assertIn(
+            "autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes)",
+            heartbeat_body,
+        )
+        self.assertNotIn(
+            "autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes)",
+            heartbeat_body,
+        )
+        self.assertIn(
+            "autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes)",
+            settings_post_body,
+        )
+
     def test_repo_uses_run_ps1_as_single_local_launcher(self):
         build_helpers = read_text("scripts/windows_agent_build.ps1")
 

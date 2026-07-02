@@ -13,29 +13,6 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
-syncEngine:
-  mode: symmetricDs
-
-symmetricds:
-  enabled: true
-  image: docker.io/jumpmind/symmetricds:3.16.10
-  initImage: docker.io/library/busybox:1.36.1
-  engineName: server
-  groupId: server
-  externalId: central
-  service:
-    port: 31415
-  persistence:
-    size: 2Gi
-    storageClassName: ""
-  resources:
-    requests:
-      cpu: 300m
-      memory: 512Mi
-    limits:
-      cpu: "1500m"
-      memory: 2Gi
-
 certManager:
   enabled: true
   createClusterIssuer: false

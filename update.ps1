@@ -35,7 +35,7 @@ function Resolve-UpdateUrl {
     )
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'Update manifest is missing the zipUrl value.'
+        throw 'Update manifest is missing the required URL value.'
     }
 
     $uri = [System.Uri]::new($Value, [System.UriKind]::RelativeOrAbsolute)
@@ -197,30 +197,36 @@ function Select-UpdateWorkParent {
 }
 
 function Get-AgentProcesses {
-    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [switch] $AllInstances
+    )
+
+    $allProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) })
+    if ($AllInstances) {
+        return $allProcesses
+    }
 
     $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
     $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
 
-    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {
-            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
-                return $false
-            }
-            $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
-            return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-        })
+    return @($allProcesses | Where-Object {
+        $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+        return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    })
 }
 
 function Stop-AgentProcesses {
     param(
         [Parameter(Mandatory = $true)][string] $TargetInstallDir,
-        [int] $MaxWaitSeconds = 30
+        [int] $MaxWaitSeconds = 30,
+        [switch] $AllInstances
     )
 
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MaxWaitSeconds))
     do {
-        $agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+        $agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir -AllInstances:$AllInstances)
         if (@($agentProcesses).Count -eq 0) {
             return
         }
@@ -231,9 +237,37 @@ function Stop-AgentProcesses {
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
 
-    $remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+    $remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir -AllInstances:$AllInstances)
     if (@($remaining).Count -gt 0) {
+        if ($AllInstances) {
+            throw 'Timed out waiting for all sync_windows_agent.exe processes to exit.'
+        }
         throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
+    }
+}
+
+function Start-UpdatedClient {
+    param(
+        [Parameter(Mandatory = $true)][string] $ExecutablePath,
+        [Parameter(Mandatory = $true)][string] $InstallDir,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+
+    Write-UpdateLog -Message "Starting updated client executable: $ExecutablePath" -LogPath $LogPath
+    try {
+        $process = Start-Process -FilePath $ExecutablePath -WorkingDirectory $InstallDir -WindowStyle Normal -PassThru -ErrorAction Stop
+        Write-UpdateLog -Message "Started updated client process pid=$($process.Id)." -LogPath $LogPath
+        Start-Sleep -Seconds 3
+        $startedProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
+        if ($null -eq $startedProcess) {
+            Write-UpdateLog -Message "Updated client process pid=$($process.Id) exited within 3 seconds after relaunch." -LogPath $LogPath
+            return
+        }
+        Write-UpdateLog -Message "Updated client process pid=$($process.Id) is still running after relaunch check." -LogPath $LogPath
+    }
+    catch {
+        Write-UpdateLog -Message "Failed to start updated client executable: $($_.Exception.Message)" -LogPath $LogPath
+        throw
     }
 }
 
@@ -248,12 +282,107 @@ function Get-SingleChildDirectory {
     return $Path
 }
 
+function ConvertTo-InstallRelativePath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $normalized = $Path.Replace('\', '/').Trim()
+    $normalized = $normalized.TrimStart('/')
+    while ($normalized.Contains('//')) {
+        $normalized = $normalized.Replace('//', '/')
+    }
+
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        throw 'Manifest contains an empty relative path.'
+    }
+
+    foreach ($segment in $normalized.Split('/')) {
+        if ([string]::IsNullOrWhiteSpace($segment) -or $segment -eq '.' -or $segment -eq '..') {
+            throw "Manifest contains an invalid relative path: $Path"
+        }
+    }
+
+    return $normalized
+}
+
+function Resolve-InstallPath {
+    param(
+        [Parameter(Mandatory = $true)][string] $RootDir,
+        [Parameter(Mandatory = $true)][string] $RelativePath
+    )
+
+    $safeRelativePath = ConvertTo-InstallRelativePath -Path $RelativePath
+    $combinedPath = Join-Path -Path $RootDir -ChildPath ($safeRelativePath -replace '/', '\')
+    $rootFullPath = [System.IO.Path]::GetFullPath($RootDir).TrimEnd('\', '/')
+    $targetFullPath = [System.IO.Path]::GetFullPath($combinedPath)
+    $rootPrefix = $rootFullPath + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $targetFullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Resolved path escaped install root: $RelativePath"
+    }
+
+    return $targetFullPath
+}
+
+function Get-PortableManifestManagedPaths {
+    param([Parameter(Mandatory = $true)][string] $ManifestPath)
+
+    $managedPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+        return $managedPaths
+    }
+
+    foreach ($line in Get-Content -LiteralPath $ManifestPath -ErrorAction Stop) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+        if ($line -match '^[A-Fa-f0-9]{64}\s+(.+)$') {
+            [void] $managedPaths.Add((ConvertTo-InstallRelativePath -Path $matches[1]))
+        }
+    }
+
+    return $managedPaths
+}
+
+function Test-InstalledFileMatchesManifest {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][int64] $ExpectedSizeBytes,
+        [Parameter(Mandatory = $true)][string] $ExpectedSha256
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+
+    $fileInfo = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if ($ExpectedSizeBytes -ge 0 -and $fileInfo.Length -ne $ExpectedSizeBytes) {
+        return $false
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+        return $true
+    }
+
+    $actualHash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    return $actualHash.Equals($ExpectedSha256.ToLowerInvariant(), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Save-UpdateDeleteList {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)] $RelativePaths
+    )
+
+    $lines = @($RelativePaths | Sort-Object -Unique)
+    Set-Content -LiteralPath $Path -Value $lines -Encoding ASCII
+}
+
 function Start-DeferredInstall {
     param(
         [Parameter(Mandatory = $true)][string] $PayloadDir,
         [Parameter(Mandatory = $true)][string] $TargetInstallDir,
         [Parameter(Mandatory = $true)][string] $WorkRoot,
         [Parameter(Mandatory = $true)][int] $ParentProcessId,
+        [string] $DeleteListPath = '',
         [string] $Version = '',
         [switch] $NoStart
     )
@@ -265,6 +394,7 @@ param(
     [Parameter(Mandatory = $true)][string] $InstallDir,
     [Parameter(Mandatory = $true)][string] $WorkRoot,
     [Parameter(Mandatory = $true)][int] $ParentProcessId,
+    [string] $DeleteListPath = '',
     [string] $Version = '',
     [switch] $NoStart
 )
@@ -273,30 +403,36 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 function Get-AgentProcesses {
-    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [switch] $AllInstances
+    )
+
+    $allProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) })
+    if ($AllInstances) {
+        return $allProcesses
+    }
 
     $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
     $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
 
-    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {
-            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
-                return $false
-            }
-            $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
-            return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-        })
+    return @($allProcesses | Where-Object {
+        $exePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+        return $exePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    })
 }
 
 function Stop-AgentProcesses {
     param(
         [Parameter(Mandatory = $true)][string] $TargetInstallDir,
-        [int] $MaxWaitSeconds = 30
+        [int] $MaxWaitSeconds = 30,
+        [switch] $AllInstances
     )
 
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MaxWaitSeconds))
     do {
-        $agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+        $agentProcesses = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir -AllInstances:$AllInstances)
         if (@($agentProcesses).Count -eq 0) {
             return
         }
@@ -307,9 +443,37 @@ function Stop-AgentProcesses {
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
 
-    $remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir)
+    $remaining = @(Get-AgentProcesses -TargetInstallDir $TargetInstallDir -AllInstances:$AllInstances)
     if (@($remaining).Count -gt 0) {
+        if ($AllInstances) {
+            throw 'Timed out waiting for all sync_windows_agent.exe processes to exit.'
+        }
         throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
+    }
+}
+
+function Start-UpdatedClient {
+    param(
+        [Parameter(Mandatory = $true)][string] $ExecutablePath,
+        [Parameter(Mandatory = $true)][string] $InstallDir,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+
+    Write-UpdateLog -Message "Starting updated client executable: $ExecutablePath" -LogPath $LogPath
+    try {
+        $process = Start-Process -FilePath $ExecutablePath -WorkingDirectory $InstallDir -WindowStyle Normal -PassThru -ErrorAction Stop
+        Write-UpdateLog -Message "Started updated client process pid=$($process.Id)." -LogPath $LogPath
+        Start-Sleep -Seconds 3
+        $startedProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
+        if ($null -eq $startedProcess) {
+            Write-UpdateLog -Message "Updated client process pid=$($process.Id) exited within 3 seconds after relaunch." -LogPath $LogPath
+            return
+        }
+        Write-UpdateLog -Message "Updated client process pid=$($process.Id) is still running after relaunch check." -LogPath $LogPath
+    }
+    catch {
+        Write-UpdateLog -Message "Failed to start updated client executable: $($_.Exception.Message)" -LogPath $LogPath
+        throw
     }
 }
 
@@ -329,6 +493,75 @@ function Write-UpdateLog {
     Add-Content -LiteralPath $LogPath -Value $line -Encoding ASCII
 }
 
+function ConvertTo-InstallRelativePath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $normalized = $Path.Replace('\', '/').Trim()
+    $normalized = $normalized.TrimStart('/')
+    while ($normalized.Contains('//')) {
+        $normalized = $normalized.Replace('//', '/')
+    }
+
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        throw 'Manifest contains an empty relative path.'
+    }
+
+    foreach ($segment in $normalized.Split('/')) {
+        if ([string]::IsNullOrWhiteSpace($segment) -or $segment -eq '.' -or $segment -eq '..') {
+            throw "Manifest contains an invalid relative path: $Path"
+        }
+    }
+
+    return $normalized
+}
+
+function Resolve-InstallPath {
+    param(
+        [Parameter(Mandatory = $true)][string] $RootDir,
+        [Parameter(Mandatory = $true)][string] $RelativePath
+    )
+
+    $safeRelativePath = ConvertTo-InstallRelativePath -Path $RelativePath
+    $combinedPath = Join-Path -Path $RootDir -ChildPath ($safeRelativePath -replace '/', '\')
+    $rootFullPath = [System.IO.Path]::GetFullPath($RootDir).TrimEnd('\', '/')
+    $targetFullPath = [System.IO.Path]::GetFullPath($combinedPath)
+    $rootPrefix = $rootFullPath + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $targetFullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Resolved path escaped install root: $RelativePath"
+    }
+
+    return $targetFullPath
+}
+
+function Remove-EmptyParentDirectories {
+    param(
+        [Parameter(Mandatory = $true)][string] $StartPath,
+        [Parameter(Mandatory = $true)][string] $RootDir
+    )
+
+    $rootFullPath = [System.IO.Path]::GetFullPath($RootDir).TrimEnd('\', '/')
+    $currentPath = Split-Path -Path $StartPath -Parent
+    while (-not [string]::IsNullOrWhiteSpace($currentPath)) {
+        $currentFullPath = [System.IO.Path]::GetFullPath($currentPath).TrimEnd('\', '/')
+        if ($currentFullPath.Equals($rootFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+
+        if (-not (Test-Path -LiteralPath $currentFullPath -PathType Container)) {
+            $currentPath = Split-Path -Path $currentFullPath -Parent
+            continue
+        }
+
+        $children = @(Get-ChildItem -LiteralPath $currentFullPath -Force -ErrorAction SilentlyContinue)
+        if ($children.Count -gt 0) {
+            break
+        }
+
+        Remove-Item -LiteralPath $currentFullPath -Force -ErrorAction SilentlyContinue
+        $currentPath = Split-Path -Path $currentFullPath -Parent
+    }
+}
+
 $logPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
 Write-UpdateLog -Message "Finalize update helper started. payload=$PayloadDir install=$InstallDir parent=$ParentProcessId" -LogPath $logPath
 
@@ -341,8 +574,22 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
     Start-Sleep -Milliseconds 250
 }
 
-Write-UpdateLog -Message "Ensuring prior client instances are stopped before install." -LogPath $logPath
-Stop-AgentProcesses -TargetInstallDir $InstallDir
+Write-UpdateLog -Message "Ensuring all prior client instances are stopped before install." -LogPath $logPath
+Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
+
+if (-not [string]::IsNullOrWhiteSpace($DeleteListPath) -and (Test-Path -LiteralPath $DeleteListPath -PathType Leaf)) {
+    foreach ($relativePath in Get-Content -LiteralPath $DeleteListPath -ErrorAction Stop) {
+        if ([string]::IsNullOrWhiteSpace($relativePath)) {
+            continue
+        }
+        $targetPath = Resolve-InstallPath -RootDir $InstallDir -RelativePath $relativePath
+        if (Test-Path -LiteralPath $targetPath) {
+            Write-UpdateLog -Message "Removing stale managed file: $relativePath" -LogPath $logPath
+            Remove-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
+            Remove-EmptyParentDirectories -StartPath $targetPath -RootDir $InstallDir
+        }
+    }
+}
 
 New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
 Write-UpdateLog -Message "Copying payload into install dir." -LogPath $logPath
@@ -362,9 +609,8 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 if (-not $NoStart) {
     Write-UpdateLog -Message "Stopping any remaining client instances before relaunch." -LogPath $logPath
-    Stop-AgentProcesses -TargetInstallDir $InstallDir
-    Write-UpdateLog -Message "Starting updated client executable: $installedExe" -LogPath $logPath
-    Start-Process -FilePath $installedExe -WorkingDirectory $InstallDir
+    Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
+    Start-UpdatedClient -ExecutablePath $installedExe -InstallDir $InstallDir -LogPath $logPath
 } else {
     Write-UpdateLog -Message 'NoStart set. Skipping client relaunch.' -LogPath $logPath
 }
@@ -384,6 +630,9 @@ Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
         '-WorkRoot', $WorkRoot,
         '-ParentProcessId', $ParentProcessId
     )
+    if (-not [string]::IsNullOrWhiteSpace($DeleteListPath)) {
+        $startArgs += @('-DeleteListPath', $DeleteListPath)
+    }
     if (-not [string]::IsNullOrWhiteSpace($Version)) {
         $startArgs += @('-Version', $Version)
     }
@@ -402,12 +651,12 @@ $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $mainLogPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
 Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir noStart=$NoStart" -LogPath $mainLogPath
 $manifest = Invoke-UpdateRestMethod -Uri $ManifestUrl
-$zipValue = if (-not [string]::IsNullOrWhiteSpace([string] $manifest.latestZipUrl)) {
-    [string] $manifest.latestZipUrl
-} else {
-    [string] $manifest.zipUrl
+$filesManifestUrlValue = [string] $manifest.filesManifestUrl
+$filesManifestUrl = ''
+if (-not [string]::IsNullOrWhiteSpace($filesManifestUrlValue)) {
+    $filesManifestUrl = Resolve-UpdateUrl -BaseUrl $ManifestUrl -Value $filesManifestUrlValue
 }
-$zipUrl = Resolve-UpdateUrl -BaseUrl $ManifestUrl -Value $zipValue
+$zipUrl = Resolve-UpdateUrl -BaseUrl $ManifestUrl -Value ([string] $manifest.zipUrl)
 
 $requiredFreeBytes = 512MB
 try {
@@ -424,9 +673,88 @@ $workParent = Select-UpdateWorkParent -TargetInstallDir $InstallDir -RequiredByt
 $workRoot = Join-Path -Path $workParent -ChildPath ("sync-windows-agent-update-{0}" -f ([guid]::NewGuid().ToString('N')))
 $zipPath = Join-Path -Path $workRoot -ChildPath 'sync_windows_agent.zip'
 $extractDir = Join-Path -Path $workRoot -ChildPath 'extract'
+$payloadDir = Join-Path -Path $workRoot -ChildPath 'payload'
+$deleteListPath = Join-Path -Path $workRoot -ChildPath 'delete.txt'
 
 New-Item -Path $workRoot -ItemType Directory -Force | Out-Null
 try {
+    if (-not [string]::IsNullOrWhiteSpace($filesManifestUrl)) {
+        Write-UpdateLog -Message "Downloading file manifest: $filesManifestUrl" -LogPath $mainLogPath
+        $filesManifest = Invoke-UpdateRestMethod -Uri $filesManifestUrl
+        $fileEntries = @($filesManifest.files)
+        if ($fileEntries.Count -gt 0) {
+            $localManagedPaths = Get-PortableManifestManagedPaths -ManifestPath (Join-Path -Path $InstallDir -ChildPath 'portable-manifest.txt')
+            $remoteManagedPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $staleManagedPaths = [System.Collections.Generic.List[string]]::new()
+            $downloadCount = 0
+            $downloadBytes = [int64]0
+
+            New-Item -Path $payloadDir -ItemType Directory -Force | Out-Null
+
+            foreach ($fileEntry in $fileEntries) {
+                $relativePath = ConvertTo-InstallRelativePath -Path ([string] $fileEntry.path)
+                [void] $remoteManagedPaths.Add($relativePath)
+
+                $expectedHash = [string] $fileEntry.sha256
+                $expectedSizeBytes = -1
+                try {
+                    $expectedSizeBytes = [int64] $fileEntry.sizeBytes
+                }
+                catch {
+                    $expectedSizeBytes = -1
+                }
+
+                $targetPath = Resolve-InstallPath -RootDir $InstallDir -RelativePath $relativePath
+                if (Test-InstalledFileMatchesManifest -Path $targetPath -ExpectedSizeBytes $expectedSizeBytes -ExpectedSha256 $expectedHash) {
+                    continue
+                }
+
+                $fileUrl = Resolve-UpdateUrl -BaseUrl $filesManifestUrl -Value ([string] $fileEntry.url)
+                $stagedPath = Resolve-InstallPath -RootDir $payloadDir -RelativePath $relativePath
+                $stagedParent = Split-Path -Path $stagedPath -Parent
+                if (-not [string]::IsNullOrWhiteSpace($stagedParent)) {
+                    New-Item -Path $stagedParent -ItemType Directory -Force | Out-Null
+                }
+
+                Write-UpdateLog -Message "Downloading changed file: $relativePath" -LogPath $mainLogPath
+                Invoke-UpdateWebRequest -Uri $fileUrl -OutFile $stagedPath
+                if (-not (Test-InstalledFileMatchesManifest -Path $stagedPath -ExpectedSizeBytes $expectedSizeBytes -ExpectedSha256 $expectedHash)) {
+                    throw "Downloaded file verification failed: $relativePath"
+                }
+
+                $downloadCount += 1
+                if ($expectedSizeBytes -gt 0) {
+                    $downloadBytes += $expectedSizeBytes
+                }
+            }
+
+            foreach ($managedPath in $localManagedPaths) {
+                if (-not $remoteManagedPaths.Contains($managedPath)) {
+                    [void] $staleManagedPaths.Add($managedPath)
+                }
+            }
+
+            Save-UpdateDeleteList -Path $deleteListPath -RelativePaths $staleManagedPaths
+            if ($downloadCount -eq 0 -and $staleManagedPaths.Count -eq 0) {
+                Write-UpdateLog -Message "Client files already match target version $($manifest.version)." -LogPath $mainLogPath
+                return
+            }
+
+            Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
+            Write-UpdateLog -Message "Scheduling differential install. files=$downloadCount bytes=$downloadBytes deletes=$($staleManagedPaths.Count)" -LogPath $mainLogPath
+            Start-DeferredInstall `
+                -PayloadDir $payloadDir `
+                -TargetInstallDir $InstallDir `
+                -WorkRoot $workRoot `
+                -ParentProcessId $PID `
+                -DeleteListPath $deleteListPath `
+                -Version ([string] $manifest.version) `
+                -NoStart:$NoStart
+            Write-UpdateLog -Message "Differential updater scheduled for version $($manifest.version) in $InstallDir" -LogPath $mainLogPath
+            return
+        }
+    }
+
     Write-UpdateLog -Message "Downloading client package: $zipUrl" -LogPath $mainLogPath
     Invoke-UpdateWebRequest -Uri $zipUrl -OutFile $zipPath
 
@@ -448,13 +776,14 @@ try {
         throw "Downloaded package does not contain sync_windows_agent.exe at the expected path: $payloadExe"
     }
 
-    Stop-AgentProcesses -TargetInstallDir $InstallDir
+    Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
     Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath
     Start-DeferredInstall `
         -PayloadDir $payloadDir `
         -TargetInstallDir $InstallDir `
         -WorkRoot $workRoot `
         -ParentProcessId $PID `
+        -DeleteListPath $deleteListPath `
         -Version ([string] $manifest.version) `
         -NoStart:$NoStart
     Write-UpdateLog -Message "Updater scheduled for version $($manifest.version) in $InstallDir" -LogPath $mainLogPath

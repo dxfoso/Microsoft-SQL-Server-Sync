@@ -9,15 +9,17 @@ This app is installed on each Windows PC that hosts or can reach Microsoft SQL S
 - register the PC against the central website domain
 - configure the local SQL Server instance and database
 - choose which tables are allowed to participate in sync
-- run or monitor scheduled sync activity every 5 minutes
-- keep sync logic local to the PC instead of exposing SQL Server to the browser
+- upload and download snapshot-based sync jobs
+- view local sync activity and diagnostics
 
 ## Run
+
+```powershell
+..\run.ps1 -SkipGet
+```
+
+For direct app-only work:
 
 ```bash
 flutter run -d windows
 ```
-
-## Current State
-
-The project currently contains a responsive desktop UI prototype with mock sync status and event data. For real sync execution it must be connected to a backend API and a SQL access layer.

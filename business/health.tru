@@ -9,13 +9,3 @@ route GET /call/ready
 function ready(): map<json> {
   return { ok: true, generatedAt: date.now() };
 }
-
-route GET /call/api/health
-function api_health(): map<json> {
-  return { ok: true, generatedAt: date.now() };
-}
-
-route GET /call/api/ready
-function api_ready(): map<json> {
-  return { ok: true, generatedAt: date.now() };
-}

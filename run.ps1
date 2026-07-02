@@ -301,6 +301,39 @@ function Get-RepoBackendServerProcess {
     return $null
 }
 
+function Get-RepoBackendProcesses {
+    $backendRunPath = (Join-Path -Path $BackendPath -ChildPath 'run.ps1').Replace('/', '\').ToLowerInvariant()
+    $targetRoot = (Join-Path -Path $BackendPath -ChildPath 'server\target').Replace('/', '\').ToLowerInvariant()
+
+    return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            if ($null -eq $_ -or $_.ProcessId -eq $PID) {
+                return $false
+            }
+
+            if ($_.Name -ieq 'powershell.exe' -and -not [string]::IsNullOrWhiteSpace($_.CommandLine)) {
+                return $_.CommandLine.Replace('/', '\').ToLowerInvariant().Contains($backendRunPath)
+            }
+
+            if ($_.Name -ieq 'tru_server.exe' -and -not [string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
+                return $_.ExecutablePath.Replace('/', '\').ToLowerInvariant().StartsWith($targetRoot)
+            }
+
+            return $false
+        } |
+        Sort-Object ProcessId)
+}
+
+function Stop-RepoBackendProcesses {
+    foreach ($processInfo in (Get-RepoBackendProcesses)) {
+        if ($null -eq $processInfo.ProcessId -or $processInfo.ProcessId -le 0) {
+            continue
+        }
+        Write-Host "Stopping stale backend process $($processInfo.ProcessId) ($($processInfo.Name))..." -ForegroundColor Yellow
+        Stop-ProcessTree -RootProcessId $processInfo.ProcessId
+    }
+}
+
 function Wait-RepoBackendServerProcess {
     param([int]$TimeoutSeconds = 15)
 
@@ -377,7 +410,6 @@ function Test-DatabaseContainerReady {
 function Wait-BackendHealthy {
     param(
         [int]$Port,
-        [System.Diagnostics.Process]$Process = $null,
         [int]$TimeoutSeconds = 900
     )
 
@@ -391,9 +423,6 @@ function Wait-BackendHealthy {
                 return $true
             }
         } catch {
-            if ($null -ne $Process -and $Process.HasExited -and $null -eq (Get-RepoBackendServerProcess)) {
-                return $false
-            }
         }
 
         Start-Sleep -Milliseconds 1000
@@ -610,8 +639,9 @@ function Start-Stack {
     $script:clientUrl = "http://127.0.0.1:$backendPort/call"
 
     Stop-PortListeners -Port $backendPort
+    Stop-RepoBackendProcesses
     $script:backendProcess = Start-Backend
-    if (-not (Wait-BackendHealthy -Port $backendPort -Process $script:backendProcess)) {
+    if (-not (Wait-BackendHealthy -Port $backendPort)) {
         Stop-AppProcess -Process $script:backendProcess
         $script:backendProcess = $null
         throw "Backend did not become healthy on port $backendPort."
