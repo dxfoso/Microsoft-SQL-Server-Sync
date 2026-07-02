@@ -5531,12 +5531,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     try {
       for (final row in rows) {
         final shouldEnable = _hasSavedRowCountChange(row.state);
-        if (shouldEnable) {
-          changedCount += 1;
+        if (!shouldEnable) {
+          continue;
         }
+        changedCount += 1;
         await _controlPlaneClient.updateTableSyncPolicy(
           table: row.syncKey,
-          enabled: shouldEnable,
+          enabled: true,
           cascadeRelated: false,
         );
       }
@@ -5548,15 +5549,15 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
       for (final row in rows) {
         final shouldEnable = _hasSavedRowCountChange(row.state);
+        if (!shouldEnable) {
+          continue;
+        }
         nextTables[row.syncKey] = row.state.copyWith(
-          enabled: shouldEnable,
+          enabled: true,
           autoRequired: false,
-          status: shouldEnable ? 'Queued' : 'Paused',
-          progress: shouldEnable ? 0 : row.state.progress,
-          message:
-              shouldEnable
-                  ? 'Row counter changed. Waiting for snapshot sync.'
-                  : 'Counter unchanged. Sync disabled.',
+          status: 'Queued',
+          progress: 0,
+          message: 'Row counter changed. Waiting for snapshot sync.',
         );
       }
       _replaceSyncState(_syncState.copyWith(tables: nextTables));
@@ -5564,7 +5565,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Marked $changedCount changed table${changedCount == 1 ? '' : 's'} from row counters.',
+            'Added $changedCount changed table${changedCount == 1 ? '' : 's'} to the current sync selection.',
           ),
         ),
       );

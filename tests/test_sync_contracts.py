@@ -310,7 +310,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("class PeriodicSyncState", control_plane)
         self.assertNotIn("queue_due_periodic_sync_jobs_for_owner", heartbeat_body)
         self.assertIn("queue_due_periodic_sync_jobs_for_owner(ownerUserId);", control_plane)
-        self.assertIn("date.diff(date.now(), existing.lastCheckedAt, 'min')", control_plane)
+        self.assertIn("function safe_date_diff_minutes_since", control_plane)
+        self.assertIn(
+            "safe_date_diff_minutes_since(string.from(existing.lastCheckedAt ?? ''))",
+            control_plane,
+        )
         self.assertIn("return 1;", control_plane)
         self.assertIn("function periodic_sync_scheduler_agent_limit", control_plane)
         self.assertIn("function periodic_sync_scheduler_table_limit", control_plane)

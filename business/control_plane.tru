@@ -308,6 +308,18 @@ function agent_online_timeout_minutes(agent: map<json>): int {
   return 5;
 }
 
+function safe_date_diff_minutes_since(rawTimestamp: string? = null): int? {
+  const timestamp = string.from(rawTimestamp ?? '').trim();
+  if (timestamp.length == 0 || timestamp == '--') {
+    return null;
+  }
+  try {
+    return date.diff(date.now(), timestamp, 'min');
+  } catch (err) {
+    return null;
+  }
+}
+
 function effective_agent_online(agent: map<json>): bool {
   if (agent.isOnline != true || agent.serverConnected != true || agent.sqlConnected != true) {
     return false;
@@ -316,7 +328,8 @@ function effective_agent_online(agent: map<json>): bool {
   if (heartbeat.length == 0) {
     return false;
   }
-  return date.diff(date.now(), heartbeat, 'min') <= agent_online_timeout_minutes(agent);
+  const ageMinutes = safe_date_diff_minutes_since(heartbeat);
+  return ageMinutes != null && ageMinutes <= agent_online_timeout_minutes(agent);
 }
 
 function default_admin_username(): string {
@@ -1908,10 +1921,14 @@ function sync_table_state_due_for_interval(tableState: map<json>? = null, interv
     return true;
   }
   const lastSync = string.from(tableState.lastSync).trim();
-  if (lastSync.length == 0) {
+  if (lastSync.length == 0 || lastSync == '--') {
     return true;
   }
-  return date.diff(date.now(), lastSync, 'min') >= interval;
+  const elapsedMinutes = safe_date_diff_minutes_since(lastSync);
+  if (elapsedMinutes == null) {
+    return true;
+  }
+  return elapsedMinutes >= interval;
 }
 
 function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
@@ -2006,15 +2023,16 @@ function agent_recent_enough_for_periodic_sync(agent: map<json>): bool {
   if (lastHeartbeat.length == 0) {
     return false;
   }
-  return date.diff(date.now(), lastHeartbeat, 'min') <= periodic_sync_recent_agent_window_minutes();
+  const ageMinutes = safe_date_diff_minutes_since(lastHeartbeat);
+  return ageMinutes != null && ageMinutes <= periodic_sync_recent_agent_window_minutes();
 }
 
 function claim_periodic_sync_scheduler_for_owner(ownerUserId: string? = null): bool {
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
   const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
   if (existing != null) {
-    const elapsedMinutes = date.diff(date.now(), existing.lastCheckedAt, 'min');
-    if (elapsedMinutes < periodic_sync_scheduler_cooldown_minutes()) {
+    const elapsedMinutes = safe_date_diff_minutes_since(string.from(existing.lastCheckedAt ?? ''));
+    if (elapsedMinutes != null && elapsedMinutes < periodic_sync_scheduler_cooldown_minutes()) {
       return false;
     }
     db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
