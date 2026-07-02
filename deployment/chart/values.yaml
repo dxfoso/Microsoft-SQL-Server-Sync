@@ -70,6 +70,17 @@ backend:
       cpu: "2500m"
       memory: 8Gi
 
+autoScheduler:
+  enabled: true
+  schedule: "*/1 * * * *"
+  image: docker.io/library/python:3.12-alpine
+  secretName: sync-auto-scheduler
+  adminNameKey: ADMIN_NAME
+  adminPasswordKey: ADMIN_PASSWORD
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  backoffLimit: 0
+
 postgres:
   enabled: true
   image: docker.io/library/postgres:16-alpine

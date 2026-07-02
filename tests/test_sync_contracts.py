@@ -247,7 +247,7 @@ class SyncContractsTests(unittest.TestCase):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")
         heartbeat_body = control_plane.split("function agents_heartbeat(", 1)[1].split(
-            "function agent_sync_settings_get(", 1
+            "function auto_sync_tick(", 1
         )[0]
         settings_post_body = control_plane.split(
             "function agent_sync_settings_post(", 1
@@ -297,11 +297,28 @@ class SyncContractsTests(unittest.TestCase):
         control_plane = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         heartbeat_body = control_plane.split("function agents_heartbeat(", 1)[1].split(
-            "function agent_sync_settings_get(", 1
+            "function auto_sync_tick(", 1
         )[0]
+        scheduler_body = control_plane.split(
+            "function queue_due_periodic_sync_jobs_for_agent(", 1
+        )[1].split("function queue_due_periodic_sync_jobs_for_owner(", 1)[0]
 
         self.assertIn("function queue_due_periodic_sync_jobs_for_agent", control_plane)
-        self.assertIn("queue_due_periodic_sync_jobs_for_agent(nextAgent);", heartbeat_body)
+        self.assertIn("function queue_due_periodic_sync_jobs_for_owner", control_plane)
+        self.assertIn("function claim_periodic_sync_scheduler_for_owner", control_plane)
+        self.assertIn("function auto_sync_tick", control_plane)
+        self.assertIn("class PeriodicSyncState", control_plane)
+        self.assertNotIn("queue_due_periodic_sync_jobs_for_owner", heartbeat_body)
+        self.assertIn("queue_due_periodic_sync_jobs_for_owner(ownerUserId);", control_plane)
+        self.assertIn("date.diff(date.now(), existing.lastCheckedAt, 'min')", control_plane)
+        self.assertIn("return 1;", control_plane)
+        self.assertIn("function periodic_sync_scheduler_agent_limit", control_plane)
+        self.assertIn("function periodic_sync_scheduler_table_limit", control_plane)
+        self.assertIn("function agent_recent_enough_for_periodic_sync", control_plane)
+        self.assertIn("queuedTableCount >= periodic_sync_scheduler_table_limit()", control_plane)
+        self.assertNotIn("!effective_agent_online(agent)", scheduler_body)
+        self.assertIn("function json_payload_changed", control_plane)
+        self.assertIn("if (tablesChanged || relationshipsChanged)", heartbeat_body)
         self.assertIn("await _refreshSelectedTableFingerprints();", agent_page)
         self.assertNotIn("_prepareAutomaticSyncQueueIfDue", agent_page)
         self.assertNotIn("_queueEnabledRoleJobs", agent_page)

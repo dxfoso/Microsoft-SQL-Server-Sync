@@ -155,6 +155,12 @@ class DownloadSession {
   field chunks: array<json>
 }
 
+class PeriodicSyncState {
+  field ownerUserId: string min=0 max=64
+  field lastCheckedAt: datetime
+  field updatedAt: datetime
+}
+
 index User_id on User(id)
 index User_username on User(username)
 index User_email on User(email)
@@ -162,6 +168,7 @@ index Session_token on Session(token)
 index Session_createdAt on Session(createdAt)
 index Session_userId_createdAt on Session(userId, createdAt)
 index Agent_clientName on Agent(clientName)
+index Agent_ownerUserId on Agent(ownerUserId)
 index TableSyncPolicy_ownerUserId_table on TableSyncPolicy(ownerUserId, table)
 index TableSyncPolicy_ownerUserId_database_table on TableSyncPolicy(ownerUserId, database, table)
 index SyncJob_id on SyncJob(id)
@@ -174,6 +181,7 @@ index UploadSession_jobId on UploadSession(jobId)
 index UploadSession_uploadId on UploadSession(uploadId)
 index DownloadSession_jobId on DownloadSession(jobId)
 index DownloadSession_snapshotId on DownloadSession(snapshotId)
+index PeriodicSyncState_ownerUserId on PeriodicSyncState(ownerUserId)
 
 function now_iso(): datetime {
   return date.now();
@@ -805,6 +813,10 @@ function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: st
     return [selectedState].concat(result);
   }
   return result;
+}
+
+function json_payload_changed(previousPayload: json, nextPayload: json): bool {
+  return json.stringify(previousPayload) != json.stringify(nextPayload);
 }
 
 function bounded_agent_tables(tables: array<json>? = null, selectedTable: string? = null): array<json> {
@@ -1924,16 +1936,17 @@ function sync_peer_agents_for_agent(agent: map<json>): array<json> {
 }
 
 function queue_due_periodic_sync_jobs_for_agent(agent: map<json>): array<json> {
-  if (!effective_agent_online(agent)) {
-    return [];
-  }
   const peerAgents = sync_peer_agents_for_agent(agent);
   const dueTables = due_periodic_sync_tables_for_agent(agent);
   if (dueTables.length == 0) {
     return [];
   }
   let createdJobs = [];
+  let queuedTableCount = 0;
   for (const table of dueTables) {
+    if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
+      break;
+    }
     const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents);
     if (sourceClientName.length == 0) {
       continue;
@@ -1941,9 +1954,81 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>): array<json> {
     const clientJobs = create_sync_jobs_for_agent(agent, [table], sourceClientName);
     if (clientJobs.length > 0) {
       createdJobs = createdJobs.concat(clientJobs);
+      queuedTableCount += 1;
     }
   }
   return createdJobs;
+}
+
+function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null): array<json> {
+  let createdJobs = [];
+  let checkedAgentCount = 0;
+  for (const agent of list_agent_rows()) {
+    if (agent.ownerUserId != ownerUserId) {
+      continue;
+    }
+    if (!agent_recent_enough_for_periodic_sync(agent)) {
+      continue;
+    }
+    if (checkedAgentCount >= periodic_sync_scheduler_agent_limit()) {
+      break;
+    }
+    checkedAgentCount += 1;
+    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent);
+    if (agentJobs.length > 0) {
+      createdJobs = createdJobs.concat(agentJobs);
+    }
+  }
+  return createdJobs;
+}
+
+function periodic_sync_scheduler_agent_limit(): int {
+  return 4;
+}
+
+function periodic_sync_scheduler_table_limit(): int {
+  return 1;
+}
+
+function periodic_sync_recent_agent_window_minutes(): int {
+  return 180;
+}
+
+function periodic_sync_scheduler_cooldown_minutes(): int {
+  return 1;
+}
+
+function agent_recent_enough_for_periodic_sync(agent: map<json>): bool {
+  if (agent.lastHeartbeat == null) {
+    return false;
+  }
+  const lastHeartbeat = string.from(agent.lastHeartbeat).trim();
+  if (lastHeartbeat.length == 0) {
+    return false;
+  }
+  return date.diff(date.now(), lastHeartbeat, 'min') <= periodic_sync_recent_agent_window_minutes();
+}
+
+function claim_periodic_sync_scheduler_for_owner(ownerUserId: string? = null): bool {
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing != null) {
+    const elapsedMinutes = date.diff(date.now(), existing.lastCheckedAt, 'min');
+    if (elapsedMinutes < periodic_sync_scheduler_cooldown_minutes()) {
+      return false;
+    }
+    db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+      lastCheckedAt: now_iso(),
+      updatedAt: now_iso()
+    });
+    return true;
+  }
+  db.insert(PeriodicSyncState, {
+    ownerUserId: normalizedOwnerUserId,
+    lastCheckedAt: now_iso(),
+    updatedAt: now_iso()
+  });
+  return true;
 }
 
 function latest_completed_upload_row_count_for_source(clientName: string, table: string): int {
@@ -2477,25 +2562,48 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   }
   const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
   nextTables = bounded_heartbeat_tables(nextTables, selectedTable);
-  const updated = db.update(Agent, { clientName: resolvedClientName }, {
-    machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
-    server,
-    database,
-    replicationUseWindowsAuth,
-    replicationUser,
-    replicationPassword,
-    isOnline: true,
-    historyLimit: clamp_history_limit(historyLimit),
-    autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
-    serverConnected,
-    sqlConnected,
-    clientVersion: truncate_text(clientVersion.trim(), 32),
-    lastHeartbeat: now_iso(),
-    selectedTable,
-    tables: nextTables,
-    tableRelationships: nextTableRelationships,
-    updatedAt: now_iso()
-  });
+  const tablesChanged = json_payload_changed(agent.tables, nextTables);
+  const relationshipsChanged = json_payload_changed(agent.tableRelationships, nextTableRelationships);
+  let updated = null;
+  if (tablesChanged || relationshipsChanged) {
+    updated = db.update(Agent, { clientName: resolvedClientName }, {
+      machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
+      server,
+      database,
+      replicationUseWindowsAuth,
+      replicationUser,
+      replicationPassword,
+      isOnline: true,
+      historyLimit: clamp_history_limit(historyLimit),
+      autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
+      serverConnected,
+      sqlConnected,
+      clientVersion: truncate_text(clientVersion.trim(), 32),
+      lastHeartbeat: now_iso(),
+      selectedTable,
+      tables: nextTables,
+      tableRelationships: nextTableRelationships,
+      updatedAt: now_iso()
+    });
+  } else {
+    updated = db.update(Agent, { clientName: resolvedClientName }, {
+      machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
+      server,
+      database,
+      replicationUseWindowsAuth,
+      replicationUser,
+      replicationPassword,
+      isOnline: true,
+      historyLimit: clamp_history_limit(historyLimit),
+      autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
+      serverConnected,
+      sqlConnected,
+      clientVersion: truncate_text(clientVersion.trim(), 32),
+      lastHeartbeat: now_iso(),
+      selectedTable,
+      updatedAt: now_iso()
+    });
+  }
   let nextAgent = agent;
   if (updated != null) {
     nextAgent = updated;
@@ -2503,7 +2611,6 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   if (nextAgent == null) {
     return raw_json_error(500, 'agent heartbeat state unavailable');
   }
-  queue_due_periodic_sync_jobs_for_agent(nextAgent);
   return {
     ok: true,
     syncSettings: sync_settings_payload(nextAgent),
@@ -2512,6 +2619,51 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     jobs: active_jobs_for_client(resolvedClientName),
     diagnostics: agent_diagnostics_payload(nextAgent),
     clientUpdate: agent_client_update_payload(nextAgent)
+  };
+}
+
+function auto_sync_tick(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (is_client_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  let ownerIds = [];
+  if (is_owner_user(current)) {
+    ownerIds = ownerIds.concat([current.id]);
+  } else {
+    for (const agent of list_agent_rows()) {
+      if (!agent_recent_enough_for_periodic_sync(agent)) {
+        continue;
+      }
+      const ownerUserId = string.from(agent.ownerUserId ?? '').trim();
+      if (ownerUserId.length != 0) {
+        ownerIds = ownerIds.concat([ownerUserId]);
+      }
+    }
+    ownerIds = unique_string_values(ownerIds);
+  }
+
+  let createdJobs = [];
+  let checkedOwners = [];
+  for (const ownerUserId of ownerIds) {
+    if (!claim_periodic_sync_scheduler_for_owner(ownerUserId)) {
+      continue;
+    }
+    checkedOwners = checkedOwners.concat([ownerUserId]);
+    const ownerJobs = queue_due_periodic_sync_jobs_for_owner(ownerUserId);
+    if (ownerJobs.length > 0) {
+      createdJobs = createdJobs.concat(ownerJobs);
+    }
+  }
+  return {
+    ok: true,
+    checkedOwnerCount: checkedOwners.length,
+    createdJobCount: createdJobs.length,
+    jobs: createdJobs.map((job) => agent_job_payload(job))
   };
 }
 
