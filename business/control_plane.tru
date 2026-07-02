@@ -72,6 +72,7 @@ class TableSyncPolicy {
   field database: string? min=0 max=256
   field table: string min=1 max=256
   field enabled: bool
+  field syncMode: string min=1 max=32
   field updatedAt: datetime
   field updatedByClientName: string min=0 max=128
 }
@@ -712,6 +713,7 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
         database: storedDatabase,
         table: localTable,
         enabled,
+        syncMode: 'sync',
         updatedAt: now_iso(),
         updatedByClientName
       });
@@ -726,6 +728,7 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
         database: storedDatabase,
         table: localTable,
         enabled,
+        syncMode: 'sync',
         updatedAt: now_iso(),
         updatedByClientName
       });
@@ -739,6 +742,7 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
     database: storedDatabase,
     table: localTable,
     enabled,
+    syncMode: 'sync',
     updatedAt: now_iso(),
     updatedByClientName
   });

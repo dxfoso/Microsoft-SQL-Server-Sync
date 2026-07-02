@@ -144,7 +144,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "message: string.concat('Waiting for source snapshot upload for ', table, '.')",
             source,
         )
-        self.assertNotIn("field syncMode: string min=1 max=32", source)
+        self.assertIn("field syncMode: string min=1 max=32", source)
         self.assertNotIn("mergeRole", source)
         self.assertNotIn("publicationName", source)
         self.assertNotIn("direction: 'sync'", source)

@@ -107,7 +107,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function jobs_download_snapshot_manifest(", control_plane)
         self.assertNotIn("mergeRole", control_plane)
         self.assertNotIn("publicationName", control_plane)
-        self.assertNotIn("syncMode", control_plane)
+        self.assertIn("field syncMode: string min=1 max=32", control_plane)
         self.assertNotIn("direction: 'sync'", control_plane)
         self.assertNotIn("Queued SymmetricDS sync", control_plane)
 
@@ -304,6 +304,7 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("const existing = find_table_sync_policy(scope, table);", upsert_body)
         self.assertIn("table: string.from(existing.table).trim()", upsert_body)
+        self.assertIn("syncMode: 'sync'", upsert_body)
         self.assertNotIn("table: table.trim()", upsert_body)
 
     def test_server_owns_periodic_sync_job_creation(self):
