@@ -301,11 +301,17 @@ class SyncContractsTests(unittest.TestCase):
         upsert_body = control_plane.split("function upsert_table_sync_policy(", 1)[1].split(
             "function apply_table_sync_policies(", 1
         )[0]
+        lookup_body = control_plane.split("function table_sync_policy_for_table(", 1)[1].split(
+            "function find_table_sync_policy(", 1
+        )[0]
 
         self.assertIn("const existing = find_table_sync_policy(scope, table);", upsert_body)
         self.assertIn("table: string.from(existing.table).trim()", upsert_body)
         self.assertIn("syncMode: 'sync'", upsert_body)
         self.assertNotIn("table: table.trim()", upsert_body)
+        self.assertIn("const reference = sync_table_reference(table);", lookup_body)
+        self.assertIn("databaseName = referenceDatabase;", lookup_body)
+        self.assertIn("const localTable = string.from(reference.table).trim();", lookup_body)
 
     def test_server_owns_periodic_sync_job_creation(self):
         control_plane = read_text("business/control_plane.tru")

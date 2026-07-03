@@ -654,8 +654,13 @@ function expand_sync_job_tables_for_owner(ownerUserId: string? = null, tables: a
 
 function table_sync_policy_for_table(ownerUserId: string? = null, database: string = '', table: string): map<json>? {
   const scope = table_sync_policy_scope(ownerUserId);
-  const databaseName = database.trim();
-  const localTable = table.trim();
+  const reference = sync_table_reference(table);
+  let databaseName = database.trim();
+  const referenceDatabase = string.from(reference.database).trim();
+  if (referenceDatabase.length != 0) {
+    databaseName = referenceDatabase;
+  }
+  const localTable = string.from(reference.table).trim();
   if (localTable.length == 0) {
     return null;
   }
