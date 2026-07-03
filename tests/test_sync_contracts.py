@@ -283,17 +283,22 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("SET XACT_ABORT ON;", target_apply)
         self.assertIn("BEGIN TRANSACTION;", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
-        self.assertIn("sourceInsertBatchSize = 200", target_apply)
+        self.assertIn("targetMergeBatchSize = 100", target_apply)
+        self.assertIn("CREATE TABLE #source_rows", target_apply)
+        self.assertIn("DROP TABLE #source_rows;", target_apply)
         self.assertIn("_matchClauseForColumns(primaryKeyColumns, columns)", target_apply)
         self.assertNotIn("alternateUniqueKeys", target_apply)
         self.assertIn("COLLATE DATABASE_DEFAULT", agent_page)
+        query_template = target_apply.split("final query = '''", 1)[1].split(
+            "''';", 1
+        )[0]
         self.assertLess(
-            target_apply.index("BEGIN TRANSACTION;"),
-            target_apply.index("MERGE ${_quoteIdentifier(database)}"),
+            query_template.index("BEGIN TRANSACTION;"),
+            query_template.index("$mergeBatchSql"),
         )
         self.assertLess(
-            target_apply.index("MERGE ${_quoteIdentifier(database)}"),
-            target_apply.index("COMMIT TRANSACTION;"),
+            query_template.index("$mergeBatchSql"),
+            query_template.index("COMMIT TRANSACTION;"),
         )
 
     def test_table_policy_upsert_updates_existing_stored_key(self):

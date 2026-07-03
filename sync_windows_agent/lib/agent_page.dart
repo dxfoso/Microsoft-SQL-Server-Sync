@@ -3335,28 +3335,6 @@ END
               '${_quoteIdentifier(column.name)} ${column.sqlCastType} NULL',
         )
         .join(',\n    ');
-    const sourceInsertBatchSize = 200;
-    final sourceInsertStatements = <String>[];
-    for (
-      var offset = 0;
-      offset < rows.length;
-      offset += sourceInsertBatchSize
-    ) {
-      final sourceValueTuples = rows
-          .skip(offset)
-          .take(sourceInsertBatchSize)
-          .map(
-            (row) =>
-                '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
-          )
-          .join(',\n      ');
-      sourceInsertStatements.add('''
-INSERT INTO #source_rows ($sourceColumnList)
-VALUES
-    $sourceValueTuples;
-''');
-    }
-    final sourceInsertSql = sourceInsertStatements.join('\n');
     final updateClause =
         updatableColumns.isEmpty
             ? ''
@@ -3378,16 +3356,24 @@ WHEN MATCHED THEN
             : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
     final triggerTarget =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
-    final query = '''
-SET NOCOUNT ON;
-SET XACT_ABORT ON;
-BEGIN TRANSACTION;
+    const targetMergeBatchSize = 100;
+    final mergeBatchStatements = <String>[];
+    for (var offset = 0; offset < rows.length; offset += targetMergeBatchSize) {
+      final sourceValueTuples = rows
+          .skip(offset)
+          .take(targetMergeBatchSize)
+          .map(
+            (row) =>
+                '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
+          )
+          .join(',\n      ');
+      mergeBatchStatements.add('''
 CREATE TABLE #source_rows (
   $sourceTempColumnDefinitions
 );
-$sourceInsertSql
-ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
-$identityInsertOn
+INSERT INTO #source_rows ($sourceColumnList)
+VALUES
+    $sourceValueTuples;
 MERGE ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} AS target
 USING #source_rows AS source
 ON $joinClause
@@ -3395,6 +3381,17 @@ $updateClause
 WHEN NOT MATCHED BY TARGET THEN
   INSERT ($insertColumnList)
   VALUES ($insertValueList);
+DROP TABLE #source_rows;
+''');
+    }
+    final mergeBatchSql = mergeBatchStatements.join('\n');
+    final query = '''
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
+$identityInsertOn
+$mergeBatchSql
 $identityInsertOff
 ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
 COMMIT TRANSACTION;
