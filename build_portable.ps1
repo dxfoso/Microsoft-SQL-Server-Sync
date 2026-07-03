@@ -105,6 +105,23 @@ function Invoke-NativeCommand {
     }
 }
 
+function Assert-LiveBackendBaseUrl {
+    param([Parameter(Mandatory = $true)][string] $BackendBaseUrl)
+
+    $normalized = $BackendBaseUrl.Trim()
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        throw 'BackendBaseUrl cannot be empty for a portable client build.'
+    }
+    if ($normalized -match '^https?://(localhost|127\.0\.0\.1|\[::1\])(?::|/|$)' -or
+        $normalized -match '^https?://0\.0\.0\.0(?::|/|$)' -or
+        $normalized -match ':6006(/|$)') {
+        throw "Refusing to build a portable client against a local backend URL: $BackendBaseUrl. Portable builds must target https://sync.velvet-leaf.com/call."
+    }
+    if ($normalized -ne 'https://sync.velvet-leaf.com/call') {
+        throw "Unexpected portable backend URL: $BackendBaseUrl. Portable builds must target https://sync.velvet-leaf.com/call."
+    }
+}
+
 function Get-FileContentSha256 {
     param([Parameter(Mandatory = $true)][string] $Path)
 
@@ -716,6 +733,7 @@ function Write-PortableManifest {
         [Parameter(Mandatory = $true)][string] $PortableDir,
         [Parameter(Mandatory = $true)][string] $ZipPath,
         [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $BackendBaseUrl,
         [Parameter(Mandatory = $true)] $FlutterVersionInfo
     )
 
@@ -732,6 +750,7 @@ function Write-PortableManifest {
         "BuiltAtUtc: $([DateTime]::UtcNow.ToString('o'))",
         "PortableDir: $PortableDir",
         "ZipPath: $ZipPath",
+        "BackendBaseUrl: $BackendBaseUrl",
         "SourceCommit: $(Get-WindowsAgentGitCommitHash -RepoRoot $RepoRoot)",
         "FlutterVersion: $($FlutterVersionInfo.Version)",
         ''
@@ -1058,6 +1077,7 @@ try {
     $flutterCommand = $flutterToolchain.Command
     $flutterVersionInfo = $flutterToolchain.VersionInfo
     Initialize-WindowsAgentBuildEnvironment
+    Assert-LiveBackendBaseUrl -BackendBaseUrl $BackendBaseUrl
 
     if (-not (Test-Path -LiteralPath (Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml') -PathType Leaf)) {
         throw "Could not find Flutter pubspec.yaml in project path: $ProjectPath"
@@ -1165,7 +1185,7 @@ try {
     Copy-VCRuntimeDlls -Destination $portableDir -ProjectPath $ProjectPath
     New-PortableLauncher -Destination $portableDir -ExeName $exeName
     Copy-Item -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'update.ps1') -Destination (Join-Path -Path $portableDir -ChildPath 'update.ps1') -Force
-    Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -FlutterVersionInfo $flutterVersionInfo
+    Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -BackendBaseUrl $BackendBaseUrl -FlutterVersionInfo $flutterVersionInfo
     Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime
 
     Write-Host "Creating zip archive..."

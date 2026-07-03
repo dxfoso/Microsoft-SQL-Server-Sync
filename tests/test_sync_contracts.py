@@ -223,6 +223,9 @@ class SyncContractsTests(unittest.TestCase):
             "[string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call'",
             build_script,
         )
+        self.assertIn("function Assert-LiveBackendBaseUrl", build_script)
+        self.assertIn("Portable builds must target https://sync.velvet-leaf.com/call", build_script)
+        self.assertIn("BackendBaseUrl: $BackendBaseUrl", build_script)
         self.assertNotIn(
             "defaultValue: 'http://127.0.0.1:6006/call'",
             client_api,
