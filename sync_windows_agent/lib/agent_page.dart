@@ -3368,9 +3368,7 @@ WHEN MATCHED THEN
           )
           .join(',\n      ');
       mergeBatchStatements.add('''
-CREATE TABLE #source_rows (
-  $sourceTempColumnDefinitions
-);
+DELETE FROM #source_rows;
 INSERT INTO #source_rows ($sourceColumnList)
 VALUES
     $sourceValueTuples;
@@ -3381,7 +3379,6 @@ $updateClause
 WHEN NOT MATCHED BY TARGET THEN
   INSERT ($insertColumnList)
   VALUES ($insertValueList);
-DROP TABLE #source_rows;
 ''');
     }
     final mergeBatchSql = mergeBatchStatements.join('\n');
@@ -3389,11 +3386,15 @@ DROP TABLE #source_rows;
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
+CREATE TABLE #source_rows (
+  $sourceTempColumnDefinitions
+);
 ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
 $identityInsertOn
 $mergeBatchSql
 $identityInsertOff
 ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
+DROP TABLE #source_rows;
 COMMIT TRANSACTION;
 ''';
     final processResult = await _runSqlCmd(
