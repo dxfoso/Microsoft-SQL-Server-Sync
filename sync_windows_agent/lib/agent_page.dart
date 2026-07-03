@@ -2497,7 +2497,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         )
         .toList(growable: false);
 
-    final changeTracking = await _queryChangeTrackingDiagnostics();
+    final changeTracking = _compactChangeTrackingDiagnosticsForUpload(
+      await _queryChangeTrackingDiagnostics(),
+    );
 
     return jsonEncode({
       'capturedAt': DateTime.now().toIso8601String(),
@@ -2541,6 +2543,71 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'tableSummaries': tableSummaries,
       'startupLogTail': _readStartupLogTail(),
     });
+  }
+
+  Map<String, dynamic> _compactChangeTrackingDiagnosticsForUpload(
+    Map<String, dynamic> diagnostics,
+  ) {
+    final compact = Map<String, dynamic>.from(diagnostics);
+    final databases = compact['databases'];
+    if (databases is! List) {
+      return compact;
+    }
+
+    compact['databases'] = databases
+        .whereType<Map>()
+        .map((database) {
+          final nextDatabase = Map<String, dynamic>.from(database);
+          final automaticEnable = nextDatabase['automaticEnable'];
+          if (automaticEnable is Map) {
+            nextDatabase['automaticEnable'] =
+                _compactAutomaticChangeTrackingEnable(automaticEnable);
+          }
+          return nextDatabase;
+        })
+        .toList(growable: false);
+
+    final automaticEnable = compact['automaticEnable'];
+    if (automaticEnable is Map) {
+      compact['automaticEnable'] = _compactAutomaticChangeTrackingEnable(
+        automaticEnable,
+      );
+    }
+    return compact;
+  }
+
+  Map<String, dynamic> _compactAutomaticChangeTrackingEnable(
+    Map<dynamic, dynamic> automaticEnable,
+  ) {
+    final compact = Map<String, dynamic>.from(automaticEnable);
+    final statuses = compact['tableStatuses'];
+    if (statuses is! List) {
+      return compact;
+    }
+
+    final statusCounts = <String, int>{};
+    final sampleNonEnabled = <Map<String, dynamic>>[];
+    for (final item in statuses) {
+      if (item is! Map) {
+        continue;
+      }
+      final status = (item['status'] as String? ?? 'unknown').trim();
+      statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+      if (status != 'enabled' && sampleNonEnabled.length < 12) {
+        sampleNonEnabled.add({
+          'table': item['table'],
+          'syncKey': item['syncKey'],
+          'status': status,
+          'message': item['message'],
+        });
+      }
+    }
+
+    compact['tableStatusCounts'] = statusCounts;
+    compact['sampleNonEnabledTables'] = sampleNonEnabled;
+    compact['tableStatusTotal'] = statuses.length;
+    compact.remove('tableStatuses');
+    return compact;
   }
 
   String _readStartupLogTail() {
