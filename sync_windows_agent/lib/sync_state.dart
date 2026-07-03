@@ -60,6 +60,8 @@ class SyncTableState {
     required this.rowCount,
     required this.savedRowCount,
     required this.tableChecksum,
+    required this.changeTrackingStatus,
+    required this.changeTrackingMessage,
     required this.message,
     required this.history,
   });
@@ -72,6 +74,8 @@ class SyncTableState {
   final int rowCount;
   final int? savedRowCount;
   final String tableChecksum;
+  final String changeTrackingStatus;
+  final String changeTrackingMessage;
   final String message;
   final List<SyncHistoryEntry> history;
 
@@ -91,6 +95,9 @@ class SyncTableState {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       savedRowCount: (json['savedRowCount'] as num?)?.round(),
       tableChecksum: json['tableChecksum'] as String? ?? '',
+      changeTrackingStatus:
+          json['changeTrackingStatus'] as String? ?? 'unknown',
+      changeTrackingMessage: json['changeTrackingMessage'] as String? ?? '',
       message: json['message'] as String? ?? '',
       history: history,
     );
@@ -105,6 +112,8 @@ class SyncTableState {
     'rowCount': rowCount,
     'savedRowCount': savedRowCount,
     'tableChecksum': tableChecksum,
+    'changeTrackingStatus': changeTrackingStatus,
+    'changeTrackingMessage': changeTrackingMessage,
     'message': message,
     'history': history.map((entry) => entry.toJson()).toList(growable: false),
   };
@@ -118,6 +127,8 @@ class SyncTableState {
     int? rowCount,
     Object? savedRowCount = _syncTableStateUnset,
     String? tableChecksum,
+    String? changeTrackingStatus,
+    String? changeTrackingMessage,
     String? message,
     List<SyncHistoryEntry>? history,
   }) {
@@ -133,6 +144,9 @@ class SyncTableState {
               ? this.savedRowCount
               : savedRowCount as int?,
       tableChecksum: tableChecksum ?? this.tableChecksum,
+      changeTrackingStatus: changeTrackingStatus ?? this.changeTrackingStatus,
+      changeTrackingMessage:
+          changeTrackingMessage ?? this.changeTrackingMessage,
       message: message ?? this.message,
       history: history ?? this.history,
     );

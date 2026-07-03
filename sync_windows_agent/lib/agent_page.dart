@@ -594,6 +594,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rowCount: 0,
       savedRowCount: null,
       tableChecksum: '',
+      changeTrackingStatus: 'unknown',
+      changeTrackingMessage: '',
       message: 'Remote sync disabled.',
       history: const [],
     );
@@ -934,6 +936,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     unawaited(_syncWithControlPlane());
+    unawaited(_queryChangeTrackingDiagnostics());
   }
 
   Future<void> _selectDatabase(String database) async {
@@ -2455,6 +2458,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             'progress': entry.value.progress,
             'rowCount': entry.value.rowCount,
             'tableChecksum': entry.value.tableChecksum,
+            'changeTrackingStatus': entry.value.changeTrackingStatus,
+            'changeTrackingMessage': entry.value.changeTrackingMessage,
             'message': entry.value.message,
           },
         )
@@ -2485,6 +2490,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             'progress': entry.value.progress,
             'rowCount': entry.value.rowCount,
             'tableChecksum': entry.value.tableChecksum,
+            'changeTrackingStatus': entry.value.changeTrackingStatus,
+            'changeTrackingMessage': entry.value.changeTrackingMessage,
             'message': entry.value.message,
           },
         )
@@ -3703,12 +3710,11 @@ FROM ${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)};
   }
 
   Future<Map<String, dynamic>> _queryChangeTrackingDiagnostics() async {
+    final syncTablesByDatabase = _syncTablesByDatabase();
     final databasesToCheck = <String>{
       if ((_selectedDatabase?.trim() ?? '').isNotEmpty)
         _selectedDatabase!.trim(),
-      for (final table in _syncState.tables.keys)
-        if (_databaseNameFromSyncKey(table).trim().isNotEmpty)
-          _databaseNameFromSyncKey(table).trim(),
+      ...syncTablesByDatabase.keys,
     }.take(10).toList(growable: false);
 
     if (databasesToCheck.isEmpty) {
@@ -3722,10 +3728,16 @@ FROM ${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)};
 
     final databaseResults = <Map<String, dynamic>>[];
     for (final database in databasesToCheck) {
-      databaseResults.add(
-        await _queryChangeTrackingDiagnosticsForDatabase(database),
+      final ensureResult = await _ensureChangeTrackingEnabledForDatabase(
+        database: database,
+        tables: syncTablesByDatabase[database] ?? const <String>[],
       );
+      final diagnostics = await _queryChangeTrackingDiagnosticsForDatabase(
+        database,
+      );
+      databaseResults.add({...diagnostics, 'automaticEnable': ensureResult});
     }
+    _applyChangeTrackingDiagnosticsToState(databaseResults);
 
     final selectedDatabase =
         (_selectedDatabase?.trim() ?? '').isEmpty
@@ -3747,6 +3759,252 @@ FROM ${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)};
         (item) => item['offlineChangesCanBeDetected'] == true,
       ),
     };
+  }
+
+  Map<String, List<String>> _syncTablesByDatabase() {
+    final tablesByDatabase = <String, Set<String>>{};
+    for (final syncKey in _syncState.tables.keys) {
+      final database = _databaseNameFromSyncKey(syncKey).trim();
+      final table = _localTableName(syncKey).trim();
+      if (database.isEmpty || table.isEmpty || _isSystemDatabase(database)) {
+        continue;
+      }
+      tablesByDatabase.putIfAbsent(database, () => <String>{}).add(table);
+    }
+    return tablesByDatabase.map(
+      (database, tables) => MapEntry(database, tables.toList(growable: false)),
+    );
+  }
+
+  Future<Map<String, dynamic>> _ensureChangeTrackingEnabledForDatabase({
+    required String database,
+    required List<String> tables,
+  }) async {
+    final trimmedDatabase = database.trim();
+    if (trimmedDatabase.isEmpty) {
+      return {
+        'attempted': false,
+        'databaseEnabled': false,
+        'tableStatuses': const <Map<String, dynamic>>[],
+        'message': 'Database name is empty.',
+      };
+    }
+    if (_isSystemDatabase(trimmedDatabase)) {
+      return {
+        'attempted': false,
+        'databaseStatus': 'skipped',
+        'databaseEnabled': false,
+        'tableStatuses': const <Map<String, dynamic>>[],
+        'message': 'System databases are not modified automatically.',
+      };
+    }
+
+    final databaseQuery = '''
+SET NOCOUNT ON;
+IF DB_ID(N'${_escapeSqlLiteral(trimmedDatabase)}') IS NULL
+BEGIN
+  SELECT N'database', N'missing', N'Database not found.';
+END
+ELSE IF NOT EXISTS (
+  SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID(N'${_escapeSqlLiteral(trimmedDatabase)}')
+)
+BEGIN
+  ALTER DATABASE ${_quoteIdentifier(trimmedDatabase)}
+    SET CHANGE_TRACKING = ON
+    (CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON);
+  SELECT N'database', N'enabled', N'Change Tracking enabled automatically.';
+END
+ELSE
+BEGIN
+  SELECT N'database', N'already_enabled', N'Change Tracking was already enabled.';
+END
+''';
+    final databaseResult = await _runSqlCmd(
+      profile: _activeProfile(),
+      database: 'master',
+      query: databaseQuery,
+    );
+    var databaseStatus = 'unknown';
+    var databaseMessage = '';
+    if (databaseResult == null) {
+      databaseStatus = 'failed';
+      databaseMessage = _sqlCmdUnavailableMessage(_activeProfile());
+    } else if (databaseResult.exitCode != 0) {
+      databaseStatus = 'failed';
+      databaseMessage = _sqlCmdFailed(
+        'enable database change tracking',
+        databaseResult,
+      );
+    } else {
+      for (final line in databaseResult.stdout.toString().split(
+        RegExp(r'\r?\n'),
+      )) {
+        final trimmed = line.trim();
+        if (_isSkippableOutputLine(trimmed)) {
+          continue;
+        }
+        final values = _splitRowValues(trimmed);
+        if (values.length >= 3 && values.first == 'database') {
+          databaseStatus = values[1];
+          databaseMessage = values[2];
+          break;
+        }
+      }
+    }
+
+    final tableStatuses = <Map<String, dynamic>>[];
+    if (databaseStatus == 'failed' || databaseStatus == 'missing') {
+      for (final table in tables.take(600)) {
+        tableStatuses.add({
+          'table': table,
+          'syncKey':
+              '$trimmedDatabase$_syncTableKeySeparator${_stripDefaultSchema(table)}',
+          'status': databaseStatus == 'missing' ? 'missing' : 'failed',
+          'message': databaseMessage,
+        });
+      }
+      return {
+        'attempted': true,
+        'databaseStatus': databaseStatus,
+        'databaseEnabled': false,
+        'message': databaseMessage,
+        'tableStatuses': tableStatuses,
+      };
+    }
+
+    for (final table in tables.take(600)) {
+      final parts = _splitQualifiedName(table);
+      final schema = parts.schema;
+      final tableName = parts.table;
+      final objectName = '$schema.$tableName';
+      final tableQuery = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(trimmedDatabase)};
+IF OBJECT_ID(N'${_escapeSqlLiteral(objectName)}', N'U') IS NULL
+BEGIN
+  SELECT N'table', N'${_escapeSqlLiteral(objectName)}', N'missing', N'Table not found.';
+END
+ELSE IF NOT EXISTS (
+  SELECT 1
+  FROM sys.indexes
+  WHERE object_id = OBJECT_ID(N'${_escapeSqlLiteral(objectName)}', N'U')
+    AND is_primary_key = 1
+)
+BEGIN
+  SELECT N'table', N'${_escapeSqlLiteral(objectName)}', N'no_primary_key', N'Change Tracking requires a primary key.';
+END
+ELSE IF EXISTS (
+  SELECT 1
+  FROM sys.change_tracking_tables
+  WHERE object_id = OBJECT_ID(N'${_escapeSqlLiteral(objectName)}', N'U')
+)
+BEGIN
+  SELECT N'table', N'${_escapeSqlLiteral(objectName)}', N'enabled', N'Change Tracking is enabled.';
+END
+ELSE
+BEGIN
+  ALTER TABLE ${_quoteIdentifier(schema)}.${_quoteIdentifier(tableName)}
+    ENABLE CHANGE_TRACKING
+    WITH (TRACK_COLUMNS_UPDATED = ON);
+  SELECT N'table', N'${_escapeSqlLiteral(objectName)}', N'enabled', N'Change Tracking enabled automatically.';
+END
+''';
+      final tableResult = await _runSqlCmd(
+        profile: _activeProfile(),
+        database: trimmedDatabase,
+        query: tableQuery,
+      );
+      var status = 'unknown';
+      var message = '';
+      if (tableResult == null) {
+        status = 'failed';
+        message = _sqlCmdUnavailableMessage(_activeProfile());
+      } else if (tableResult.exitCode != 0) {
+        status = 'failed';
+        message = _sqlCmdFailed('enable table change tracking', tableResult);
+      } else {
+        for (final line in tableResult.stdout.toString().split(
+          RegExp(r'\r?\n'),
+        )) {
+          final trimmed = line.trim();
+          if (_isSkippableOutputLine(trimmed)) {
+            continue;
+          }
+          final values = _splitRowValues(trimmed);
+          if (values.length >= 4 && values.first == 'table') {
+            status = values[2];
+            message = values[3];
+            break;
+          }
+        }
+      }
+      tableStatuses.add({
+        'table': objectName,
+        'syncKey':
+            '$trimmedDatabase$_syncTableKeySeparator${_stripDefaultSchema(table)}',
+        'status': status,
+        'message': message,
+      });
+    }
+
+    return {
+      'attempted': true,
+      'databaseStatus': databaseStatus,
+      'databaseEnabled':
+          databaseStatus == 'enabled' || databaseStatus == 'already_enabled',
+      'message': databaseMessage,
+      'tableStatuses': tableStatuses,
+    };
+  }
+
+  void _applyChangeTrackingDiagnosticsToState(
+    List<Map<String, dynamic>> databaseResults,
+  ) {
+    final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+    var changed = false;
+    for (final databaseResult in databaseResults) {
+      final automaticEnable = databaseResult['automaticEnable'];
+      if (automaticEnable is! Map) {
+        continue;
+      }
+      final statuses = automaticEnable['tableStatuses'];
+      if (statuses is! List) {
+        continue;
+      }
+      for (final item in statuses) {
+        if (item is! Map) {
+          continue;
+        }
+        final syncKey = (item['syncKey'] as String? ?? '').trim();
+        final status = (item['status'] as String? ?? 'unknown').trim();
+        final message = (item['message'] as String? ?? '').trim();
+        final current = nextTables[syncKey];
+        if (current == null) {
+          continue;
+        }
+        if (current.changeTrackingStatus == status &&
+            current.changeTrackingMessage == message) {
+          continue;
+        }
+        nextTables[syncKey] = current.copyWith(
+          changeTrackingStatus: status,
+          changeTrackingMessage: message,
+        );
+        changed = true;
+      }
+    }
+    if (changed && mounted) {
+      _replaceSyncState(_syncState.copyWith(tables: nextTables));
+    }
+  }
+
+  bool _isSystemDatabase(String database) {
+    return const {
+      'master',
+      'model',
+      'msdb',
+      'tempdb',
+    }.contains(database.trim().toLowerCase());
   }
 
   Future<Map<String, dynamic>> _queryChangeTrackingDiagnosticsForDatabase(
@@ -5221,6 +5479,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                 if (autoRequired) _buildAutoRequiredBadge(),
                 _buildSyncFlowBadge(showLabel: false),
                 _buildSyncStatusSymbol(row.state.status, size: 26),
+                _buildChangeTrackingBadge(row.state),
                 _buildSyncTableRowCountMetric(row.state),
                 _buildFixedProgressPill(progress, statusColor),
                 _buildOpenLiveTableButton(row.table),
@@ -5434,6 +5693,84 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     );
   }
 
+  Widget _buildChangeTrackingBadge(SyncTableState state) {
+    final color = _changeTrackingColor(state.changeTrackingStatus);
+    return Tooltip(
+      message: _changeTrackingTooltip(state),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 26),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.09),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.32)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _changeTrackingIcon(state.changeTrackingStatus),
+              size: 14,
+              color: color,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              _changeTrackingLabel(state.changeTrackingStatus),
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _changeTrackingIcon(String status) {
+    return switch (status.toLowerCase()) {
+      'enabled' => Icons.verified_user_rounded,
+      'failed' => Icons.gpp_bad_rounded,
+      'no_primary_key' => Icons.key_off_rounded,
+      'missing' => Icons.help_outline_rounded,
+      _ => Icons.shield_outlined,
+    };
+  }
+
+  Color _changeTrackingColor(String status) {
+    return switch (status.toLowerCase()) {
+      'enabled' => const Color(0xFF15803D),
+      'failed' => const Color(0xFFB42318),
+      'no_primary_key' => const Color(0xFF667085),
+      'missing' => const Color(0xFFB54708),
+      _ => const Color(0xFFB54708),
+    };
+  }
+
+  String _changeTrackingLabel(String status) {
+    return switch (status.toLowerCase()) {
+      'enabled' => 'CT',
+      'failed' => 'CT!',
+      'no_primary_key' => 'NO PK',
+      'missing' => 'MISS',
+      _ => 'CT?',
+    };
+  }
+
+  String _changeTrackingTooltip(SyncTableState state) {
+    final status = state.changeTrackingStatus.toLowerCase();
+    final message = state.changeTrackingMessage.trim();
+    final base = switch (status) {
+      'enabled' => 'Change Tracking is enabled for this table.',
+      'failed' => 'Change Tracking could not be enabled automatically.',
+      'no_primary_key' => 'Change Tracking requires a primary key.',
+      'missing' => 'The table was not found when checking Change Tracking.',
+      _ => 'Change Tracking status has not been checked yet.',
+    };
+    return message.isEmpty ? base : '$base $message';
+  }
+
   Widget _buildSyncTableRowCountMetric(SyncTableState state) {
     final color = _savedRowCountColor(state);
     return _buildSyncTableMetric(
@@ -5560,6 +5897,12 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         tooltip: 'Sync now',
         icon: Icons.sync_rounded,
         onTap: canRunSync ? () => _triggerSyncNow(row.table) : null,
+      ),
+      _buildToolbarStat(
+        tooltip: _changeTrackingTooltip(row.state),
+        icon: _changeTrackingIcon(row.state.changeTrackingStatus),
+        value: _changeTrackingLabel(row.state.changeTrackingStatus),
+        color: _changeTrackingColor(row.state.changeTrackingStatus),
       ),
       _buildToolbarStat(
         tooltip:

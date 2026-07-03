@@ -44,7 +44,15 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("CHANGE_TRACKING_MIN_VALID_VERSION", agent_page)
         self.assertIn("'changeTracking': changeTracking", agent_page)
         self.assertIn("'databases': databaseResults", agent_page)
-        self.assertIn("_databaseNameFromSyncKey(table)", agent_page)
+        self.assertIn("_databaseNameFromSyncKey(syncKey)", agent_page)
+        self.assertIn("_ensureChangeTrackingEnabledForDatabase", agent_page)
+        self.assertIn("ALTER DATABASE ${_quoteIdentifier(trimmedDatabase)}", agent_page)
+        self.assertIn("ENABLE CHANGE_TRACKING", agent_page)
+        self.assertIn("_isSystemDatabase", agent_page)
+        self.assertIn("System databases are not modified automatically.", agent_page)
+        self.assertIn("_buildChangeTrackingBadge", agent_page)
+        self.assertIn("unawaited(_queryChangeTrackingDiagnostics());", agent_page)
+        self.assertIn("changeTrackingStatus", read_text("sync_windows_agent/lib/sync_state.dart"))
 
     def test_symmetricds_client_service_is_removed(self):
         self.assertFalse(
