@@ -214,6 +214,9 @@ class SyncContractsTests(unittest.TestCase):
             "defaultValue: 'https://sync.velvet-leaf.com/call'",
             client_api,
         )
+        self.assertIn("const String _liveControlPlaneUrl", client_api)
+        self.assertIn("host == '127.0.0.1'", client_api)
+        self.assertIn("return _liveControlPlaneUrl;", client_api)
         self.assertIn("'--dart-define', \"BACKEND_BASE_URL=$BackendBaseUrl\"", build_helpers)
         self.assertIn(
             "[string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call'",
@@ -230,6 +233,18 @@ class SyncContractsTests(unittest.TestCase):
             "defaultValue: 'http://127.0.0.1:6006/call'",
             client_api,
         )
+
+    def test_windows_client_update_manifest_ignores_localhost_overrides(self):
+        app = read_text("sync_windows_agent/lib/app.dart")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        for source in (app, agent_page):
+            self.assertIn("_isLocalHttpUrl", source)
+            self.assertIn("CLIENT_UPDATE_BASE_URL", source)
+            self.assertIn("host == '127.0.0.1'", source)
+            self.assertIn("uri?.port == 6006", source)
+            self.assertIn("latest.json", source)
+            self.assertNotIn("http://127.0.0.1:6006/client/latest.json", source)
 
     def test_windows_client_build_clears_stale_flutter_aot_cache(self):
         build_helpers = read_text("scripts/windows_agent_build.ps1")

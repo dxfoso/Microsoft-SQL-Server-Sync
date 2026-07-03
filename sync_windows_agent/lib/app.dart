@@ -18,6 +18,8 @@ const String _shellClientUpdateBaseUrlOverride = String.fromEnvironment(
   'CLIENT_UPDATE_BASE_URL',
   defaultValue: '',
 );
+const String _shellLiveClientUpdateBaseUrl =
+    'https://sync.velvet-leaf.com/client';
 const String _shellAgentBuildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
   defaultValue: '',
@@ -395,17 +397,31 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         (Platform.environment['CLIENT_UPDATE_BASE_URL'] ??
                 _shellClientUpdateBaseUrlOverride)
             .trim();
-    if (overrideBaseUrl.isNotEmpty) {
+    if (overrideBaseUrl.isNotEmpty && !_isLocalHttpUrl(overrideBaseUrl)) {
       final normalizedBaseUrl =
           overrideBaseUrl.endsWith('/')
               ? overrideBaseUrl.substring(0, overrideBaseUrl.length - 1)
               : overrideBaseUrl;
       return '$normalizedBaseUrl/latest.json';
     }
-    return _authClient.baseUrl.replaceFirst(
+    final manifestUrl = _authClient.baseUrl.replaceFirst(
       RegExp(r'/call/?$'),
       '/client/latest.json',
     );
+    if (_isLocalHttpUrl(manifestUrl)) {
+      return '$_shellLiveClientUpdateBaseUrl/latest.json';
+    }
+    return manifestUrl;
+  }
+
+  bool _isLocalHttpUrl(String value) {
+    final uri = Uri.tryParse(value.trim());
+    final host = uri?.host.toLowerCase() ?? '';
+    return host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1' ||
+        host == '0.0.0.0' ||
+        uri?.port == 6006;
   }
 
   String _shellClientUpdateScriptUrl(ClientUpdateInfo updateInfo) {

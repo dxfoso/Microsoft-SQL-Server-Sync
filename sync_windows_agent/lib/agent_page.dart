@@ -21,6 +21,7 @@ const String _clientUpdateBaseUrlOverride = String.fromEnvironment(
   'CLIENT_UPDATE_BASE_URL',
   defaultValue: '',
 );
+const String _liveClientUpdateBaseUrl = 'https://sync.velvet-leaf.com/client';
 const String _agentBuildCommitHash = String.fromEnvironment(
   'BUILD_COMMIT_HASH',
   defaultValue: '',
@@ -1461,17 +1462,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         (Platform.environment['CLIENT_UPDATE_BASE_URL'] ??
                 _clientUpdateBaseUrlOverride)
             .trim();
-    if (overrideBaseUrl.isNotEmpty) {
+    if (overrideBaseUrl.isNotEmpty && !_isLocalHttpUrl(overrideBaseUrl)) {
       final normalizedBaseUrl =
           overrideBaseUrl.endsWith('/')
               ? overrideBaseUrl.substring(0, overrideBaseUrl.length - 1)
               : overrideBaseUrl;
       return '$normalizedBaseUrl/latest.json';
     }
-    return _controlPlaneClient.baseUrl.replaceFirst(
+    final manifestUrl = _controlPlaneClient.baseUrl.replaceFirst(
       RegExp(r'/call/?$'),
       '/client/latest.json',
     );
+    if (_isLocalHttpUrl(manifestUrl)) {
+      return '$_liveClientUpdateBaseUrl/latest.json';
+    }
+    return manifestUrl;
+  }
+
+  bool _isLocalHttpUrl(String value) {
+    final uri = Uri.tryParse(value.trim());
+    final host = uri?.host.toLowerCase() ?? '';
+    return host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1' ||
+        host == '0.0.0.0' ||
+        uri?.port == 6006;
   }
 
   String _clientUpdateScriptUrl(ClientUpdateInfo updateInfo) {

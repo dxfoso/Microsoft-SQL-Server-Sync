@@ -11,6 +11,7 @@ const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
   defaultValue: 'https://sync.velvet-leaf.com/call',
 );
+const String _liveControlPlaneUrl = 'https://sync.velvet-leaf.com/call';
 const int _snapshotTransferChunkSizeBytes = 100 * 1024;
 const int _snapshotTransferMaxAttempts = 10;
 const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
@@ -86,7 +87,17 @@ class AgentControlPlaneClient {
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
     if (trimmed.isEmpty) {
-      return 'https://sync.velvet-leaf.com/call';
+      return _liveControlPlaneUrl;
+    }
+    final parsed = Uri.tryParse(trimmed);
+    final host = parsed?.host.toLowerCase() ?? '';
+    final port = parsed?.port;
+    if (host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1' ||
+        host == '0.0.0.0' ||
+        port == 6006) {
+      return _liveControlPlaneUrl;
     }
     return trimmed.endsWith('/')
         ? trimmed.substring(0, trimmed.length - 1)
