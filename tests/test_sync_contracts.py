@@ -43,6 +43,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("CHANGE_TRACKING_CURRENT_VERSION()", agent_page)
         self.assertIn("CHANGE_TRACKING_MIN_VALID_VERSION", agent_page)
         self.assertIn("'changeTracking': changeTracking", agent_page)
+        self.assertIn("'databases': databaseResults", agent_page)
+        self.assertIn("_databaseNameFromSyncKey(table)", agent_page)
 
     def test_symmetricds_client_service_is_removed(self):
         self.assertFalse(

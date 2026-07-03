@@ -3703,12 +3703,60 @@ FROM ${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)};
   }
 
   Future<Map<String, dynamic>> _queryChangeTrackingDiagnostics() async {
-    final database = _selectedDatabase?.trim() ?? '';
+    final databasesToCheck = <String>{
+      if ((_selectedDatabase?.trim() ?? '').isNotEmpty)
+        _selectedDatabase!.trim(),
+      for (final table in _syncState.tables.keys)
+        if (_databaseNameFromSyncKey(table).trim().isNotEmpty)
+          _databaseNameFromSyncKey(table).trim(),
+    }.take(10).toList(growable: false);
+
+    if (databasesToCheck.isEmpty) {
+      return {
+        'checked': false,
+        'available': false,
+        'reason': 'No database selected or referenced by sync tables.',
+        'databases': const <Map<String, dynamic>>[],
+      };
+    }
+
+    final databaseResults = <Map<String, dynamic>>[];
+    for (final database in databasesToCheck) {
+      databaseResults.add(
+        await _queryChangeTrackingDiagnosticsForDatabase(database),
+      );
+    }
+
+    final selectedDatabase =
+        (_selectedDatabase?.trim() ?? '').isEmpty
+            ? databasesToCheck.first
+            : _selectedDatabase!.trim();
+    final selectedResult = databaseResults.firstWhere(
+      (item) =>
+          (item['database'] as String? ?? '').toLowerCase() ==
+          selectedDatabase.toLowerCase(),
+      orElse: () => databaseResults.first,
+    );
+
+    return {
+      ...selectedResult,
+      'selectedDatabase': selectedDatabase,
+      'checkedDatabaseCount': databaseResults.length,
+      'databases': databaseResults,
+      'offlineChangesCanBeDetectedForAnyDatabase': databaseResults.any(
+        (item) => item['offlineChangesCanBeDetected'] == true,
+      ),
+    };
+  }
+
+  Future<Map<String, dynamic>> _queryChangeTrackingDiagnosticsForDatabase(
+    String database,
+  ) async {
     if (database.isEmpty) {
       return {
         'checked': false,
         'available': false,
-        'reason': 'No database selected.',
+        'reason': 'Database name is empty.',
       };
     }
 
