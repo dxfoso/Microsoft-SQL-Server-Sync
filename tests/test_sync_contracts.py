@@ -34,6 +34,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("_runDirectQueuedTableSync(", agent_page)
         self.assertNotIn("_RemoteTableSyncResult", agent_page)
 
+    def test_windows_agent_reports_change_tracking_diagnostics(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("Future<Map<String, dynamic>> _queryChangeTrackingDiagnostics()", agent_page)
+        self.assertIn("sys.change_tracking_databases", agent_page)
+        self.assertIn("sys.change_tracking_tables", agent_page)
+        self.assertIn("CHANGE_TRACKING_CURRENT_VERSION()", agent_page)
+        self.assertIn("CHANGE_TRACKING_MIN_VALID_VERSION", agent_page)
+        self.assertIn("'changeTracking': changeTracking", agent_page)
+
     def test_symmetricds_client_service_is_removed(self):
         self.assertFalse(
             (ROOT / "sync_windows_agent/lib/symmetricds_service.dart").exists()

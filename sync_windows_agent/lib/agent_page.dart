@@ -2348,7 +2348,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Future<void> _uploadRequestedDiagnostics(
     RemoteAgentDiagnostics diagnostics,
   ) async {
-    final payload = _buildDiagnosticsPayload();
+    final payload = await _buildDiagnosticsPayload();
     final failedTableCount =
         _syncState.tables.values
             .where((table) => table.status.toLowerCase() == 'failed')
@@ -2443,7 +2443,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
-  String _buildDiagnosticsPayload() {
+  Future<String> _buildDiagnosticsPayload() async {
     final failedTables = _syncState.tables.entries
         .where((entry) => entry.value.status.toLowerCase() == 'failed')
         .take(25)
@@ -2490,6 +2490,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         )
         .toList(growable: false);
 
+    final changeTracking = await _queryChangeTrackingDiagnostics();
+
     return jsonEncode({
       'capturedAt': DateTime.now().toIso8601String(),
       'clientName': widget.clientName,
@@ -2517,6 +2519,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             _selectedTable == null ? null : _syncTableKey(_selectedTable!),
         'databaseCount': _databases.length,
         'tableCount': _tables.length,
+        'changeTracking': changeTracking,
       },
       'syncSettings': {
         'historyLimit': _syncState.historyLimit,
@@ -3697,6 +3700,157 @@ FROM ${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)};
     }
 
     return fingerprints;
+  }
+
+  Future<Map<String, dynamic>> _queryChangeTrackingDiagnostics() async {
+    final database = _selectedDatabase?.trim() ?? '';
+    if (database.isEmpty) {
+      return {
+        'checked': false,
+        'available': false,
+        'reason': 'No database selected.',
+      };
+    }
+
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT
+  N'database',
+  CAST(SERVERPROPERTY('Edition') AS nvarchar(128)),
+  CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)),
+  DB_NAME(),
+  CASE WHEN ctd.database_id IS NULL THEN N'0' ELSE N'1' END,
+  COALESCE(CAST(ctd.is_auto_cleanup_on AS nvarchar(20)), N''),
+  COALESCE(CAST(ctd.retention_period AS nvarchar(20)), N''),
+  COALESCE(CAST(ctd.retention_period_units_desc AS nvarchar(40)), N''),
+  COALESCE(CAST(CHANGE_TRACKING_CURRENT_VERSION() AS nvarchar(40)), N'')
+FROM (SELECT 1 AS marker) AS seed
+LEFT JOIN sys.change_tracking_databases AS ctd
+  ON ctd.database_id = DB_ID();
+
+SELECT TOP (200)
+  N'table',
+  s.name + N'.' + t.name,
+  CASE WHEN ct.object_id IS NULL THEN N'0' ELSE N'1' END,
+  COALESCE(CAST(ct.is_track_columns_updated_on AS nvarchar(20)), N''),
+  COALESCE(CAST(ct.begin_version AS nvarchar(40)), N''),
+  CASE
+    WHEN ct.object_id IS NULL THEN N''
+    ELSE COALESCE(CAST(CHANGE_TRACKING_MIN_VALID_VERSION(t.object_id) AS nvarchar(40)), N'')
+  END,
+  CASE
+    WHEN pk.object_id IS NULL THEN N'0'
+    ELSE N'1'
+  END
+FROM sys.tables AS t
+INNER JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+LEFT JOIN sys.change_tracking_tables AS ct ON ct.object_id = t.object_id
+LEFT JOIN (
+  SELECT DISTINCT i.object_id
+  FROM sys.indexes AS i
+  WHERE i.is_primary_key = 1
+) AS pk ON pk.object_id = t.object_id
+ORDER BY
+  CASE WHEN ct.object_id IS NULL THEN 1 ELSE 0 END,
+  s.name,
+  t.name;
+''';
+
+    final result = await _runSqlCmd(
+      profile: _activeProfile(),
+      database: database,
+      query: query,
+    );
+    if (result == null) {
+      return {
+        'checked': true,
+        'available': false,
+        'database': database,
+        'error': _sqlCmdUnavailableMessage(_activeProfile()),
+      };
+    }
+    if (result.exitCode != 0) {
+      return {
+        'checked': true,
+        'available': false,
+        'database': database,
+        'error': _sqlCmdFailed('change tracking diagnostics', result),
+      };
+    }
+
+    var edition = '';
+    var productVersion = '';
+    var databaseName = database;
+    var databaseEnabled = false;
+    var autoCleanup = '';
+    var retentionPeriod = '';
+    var retentionUnits = '';
+    var currentVersion = '';
+    final trackedTables = <Map<String, dynamic>>[];
+    var tableCount = 0;
+    var primaryKeyTableCount = 0;
+
+    final lines = result.stdout.toString().split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (_isSkippableOutputLine(trimmed)) {
+        continue;
+      }
+      final values = _splitRowValues(trimmed);
+      if (values.isEmpty) {
+        continue;
+      }
+      if (values.first == 'database' && values.length >= 9) {
+        edition = values[1];
+        productVersion = values[2];
+        databaseName = values[3].isEmpty ? database : values[3];
+        databaseEnabled = values[4] == '1';
+        autoCleanup = values[5];
+        retentionPeriod = values[6];
+        retentionUnits = values[7];
+        currentVersion = values[8];
+        continue;
+      }
+      if (values.first == 'table' && values.length >= 7) {
+        tableCount += 1;
+        final hasPrimaryKey = values[6] == '1';
+        if (hasPrimaryKey) {
+          primaryKeyTableCount += 1;
+        }
+        final trackingEnabled = values[2] == '1';
+        if (trackingEnabled) {
+          trackedTables.add({
+            'table': values[1],
+            'trackColumns': values[3] == '1',
+            'beginVersion': values[4],
+            'minValidVersion': values[5],
+            'hasPrimaryKey': hasPrimaryKey,
+          });
+        }
+      }
+    }
+
+    return {
+      'checked': true,
+      'available': databaseEnabled,
+      'serverEdition': edition,
+      'productVersion': productVersion,
+      'database': databaseName,
+      'currentVersion': currentVersion,
+      'autoCleanup': autoCleanup == '1',
+      'retentionPeriod': retentionPeriod,
+      'retentionUnits': retentionUnits,
+      'tableCount': tableCount,
+      'primaryKeyTableCount': primaryKeyTableCount,
+      'trackedTableCount': trackedTables.length,
+      'trackedTables': trackedTables.take(100).toList(growable: false),
+      'offlineChangesCanBeDetected': databaseEnabled,
+      'offlineChangeDetectionNote':
+          databaseEnabled
+              ? 'Changes made while the client is closed can be detected after restart if the saved sync version is still >= each table minValidVersion.'
+              : 'Change Tracking is not enabled on this database. Offline changes require full snapshot/hash fallback.',
+    };
   }
 
   Future<Map<String, Set<String>>> _queryTableRelationships({
