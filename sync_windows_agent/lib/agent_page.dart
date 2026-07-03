@@ -3371,8 +3371,7 @@ WHEN MATCHED THEN
             : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
     final triggerTarget =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
-    const targetMergeBatchSize = 100;
-    final mergeBatchStatements = <String>[];
+    const targetMergeBatchSize = 25;
     for (var offset = 0; offset < rows.length; offset += targetMergeBatchSize) {
       final sourceValueTuples = rows
           .skip(offset)
@@ -3382,8 +3381,15 @@ WHEN MATCHED THEN
                 '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
           )
           .join(',\n      ');
-      mergeBatchStatements.add('''
-DELETE FROM #source_rows;
+      final query = '''
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+CREATE TABLE #source_rows (
+  $sourceTempColumnDefinitions
+);
+ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
+$identityInsertOn
 INSERT INTO #source_rows ($sourceColumnList)
 VALUES
     $sourceValueTuples;
@@ -3394,34 +3400,22 @@ $updateClause
 WHEN NOT MATCHED BY TARGET THEN
   INSERT ($insertColumnList)
   VALUES ($insertValueList);
-''');
-    }
-    final mergeBatchSql = mergeBatchStatements.join('\n');
-    final query = '''
-SET NOCOUNT ON;
-SET XACT_ABORT ON;
-BEGIN TRANSACTION;
-CREATE TABLE #source_rows (
-  $sourceTempColumnDefinitions
-);
-ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
-$identityInsertOn
-$mergeBatchSql
 $identityInsertOff
 ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
 DROP TABLE #source_rows;
 COMMIT TRANSACTION;
 ''';
-    final processResult = await _runSqlCmd(
-      profile: profile,
-      database: database,
-      query: query,
-    );
-    if (processResult == null) {
-      throw Exception(_sqlCmdUnavailableMessage(profile));
-    }
-    if (processResult.exitCode != 0) {
-      throw Exception(_sqlCmdFailed('target upsert', processResult));
+      final processResult = await _runSqlCmd(
+        profile: profile,
+        database: database,
+        query: query,
+      );
+      if (processResult == null) {
+        throw Exception(_sqlCmdUnavailableMessage(profile));
+      }
+      if (processResult.exitCode != 0) {
+        throw Exception(_sqlCmdFailed('target upsert', processResult));
+      }
     }
   }
 

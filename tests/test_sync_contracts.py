@@ -292,7 +292,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("labelText: 'Sync Client'", dashboard)
         self.assertIn("for (const agent of visible_agent_rows_for(current))", settings_post_all_body)
 
-    def test_windows_client_target_apply_is_transactional(self):
+    def test_windows_client_target_apply_uses_small_transactional_batches(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         target_apply = agent_page.split("Future<void> _applySourceRowsToTarget(", 1)[1].split(
             "String _sourceBatchTargetLiteral(", 1
@@ -301,9 +301,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("SET XACT_ABORT ON;", target_apply)
         self.assertIn("BEGIN TRANSACTION;", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
-        self.assertIn("targetMergeBatchSize = 100", target_apply)
+        self.assertIn("targetMergeBatchSize = 25", target_apply)
         self.assertIn("CREATE TABLE #source_rows", target_apply)
-        self.assertIn("DELETE FROM #source_rows;", target_apply)
         self.assertIn("DROP TABLE #source_rows;", target_apply)
         self.assertEqual(target_apply.count("CREATE TABLE #source_rows"), 1)
         self.assertIn("_matchClauseForColumns(primaryKeyColumns, columns)", target_apply)
@@ -314,10 +313,10 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertLess(
             query_template.index("BEGIN TRANSACTION;"),
-            query_template.index("$mergeBatchSql"),
+            query_template.index("INSERT INTO #source_rows"),
         )
         self.assertLess(
-            query_template.index("$mergeBatchSql"),
+            query_template.index("MERGE ${_quoteIdentifier(database)}"),
             query_template.index("COMMIT TRANSACTION;"),
         )
 
