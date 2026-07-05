@@ -306,7 +306,7 @@ function sync_job_text(value: string? = null, maxLength: int = 256): string {
 }
 
 function agent_online_timeout_minutes(agent: map<json>): int {
-  return 5;
+  return 15;
 }
 
 function safe_date_diff_minutes_since(rawTimestamp: string? = null): int? {
