@@ -119,6 +119,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _checkingServerConnection = false;
   DateTime? _lastServerCheck;
   bool _syncLoopBusy = false;
+  bool _diagnosticsUploadBusy = false;
+  String? _diagnosticsUploadRequestId;
   bool _rowCountsRefreshing = false;
   bool _markChangedTablesBusy = false;
   List<RemoteSyncJob> _activeJobs = const [];
@@ -2314,9 +2316,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _refreshVisibleTablesForSelectedDatabaseInState();
       });
 
-      if (heartbeat.diagnostics.pending) {
-        await _uploadRequestedDiagnostics(heartbeat.diagnostics);
-      }
+      _scheduleRequestedDiagnosticsUpload(heartbeat.diagnostics);
 
       if (heartbeat.clientUpdate.pending) {
         await _handleRequestedClientUpdate(heartbeat.clientUpdate);
@@ -2369,6 +2369,32 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     logStartupEvent(
       'Uploaded diagnostics for ${widget.clientName} request ${diagnostics.requestId ?? 'manual'}.',
+    );
+  }
+
+  void _scheduleRequestedDiagnosticsUpload(RemoteAgentDiagnostics diagnostics) {
+    if (!diagnostics.pending || _diagnosticsUploadBusy) {
+      return;
+    }
+    final requestId = diagnostics.requestId?.trim() ?? '';
+    if (requestId.isNotEmpty && _diagnosticsUploadRequestId == requestId) {
+      return;
+    }
+
+    _diagnosticsUploadBusy = true;
+    _diagnosticsUploadRequestId = requestId.isEmpty ? null : requestId;
+    unawaited(
+      _uploadRequestedDiagnostics(diagnostics)
+          .catchError((Object error, StackTrace stackTrace) {
+            logStartupEvent('Diagnostics upload failed: $error');
+            if (requestId.isNotEmpty &&
+                _diagnosticsUploadRequestId == requestId) {
+              _diagnosticsUploadRequestId = null;
+            }
+          })
+          .whenComplete(() {
+            _diagnosticsUploadBusy = false;
+          }),
     );
   }
 
