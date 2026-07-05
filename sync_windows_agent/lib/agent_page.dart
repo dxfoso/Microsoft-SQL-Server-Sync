@@ -3507,11 +3507,20 @@ END
     final insertColumns = columns
         .where((column) => column.isWritable)
         .toList(growable: false);
+    final updatePrimaryKeysFromUniqueMatch = matchColumnSets.length > 1;
+    final primaryKeyColumnNames =
+        primaryKeyColumns.map((column) => column.toLowerCase()).toSet();
     final updatableColumns = insertColumns
-        .where(
-          (column) =>
-              !primaryKeyColumns.contains(column.name) && !column.isIdentity,
-        )
+        .where((column) {
+          if (column.isIdentity) {
+            return false;
+          }
+          if (primaryKeyColumnNames.contains(column.name.toLowerCase()) &&
+              !updatePrimaryKeysFromUniqueMatch) {
+            return false;
+          }
+          return true;
+        })
         .toList(growable: false);
     final joinClause = _matchClauseForColumnSets(matchColumnSets, columns);
     final insertColumnList = insertColumns
@@ -3550,7 +3559,7 @@ WHEN MATCHED THEN
             : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
     final triggerTarget =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
-    const targetMergeBatchSize = 25;
+    const targetMergeBatchSize = 100;
     for (var offset = 0; offset < rows.length; offset += targetMergeBatchSize) {
       final sourceValueTuples = rows
           .skip(offset)
