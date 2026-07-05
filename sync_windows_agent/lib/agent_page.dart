@@ -3500,10 +3500,6 @@ END
     required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
   }) async {
-    if (rows.isEmpty) {
-      return;
-    }
-
     final insertColumns = columns
         .where((column) => column.isWritable)
         .toList(growable: false);
@@ -3559,17 +3555,28 @@ WHEN MATCHED THEN
             : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
     final triggerTarget =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
-    const targetMergeBatchSize = 100;
-    for (var offset = 0; offset < rows.length; offset += targetMergeBatchSize) {
+    const targetMergeInsertBatchSize = 100;
+    final insertStatements = StringBuffer();
+    for (
+      var offset = 0;
+      offset < rows.length;
+      offset += targetMergeInsertBatchSize
+    ) {
       final sourceValueTuples = rows
           .skip(offset)
-          .take(targetMergeBatchSize)
+          .take(targetMergeInsertBatchSize)
           .map(
             (row) =>
                 '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
           )
           .join(',\n      ');
-      final query = '''
+      insertStatements.writeln('''
+INSERT INTO #source_rows ($sourceColumnList)
+VALUES
+    $sourceValueTuples;
+''');
+    }
+    final query = '''
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
@@ -3578,32 +3585,31 @@ CREATE TABLE #source_rows (
 );
 ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
 $identityInsertOn
-INSERT INTO #source_rows ($sourceColumnList)
-VALUES
-    $sourceValueTuples;
+${insertStatements.toString()}
 MERGE ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} AS target
 USING #source_rows AS source
 ON $joinClause
 $updateClause
 WHEN NOT MATCHED BY TARGET THEN
   INSERT ($insertColumnList)
-  VALUES ($insertValueList);
+  VALUES ($insertValueList)
+WHEN NOT MATCHED BY SOURCE THEN
+  DELETE;
 $identityInsertOff
 ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
 DROP TABLE #source_rows;
 COMMIT TRANSACTION;
 ''';
-      final processResult = await _runSqlCmd(
-        profile: profile,
-        database: database,
-        query: query,
-      );
-      if (processResult == null) {
-        throw Exception(_sqlCmdUnavailableMessage(profile));
-      }
-      if (processResult.exitCode != 0) {
-        throw Exception(_sqlCmdFailed('target upsert', processResult));
-      }
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('target snapshot merge', processResult));
     }
   }
 

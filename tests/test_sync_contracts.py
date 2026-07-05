@@ -146,7 +146,7 @@ class SyncContractsTests(unittest.TestCase):
             agent_page,
         )
         self.assertIn("!updatePrimaryKeysFromUniqueMatch", agent_page)
-        self.assertIn("const targetMergeBatchSize = 100;", agent_page)
+        self.assertIn("const targetMergeInsertBatchSize = 100;", agent_page)
 
     def test_unused_business_info_route_is_removed(self):
         self.assertFalse((ROOT / "business" / "sql_sync_api.tru").exists())
@@ -338,10 +338,14 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("SET XACT_ABORT ON;", target_apply)
         self.assertIn("BEGIN TRANSACTION;", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
-        self.assertIn("targetMergeBatchSize = 100", target_apply)
+        self.assertIn("targetMergeInsertBatchSize = 100", target_apply)
         self.assertIn("CREATE TABLE #source_rows", target_apply)
+        self.assertIn("INSERT INTO #source_rows ($sourceColumnList)", target_apply)
         self.assertIn("DROP TABLE #source_rows;", target_apply)
         self.assertEqual(target_apply.count("CREATE TABLE #source_rows"), 1)
+        self.assertIn("WHEN NOT MATCHED BY SOURCE THEN", target_apply)
+        self.assertIn("DELETE;", target_apply)
+        self.assertIn("target snapshot merge", target_apply)
         self.assertIn("_matchClauseForColumnSets(matchColumnSets, columns)", target_apply)
         self.assertNotIn("alternateUniqueKeys", target_apply)
         self.assertIn("COLLATE DATABASE_DEFAULT", agent_page)
@@ -350,7 +354,7 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertLess(
             query_template.index("BEGIN TRANSACTION;"),
-            query_template.index("INSERT INTO #source_rows"),
+            query_template.index("${insertStatements.toString()}"),
         )
         self.assertLess(
             query_template.index("MERGE ${_quoteIdentifier(database)}"),
