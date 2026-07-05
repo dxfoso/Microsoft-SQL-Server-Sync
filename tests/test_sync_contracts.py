@@ -131,6 +131,17 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("direction: 'sync'", control_plane)
         self.assertNotIn("Queued SymmetricDS sync", control_plane)
 
+    def test_windows_snapshot_apply_matches_unique_indexes(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("Future<List<List<String>>> _queryUniqueIndexColumnSets(", agent_page)
+        self.assertIn("i.is_unique = 1", agent_page)
+        self.assertIn("i.is_primary_key = 0", agent_page)
+        self.assertIn("required List<List<String>> matchColumnSets", agent_page)
+        self.assertIn("_targetMatchColumnSets(", agent_page)
+        self.assertIn("_matchClauseForColumnSets(matchColumnSets, columns)", agent_page)
+        self.assertIn("uniqueIndexColumnSets: uniqueIndexColumnSets", agent_page)
+
     def test_unused_business_info_route_is_removed(self):
         self.assertFalse((ROOT / "business" / "sql_sync_api.tru").exists())
 
@@ -325,7 +336,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("CREATE TABLE #source_rows", target_apply)
         self.assertIn("DROP TABLE #source_rows;", target_apply)
         self.assertEqual(target_apply.count("CREATE TABLE #source_rows"), 1)
-        self.assertIn("_matchClauseForColumns(primaryKeyColumns, columns)", target_apply)
+        self.assertIn("_matchClauseForColumnSets(matchColumnSets, columns)", target_apply)
         self.assertNotIn("alternateUniqueKeys", target_apply)
         self.assertIn("COLLATE DATABASE_DEFAULT", agent_page)
         query_template = target_apply.split("final query = '''", 1)[1].split(

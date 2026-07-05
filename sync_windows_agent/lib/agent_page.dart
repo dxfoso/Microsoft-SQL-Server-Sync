@@ -3069,6 +3069,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
+    final uniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    final targetMatchColumnSets = _targetMatchColumnSets(
+      primaryKeyColumns: primaryKeyColumns,
+      uniqueIndexColumnSets: uniqueIndexColumnSets,
+      columns: syncColumns,
+    );
     if (snapshot.rows.isNotEmpty) {
       final rows = snapshot.rows
           .map(
@@ -3084,6 +3095,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         table: targetTable.table,
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
+        matchColumnSets: targetMatchColumnSets,
         rows: rows,
       );
     }
@@ -3226,6 +3238,69 @@ ORDER BY ic.key_ordinal;
       throw Exception(_sqlCmdFailed('primary key lookup', processResult));
     }
     return _parseSingleColumnOutput(processResult.stdout.toString());
+  }
+
+  Future<List<List<String>>> _queryUniqueIndexColumnSets({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+  }) async {
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT i.name, c.name
+FROM sys.indexes AS i
+INNER JOIN sys.index_columns AS ic
+  ON ic.object_id = i.object_id
+ AND ic.index_id = i.index_id
+INNER JOIN sys.columns AS c
+  ON c.object_id = ic.object_id
+ AND c.column_id = ic.column_id
+WHERE i.is_unique = 1
+  AND i.is_primary_key = 0
+  AND i.is_disabled = 0
+  AND i.is_hypothetical = 0
+  AND ic.is_included_column = 0
+  AND i.object_id = OBJECT_ID(N'${_escapeSqlLiteral(_quoteIdentifier(schema))}.${_escapeSqlLiteral(_quoteIdentifier(table))}')
+ORDER BY i.index_id, ic.key_ordinal;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(_sqlCmdFailed('unique index lookup', processResult));
+    }
+
+    final orderedIndexNames = <String>[];
+    final columnsByIndex = <String, List<String>>{};
+    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      final parts = _splitRowValues(trimmedLine);
+      if (parts.length < 2) {
+        continue;
+      }
+      final indexName = parts[0];
+      final columnName = parts[1];
+      if (!columnsByIndex.containsKey(indexName)) {
+        orderedIndexNames.add(indexName);
+        columnsByIndex[indexName] = <String>[];
+      }
+      columnsByIndex[indexName]!.add(columnName);
+    }
+    return orderedIndexNames
+        .map((indexName) => columnsByIndex[indexName] ?? const <String>[])
+        .where((columns) => columns.isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<List<Map<String, dynamic>>> _fetchSourceTableBatch({
@@ -3422,6 +3497,7 @@ END
     required String table,
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
+    required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
   }) async {
     if (rows.isEmpty) {
@@ -3437,7 +3513,7 @@ END
               !primaryKeyColumns.contains(column.name) && !column.isIdentity,
         )
         .toList(growable: false);
-    final joinClause = _matchClauseForColumns(primaryKeyColumns, columns);
+    final joinClause = _matchClauseForColumnSets(matchColumnSets, columns);
     final insertColumnList = insertColumns
         .map((column) => _quoteIdentifier(column.name))
         .join(', ');
@@ -3585,6 +3661,54 @@ END
           return '$sourceExpression IS NOT NULL AND $targetExpression = $sourceExpression';
         })
         .join(' AND ');
+  }
+
+  List<List<String>> _targetMatchColumnSets({
+    required List<String> primaryKeyColumns,
+    required List<List<String>> uniqueIndexColumnSets,
+    required List<_SqlColumnDefinition> columns,
+  }) {
+    final writableColumnNames = {
+      for (final column in columns) column.name.toLowerCase(),
+    };
+    final sets = <List<String>>[primaryKeyColumns];
+    for (final uniqueColumns in uniqueIndexColumnSets) {
+      if (uniqueColumns.every(
+        (column) => writableColumnNames.contains(column.toLowerCase()),
+      )) {
+        sets.add(uniqueColumns);
+      }
+    }
+
+    final seen = <String>{};
+    return sets
+        .where((columns) {
+          final key = columns.map((column) => column.toLowerCase()).join('|');
+          if (key.isEmpty || seen.contains(key)) {
+            return false;
+          }
+          seen.add(key);
+          return true;
+        })
+        .toList(growable: false);
+  }
+
+  String _matchClauseForColumnSets(
+    List<List<String>> matchColumnSets,
+    List<_SqlColumnDefinition> columns,
+  ) {
+    final usableSets = matchColumnSets
+        .where((columnSet) => columnSet.isNotEmpty)
+        .toList(growable: false);
+    if (usableSets.isEmpty) {
+      return '1 = 0';
+    }
+    if (usableSets.length == 1) {
+      return _matchClauseForColumns(usableSets.first, columns);
+    }
+    return usableSets
+        .map((columnSet) => '(${_matchClauseForColumns(columnSet, columns)})')
+        .join('\n  OR ');
   }
 
   Future<_StringQueryResult> _queryDatabases({
