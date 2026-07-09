@@ -119,13 +119,18 @@ def summarize_client(agent: dict) -> dict:
     last_heartbeat = str(agent.get("lastHeartbeat") or "").strip()
     return {
         "clientName": str(agent.get("clientName") or "").strip(),
+        "machineName": str(agent.get("machineName") or "").strip(),
         "version": str(agent.get("clientVersion") or "").strip(),
         "online": bool(agent.get("isOnline")),
+        "serverConnected": bool(agent.get("serverConnected")),
+        "sqlConnected": bool(agent.get("sqlConnected")),
         "lastHeartbeat": last_heartbeat,
         "heartbeatAgeMinutes": heartbeat_age_minutes(last_heartbeat),
         "pending": bool(client_update.get("pending")),
         "requestId": str(client_update.get("requestId") or "").strip(),
+        "requestedAt": str(client_update.get("requestedAt") or "").strip(),
         "lastRequestId": str(client_update.get("lastRequestId") or "").strip(),
+        "acknowledgedAt": str(client_update.get("acknowledgedAt") or "").strip(),
         "status": str(client_update.get("status") or "").strip(),
         "message": str(client_update.get("message") or "").strip(),
         "targetVersion": str(client_update.get("targetVersion") or "").strip(),
@@ -180,8 +185,11 @@ def main() -> int:
         summary = find_agent_summary(state, args.client_name)
         last_summary = summary
         print(
-            "client={clientName} version={version} pending={pending} status={status} "
-            "target={targetVersion} lastRequestId={lastRequestId} heartbeatAgeMinutes={heartbeatAgeMinutes}".format(
+            "client={clientName} machine={machineName} online={online} serverConnected={serverConnected} "
+            "sqlConnected={sqlConnected} version={version} pending={pending} status={status} "
+            "target={targetVersion} requestId={requestId} lastRequestId={lastRequestId} "
+            "requestedAt={requestedAt} acknowledgedAt={acknowledgedAt} "
+            "heartbeatAgeMinutes={heartbeatAgeMinutes}".format(
                 **summary
             )
         )
@@ -195,8 +203,14 @@ def main() -> int:
 
     age = last_summary.get("heartbeatAgeMinutes")
     if age is not None and age >= args.stale_heartbeat_minutes:
+        requested_at = last_summary.get("requestedAt") or "unknown"
+        acknowledged_at = last_summary.get("acknowledgedAt") or "never"
         print(
-            f"timed out waiting for {args.client_name} to update; heartbeat is stale at {age:.1f} minutes",
+            f"timed out waiting for {args.client_name} to update; "
+            f"client is offline/stale at {age:.1f} minutes, "
+            f"last heartbeat {last_summary.get('lastHeartbeat') or 'unknown'}, "
+            f"update requested at {requested_at}, "
+            f"last acknowledged at {acknowledged_at}",
             file=sys.stderr,
         )
         return 3

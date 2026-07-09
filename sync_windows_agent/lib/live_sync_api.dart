@@ -15,7 +15,8 @@ const String _liveControlPlaneUrl = 'https://sync.velvet-leaf.com/call';
 const int _snapshotTransferChunkSizeBytes = 100 * 1024;
 const int _snapshotTransferMaxAttempts = 10;
 const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
-const Duration _controlPlaneRequestTimeout = Duration(seconds: 10);
+const Duration _defaultControlPlaneRequestTimeout = Duration(seconds: 10);
+const Duration _defaultDiagnosticsUploadRequestTimeout = Duration(minutes: 2);
 const List<Duration> _snapshotTransferRetryDelays = <Duration>[
   Duration(seconds: 1),
   Duration(seconds: 2),
@@ -74,12 +75,21 @@ class ClientUpdateInfo {
 }
 
 class AgentControlPlaneClient {
-  AgentControlPlaneClient({http.Client? client, String? baseUrl})
-    : _client = client ?? http.Client(),
-      _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultControlPlaneUrl);
+  AgentControlPlaneClient({
+    http.Client? client,
+    String? baseUrl,
+    Duration controlPlaneRequestTimeout = _defaultControlPlaneRequestTimeout,
+    Duration diagnosticsUploadRequestTimeout =
+        _defaultDiagnosticsUploadRequestTimeout,
+  }) : _client = client ?? http.Client(),
+       _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultControlPlaneUrl),
+       _controlPlaneRequestTimeout = controlPlaneRequestTimeout,
+       _diagnosticsUploadRequestTimeout = diagnosticsUploadRequestTimeout;
 
   final http.Client _client;
   final String _baseUrl;
+  final Duration _controlPlaneRequestTimeout;
+  final Duration _diagnosticsUploadRequestTimeout;
   String? _authToken;
 
   String get baseUrl => _baseUrl;
@@ -129,8 +139,9 @@ class AgentControlPlaneClient {
   Future<dynamic> _invokeFunction(
     String functionName,
     Map<String, dynamic> args,
-    String phase,
-  ) async {
+    String phase, {
+    Duration? timeout,
+  }) async {
     final payloadArgs = <String, dynamic>{...args};
     if (_authToken != null &&
         _authToken!.isNotEmpty &&
@@ -144,6 +155,7 @@ class AgentControlPlaneClient {
         body: jsonEncode({'name': functionName, 'args': payloadArgs}),
       ),
       phase,
+      timeout: timeout,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _exceptionFromResponse(response);
@@ -169,10 +181,11 @@ class AgentControlPlaneClient {
 
   Future<http.Response> _sendRequest(
     Future<http.Response> request,
-    String phase,
-  ) async {
+    String phase, {
+    Duration? timeout,
+  }) async {
     try {
-      return await request.timeout(_controlPlaneRequestTimeout);
+      return await request.timeout(timeout ?? _controlPlaneRequestTimeout);
     } on TimeoutException {
       throw AgentControlPlaneException(
         'Control plane request timed out during $phase. Check network connectivity.',
@@ -460,6 +473,12 @@ class AgentControlPlaneClient {
                 Map<String, dynamic>.from(decoded['clientUpdate'] as Map),
               )
               : const RemoteAgentClientUpdate(),
+      windowAction:
+          decoded['windowAction'] is Map
+              ? RemoteAgentWindowAction.fromJson(
+                Map<String, dynamic>.from(decoded['windowAction'] as Map),
+              )
+              : const RemoteAgentWindowAction(),
     );
   }
 
@@ -493,13 +512,18 @@ class AgentControlPlaneClient {
     required String summary,
     required String payload,
   }) async {
-    final response = await _invokeFunction('agent_diagnostics_upload', {
-      'clientName': clientName,
-      if (requestId != null && requestId.trim().isNotEmpty)
-        'requestId': requestId.trim(),
-      'summary': summary,
-      'payload': payload,
-    }, 'uploading diagnostics');
+    final response = await _invokeFunction(
+      'agent_diagnostics_upload',
+      {
+        'clientName': clientName,
+        if (requestId != null && requestId.trim().isNotEmpty)
+          'requestId': requestId.trim(),
+        'summary': summary,
+        'payload': payload,
+      },
+      'uploading diagnostics',
+      timeout: _diagnosticsUploadRequestTimeout,
+    );
     if (response is! Map || response['diagnostics'] is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected diagnostics upload payload.',
@@ -507,6 +531,30 @@ class AgentControlPlaneClient {
     }
     return RemoteAgentDiagnostics.fromJson(
       Map<String, dynamic>.from(response['diagnostics'] as Map),
+    );
+  }
+
+  Future<RemoteAgentWindowAction> acknowledgeWindowAction({
+    required String clientName,
+    String? requestId,
+    String action = '',
+    required String status,
+    String message = '',
+  }) async {
+    final response = await _invokeFunction('agent_window_action_ack', {
+      'clientName': clientName,
+      'requestId': requestId,
+      'action': action,
+      'status': status,
+      'message': message,
+    }, 'acknowledging window action request');
+    if (response is! Map || response['windowAction'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected window action acknowledgement payload.',
+      );
+    }
+    return RemoteAgentWindowAction.fromJson(
+      Map<String, dynamic>.from(response['windowAction'] as Map),
     );
   }
 
@@ -918,6 +966,7 @@ class HeartbeatResult {
     required this.jobs,
     required this.diagnostics,
     required this.clientUpdate,
+    required this.windowAction,
   });
 
   final RemoteAgentSyncSettings syncSettings;
@@ -926,6 +975,7 @@ class HeartbeatResult {
   final List<RemoteSyncJob> jobs;
   final RemoteAgentDiagnostics diagnostics;
   final RemoteAgentClientUpdate clientUpdate;
+  final RemoteAgentWindowAction windowAction;
 }
 
 class RemoteTableDependency {
@@ -1071,6 +1121,44 @@ class RemoteAgentClientUpdate {
       requestedAt: json['requestedAt'] as String?,
       requestedByUserId: json['requestedByUserId'] as String?,
       targetVersion: json['targetVersion'] as String?,
+      lastRequestId: json['lastRequestId'] as String?,
+      acknowledgedAt: json['acknowledgedAt'] as String?,
+      status: json['status'] as String? ?? 'idle',
+      message: json['message'] as String? ?? '',
+    );
+  }
+}
+
+class RemoteAgentWindowAction {
+  const RemoteAgentWindowAction({
+    this.pending = false,
+    this.requestId,
+    this.requestedAt,
+    this.requestedByUserId,
+    this.action,
+    this.lastRequestId,
+    this.acknowledgedAt,
+    this.status = 'idle',
+    this.message = '',
+  });
+
+  final bool pending;
+  final String? requestId;
+  final String? requestedAt;
+  final String? requestedByUserId;
+  final String? action;
+  final String? lastRequestId;
+  final String? acknowledgedAt;
+  final String status;
+  final String message;
+
+  factory RemoteAgentWindowAction.fromJson(Map<String, dynamic> json) {
+    return RemoteAgentWindowAction(
+      pending: json['pending'] as bool? ?? false,
+      requestId: json['requestId'] as String?,
+      requestedAt: json['requestedAt'] as String?,
+      requestedByUserId: json['requestedByUserId'] as String?,
+      action: json['action'] as String? ?? '',
       lastRequestId: json['lastRequestId'] as String?,
       acknowledgedAt: json['acknowledgedAt'] as String?,
       status: json['status'] as String? ?? 'idle',

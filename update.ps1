@@ -917,8 +917,8 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
     Start-Sleep -Milliseconds 250
 }
 
-Write-UpdateLog -Message "Ensuring all prior client instances are stopped before install." -LogPath $logPath
-Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
+Write-UpdateLog -Message "Ensuring the prior client instance from this install is stopped before install." -LogPath $logPath
+Stop-AgentProcesses -TargetInstallDir $InstallDir
 
 if (-not [string]::IsNullOrWhiteSpace($DeleteListPath) -and (Test-Path -LiteralPath $DeleteListPath -PathType Leaf)) {
     foreach ($relativePath in Get-Content -LiteralPath $DeleteListPath -ErrorAction Stop) {
@@ -953,8 +953,8 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 
 if (-not $NoStart) {
-    Write-UpdateLog -Message "Stopping any remaining client instances before relaunch." -LogPath $logPath
-    Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
+    Write-UpdateLog -Message "Stopping any remaining client instance from this install before relaunch." -LogPath $logPath
+    Stop-AgentProcesses -TargetInstallDir $InstallDir
     Start-UpdatedClient -ExecutablePath $installedExe -InstallDir $InstallDir -LogPath $logPath
 } else {
     Write-UpdateLog -Message 'NoStart set. Skipping client relaunch.' -LogPath $logPath
@@ -1085,7 +1085,7 @@ try {
                 return
             }
 
-            Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
+            Stop-AgentProcesses -TargetInstallDir $InstallDir
             Write-UpdateLog -Message "Scheduling differential install. files=$downloadCount bytes=$downloadBytes deletes=$($staleManagedPaths.Count)" -LogPath $mainLogPath
             Start-DeferredInstall `
                 -PayloadDir $payloadDir `
@@ -1121,7 +1121,7 @@ try {
         throw "Downloaded package does not contain sync_windows_agent.exe at the expected path: $payloadExe"
     }
 
-    Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances
+    Stop-AgentProcesses -TargetInstallDir $InstallDir
     Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath
     Start-DeferredInstall `
         -PayloadDir $payloadDir `

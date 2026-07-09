@@ -2,7 +2,9 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <cwctype>
 #include <filesystem>
+#include <functional>
 
 #include "flutter_window.h"
 #include "startup_log.h"
@@ -12,6 +14,13 @@ namespace {
 
 using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
 HANDLE g_instance_mutex = nullptr;
+
+std::wstring ToLowerInvariant(std::wstring value) {
+  for (auto& ch : value) {
+    ch = static_cast<wchar_t>(towlower(ch));
+  }
+  return value;
+}
 
 bool HasEnvironmentVariable(const wchar_t* name) {
   const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
@@ -27,6 +36,20 @@ std::filesystem::path GetExecutableDirectory() {
   }
 
   return std::filesystem::path(path).parent_path();
+}
+
+std::wstring GetInstanceMutexName() {
+  auto executable_directory = GetExecutableDirectory().wstring();
+  if (executable_directory.empty()) {
+    return L"Local\\MicrosoftSqlServerSyncAgent";
+  }
+
+  const auto normalized = ToLowerInvariant(executable_directory);
+  const size_t hash = std::hash<std::wstring>{}(normalized);
+  wchar_t mutex_name[128];
+  swprintf_s(mutex_name, L"Local\\MicrosoftSqlServerSyncAgent_%016llX",
+             static_cast<unsigned long long>(hash));
+  return mutex_name;
 }
 
 void ConfigureEngineSwitches() {
@@ -76,8 +99,8 @@ void LogWindowsVersion() {
 }
 
 bool AcquireSingleInstanceMutex() {
-  g_instance_mutex =
-      CreateMutexW(nullptr, FALSE, L"Local\\MicrosoftSqlServerSyncAgent");
+  const auto mutex_name = GetInstanceMutexName();
+  g_instance_mutex = CreateMutexW(nullptr, FALSE, mutex_name.c_str());
   if (g_instance_mutex == nullptr) {
     LogStartupLastError(L"CreateMutexW failed for single-instance guard");
     return true;
@@ -98,6 +121,26 @@ void ReleaseSingleInstanceMutex() {
     CloseHandle(g_instance_mutex);
     g_instance_mutex = nullptr;
   }
+}
+
+bool ConsumeStartMinimizedFlag(std::vector<std::string>* arguments) {
+  if (arguments == nullptr) {
+    return false;
+  }
+
+  bool start_minimized = false;
+  std::vector<std::string> filtered_arguments;
+  filtered_arguments.reserve(arguments->size());
+  for (const auto& argument : *arguments) {
+    if (argument == "--start-minimized") {
+      start_minimized = true;
+      continue;
+    }
+    filtered_arguments.push_back(argument);
+  }
+
+  *arguments = std::move(filtered_arguments);
+  return start_minimized;
 }
 
 }  // namespace
@@ -127,10 +170,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
+  const bool start_minimized =
+      ConsumeStartMinimizedFlag(&command_line_arguments);
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
-  FlutterWindow window(project);
+  FlutterWindow window(project, start_minimized);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   if (!window.Create(L"SQL Sync Agent", origin, size)) {

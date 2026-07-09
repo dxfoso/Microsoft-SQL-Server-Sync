@@ -15,7 +15,8 @@
 class FlutterWindow : public Win32Window {
  public:
   // Creates a new FlutterWindow hosting a Flutter view running |project|.
-  explicit FlutterWindow(const flutter::DartProject& project);
+  explicit FlutterWindow(const flutter::DartProject& project,
+                         bool start_minimized = false);
   virtual ~FlutterWindow();
   const std::wstring& startup_failure_details() const;
 
@@ -36,6 +37,7 @@ class FlutterWindow : public Win32Window {
   bool startup_ui_ready_ = false;
   bool allow_tray_minimize_ = false;
   bool tray_icon_visible_ = false;
+  bool start_minimized_ = false;
   NOTIFYICONDATA tray_icon_data_{};
 
   // The project to run.

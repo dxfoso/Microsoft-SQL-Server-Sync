@@ -77,6 +77,8 @@ function Stop-ProcessesUnderPath {
     )
     $targetPrefix = $targetFull.TrimEnd($trimChars) + [System.IO.Path]::DirectorySeparatorChar
 
+    $stoppedProcessIds = [System.Collections.Generic.List[int]]::new()
+
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
             if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
@@ -89,7 +91,19 @@ function Stop-ProcessesUnderPath {
         ForEach-Object {
             Write-Host "Stopping process using portable output: $($_.Name) [$($_.ProcessId)]"
             Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            [void] $stoppedProcessIds.Add([int] $_.ProcessId)
         }
+
+    foreach ($processId in $stoppedProcessIds) {
+        for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($null -eq $process) {
+                break
+            }
+
+            Start-Sleep -Milliseconds 250
+        }
+    }
 }
 
 function Invoke-NativeCommand {
@@ -971,7 +985,11 @@ function New-PortableZipParts {
         '',
         "`$ErrorActionPreference = 'Stop'",
         "`$root = `$PSScriptRoot",
-        "`$destination = Join-Path -Path `$root -ChildPath `$OutputZip",
+        "if ([System.IO.Path]::IsPathRooted(`$OutputZip)) {",
+        "    `$destination = `$OutputZip",
+        "} else {",
+        "    `$destination = Join-Path -Path `$root -ChildPath `$OutputZip",
+        "}",
         "if (Test-Path -LiteralPath `$destination) { Remove-Item -LiteralPath `$destination -Force }",
         "`$parts = 1..$PartCount | ForEach-Object { Join-Path -Path `$root -ChildPath ('{0}.zip.part{1:D2}' -f '$BaseZipName', `$_) }",
         "foreach (`$part in `$parts) { if (-not (Test-Path -LiteralPath `$part -PathType Leaf)) { throw ('Missing ZIP part: {0}' -f `$part) } }",
@@ -1002,7 +1020,11 @@ function New-PortableZipParts {
         "`$root = `$PSScriptRoot",
         "`$archive = Join-Path -Path `$root -ChildPath '$BaseZipName.zip'",
         "if (-not (Test-Path -LiteralPath `$archive -PathType Leaf)) { & (Join-Path -Path `$root -ChildPath 'combine.ps1') -OutputZip '$BaseZipName.zip' }",
-        "`$destination = Join-Path -Path `$root -ChildPath `$OutputDir",
+        "if ([System.IO.Path]::IsPathRooted(`$OutputDir)) {",
+        "    `$destination = `$OutputDir",
+        "} else {",
+        "    `$destination = Join-Path -Path `$root -ChildPath `$OutputDir",
+        "}",
         "if (Test-Path -LiteralPath `$destination) { Remove-Item -LiteralPath `$destination -Recurse -Force }",
         "Expand-Archive -LiteralPath `$archive -DestinationPath `$destination -Force",
         "Write-Host ('Extracted multipart ZIP to {0}' -f `$destination)"
@@ -1091,7 +1113,6 @@ try {
     $releaseDir = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\runner\Release'
     $portableDir = Join-Path -Path $OutputRoot -ChildPath $PortableName
     $zipPath = Join-Path -Path $OutputRoot -ChildPath "$PortableName.zip"
-    $zipPartsDir = Join-Path -Path $OutputRoot -ChildPath "$PortableName-zip-parts"
     $exeName = "$binaryName.exe"
     $exePath = Join-Path -Path $releaseDir -ChildPath $exeName
     $expectedAppVersion = Get-WindowsAgentFlutterAppVersion -ProjectPath $ProjectPath
@@ -1100,7 +1121,6 @@ try {
     Stop-ProcessesUnderPath -Path $portableDir
     Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory before build'
     Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive before build'
-    Remove-OutputPath -Path $zipPartsDir -OutputRoot $OutputRoot -Purpose 'to remove the old split zip parts directory before build'
 
     Push-Location $ProjectPath
     try {
@@ -1116,9 +1136,7 @@ try {
         }
         Write-Host "Portable backend URL: $BackendBaseUrl"
         Remove-WindowsAgentBuildArtifacts `
-            -ProjectPath $ProjectPath `
-            -PreserveFlutterEphemeral `
-            -PreserveWindowsBuildTree
+            -ProjectPath $ProjectPath
         if (Test-Path -LiteralPath $releaseDir -PathType Container) {
             Write-Host "Removing stale release output: $releaseDir"
             Remove-WindowsAgentBuildPath -Path $releaseDir -ProjectPath $ProjectPath
@@ -1143,6 +1161,12 @@ try {
             if ($recoveredVersion -ne $expectedAppVersion) {
                 throw ("Windows release build failed and recovery found executable version {0}, expected {1}. " +
                        "Refusing to package a stale runner.") -f $recoveredVersion, $expectedAppVersion
+            }
+
+            try {
+                Invoke-WindowsAgentReleaseInstall -ProjectPath $ProjectPath
+            } catch {
+                Write-Warning "CMake release install recovery failed: $($_.Exception.Message)"
             }
 
             $restoredAotLibrary = Restore-WindowsAgentAotLibrary -ProjectPath $ProjectPath
@@ -1191,12 +1215,6 @@ try {
     Write-Host "Creating zip archive..."
     Compress-Archive -LiteralPath $portableDir -DestinationPath $zipPath -Force
     Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime
-    Write-Host "Splitting zip archive into 10 parts..."
-    $zipPartsInfo = New-PortableZipParts `
-        -ZipPath $zipPath `
-        -BaseZipName $PortableName `
-        -PartsDir $zipPartsDir `
-        -PartCount 10
 
     $portableSize = Get-DirectorySize -Path $portableDir
     $zipSize = (Get-Item -LiteralPath $zipPath).Length
@@ -1205,11 +1223,9 @@ try {
     Write-Host 'Portable Windows build complete.'
     Write-Host "Folder: $portableDir"
     Write-Host "Zip:    $zipPath"
-    Write-Host "Parts:  $($zipPartsInfo.PartsDir)"
     Write-Host "EXE:    $(Join-Path -Path $portableDir -ChildPath $exeName)"
     Write-Host ("Folder size: {0:N1} MB" -f ($portableSize / 1MB))
     Write-Host ("Zip size:    {0:N1} MB" -f ($zipSize / 1MB))
-    Write-Host ("Zip parts:   {0} files" -f $zipPartsInfo.PartCount)
 }
 finally {
     Pop-Location

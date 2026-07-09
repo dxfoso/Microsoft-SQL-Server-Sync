@@ -20,7 +20,6 @@ $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path -Path $PSScriptRoot -ChildP
 $ProjectPath = Join-Path -Path $RepoRoot -ChildPath 'sync_windows_agent'
 $PortableName = 'sync_windows_agent-windows-portable'
 $PortableZip = Join-Path -Path $RepoRoot -ChildPath "$PortableName.zip"
-$PortableZipPartsDir = Join-Path -Path $RepoRoot -ChildPath "$PortableName-zip-parts"
 $UpdaterScript = Join-Path -Path $RepoRoot -ChildPath 'update.ps1'
 
 function Get-PubspecVersion {
@@ -158,6 +157,156 @@ function New-PortableFilesManifest {
     }
 }
 
+function New-PortableZipParts {
+    param(
+        [Parameter(Mandatory = $true)][string] $ZipPath,
+        [Parameter(Mandatory = $true)][string] $BaseZipName,
+        [Parameter(Mandatory = $true)][string] $PartsDir,
+        [int] $PartCount = 10
+    )
+
+    if ($PartCount -lt 1) {
+        throw "PartCount must be at least 1. Actual: $PartCount"
+    }
+
+    New-Item -Path $PartsDir -ItemType Directory -Force | Out-Null
+
+    $sourceZip = [System.IO.Path]::GetFullPath($ZipPath)
+    if (-not (Test-Path -LiteralPath $sourceZip -PathType Leaf)) {
+        throw "Cannot split missing portable ZIP archive: $ZipPath"
+    }
+
+    $zipSizeBytes = [int64] (Get-Item -LiteralPath $sourceZip).Length
+    if ($zipSizeBytes -le 0) {
+        throw "Cannot split zero-byte portable ZIP archive: $ZipPath"
+    }
+
+    Get-ChildItem -LiteralPath $PartsDir -File -Force |
+        Where-Object { $_.Name -match ('^{0}\.zip\.part\d{{2}}$' -f [regex]::Escape($BaseZipName)) -or $_.Name -in @('combine.ps1', 'extract_all.ps1', 'parts-manifest.txt') } |
+        Remove-Item -Force
+
+    $basePartSize = [int64] [Math]::Floor($zipSizeBytes / [double] $PartCount)
+    $remainder = [int64] ($zipSizeBytes % $PartCount)
+    $bufferSize = 1024 * 1024
+    $buffer = [byte[]]::new($bufferSize)
+    $createdPartNames = [System.Collections.Generic.List[string]]::new()
+
+    $inputStream = [System.IO.File]::Open($sourceZip, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    $bytesConsumed = [int64] 0
+    try {
+        for ($index = 1; $index -le $PartCount; $index++) {
+            $partSize = $basePartSize
+            if ($index -le $remainder) {
+                $partSize++
+            }
+
+            $partName = '{0}.zip.part{1:D2}' -f $BaseZipName, $index
+            $partPath = Join-Path -Path $PartsDir -ChildPath $partName
+            $outputStream = [System.IO.File]::Open($partPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            try {
+                $remaining = [int64] $partSize
+                while ($remaining -gt 0) {
+                    $readLength = [int] [Math]::Min($buffer.Length, $remaining)
+                    $bytesRead = $inputStream.Read($buffer, 0, $readLength)
+                    if ($bytesRead -le 0) {
+                        throw "Unexpected end of ZIP archive while writing $partName."
+                    }
+                    $outputStream.Write($buffer, 0, $bytesRead)
+                    $remaining -= $bytesRead
+                }
+            }
+            finally {
+                $outputStream.Dispose()
+            }
+            [void] $createdPartNames.Add($partName)
+        }
+        $bytesConsumed = $inputStream.Position
+    }
+    finally {
+        $inputStream.Dispose()
+    }
+
+    if ($bytesConsumed -ne $zipSizeBytes) {
+        throw "ZIP split did not consume the complete archive. Read $bytesConsumed of $zipSizeBytes bytes."
+    }
+
+    if ($createdPartNames.Count -ne $PartCount) {
+        throw "Expected $PartCount ZIP parts for $BaseZipName, created $($createdPartNames.Count)."
+    }
+
+    $combineScriptPath = Join-Path -Path $PartsDir -ChildPath 'combine.ps1'
+    $combineScript = @(
+        'param(',
+        "    [string] `$OutputZip = '$BaseZipName.zip'",
+        ')',
+        '',
+        "`$ErrorActionPreference = 'Stop'",
+        "`$root = `$PSScriptRoot",
+        "if ([System.IO.Path]::IsPathRooted(`$OutputZip)) {",
+        "    `$destination = `$OutputZip",
+        "} else {",
+        "    `$destination = Join-Path -Path `$root -ChildPath `$OutputZip",
+        "}",
+        "if (Test-Path -LiteralPath `$destination) { Remove-Item -LiteralPath `$destination -Force }",
+        "`$parts = 1..$PartCount | ForEach-Object { Join-Path -Path `$root -ChildPath ('{0}.zip.part{1:D2}' -f '$BaseZipName', `$_) }",
+        "foreach (`$part in `$parts) { if (-not (Test-Path -LiteralPath `$part -PathType Leaf)) { throw ('Missing ZIP part: {0}' -f `$part) } }",
+        "`$output = [System.IO.File]::Open(`$destination, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)",
+        'try {',
+        "    foreach (`$part in `$parts) {",
+        "        `$input = [System.IO.File]::Open(`$part, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)",
+        '        try {',
+        "            `$input.CopyTo(`$output)",
+        '        } finally {',
+        "            `$input.Dispose()",
+        '        }',
+        '    }',
+        '} finally {',
+        "    `$output.Dispose()",
+        '}',
+        "Write-Host ('Combined ZIP: {0}' -f `$destination)"
+    )
+    Set-Content -LiteralPath $combineScriptPath -Value $combineScript -Encoding ASCII
+
+    $extractScriptPath = Join-Path -Path $PartsDir -ChildPath 'extract_all.ps1'
+    $extractScript = @(
+        'param(',
+        "    [string] `$OutputDir = 'extracted'",
+        ')',
+        '',
+        "`$ErrorActionPreference = 'Stop'",
+        "`$root = `$PSScriptRoot",
+        "`$archive = Join-Path -Path `$root -ChildPath '$BaseZipName.zip'",
+        "if (-not (Test-Path -LiteralPath `$archive -PathType Leaf)) { & (Join-Path -Path `$root -ChildPath 'combine.ps1') -OutputZip '$BaseZipName.zip' }",
+        "if ([System.IO.Path]::IsPathRooted(`$OutputDir)) {",
+        "    `$destination = `$OutputDir",
+        "} else {",
+        "    `$destination = Join-Path -Path `$root -ChildPath `$OutputDir",
+        "}",
+        "if (Test-Path -LiteralPath `$destination) { Remove-Item -LiteralPath `$destination -Recurse -Force }",
+        "Expand-Archive -LiteralPath `$archive -DestinationPath `$destination -Force",
+        "Write-Host ('Extracted multipart ZIP to {0}' -f `$destination)"
+    )
+    Set-Content -LiteralPath $extractScriptPath -Value $extractScript -Encoding ASCII
+
+    $partsManifestPath = Join-Path -Path $PartsDir -ChildPath 'parts-manifest.txt'
+    $manifestLines = @(
+        "SourceZip: $ZipPath",
+        "PartCount: $($createdPartNames.Count)",
+        "RequestedPartCount: $PartCount",
+        "ZipSizeBytes: $zipSizeBytes",
+        "Format: raw-byte-split",
+        "CombineScript: combine.ps1",
+        "ExtractScript: extract_all.ps1",
+        ''
+    ) + @(
+        foreach ($partName in $createdPartNames) {
+            $partPath = Join-Path -Path $PartsDir -ChildPath $partName
+            '{0} {1}' -f $partName, (Get-Item -LiteralPath $partPath).Length
+        }
+    )
+    Set-Content -LiteralPath $partsManifestPath -Value $manifestLines -Encoding ASCII
+}
+
 if (-not (Test-Path -LiteralPath $UpdaterScript -PathType Leaf)) {
     throw "Missing updater script: $UpdaterScript"
 }
@@ -193,9 +342,6 @@ if (-not (Test-Path -LiteralPath $PortableZip -PathType Leaf)) {
     throw "Missing portable ZIP: $PortableZip"
 }
 Assert-ClientUpdateZipContents -ZipPath $PortableZip
-if (-not (Test-Path -LiteralPath $PortableZipPartsDir -PathType Container)) {
-    throw "Missing portable multipart ZIP directory: $PortableZipPartsDir"
-}
 
 New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
 
@@ -227,8 +373,11 @@ if (Test-Path -LiteralPath $multipartOutputDir) {
     Remove-Item -LiteralPath $multipartOutputDir -Recurse -Force
 }
 New-Item -Path $multipartOutputDir -ItemType Directory -Force | Out-Null
-Get-ChildItem -LiteralPath $PortableZipPartsDir -Force |
-    Copy-Item -Destination $multipartOutputDir -Recurse -Force
+New-PortableZipParts `
+    -ZipPath $PortableZip `
+    -BaseZipName $PortableName `
+    -PartsDir $multipartOutputDir `
+    -PartCount 10
 
 $extractRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("sql-sync-client-publish-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -Path $extractRoot -ItemType Directory -Force | Out-Null

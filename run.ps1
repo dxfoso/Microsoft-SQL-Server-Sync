@@ -59,6 +59,7 @@ $script:restartDesktop = $false
 $script:restartBackend = $false
 $script:lastChange = Get-Date
 $script:backendUnavailableSince = $null
+$script:lastDesktopLaunch = $null
 
 function New-DartDefineArgs {
     param(
@@ -163,6 +164,31 @@ function Get-RepoDesktopAppProcess {
         return $null
     }
     return Get-Process -Id $processes[0].ProcessId -ErrorAction SilentlyContinue
+}
+
+function Get-RepoDesktopLauncherProcess {
+    $desktopRoot = $DesktopPath.Replace('/', '\').ToLowerInvariant()
+
+    $launcher = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            if ($null -eq $_ -or [string]::IsNullOrWhiteSpace($_.CommandLine)) {
+                return $false
+            }
+
+            $commandLine = $_.CommandLine.Replace('/', '\').ToLowerInvariant()
+            return $commandLine.Contains('flutter_tools.snapshot') -and
+                $commandLine.Contains(' run ') -and
+                $commandLine.Contains('-d windows') -and
+                $commandLine.Contains($desktopRoot)
+        } |
+        Sort-Object ProcessId |
+        Select-Object -First 1
+
+    if ($null -eq $launcher -or $null -eq $launcher.ProcessId) {
+        return $null
+    }
+
+    return Get-Process -Id $launcher.ProcessId -ErrorAction SilentlyContinue
 }
 
 function Stop-RepoDesktopAppProcesses {
@@ -623,6 +649,7 @@ function Start-DesktopApp {
     Write-Host "Starting Windows desktop client: flutter run -d $DesktopDevice" -ForegroundColor Cyan
     Write-Host "Desktop API URL: $backendBaseUrl" -ForegroundColor Green
     Stop-RepoDesktopAppProcesses
+    $script:lastDesktopLaunch = Get-Date
     return Start-Process -FilePath flutter `
         -ArgumentList $flutterArgs `
         -WorkingDirectory $DesktopPath `
@@ -638,18 +665,24 @@ function Start-Stack {
     $script:serverUrl = "http://127.0.0.1:$backendPort"
     $script:clientUrl = "http://127.0.0.1:$backendPort/call"
 
-    Stop-PortListeners -Port $backendPort
-    Stop-RepoBackendProcesses
-    $script:backendProcess = Start-Backend
-    if (-not (Wait-BackendHealthy -Port $backendPort)) {
-        Stop-AppProcess -Process $script:backendProcess
-        $script:backendProcess = $null
-        throw "Backend did not become healthy on port $backendPort."
-    }
+    $existingBackendProcess = Get-RepoBackendServerProcess
+    if ($null -ne $existingBackendProcess -and (Test-BackendAvailable -Port $backendPort)) {
+        Write-Host "Reusing healthy local backend server on port $backendPort." -ForegroundColor Cyan
+        $script:backendProcess = $existingBackendProcess
+    } else {
+        Stop-PortListeners -Port $backendPort
+        Stop-RepoBackendProcesses
+        $script:backendProcess = Start-Backend
+        if (-not (Wait-BackendHealthy -Port $backendPort)) {
+            Stop-AppProcess -Process $script:backendProcess
+            $script:backendProcess = $null
+            throw "Backend did not become healthy on port $backendPort."
+        }
 
-    $serverProcess = Wait-RepoBackendServerProcess
-    if ($null -ne $serverProcess) {
-        $script:backendProcess = $serverProcess
+        $serverProcess = Wait-RepoBackendServerProcess
+        if ($null -ne $serverProcess) {
+            $script:backendProcess = $serverProcess
+        }
     }
 
     Write-Host "Local server URL: " -NoNewline -ForegroundColor DarkCyan
@@ -882,6 +915,14 @@ try {
                 if ($null -ne $desktopAppProcess) {
                     $script:desktopProcess = $desktopAppProcess
                 } else {
+                    $desktopLauncherProcess = Get-RepoDesktopLauncherProcess
+                    if ($null -ne $desktopLauncherProcess) {
+                        $script:desktopProcess = $desktopLauncherProcess
+                        continue
+                    }
+                    if ($null -ne $script:lastDesktopLaunch -and ((Get-Date) - $script:lastDesktopLaunch).TotalSeconds -lt 30) {
+                        continue
+                    }
                     Write-Host "Restart reason: desktop launcher process exited and no desktop app process was found." -ForegroundColor Red
                     Restart-DesktopApp
                 }

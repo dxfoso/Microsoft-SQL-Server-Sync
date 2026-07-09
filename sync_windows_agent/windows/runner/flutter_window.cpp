@@ -31,8 +31,9 @@ std::wstring Utf8ToWide(const std::string& value) {
 
 }  // namespace
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             bool start_minimized)
+    : start_minimized_(start_minimized), project_(project) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -140,15 +141,21 @@ bool FlutterWindow::OnCreate() {
   LogStartupEvent(L"FlutterWindow::OnCreate SetChildContent start");
   SetChildContent(flutter_view_window);
   LogStartupEvent(L"FlutterWindow::OnCreate SetChildContent complete");
-  LogStartupEvent(L"FlutterWindow::OnCreate show window immediately");
-  this->Show();
+  if (start_minimized_) {
+    LogStartupEvent(L"FlutterWindow::OnCreate launching minimized to tray");
+    allow_tray_minimize_ = true;
+    MinimizeToTray();
+  } else {
+    LogStartupEvent(L"FlutterWindow::OnCreate show window immediately");
+    this->Show();
+  }
 
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     LogStartupEvent(L"FlutterWindow first frame callback");
     startup_ui_ready_ = true;
     allow_tray_minimize_ = true;
     const auto window_handle = GetHandle();
-    if (window_handle != nullptr) {
+    if (window_handle != nullptr && !start_minimized_) {
       this->Show();
       SetForegroundWindow(window_handle);
     }

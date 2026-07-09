@@ -348,6 +348,40 @@ class AdminBulkClientUpdateRequestResult {
   }
 }
 
+class AdminBulkWindowActionRequestResult {
+  const AdminBulkWindowActionRequestResult({
+    required this.action,
+    required this.requestId,
+    required this.requestedAt,
+    required this.requestedByUserId,
+    required this.requestedClientCount,
+    required this.requestedClientNames,
+  });
+
+  final String action;
+  final String requestId;
+  final String requestedAt;
+  final String? requestedByUserId;
+  final int requestedClientCount;
+  final List<String> requestedClientNames;
+
+  factory AdminBulkWindowActionRequestResult.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return AdminBulkWindowActionRequestResult(
+      action: json['action'] as String? ?? '',
+      requestId: json['requestId'] as String? ?? '',
+      requestedAt: json['requestedAt'] as String? ?? '',
+      requestedByUserId: json['requestedByUserId'] as String?,
+      requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
+      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+    );
+  }
+}
+
 class AdminServerResetResult {
   const AdminServerResetResult({
     required this.jobDeletedCount,
