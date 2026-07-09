@@ -62,6 +62,14 @@ class Agent {
   field clientUpdateLastAcknowledgedAt: datetime?
   field clientUpdateStatus: string min=0 max=32
   field clientUpdateMessage: string min=0 max=4000
+  field windowActionRequestId: string? min=0 max=64
+  field windowActionRequestedAt: datetime?
+  field windowActionRequestedByUserId: string? min=0 max=64
+  field windowActionName: string min=0 max=32
+  field windowActionLastRequestId: string? min=0 max=64
+  field windowActionLastAcknowledgedAt: datetime?
+  field windowActionStatus: string min=0 max=32
+  field windowActionMessage: string min=0 max=4000
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field updatedAt: datetime
@@ -1264,7 +1272,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'diagnosticPayload', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1326,45 +1334,30 @@ function visible_job_rows_for(current: map<json>): array<json> {
 }
 
 function public_agent_payload(agent: map<json>): map<json> {
-  let payloadAgent = agent;
-  if (
-    (payloadAgent.tables == null
-      || payloadAgent.diagnosticStatus == null)
-    && payloadAgent.clientName != null
-  ) {
-    const refreshed = db.selectOne(Agent, {
-      clientName: string.from(payloadAgent.clientName)
-    });
-    if (refreshed != null) {
-      payloadAgent = refreshed;
-    }
-  }
   let nextTables = [];
   if (agent.tables != null) {
     nextTables = apply_table_sync_policies(agent.ownerUserId, bounded_agent_tables(agent.tables, agent.selectedTable), string.from(agent.database));
   }
-  if (payloadAgent.tables != null) {
-    nextTables = apply_table_sync_policies(payloadAgent.ownerUserId, bounded_agent_tables(payloadAgent.tables, payloadAgent.selectedTable), string.from(payloadAgent.database));
-  }
-  nextTables = normalize_agent_tables_payload(payloadAgent, nextTables);
+  nextTables = normalize_agent_tables_payload(agent, nextTables);
   return {
-    clientName: payloadAgent.clientName,
-    machineName: payloadAgent.machineName,
-    server: payloadAgent.server,
-    database: payloadAgent.database,
+    clientName: agent.clientName,
+    machineName: agent.machineName,
+    server: agent.server,
+    database: agent.database,
     isOnline: effective_agent_online(agent),
-    historyLimit: payloadAgent.historyLimit,
-    autoSyncIntervalMinutes: payloadAgent.autoSyncIntervalMinutes,
-    serverConnected: payloadAgent.serverConnected,
-    sqlConnected: payloadAgent.sqlConnected,
-    clientVersion: payloadAgent.clientVersion ?? '',
-    lastHeartbeat: payloadAgent.lastHeartbeat,
-    selectedTable: payloadAgent.selectedTable,
-    diagnostics: agent_diagnostics_payload(payloadAgent),
-    clientUpdate: agent_client_update_payload(payloadAgent),
+    historyLimit: agent.historyLimit,
+    autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
+    serverConnected: agent.serverConnected,
+    sqlConnected: agent.sqlConnected,
+    clientVersion: agent.clientVersion ?? '',
+    lastHeartbeat: agent.lastHeartbeat,
+    selectedTable: agent.selectedTable,
+    diagnostics: agent_diagnostics_payload(agent),
+    clientUpdate: agent_client_update_payload(agent),
+    windowAction: agent_window_action_payload(agent),
     tables: nextTables,
-    clientUserId: payloadAgent.clientUserId,
-    ownerUserId: payloadAgent.ownerUserId
+    clientUserId: agent.clientUserId,
+    ownerUserId: agent.ownerUserId
   };
 }
 
@@ -1425,6 +1418,34 @@ function agent_client_update_payload(agent: map<json>): map<json> {
     acknowledgedAt: agent.clientUpdateLastAcknowledgedAt,
     status: agent.clientUpdateStatus,
     message: agent.clientUpdateMessage
+  };
+}
+
+function window_action_request_pending(agent: map<json>): bool {
+  if (agent.windowActionRequestId == null) {
+    return false;
+  }
+  const requestId = string.from(agent.windowActionRequestId).trim();
+  if (requestId.length == 0) {
+    return false;
+  }
+  if (agent.windowActionLastRequestId == null) {
+    return true;
+  }
+  return string.from(agent.windowActionLastRequestId).trim() != requestId;
+}
+
+function agent_window_action_payload(agent: map<json>): map<json> {
+  return {
+    pending: window_action_request_pending(agent),
+    requestId: agent.windowActionRequestId,
+    requestedAt: agent.windowActionRequestedAt,
+    requestedByUserId: agent.windowActionRequestedByUserId,
+    action: agent.windowActionName,
+    lastRequestId: agent.windowActionLastRequestId,
+    acknowledgedAt: agent.windowActionLastAcknowledgedAt,
+    status: agent.windowActionStatus,
+    message: agent.windowActionMessage
   };
 }
 
@@ -1620,7 +1641,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1709,6 +1730,14 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       clientUpdateLastAcknowledgedAt: null,
       clientUpdateStatus: 'idle',
       clientUpdateMessage: '',
+      windowActionRequestId: null,
+      windowActionRequestedAt: null,
+      windowActionRequestedByUserId: null,
+      windowActionName: '',
+      windowActionLastRequestId: null,
+      windowActionLastAcknowledgedAt: null,
+      windowActionStatus: 'idle',
+      windowActionMessage: '',
       clientVersion: '',
       clientUserId,
       ownerUserId,
@@ -1753,6 +1782,14 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     clientUpdateLastAcknowledgedAt: null,
     clientUpdateStatus: 'idle',
     clientUpdateMessage: '',
+    windowActionRequestId: null,
+    windowActionRequestedAt: null,
+    windowActionRequestedByUserId: null,
+    windowActionName: '',
+    windowActionLastRequestId: null,
+    windowActionLastAcknowledgedAt: null,
+    windowActionStatus: 'idle',
+    windowActionMessage: '',
     clientUserId,
     ownerUserId,
     updatedAt: now_iso()
@@ -2010,6 +2047,10 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null): ar
 
 function periodic_sync_scheduler_agent_limit(): int {
   return 4;
+}
+
+function periodic_sync_scheduler_owner_limit(): int {
+  return 2;
 }
 
 function periodic_sync_scheduler_table_limit(): int {
@@ -2645,7 +2686,8 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),
     jobs: active_jobs_for_client(resolvedClientName),
     diagnostics: agent_diagnostics_payload(nextAgent),
-    clientUpdate: agent_client_update_payload(nextAgent)
+    clientUpdate: agent_client_update_payload(nextAgent),
+    windowAction: agent_window_action_payload(nextAgent)
   };
 }
 
@@ -2662,16 +2704,19 @@ function auto_sync_tick(token: string? = null): map<json> {
   if (is_owner_user(current)) {
     ownerIds = ownerIds.concat([current.id]);
   } else {
+    const ownerLimit = periodic_sync_scheduler_owner_limit();
     for (const agent of list_agent_rows()) {
       if (!agent_recent_enough_for_periodic_sync(agent)) {
         continue;
       }
       const ownerUserId = string.from(agent.ownerUserId ?? '').trim();
-      if (ownerUserId.length != 0) {
+      if (ownerUserId.length != 0 && !string_array_contains(ownerIds, ownerUserId)) {
         ownerIds = ownerIds.concat([ownerUserId]);
+        if (ownerIds.length >= ownerLimit) {
+          break;
+        }
       }
     }
-    ownerIds = unique_string_values(ownerIds);
   }
 
   let createdJobs = [];
@@ -3046,6 +3091,128 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
   };
 }
 
+function agent_window_action_request_all(action: string = 'minimize', token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedAction = truncate_text(action.trim().toLowerCase(), 32);
+  if (normalizedAction.length == 0) {
+    return raw_json_error(400, 'action is required');
+  }
+  if (normalizedAction != 'minimize') {
+    return raw_json_error(400, 'unsupported window action');
+  }
+  const requestId = uuid.v4();
+  const requestedAt = now_iso();
+  const visibleAgents = visible_agent_rows_for(current);
+  let requestedClientNames = [];
+  for (const agent of visibleAgents) {
+    if (!effective_agent_online(agent)) {
+      continue;
+    }
+    const clientName = normalize_user_name(agent.clientName);
+    if (clientName.length != 0) {
+      requestedClientNames = requestedClientNames.concat([clientName]);
+    }
+  }
+  if (requestedClientNames.length == 0) {
+    return {
+      ok: true,
+      action: normalizedAction,
+      requestId,
+      requestedAt,
+      requestedByUserId: current.id,
+      requestedClientCount: 0,
+      requestedClientNames: []
+    };
+  }
+  db.updateMany(Agent, { clientName: { in: requestedClientNames } }, {
+    windowActionRequestId: requestId,
+    windowActionRequestedAt: requestedAt,
+    windowActionRequestedByUserId: current.id,
+    windowActionName: normalizedAction,
+    windowActionStatus: 'requested',
+    windowActionMessage: '',
+    updatedAt: requestedAt
+  });
+  return {
+    ok: true,
+    action: normalizedAction,
+    requestId,
+    requestedAt,
+    requestedByUserId: current.id,
+    requestedClientCount: requestedClientNames.length,
+    requestedClientNames
+  };
+}
+
+function agent_window_action_ack(clientName: string? = null, requestId: string? = null, action: string = '', status: string = 'completed', message: string = '', token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  let resolvedClientName = '';
+  if (clientName == null || clientName.trim().length == 0) {
+    if (current.username == null) {
+      resolvedClientName = normalize_user_name(current.name);
+    } else {
+      resolvedClientName = normalize_user_name(current.username);
+    }
+  } else {
+    resolvedClientName = normalize_user_name(clientName);
+  }
+  const targetUser = find_user_by_identity(resolvedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let targetOwnerUserId = owner_namespace_for_user(current);
+  let targetClientUserId = current.id;
+  if (targetUser != null) {
+    targetOwnerUserId = targetUser.ownerUserId;
+    targetClientUserId = targetUser.id;
+  }
+  const agent = ensure_agent(resolvedClientName, targetClientUserId, targetOwnerUserId);
+  let resolvedRequestId = '';
+  if (requestId != null) {
+    resolvedRequestId = string.from(requestId).trim();
+  }
+  if (resolvedRequestId.length == 0 && agent.windowActionRequestId != null) {
+    resolvedRequestId = string.from(agent.windowActionRequestId).trim();
+  }
+  let resolvedRequestIdOrNull = null;
+  if (resolvedRequestId.length != 0) {
+    resolvedRequestIdOrNull = resolvedRequestId;
+  }
+  let nextAction = '';
+  if (action.trim().length == 0) {
+    if (agent.windowActionName != null) {
+      nextAction = truncate_text(string.from(agent.windowActionName).trim().toLowerCase(), 32);
+    }
+  } else {
+    nextAction = truncate_text(action.trim().toLowerCase(), 32);
+  }
+  const updated = db.update(Agent, { clientName: resolvedClientName }, {
+    windowActionLastRequestId: resolvedRequestIdOrNull,
+    windowActionLastAcknowledgedAt: now_iso(),
+    windowActionName: nextAction,
+    windowActionStatus: truncate_text(status.trim(), 32),
+    windowActionMessage: truncate_text(message, 4000),
+    updatedAt: now_iso()
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: resolvedClientName,
+    windowAction: agent_window_action_payload(updated)
+  };
+}
+
 function agent_diagnostics_upload(clientName: string? = null, requestId: string? = null, summary: string = '', payload: string = '', token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -3200,6 +3367,14 @@ function reset_all_agent_saved_state(): int {
     diagnosticStatus: 'idle',
     diagnosticSummary: '',
     diagnosticPayload: '',
+    windowActionRequestId: null,
+    windowActionRequestedAt: null,
+    windowActionRequestedByUserId: null,
+    windowActionName: '',
+    windowActionLastRequestId: null,
+    windowActionLastAcknowledgedAt: null,
+    windowActionStatus: 'idle',
+    windowActionMessage: '',
     updatedAt: now_iso()
   });
 }

@@ -10,8 +10,12 @@ import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
 import 'live_sync_api.dart';
+import 'sql_sync_fingerprint.dart';
+import 'sql_sync_merge.dart';
+import 'sql_sync_schema.dart';
 import 'sync_state.dart';
 import 'startup_log.dart';
+import 'window_settings.dart';
 
 const String _agentAppVersion = String.fromEnvironment(
   'APP_VERSION',
@@ -30,13 +34,23 @@ const String _agentBuildReleaseDate = String.fromEnvironment(
   'BUILD_RELEASE_DATE',
   defaultValue: '',
 );
-const Set<String> _textLikeSqlTypes = <String>{
-  'char',
-  'nchar',
-  'varchar',
-  'nvarchar',
-  'sysname',
-};
+const Duration _defaultSqlCmdTimeout = Duration(minutes: 2);
+const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);
+typedef _SqlColumnDefinition = SqlSyncColumnDefinition;
+
+class _PendingWindowActionAck {
+  const _PendingWindowActionAck({
+    required this.requestId,
+    required this.action,
+    required this.status,
+    required this.message,
+  });
+
+  final String requestId;
+  final String action;
+  final String status;
+  final String message;
+}
 
 class AgentDashboardPage extends StatefulWidget {
   const AgentDashboardPage({
@@ -94,7 +108,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
+  static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);
   static const int _heartbeatTablePayloadLimit = 150;
+  static const int _targetSnapshotStageInsertBatchSize = 100;
 
   late final TextEditingController _serverController;
   final TextEditingController _userController = TextEditingController();
@@ -131,6 +147,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _clientUpdateError;
   bool _checkingClientUpdate = false;
   bool _applyingClientUpdate = false;
+  ClientUpdateInfo? _pendingForcedClientUpdateInfo;
+  _PendingWindowActionAck? _pendingWindowActionAck;
+  bool _flushingPendingWindowActionAck = false;
+  bool _refreshingTableFingerprints = false;
+  DateTime? _lastTableFingerprintRefreshStartedAt;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -273,6 +294,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           context,
         ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
       }
+    } finally {
+      _retryAutomaticClientUpdateIfReady();
     }
   }
 
@@ -1603,6 +1626,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   void _retryAutomaticClientUpdateIfReady() {
+    final forcedUpdateInfo = _pendingForcedClientUpdateInfo;
+    if (forcedUpdateInfo != null) {
+      _pendingForcedClientUpdateInfo = null;
+      unawaited(_maybeAutoApplyClientUpdate(forcedUpdateInfo, force: true));
+      return;
+    }
     final updateInfo = _clientUpdateInfo;
     if (updateInfo == null) {
       return;
@@ -1614,11 +1643,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     ClientUpdateInfo updateInfo, {
     bool force = false,
   }) async {
-    if (!mounted ||
-        !_hasClientUpdate ||
-        !_supportsAutomaticClientUpdate ||
-        _applyingClientUpdate ||
-        _checkingClientUpdate) {
+    if (!mounted || !_hasClientUpdate || !_supportsAutomaticClientUpdate) {
+      return;
+    }
+    if (_applyingClientUpdate || _checkingClientUpdate) {
+      if (force) {
+        _pendingForcedClientUpdateInfo = updateInfo;
+      }
       return;
     }
 
@@ -1629,12 +1660,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (!force && _hasRecentAutoUpdateAttempt(targetId)) {
       return;
     }
-    if (_syncLoopBusy ||
-        _rowsLoading ||
-        _processingJobIds.isNotEmpty ||
-        _activeJobs.any(
-          (job) => job.status == 'running' || job.status == 'applying',
-        )) {
+    if (!force &&
+        (_syncLoopBusy ||
+            _rowsLoading ||
+            _processingJobIds.isNotEmpty ||
+            _activeJobs.any(
+              (job) => job.status == 'running' || job.status == 'applying',
+            ))) {
       return;
     }
 
@@ -2259,8 +2291,82 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
+  void _scheduleSelectedTableFingerprintRefresh({bool force = false}) {
+    if (!mounted || _refreshingTableFingerprints) {
+      return;
+    }
+    final lastStartedAt = _lastTableFingerprintRefreshStartedAt;
+    if (!force &&
+        lastStartedAt != null &&
+        DateTime.now().difference(lastStartedAt) <
+            _tableFingerprintRefreshCooldown) {
+      return;
+    }
+
+    _refreshingTableFingerprints = true;
+    _lastTableFingerprintRefreshStartedAt = DateTime.now();
+    unawaited(
+      _refreshSelectedTableFingerprints()
+          .catchError((Object error, StackTrace stackTrace) {
+            logStartupEvent('Selected table fingerprint refresh failed: $error');
+          })
+          .whenComplete(() {
+            _refreshingTableFingerprints = false;
+          }),
+    );
+  }
+
   bool _isTemporaryControlPlaneUnavailable(Object error) {
     return error is AgentControlPlaneException && error.statusCode == 503;
+  }
+
+  bool _matchesPendingWindowActionAck(RemoteAgentWindowAction windowAction) {
+    final pendingAck = _pendingWindowActionAck;
+    if (pendingAck == null) {
+      return false;
+    }
+    final requestId = windowAction.requestId?.trim() ?? '';
+    final action = windowAction.action?.trim().toLowerCase() ?? '';
+    return requestId == pendingAck.requestId && action == pendingAck.action;
+  }
+
+  Future<void> _flushPendingWindowActionAck() async {
+    final pendingAck = _pendingWindowActionAck;
+    if (pendingAck == null || _flushingPendingWindowActionAck) {
+      return;
+    }
+    _flushingPendingWindowActionAck = true;
+    try {
+      await _controlPlaneClient.acknowledgeWindowAction(
+        clientName: widget.clientName,
+        requestId: pendingAck.requestId,
+        action: pendingAck.action,
+        status: pendingAck.status,
+        message: pendingAck.message,
+      );
+      if (_pendingWindowActionAck?.requestId == pendingAck.requestId) {
+        _pendingWindowActionAck = null;
+      }
+    } catch (error) {
+      logStartupEvent('Window action acknowledgement retry failed: $error');
+    } finally {
+      _flushingPendingWindowActionAck = false;
+    }
+  }
+
+  Future<void> _queueWindowActionAck({
+    required String requestId,
+    required String action,
+    required String status,
+    required String message,
+  }) async {
+    _pendingWindowActionAck = _PendingWindowActionAck(
+      requestId: requestId,
+      action: action,
+      status: status,
+      message: message,
+    );
+    await _flushPendingWindowActionAck();
   }
 
   Future<void> _syncWithControlPlane() async {
@@ -2270,7 +2376,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _syncLoopBusy = true;
     try {
-      await _refreshSelectedTableFingerprints();
+      _scheduleSelectedTableFingerprintRefresh();
       final heartbeat = await _controlPlaneClient.heartbeat(
         clientName: widget.clientName,
         machineName: Platform.localHostname,
@@ -2317,6 +2423,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       });
 
       _scheduleRequestedDiagnosticsUpload(heartbeat.diagnostics);
+
+      await _flushPendingWindowActionAck();
+
+      if (heartbeat.windowAction.pending) {
+        if (_matchesPendingWindowActionAck(heartbeat.windowAction)) {
+          await _flushPendingWindowActionAck();
+        } else {
+          await _handleRequestedWindowAction(heartbeat.windowAction);
+        }
+      }
 
       if (heartbeat.clientUpdate.pending) {
         await _handleRequestedClientUpdate(heartbeat.clientUpdate);
@@ -2398,6 +2514,54 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  Future<void> _handleRequestedWindowAction(
+    RemoteAgentWindowAction windowAction,
+  ) async {
+    final requestId = windowAction.requestId?.trim() ?? '';
+    final action = windowAction.action?.trim().toLowerCase() ?? '';
+    if (requestId.isEmpty || action.isEmpty) {
+      return;
+    }
+
+    try {
+      switch (action) {
+        case 'minimize':
+          logStartupEvent(
+            'Server requested window action $requestId for ${widget.clientName}: minimize.',
+          );
+          await WindowsAgentWindowSettings.minimizeWindow();
+          await _queueWindowActionAck(
+            requestId: requestId,
+            action: action,
+            status: 'completed',
+            message: 'Window minimized to tray.',
+          );
+          return;
+        default:
+          await _queueWindowActionAck(
+            requestId: requestId,
+            action: action,
+            status: 'failed',
+            message: 'Unsupported window action $action.',
+          );
+      }
+    } catch (error) {
+      logStartupEvent('Server-requested window action failed: $error');
+      try {
+        await _queueWindowActionAck(
+          requestId: requestId,
+          action: action,
+          status: 'failed',
+          message: error.toString(),
+        );
+      } catch (ackError) {
+        logStartupEvent(
+          'Window action failure acknowledgement failed: $ackError',
+        );
+      }
+    }
+  }
+
   Future<void> _handleRequestedClientUpdate(
     RemoteAgentClientUpdate clientUpdate,
   ) async {
@@ -2457,6 +2621,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       logStartupEvent(
         'Server requested client update $requestId for ${widget.clientName}; live version=$manifestVersion current=${currentVersion.isEmpty ? 'unknown' : currentVersion}.',
       );
+      if (_syncLoopBusy) {
+        _pendingForcedClientUpdateInfo = updateInfo;
+        return;
+      }
       await _maybeAutoApplyClientUpdate(updateInfo, force: true);
     } catch (error) {
       logStartupEvent('Server-requested client update failed: $error');
@@ -2583,13 +2751,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     compact['databases'] = databases
         .whereType<Map>()
         .map((database) {
-          final nextDatabase = Map<String, dynamic>.from(database);
-          final automaticEnable = nextDatabase['automaticEnable'];
-          if (automaticEnable is Map) {
-            nextDatabase['automaticEnable'] =
-                _compactAutomaticChangeTrackingEnable(automaticEnable);
-          }
-          return nextDatabase;
+          return _compactDatabaseChangeTrackingDiagnostics(database);
         })
         .toList(growable: false);
 
@@ -2599,7 +2761,41 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         automaticEnable,
       );
     }
+    compact.remove('trackedTables');
+    compact.remove('offlineChangeDetectionNote');
     return compact;
+  }
+
+  Map<String, dynamic> _compactDatabaseChangeTrackingDiagnostics(
+    Map<dynamic, dynamic> database,
+  ) {
+    final nextDatabase = <String, dynamic>{
+      'checked': database['checked'],
+      'available': database['available'],
+      'database': database['database'],
+      'currentVersion': database['currentVersion'],
+      'tableCount': database['tableCount'],
+      'primaryKeyTableCount': database['primaryKeyTableCount'],
+      'trackedTableCount': database['trackedTableCount'],
+      'offlineChangesCanBeDetected': database['offlineChangesCanBeDetected'],
+      if (database['error'] != null) 'error': database['error'],
+      if (database['serverEdition'] != null)
+        'serverEdition': database['serverEdition'],
+      if (database['productVersion'] != null)
+        'productVersion': database['productVersion'],
+      if (database['autoCleanup'] != null) 'autoCleanup': database['autoCleanup'],
+      if (database['retentionPeriod'] != null)
+        'retentionPeriod': database['retentionPeriod'],
+      if (database['retentionUnits'] != null)
+        'retentionUnits': database['retentionUnits'],
+    };
+    final automaticEnable = database['automaticEnable'];
+    if (automaticEnable is Map) {
+      nextDatabase['automaticEnable'] = _compactAutomaticChangeTrackingEnable(
+        automaticEnable,
+      );
+    }
+    return nextDatabase;
   }
 
   Map<String, dynamic> _compactAutomaticChangeTrackingEnable(
@@ -2910,8 +3106,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
 
-    final unsupportedColumns =
-        columnDefinitions.where((column) => !column.isSupported).toList();
+    final columnAssessment = assessSqlSyncColumns(columnDefinitions);
+    final unsupportedColumns = columnAssessment.unsupportedColumns;
     if (unsupportedColumns.isNotEmpty) {
       final names = unsupportedColumns.map((column) => column.name).join(', ');
       throw Exception(
@@ -2919,9 +3115,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
 
-    final syncColumns = columnDefinitions
-        .where((column) => column.isWritable)
-        .toList(growable: false);
+    final syncColumns = columnAssessment.writableColumns;
     if (syncColumns.isEmpty) {
       throw Exception(
         'Table ${tableParts.schema}.${tableParts.table} has no writable columns to sync.',
@@ -3033,8 +3227,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
 
-    final unsupportedColumns =
-        columnDefinitions.where((column) => !column.isSupported).toList();
+    final columnAssessment = assessSqlSyncColumns(columnDefinitions);
+    final unsupportedColumns = columnAssessment.unsupportedColumns;
     if (unsupportedColumns.isNotEmpty) {
       final names = unsupportedColumns.map((column) => column.name).join(', ');
       throw Exception(
@@ -3112,11 +3306,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
 
+    final visibleTableName = _stripKnownDatabaseAndDefaultSchema(
+      localTableName,
+      database: targetDatabase,
+    );
+    final targetFingerprints = await _queryTableFingerprints(
+      profile: targetProfile,
+      database: targetDatabase,
+      tables: [visibleTableName],
+    );
+    _applyTableFingerprints(
+      database: targetDatabase,
+      fingerprints: targetFingerprints,
+    );
+
     if (_selectedDatabase == targetDatabase) {
-      final visibleTableName = _stripKnownDatabaseAndDefaultSchema(
-        localTableName,
-        database: targetDatabase,
-      );
       _applyTableRowCounts(
         database: targetDatabase,
         rowCounts: {visibleTableName: targetRowCountResult.value},
@@ -3500,182 +3704,104 @@ END
     required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
   }) async {
-    final insertColumns = columns
-        .where((column) => column.isWritable)
-        .toList(growable: false);
-    final updatePrimaryKeysFromUniqueMatch = matchColumnSets.length > 1;
-    final primaryKeyColumnNames =
-        primaryKeyColumns.map((column) => column.toLowerCase()).toSet();
-    final updatableColumns = insertColumns
-        .where((column) {
-          if (column.isIdentity) {
-            return false;
-          }
-          if (primaryKeyColumnNames.contains(column.name.toLowerCase()) &&
-              !updatePrimaryKeysFromUniqueMatch) {
-            return false;
-          }
-          return true;
-        })
-        .toList(growable: false);
-    final joinClause = _matchClauseForColumnSets(matchColumnSets, columns);
-    final insertColumnList = insertColumns
-        .map((column) => _quoteIdentifier(column.name))
-        .join(', ');
-    final insertValueList = insertColumns
-        .map((column) => 'source.${_quoteIdentifier(column.name)}')
-        .join(', ');
-    final sourceColumnList = insertColumns
-        .map((column) => _quoteIdentifier(column.name))
-        .join(', ');
-    final sourceTempColumnDefinitions = insertColumns
-        .map(
-          (column) =>
-              '${_quoteIdentifier(column.name)} ${column.sqlCastType} NULL',
-        )
-        .join(',\n    ');
-    final updateClause =
-        updatableColumns.isEmpty
-            ? ''
-            : '''
-WHEN MATCHED THEN
-  UPDATE SET
-    ${updatableColumns.map((column) => 'target.${_quoteIdentifier(column.name)} = source.${_quoteIdentifier(column.name)}').join(',\n    ')}
-''';
-    final identityColumns = insertColumns
-        .where((column) => column.isIdentity)
-        .toList(growable: false);
-    final identityInsertOn =
-        identityColumns.isEmpty
-            ? ''
-            : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} ON;';
-    final identityInsertOff =
-        identityColumns.isEmpty
-            ? ''
-            : 'SET IDENTITY_INSERT ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} OFF;';
-    final triggerTarget =
-        '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
-    const targetMergeInsertBatchSize = 100;
-    final insertStatements = StringBuffer();
-    for (
-      var offset = 0;
-      offset < rows.length;
-      offset += targetMergeInsertBatchSize
-    ) {
-      final sourceValueTuples = rows
-          .skip(offset)
-          .take(targetMergeInsertBatchSize)
-          .map(
-            (row) =>
-                '(${insertColumns.map((column) => _sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
-          )
-          .join(',\n      ');
-      insertStatements.writeln('''
-INSERT INTO #source_rows ($sourceColumnList)
-VALUES
-    $sourceValueTuples;
-''');
+    final stageTableName = _nextTargetSnapshotStageTableName(table);
+    try {
+      await _runSqlCmdOrThrow(
+        profile: profile,
+        database: database,
+        query: buildTargetSnapshotStageSetupSql(
+          stageTableName: stageTableName,
+          columns: columns,
+        ),
+        context: 'target snapshot stage setup',
+        timeout: _snapshotSqlCmdTimeout,
+      );
+      for (
+        var offset = 0;
+        offset < rows.length;
+        offset += _targetSnapshotStageInsertBatchSize
+      ) {
+        final batch = rows
+            .skip(offset)
+            .take(_targetSnapshotStageInsertBatchSize)
+            .toList(growable: false);
+        await _runSqlCmdOrThrow(
+          profile: profile,
+          database: database,
+          query: buildTargetSnapshotStageInsertSql(
+            stageTableName: stageTableName,
+            columns: columns,
+            rows: batch,
+          ),
+          context: 'target snapshot stage load',
+          timeout: _snapshotSqlCmdTimeout,
+        );
+      }
+      await _runSqlCmdOrThrow(
+        profile: profile,
+        database: database,
+        query: buildTargetSnapshotStageApplySql(
+          database: database,
+          schema: schema,
+          table: table,
+          stageTableName: stageTableName,
+          columns: columns,
+          primaryKeyColumns: primaryKeyColumns,
+          matchColumnSets: matchColumnSets,
+        ),
+        context: 'target snapshot merge',
+        timeout: _snapshotSqlCmdTimeout,
+      );
+    } finally {
+      await _dropTargetSnapshotStage(
+        profile: profile,
+        database: database,
+        stageTableName: stageTableName,
+      );
     }
-    final query = '''
-SET NOCOUNT ON;
-SET XACT_ABORT ON;
-BEGIN TRANSACTION;
-CREATE TABLE #source_rows (
-  $sourceTempColumnDefinitions
-);
-ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
-$identityInsertOn
-${insertStatements.toString()}
-MERGE ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)} AS target
-USING #source_rows AS source
-ON $joinClause
-$updateClause
-WHEN NOT MATCHED BY TARGET THEN
-  INSERT ($insertColumnList)
-  VALUES ($insertValueList)
-WHEN NOT MATCHED BY SOURCE THEN
-  DELETE;
-$identityInsertOff
-ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
-DROP TABLE #source_rows;
-COMMIT TRANSACTION;
-''';
+  }
+
+  String _nextTargetSnapshotStageTableName(String table) {
+    final normalizedTable = table.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
+    final randomSuffix = math.Random.secure().nextInt(0x7fffffff);
+    return 'sqlsync_${normalizedTable}_$randomSuffix';
+  }
+
+  Future<void> _dropTargetSnapshotStage({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String stageTableName,
+  }) async {
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: buildTargetSnapshotStageDropSql(stageTableName: stageTableName),
+      timeout: _snapshotSqlCmdTimeout,
+    );
+    if (processResult == null || processResult.exitCode == 0) {
+      return;
+    }
+  }
+
+  Future<void> _runSqlCmdOrThrow({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String query,
+    required String context,
+    Duration timeout = _defaultSqlCmdTimeout,
+  }) async {
     final processResult = await _runSqlCmd(
       profile: profile,
       database: database,
       query: query,
+      timeout: timeout,
     );
     if (processResult == null) {
       throw Exception(_sqlCmdUnavailableMessage(profile));
     }
     if (processResult.exitCode != 0) {
-      throw Exception(_sqlCmdFailed('target snapshot merge', processResult));
+      throw Exception(_sqlCmdFailed(context, processResult));
     }
-  }
-
-  String _sourceBatchTargetLiteral(_SqlColumnDefinition column, Object? value) {
-    if (value == null) {
-      return 'NULL';
-    }
-
-    final stringValue = value.toString();
-    final normalized = column.sqlType.trim().toLowerCase();
-    if (normalized == 'binary' || normalized == 'varbinary') {
-      return "CONVERT(${column.sqlCastType}, '${_escapeSqlLiteral(stringValue)}', 1)";
-    }
-    if (_textLikeSqlTypes.contains(normalized)) {
-      return "N'${_escapeSqlLiteral(stringValue)}'";
-    }
-    if (column.isDateOrTimeType) {
-      return _dateTimeTargetLiteral(column, stringValue);
-    }
-    return "CAST(N'${_escapeSqlLiteral(stringValue)}' AS ${column.sqlCastType})";
-  }
-
-  String _dateTimeTargetLiteral(_SqlColumnDefinition column, String value) {
-    final escapedValue = _escapeSqlLiteral(value);
-    final literal = "N'$escapedValue'";
-    final trimmedLiteral = "NULLIF(LTRIM(RTRIM($literal)), N'')";
-    final targetType = column.sqlCastType;
-    final normalized = column.sqlType.trim().toLowerCase();
-
-    final expression = switch (normalized) {
-      'date' => 'CONVERT($targetType, $literal, 23)',
-      'datetimeoffset' => 'CONVERT($targetType, $literal, 127)',
-      'datetime' ||
-      'smalldatetime' ||
-      'datetime2' => 'CONVERT($targetType, $literal, 126)',
-      'time' => 'CAST($literal AS $targetType)',
-      _ => 'CAST($literal AS $targetType)',
-    };
-
-    return '''
-CASE
-  WHEN $trimmedLiteral IS NULL THEN NULL
-  ELSE $expression
-END
-''';
-  }
-
-  String _matchClauseForColumns(
-    List<String> matchColumns,
-    List<_SqlColumnDefinition> columns,
-  ) {
-    final definitionsByName = {
-      for (final column in columns) column.name.toLowerCase(): column,
-    };
-    return matchColumns
-        .map((column) {
-          final quotedColumn = _quoteIdentifier(column);
-          final sourceExpression = 'source.$quotedColumn';
-          var targetExpression = 'target.$quotedColumn';
-          final definition = definitionsByName[column.toLowerCase()];
-          if (definition != null && definition.isTextLike) {
-            targetExpression = '$targetExpression COLLATE DATABASE_DEFAULT';
-          }
-          return '$sourceExpression IS NOT NULL AND $targetExpression = $sourceExpression';
-        })
-        .join(' AND ');
   }
 
   List<List<String>> _targetMatchColumnSets({
@@ -3706,24 +3832,6 @@ END
           return true;
         })
         .toList(growable: false);
-  }
-
-  String _matchClauseForColumnSets(
-    List<List<String>> matchColumnSets,
-    List<_SqlColumnDefinition> columns,
-  ) {
-    final usableSets = matchColumnSets
-        .where((columnSet) => columnSet.isNotEmpty)
-        .toList(growable: false);
-    if (usableSets.isEmpty) {
-      return '1 = 0';
-    }
-    if (usableSets.length == 1) {
-      return _matchClauseForColumns(usableSets.first, columns);
-    }
-    return usableSets
-        .map((columnSet) => '(${_matchClauseForColumns(columnSet, columns)})')
-        .join('\n  OR ');
   }
 
   Future<_StringQueryResult> _queryDatabases({
@@ -3901,44 +4009,118 @@ ORDER BY r.display_name;
     final fingerprints = <String, _TableFingerprint>{};
     for (final tableName in tables) {
       final parts = _splitQualifiedName(tableName);
-      final query = '''
-SET NOCOUNT ON;
-USE ${_quoteIdentifier(database)};
-SELECT
-  CONVERT(varchar(40), COUNT_BIG(1)) AS row_count,
-  CONVERT(varchar(40), COALESCE(CHECKSUM_AGG(BINARY_CHECKSUM(*)), 0)) AS table_checksum
-FROM ${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)};
-''';
-      final processResult = await _runSqlCmd(
+      final definitions = await _querySyncColumnDefinitions(
         profile: profile,
         database: database,
-        query: query,
+        schema: parts.schema,
+        table: parts.table,
       );
-      if (processResult == null || processResult.exitCode != 0) {
+      final writableColumns = assessSqlSyncColumns(definitions).writableColumns;
+      final primaryKeyColumns = await _queryPrimaryKeyColumns(
+        profile: profile,
+        database: database,
+        schema: parts.schema,
+        table: parts.table,
+      );
+      final uniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
+        profile: profile,
+        database: database,
+        schema: parts.schema,
+        table: parts.table,
+      );
+      final orderColumns = _tableFingerprintOrderColumns(
+        primaryKeyColumns: primaryKeyColumns,
+        uniqueIndexColumnSets: uniqueIndexColumnSets,
+        writableColumns: writableColumns,
+      );
+      final fingerprint = await _computeTableFingerprint(
+        profile: profile,
+        database: database,
+        schema: parts.schema,
+        table: parts.table,
+        writableColumns: writableColumns,
+        orderColumns: orderColumns,
+      );
+      if (fingerprint == null) {
         continue;
       }
+      fingerprints[tableName] = fingerprint;
+    }
 
-      final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
-      for (final line in lines) {
-        final trimmedLine = line.trim();
-        if (_isSkippableOutputLine(trimmedLine)) {
-          continue;
-        }
-        final values = _splitRowValues(trimmedLine);
-        if (values.length < 2) {
-          continue;
-        }
-        final rowCount = int.tryParse(values[0]) ?? 0;
-        final checksum = '$rowCount:${values[1].trim()}';
-        fingerprints[tableName] = _TableFingerprint(
-          rowCount: rowCount,
-          checksum: checksum,
-        );
+    return fingerprints;
+  }
+
+  List<String> _tableFingerprintOrderColumns({
+    required List<String> primaryKeyColumns,
+    required List<List<String>> uniqueIndexColumnSets,
+    required List<_SqlColumnDefinition> writableColumns,
+  }) {
+    if (primaryKeyColumns.isNotEmpty) {
+      return primaryKeyColumns;
+    }
+    for (final columnSet in uniqueIndexColumnSets) {
+      if (columnSet.isNotEmpty) {
+        return columnSet;
+      }
+    }
+    return writableColumns.map((column) => column.name).toList(growable: false);
+  }
+
+  Future<_TableFingerprint?> _computeTableFingerprint({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> writableColumns,
+    required List<String> orderColumns,
+  }) async {
+    if (writableColumns.isEmpty) {
+      final rowCountResult = await _queryTableRowCount(
+        profile: profile,
+        database: database,
+        schema: schema,
+        table: table,
+      );
+      if (!rowCountResult.success) {
+        return null;
+      }
+      return _TableFingerprint(
+        rowCount: rowCountResult.value,
+        checksum: '${rowCountResult.value}:empty',
+      );
+    }
+    if (orderColumns.isEmpty) {
+      return null;
+    }
+
+    const batchSize = 200;
+    final accumulator = SqlSyncFingerprintAccumulator();
+    for (var offset = 0; true; offset += batchSize) {
+      final rows = await _fetchSourceTableBatch(
+        profile: profile,
+        database: database,
+        schema: schema,
+        table: table,
+        columns: writableColumns,
+        orderColumns: orderColumns,
+        offset: offset,
+        batchSize: batchSize,
+      );
+      if (rows.isEmpty) {
+        break;
+      }
+      for (final row in rows) {
+        accumulator.addRow(writableColumns, row);
+      }
+      if (rows.length < batchSize) {
         break;
       }
     }
 
-    return fingerprints;
+    return _TableFingerprint(
+      rowCount: accumulator.rowCount,
+      checksum: accumulator.build(),
+    );
   }
 
   Future<Map<String, dynamic>> _queryChangeTrackingDiagnostics() async {
@@ -4061,26 +4243,25 @@ END
     if (databaseResult == null) {
       databaseStatus = 'failed';
       databaseMessage = _sqlCmdUnavailableMessage(_activeProfile());
-    } else if (databaseResult.exitCode != 0) {
-      databaseStatus = 'failed';
-      databaseMessage = _sqlCmdFailed(
-        'enable database change tracking',
-        databaseResult,
-      );
     } else {
-      for (final line in databaseResult.stdout.toString().split(
-        RegExp(r'\r?\n'),
-      )) {
-        final trimmed = line.trim();
-        if (_isSkippableOutputLine(trimmed)) {
-          continue;
+      final parsedStatus = _extractChangeTrackingDatabaseStatus(databaseResult);
+      if (databaseResult.exitCode != 0) {
+        if (_isAlreadyEnabledChangeTrackingFailure(databaseResult)) {
+          databaseStatus = 'already_enabled';
+          databaseMessage =
+              parsedStatus?.message.isNotEmpty == true
+                  ? parsedStatus!.message
+                  : 'Change Tracking was already enabled.';
+        } else {
+          databaseStatus = 'failed';
+          databaseMessage = _sqlCmdFailed(
+            'enable database change tracking',
+            databaseResult,
+          );
         }
-        final values = _splitRowValues(trimmed);
-        if (values.length >= 3 && values.first == 'database') {
-          databaseStatus = values[1];
-          databaseMessage = values[2];
-          break;
-        }
+      } else if (parsedStatus != null) {
+        databaseStatus = parsedStatus.status;
+        databaseMessage = parsedStatus.message;
       }
     }
 
@@ -4681,10 +4862,35 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         '${_formatSqlError(processResult)}';
   }
 
+  ({String status, String message})? _extractChangeTrackingDatabaseStatus(
+    ProcessResult processResult,
+  ) {
+    for (final line in processResult.stdout.toString().split(
+      RegExp(r'\r?\n'),
+    )) {
+      final trimmed = line.trim();
+      if (_isSkippableOutputLine(trimmed)) {
+        continue;
+      }
+      final values = _splitRowValues(trimmed);
+      if (values.length >= 3 && values.first == 'database') {
+        return (status: values[1], message: values[2]);
+      }
+    }
+    return null;
+  }
+
+  bool _isAlreadyEnabledChangeTrackingFailure(ProcessResult processResult) {
+    final details =
+        '${processResult.stdout}\n${processResult.stderr}'.toLowerCase();
+    return details.contains('change tracking is already enabled for database');
+  }
+
   Future<ProcessResult?> _runSqlCmd({
     required _SqlConnectionProfile profile,
     String? database,
     required String query,
+    Duration timeout = _defaultSqlCmdTimeout,
   }) async {
     _lastSqlCmdLaunchError = null;
     final rawQuery = query.trim();
@@ -4757,7 +4963,25 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             return buffer;
           })
           .then((buffer) => buffer.takeBytes());
-      final exitCode = await process.exitCode;
+      int exitCode;
+      try {
+        exitCode = await process.exitCode.timeout(timeout);
+      } on TimeoutException {
+        process.kill();
+        final stdoutBytes = await stdoutFuture;
+        final stderrBytes = await stderrFuture;
+        final timeoutText =
+            'sqlcmd timed out after ${_formatDurationForLog(timeout)}.';
+        return ProcessResult(
+          process.pid,
+          -1,
+          _decodeSqlCmdOutput(stdoutBytes),
+          [
+            timeoutText,
+            _decodeSqlCmdOutput(stderrBytes),
+          ].where((part) => part.trim().isNotEmpty).join('\n'),
+        );
+      }
       final stdoutBytes = await stdoutFuture;
       final stderrBytes = await stderrFuture;
       return ProcessResult(
@@ -4797,6 +5021,18 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     } on FormatException {
       return utf8.decode(data, allowMalformed: true);
     }
+  }
+
+  String _formatDurationForLog(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds.remainder(60);
+    if (minutes > 0 && seconds > 0) {
+      return '${minutes}m ${seconds}s';
+    }
+    if (minutes > 0) {
+      return '${minutes}m';
+    }
+    return '${duration.inSeconds}s';
   }
 
   bool _looksLikeUtf16Le(Uint8List bytes) {
@@ -7441,135 +7677,6 @@ class _TableFingerprint {
 
   final int rowCount;
   final String checksum;
-}
-
-class _SqlColumnDefinition {
-  const _SqlColumnDefinition({
-    required this.name,
-    required this.sqlType,
-    required this.maxLength,
-    required this.precision,
-    required this.scale,
-    required this.isIdentity,
-    required this.isComputed,
-  });
-
-  final String name;
-  final String sqlType;
-  final int maxLength;
-  final int precision;
-  final int scale;
-  final bool isIdentity;
-  final bool isComputed;
-
-  bool get isRowVersion {
-    final normalized = sqlType.trim().toLowerCase();
-    return normalized == 'rowversion' || normalized == 'timestamp';
-  }
-
-  bool get isSupported {
-    final normalized = sqlType.trim().toLowerCase();
-    if (isComputed || isRowVersion) {
-      return true;
-    }
-    return !const {
-      'image',
-      'text',
-      'ntext',
-      'sql_variant',
-      'hierarchyid',
-      'geometry',
-      'geography',
-      'cursor',
-      'table',
-    }.contains(normalized);
-  }
-
-  bool get isWritable => !isComputed && !isRowVersion;
-
-  bool get isDateOrTimeType {
-    final normalized = sqlType.trim().toLowerCase();
-    return normalized == 'date' ||
-        normalized == 'datetime' ||
-        normalized == 'smalldatetime' ||
-        normalized == 'datetime2' ||
-        normalized == 'datetimeoffset' ||
-        normalized == 'time';
-  }
-
-  bool get isTextLike =>
-      _textLikeSqlTypes.contains(sqlType.trim().toLowerCase());
-
-  String get openJsonType {
-    final normalized = sqlType.trim().toLowerCase();
-    if (normalized == 'nvarchar' || normalized == 'nchar') {
-      if (maxLength < 0) {
-        return 'nvarchar(max)';
-      }
-      return 'nvarchar(${maxLength ~/ 2})';
-    }
-    if (normalized == 'varchar' || normalized == 'char') {
-      if (maxLength < 0) {
-        return 'varchar(max)';
-      }
-      return '$normalized($maxLength)';
-    }
-    if (normalized == 'varbinary' || normalized == 'binary') {
-      if (maxLength < 0) {
-        return 'varbinary(max)';
-      }
-      return '$normalized($maxLength)';
-    }
-    if (normalized == 'decimal' || normalized == 'numeric') {
-      return '$normalized($precision,$scale)';
-    }
-    if (normalized == 'datetime2' ||
-        normalized == 'datetimeoffset' ||
-        normalized == 'time') {
-      return '$normalized($scale)';
-    }
-    if (normalized == 'sysname') {
-      return 'nvarchar(128)';
-    }
-    if (normalized == 'xml') {
-      return 'nvarchar(max)';
-    }
-    return normalized;
-  }
-
-  String get sqlCastType {
-    final normalized = sqlType.trim().toLowerCase();
-    if (normalized == 'nvarchar' || normalized == 'nchar') {
-      if (maxLength < 0) {
-        return 'nvarchar(max)';
-      }
-      return 'nvarchar(${maxLength ~/ 2})';
-    }
-    if (normalized == 'varchar' || normalized == 'char') {
-      if (maxLength < 0) {
-        return 'varchar(max)';
-      }
-      return '$normalized($maxLength)';
-    }
-    if (normalized == 'varbinary' || normalized == 'binary') {
-      if (maxLength < 0) {
-        return 'varbinary(max)';
-      }
-      return '$normalized($maxLength)';
-    }
-    if (normalized == 'decimal' || normalized == 'numeric') {
-      return '$normalized($precision,$scale)';
-    }
-    if (normalized == 'datetime2' ||
-        normalized == 'datetimeoffset' ||
-        normalized == 'time') {
-      return '$normalized($scale)';
-    }
-    if (normalized == 'sysname') {
-      return 'nvarchar(128)';
-    }
-    return normalized;
-  }
 }
 
 class _RelaySnapshotDocument {

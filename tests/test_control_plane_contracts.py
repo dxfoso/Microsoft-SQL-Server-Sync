@@ -41,7 +41,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertEqual(limits["agent"], 100)
         self.assertLessEqual(limits["job"], 50)
 
-    def test_agent_rows_omit_heavy_payload_fields(self):
+    def test_agent_rows_include_dashboard_fields_without_diagnostic_payload(self):
         source = read_text("business/control_plane.tru")
         match = re.search(
             r"function live_state_agent_rows_for\(.*?\): array<json> \{(?P<body>.*?)\n\}",
@@ -52,8 +52,24 @@ class ControlPlaneContractsTests(unittest.TestCase):
         body = match.group("body")
 
         self.assertIn("limit: limit + 1", body)
-        self.assertNotIn("'tables'", body)
+        self.assertIn("'tables'", body)
+        self.assertIn("clientUpdateStatus", body)
+        self.assertIn("windowActionStatus", body)
         self.assertNotIn("diagnosticPayload", body)
+
+    def test_public_agent_payload_does_not_refetch_agent_rows(self):
+        source = read_text("business/control_plane.tru")
+        match = re.search(
+            r"function public_agent_payload\(agent: map<json>\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+
+        self.assertNotIn("db.selectOne(Agent", body)
+        self.assertIn("agent_client_update_payload(agent)", body)
+        self.assertIn("agent_window_action_payload(agent)", body)
 
     def test_job_schema_keeps_only_current_snapshot_fields(self):
         source = read_text("business/control_plane.tru")
@@ -95,6 +111,115 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function agent_client_update_request_all(targetVersion: string? = null, token: string? = null): map<json> {", source)
         self.assertIn("function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', token: string? = null): map<json> {", source)
 
+    def test_control_plane_exposes_server_requested_window_actions(self):
+        source = read_text("business/control_plane.tru")
+
+        self.assertIn("field windowActionRequestId: string? min=0 max=64", source)
+        self.assertIn("field windowActionName: string min=0 max=32", source)
+        self.assertIn("function agent_window_action_payload(agent: map<json>): map<json> {", source)
+        self.assertIn("function agent_window_action_request_all(action: string = 'minimize', token: string? = null): map<json> {", source)
+        self.assertIn("function agent_window_action_ack(clientName: string? = null, requestId: string? = null, action: string = '', status: string = 'completed', message: string = '', token: string? = null): map<json> {", source)
+
+    def test_client_update_payload_and_ack_track_pending_and_last_ack_state(self):
+        source = read_text("business/control_plane.tru")
+
+        payload_match = re.search(
+            r"function agent_client_update_payload\(agent: map<json>\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(payload_match)
+        payload_body = payload_match.group("body")
+
+        self.assertIn("pending: client_update_request_pending(agent),", payload_body)
+        self.assertIn("requestId: agent.clientUpdateRequestId,", payload_body)
+        self.assertIn("targetVersion: agent.clientUpdateTargetVersion,", payload_body)
+        self.assertIn("lastRequestId: agent.clientUpdateLastRequestId,", payload_body)
+        self.assertIn("acknowledgedAt: agent.clientUpdateLastAcknowledgedAt,", payload_body)
+        self.assertIn("status: agent.clientUpdateStatus,", payload_body)
+        self.assertIn("message: agent.clientUpdateMessage", payload_body)
+
+        ack_match = re.search(
+            r"function agent_client_update_ack\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(ack_match)
+        ack_body = ack_match.group("body")
+
+        self.assertIn("clientUpdateLastRequestId: resolvedRequestIdOrNull,", ack_body)
+        self.assertIn("clientUpdateLastAcknowledgedAt: now_iso(),", ack_body)
+        self.assertIn("clientUpdateStatus: truncate_text(status.trim(), 32),", ack_body)
+        self.assertIn("clientUpdateMessage: truncate_text(message, 4000),", ack_body)
+        self.assertIn("clientVersion: nextClientVersion,", ack_body)
+
+    def test_client_update_request_all_only_targets_online_agents(self):
+        source = read_text("business/control_plane.tru")
+        match = re.search(
+            r"function agent_client_update_request_all\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+
+        self.assertIn("const visibleAgents = visible_agent_rows_for(current);", body)
+        self.assertIn("if (!effective_agent_online(agent)) {", body)
+        self.assertIn("requestedClientNames = requestedClientNames.concat([clientName]);", body)
+        self.assertIn("clientUpdateRequestId: requestId,", body)
+        self.assertIn("clientUpdateTargetVersion: targetVersionOrNull,", body)
+        self.assertIn("clientUpdateStatus: 'requested',", body)
+
+    def test_window_action_request_all_only_targets_online_agents(self):
+        source = read_text("business/control_plane.tru")
+        match = re.search(
+            r"function agent_window_action_request_all\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+
+        self.assertIn("if (normalizedAction != 'minimize') {", body)
+        self.assertIn("const visibleAgents = visible_agent_rows_for(current);", body)
+        self.assertIn("if (!effective_agent_online(agent)) {", body)
+        self.assertIn("windowActionRequestId: requestId,", body)
+        self.assertIn("windowActionName: normalizedAction,", body)
+        self.assertIn("windowActionStatus: 'requested',", body)
+
+    def test_window_action_payload_and_ack_track_pending_and_last_ack_state(self):
+        source = read_text("business/control_plane.tru")
+
+        payload_match = re.search(
+            r"function agent_window_action_payload\(agent: map<json>\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(payload_match)
+        payload_body = payload_match.group("body")
+
+        self.assertIn("pending: window_action_request_pending(agent),", payload_body)
+        self.assertIn("requestId: agent.windowActionRequestId,", payload_body)
+        self.assertIn("action: agent.windowActionName,", payload_body)
+        self.assertIn("lastRequestId: agent.windowActionLastRequestId,", payload_body)
+        self.assertIn("acknowledgedAt: agent.windowActionLastAcknowledgedAt,", payload_body)
+        self.assertIn("status: agent.windowActionStatus,", payload_body)
+        self.assertIn("message: agent.windowActionMessage", payload_body)
+
+        ack_match = re.search(
+            r"function agent_window_action_ack\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(ack_match)
+        ack_body = ack_match.group("body")
+
+        self.assertIn("windowActionLastRequestId: resolvedRequestIdOrNull,", ack_body)
+        self.assertIn("windowActionLastAcknowledgedAt: now_iso(),", ack_body)
+        self.assertIn("windowActionName: nextAction,", ack_body)
+        self.assertIn("windowActionStatus: truncate_text(status.trim(), 32),", ack_body)
+        self.assertIn("windowActionMessage: truncate_text(message, 4000),", ack_body)
+
     def test_ensure_agent_repairs_stale_rows_before_recreating_them(self):
         source = read_text("business/control_plane.tru")
         match = re.search(
@@ -108,6 +233,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const repaired = db.update(Agent, { clientName }, {", body)
         self.assertIn("tableRelationships: [],", body)
         self.assertIn("diagnosticStatus: 'idle',", body)
+        self.assertIn("windowActionStatus: 'idle',", body)
         self.assertNotIn("symmetricDsStatus", body)
 
     def test_table_policy_path_no_longer_keeps_legacy_key_normalizers(self):
@@ -178,6 +304,58 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("enabledTables = latest_completed_job_tables_for_client(agent.clientName);", source)
         self.assertIn("final tablesToQueue = <String>{", agent_page)
         self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
+
+    def test_server_reset_clears_saved_agent_state_and_reports_counts(self):
+        source = read_text("business/control_plane.tru")
+
+        reset_match = re.search(
+            r"function reset_all_agent_saved_state\(\): int \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(reset_match)
+        reset_body = reset_match.group("body")
+
+        self.assertIn("return db.updateMany(Agent, { clientName: { gte: '' } }, {", reset_body)
+        self.assertIn("selectedTable: null,", reset_body)
+        self.assertIn("tables: [],", reset_body)
+        self.assertIn("diagnosticRequestId: null,", reset_body)
+        self.assertIn("diagnosticLastRequestId: null,", reset_body)
+        self.assertIn("diagnosticStatus: 'idle',", reset_body)
+        self.assertIn("diagnosticSummary: '',", reset_body)
+        self.assertIn("diagnosticPayload: '',", reset_body)
+        self.assertIn("windowActionRequestId: null,", reset_body)
+        self.assertIn("windowActionStatus: 'idle',", reset_body)
+
+        server_reset_match = re.search(
+            r"function server_saved_data_reset\(resetAgents: bool = true, token: string\? = null\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(server_reset_match)
+        server_reset_body = server_reset_match.group("body")
+
+        self.assertIn("const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });", server_reset_body)
+        self.assertIn("agentResetCount = reset_all_agent_saved_state();", server_reset_body)
+        self.assertIn("jobDeletedCount,", server_reset_body)
+        self.assertIn("agentResetCount", server_reset_body)
+
+    def test_active_job_statuses_include_snapshot_transfer_and_apply_states(self):
+        source = read_text("business/control_plane.tru")
+        match = re.search(
+            r"function is_active_job_status\(status: string\? = null\): bool \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+
+        self.assertIn("normalized == 'queued'", body)
+        self.assertIn("normalized == 'running'", body)
+        self.assertIn("normalized == 'snapshotting'", body)
+        self.assertIn("normalized == 'uploading'", body)
+        self.assertIn("normalized == 'downloading'", body)
+        self.assertIn("normalized == 'applying'", body)
 
     def test_control_plane_no_longer_advertises_old_sync_engine(self):
         source = read_text("business/control_plane.tru")

@@ -48,6 +48,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_ensureChangeTrackingEnabledForDatabase", agent_page)
         self.assertIn("ALTER DATABASE ${_quoteIdentifier(trimmedDatabase)}", agent_page)
         self.assertIn("ENABLE CHANGE_TRACKING", agent_page)
+        self.assertIn(
+            "({String status, String message})? _extractChangeTrackingDatabaseStatus(",
+            agent_page,
+        )
+        self.assertIn(
+            "bool _isAlreadyEnabledChangeTrackingFailure(ProcessResult processResult)",
+            agent_page,
+        )
+        self.assertIn(
+            "details.contains('change tracking is already enabled for database')",
+            agent_page,
+        )
+        self.assertIn("databaseStatus = 'already_enabled';", agent_page)
         self.assertIn("_isSystemDatabase", agent_page)
         self.assertIn("System databases are not modified automatically.", agent_page)
         self.assertIn("_buildChangeTrackingBadge", agent_page)
@@ -133,20 +146,104 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_windows_snapshot_apply_matches_unique_indexes(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
 
         self.assertIn("Future<List<List<String>>> _queryUniqueIndexColumnSets(", agent_page)
         self.assertIn("i.is_unique = 1", agent_page)
         self.assertIn("i.is_primary_key = 0", agent_page)
         self.assertIn("required List<List<String>> matchColumnSets", agent_page)
         self.assertIn("_targetMatchColumnSets(", agent_page)
-        self.assertIn("_matchClauseForColumnSets(matchColumnSets, columns)", agent_page)
+        self.assertIn("matchClauseForColumnSets(matchColumnSets, columns)", merge_helper)
         self.assertIn("uniqueIndexColumnSets: uniqueIndexColumnSets", agent_page)
         self.assertIn(
             "final updatePrimaryKeysFromUniqueMatch = matchColumnSets.length > 1;",
+            merge_helper,
+        )
+        self.assertIn("!updatePrimaryKeysFromUniqueMatch", merge_helper)
+        self.assertIn("int targetMergeInsertBatchSize = 100", merge_helper)
+        self.assertIn("_buildSourceTempIndexStatements(", merge_helper)
+
+    def test_table_fingerprints_only_hash_writable_sync_columns(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        fingerprint_helper = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+        fingerprint_body = agent_page.split(
+            "Future<Map<String, _TableFingerprint>> _queryTableFingerprints(", 1
+        )[1].split("Future<Map<String, dynamic>> _queryChangeTrackingDiagnostics()", 1)[0]
+
+        self.assertIn("assessSqlSyncColumns(definitions).writableColumns", fingerprint_body)
+        self.assertIn("_computeTableFingerprint(", fingerprint_body)
+        self.assertIn("SqlSyncFingerprintAccumulator", fingerprint_helper)
+        self.assertIn("encodeSqlSyncFingerprintField", fingerprint_helper)
+        self.assertNotIn("CHECKSUM_AGG", fingerprint_body)
+
+    def test_uploaded_diagnostics_compact_change_tracking_payloads(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        compact_body = agent_page.split(
+            "Map<String, dynamic> _compactChangeTrackingDiagnosticsForUpload(", 1
+        )[1].split("Map<String, dynamic> _compactAutomaticChangeTrackingEnable(", 1)[0]
+
+        self.assertIn(
+            "Map<String, dynamic> _compactDatabaseChangeTrackingDiagnostics(",
             agent_page,
         )
-        self.assertIn("!updatePrimaryKeysFromUniqueMatch", agent_page)
-        self.assertIn("const targetMergeInsertBatchSize = 100;", agent_page)
+        self.assertIn(
+            "return _compactDatabaseChangeTrackingDiagnostics(database);",
+            compact_body,
+        )
+        self.assertIn("compact.remove('trackedTables');", compact_body)
+        self.assertIn("compact.remove('offlineChangeDetectionNote');", compact_body)
+        self.assertNotIn("trackedTables.take(100)", compact_body)
+
+    def test_heartbeat_does_not_block_on_full_fingerprint_refresh(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        heartbeat_body = agent_page.split("Future<void> _syncWithControlPlane() async {", 1)[
+            1
+        ].split("Future<void> _uploadRequestedDiagnostics(", 1)[0]
+
+        self.assertIn(
+            "const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);",
+            agent_page,
+        )
+        self.assertIn("bool _refreshingTableFingerprints = false;", agent_page)
+        self.assertIn("DateTime? _lastTableFingerprintRefreshStartedAt;", agent_page)
+        self.assertIn(
+            "void _scheduleSelectedTableFingerprintRefresh({bool force = false}) {",
+            agent_page,
+        )
+        self.assertIn("_scheduleSelectedTableFingerprintRefresh();", heartbeat_body)
+        self.assertNotIn("await _refreshSelectedTableFingerprints();", heartbeat_body)
+        self.assertIn(
+            "Selected table fingerprint refresh failed: $error",
+            agent_page,
+        )
+
+    def test_snapshot_apply_refreshes_target_fingerprint_after_success(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        apply_body = agent_page.split(
+            "Future<int> _applyDownloadedSnapshotToTarget({", 1
+        )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
+
+        self.assertIn("final targetFingerprints = await _queryTableFingerprints(", apply_body)
+        self.assertIn("_applyTableFingerprints(", apply_body)
+        self.assertIn("tables: [visibleTableName]", apply_body)
+
+    def test_sqlcmd_calls_are_bounded_by_timeout(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+
+        self.assertIn("const Duration _defaultSqlCmdTimeout = Duration(minutes: 2);", agent_page)
+        self.assertIn("const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);", agent_page)
+        self.assertIn("await process.exitCode.timeout(timeout);", agent_page)
+        self.assertIn("sqlcmd timed out after ${_formatDurationForLog(timeout)}.", agent_page)
+        self.assertIn("timeout: _snapshotSqlCmdTimeout,", agent_page)
+        self.assertIn(
+            "const Duration _defaultDiagnosticsUploadRequestTimeout = Duration(minutes: 2);",
+            client_api,
+        )
+        self.assertIn(
+            "timeout: _diagnosticsUploadRequestTimeout",
+            client_api,
+        )
 
     def test_unused_business_info_route_is_removed(self):
         self.assertFalse((ROOT / "business" / "sql_sync_api.tru").exists())
@@ -209,15 +306,42 @@ class SyncContractsTests(unittest.TestCase):
     def test_windows_update_script_stops_existing_instances(self):
         update_script = read_text("update.ps1")
         publish_script = read_text("scripts/publish_windows_client_update.ps1")
+        runner_main = read_text("sync_windows_agent/windows/runner/main.cpp")
+        runner_window = read_text("sync_windows_agent/windows/runner/flutter_window.cpp")
 
         self.assertIn("function Get-AgentProcesses {", update_script)
         self.assertIn("function Stop-AgentProcesses {", update_script)
+        self.assertIn("function Get-WatchdogScriptPath {", update_script)
+        self.assertIn("function Start-WatchdogProcess {", update_script)
+        self.assertIn("function Update-StartupShortcutToWatchdog {", update_script)
+        self.assertIn("sync_windows_agent_watchdog.ps1", update_script)
+        self.assertIn("ensureWatchdogInstalledAndRunning", read_text("sync_windows_agent/lib/window_settings.dart"))
+        self.assertIn("unawaited(", read_text("sync_windows_agent/lib/app.dart"))
+        self.assertIn("WindowsAgentWindowSettings.ensureWatchdogInstalledAndRunning()", read_text("sync_windows_agent/lib/app.dart"))
+        self.assertIn("ArgumentList '--start-minimized'", update_script)
+        self.assertIn("-WindowStyle Minimized", update_script)
         self.assertIn(
             "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir",
             update_script,
         )
+        self.assertIn('argument == "--start-minimized"', runner_main)
+        self.assertIn("launching minimized to tray", runner_window)
+        self.assertIn("!start_minimized_", runner_window)
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
+
+    def test_shell_auto_update_stays_active_for_logged_in_clients(self):
+        app_source = read_text("sync_windows_agent/lib/app.dart")
+        shell_check_body = app_source.split("Future<void> _checkShellClientUpdate() async {", 1)[
+            1
+        ].split("Future<void> _maybeAutoApplyShellClientUpdate(", 1)[0]
+        shell_apply_body = app_source.split(
+            "Future<void> _maybeAutoApplyShellClientUpdate(", 1
+        )[1].split("void _migrateStoredClientState(", 1)[0]
+
+        self.assertNotIn("_dashboardSessionActive", shell_check_body)
+        self.assertNotIn("_dashboardSessionActive", shell_apply_body)
+        self.assertIn("Applying shell client update automatically:", app_source)
 
     def test_windows_agent_can_apply_server_requested_client_updates(self):
         control_plane = read_text("business/control_plane.tru")
@@ -232,14 +356,45 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("agent_client_update_ack", control_plane)
         self.assertIn("await _handleRequestedClientUpdate(heartbeat.clientUpdate);", agent_page)
         self.assertIn("Future<void> _handleRequestedClientUpdate(", agent_page)
+        self.assertIn("ClientUpdateInfo? _pendingForcedClientUpdateInfo;", agent_page)
+        self.assertIn("final forcedUpdateInfo = _pendingForcedClientUpdateInfo;", agent_page)
+        self.assertIn("unawaited(_maybeAutoApplyClientUpdate(forcedUpdateInfo, force: true));", agent_page)
+        self.assertIn("if (_syncLoopBusy) {", agent_page)
+        self.assertIn("_pendingForcedClientUpdateInfo = updateInfo;", agent_page)
+        self.assertIn("if (!force &&", agent_page)
+        self.assertIn("if (_applyingClientUpdate || _checkingClientUpdate) {", agent_page)
+        self.assertIn("if (force) {", agent_page)
+        self.assertIn("_pendingForcedClientUpdateInfo = updateInfo;", agent_page)
+        self.assertIn("} finally {", agent_page)
+        self.assertIn("_retryAutomaticClientUpdateIfReady();", agent_page)
         self.assertIn("Future<RemoteAgentClientUpdate> acknowledgeClientUpdate(", client_api)
         self.assertIn("class RemoteAgentClientUpdate {", client_api)
         self.assertIn("requestAllAgentClientUpdates() async {", web_api)
-        self.assertIn("Future<AdminAgentClientUpdate> requestAgentClientUpdate({", web_api)
-        self.assertIn("class AdminAgentClientUpdate {", web_models)
-        self.assertIn("class AdminBulkClientUpdateRequestResult {", web_models)
-        self.assertIn("Update All Clients", dashboard)
-        self.assertIn("Update Client", dashboard)
+
+    def test_windows_agent_can_apply_server_requested_window_actions(self):
+        control_plane = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        web_api = read_text("frontend/lib/live_sync_api.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        window_settings = read_text("sync_windows_agent/lib/window_settings.dart")
+
+        self.assertIn("agent_window_action_request_all", control_plane)
+        self.assertIn("agent_window_action_ack", control_plane)
+        self.assertIn("await _handleRequestedWindowAction(heartbeat.windowAction);", agent_page)
+        self.assertIn("Future<void> _handleRequestedWindowAction(", agent_page)
+        self.assertIn("WindowsAgentWindowSettings.minimizeWindow()", agent_page)
+        self.assertIn("class _PendingWindowActionAck {", agent_page)
+        self.assertIn("Future<void> _flushPendingWindowActionAck() async {", agent_page)
+        self.assertIn("Future<void> _queueWindowActionAck({", agent_page)
+        self.assertIn("if (_matchesPendingWindowActionAck(heartbeat.windowAction)) {", agent_page)
+        self.assertIn("Future<RemoteAgentWindowAction> acknowledgeWindowAction(", client_api)
+        self.assertIn("class RemoteAgentWindowAction {", client_api)
+        self.assertIn("requestAllAgentWindowActions({", web_api)
+        self.assertIn("String action = 'minimize'", web_api)
+        self.assertIn("_requestAllAgentWindowMinimize()", dashboard)
+        self.assertIn("Minimize All Clients", dashboard)
+        self.assertIn("minimizeWindow", window_settings)
 
     def test_windows_client_production_build_uses_live_control_plane(self):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
@@ -331,33 +486,41 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_windows_client_target_apply_uses_small_transactional_batches(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-        target_apply = agent_page.split("Future<void> _applySourceRowsToTarget(", 1)[1].split(
-            "String _sourceBatchTargetLiteral(", 1
+        merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        target_apply = merge_helper.split("String buildTargetSnapshotMergeSql(", 1)[1].split(
+            "String sourceBatchTargetLiteral(", 1
         )[0]
 
         self.assertIn("SET XACT_ABORT ON;", target_apply)
         self.assertIn("BEGIN TRANSACTION;", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
         self.assertIn("targetMergeInsertBatchSize = 100", target_apply)
+        self.assertIn("targetMergeApplyBatchSize = 500", target_apply)
         self.assertIn("CREATE TABLE #source_rows", target_apply)
+        self.assertIn(
+            "CREATE UNIQUE CLUSTERED INDEX IX_source_rows_row_num ON #source_rows (__row_num);",
+            target_apply,
+        )
         self.assertIn("INSERT INTO #source_rows ($sourceColumnList)", target_apply)
         self.assertIn("DROP TABLE #source_rows;", target_apply)
+        self.assertIn("__row_num INT IDENTITY(1,1) NOT NULL", target_apply)
         self.assertEqual(target_apply.count("CREATE TABLE #source_rows"), 1)
-        self.assertIn("WHEN NOT MATCHED BY SOURCE THEN", target_apply)
-        self.assertIn("DELETE;", target_apply)
-        self.assertIn("target snapshot merge", target_apply)
-        self.assertIn("_matchClauseForColumnSets(matchColumnSets, columns)", target_apply)
+        self.assertIn("DELETE TOP ($targetMergeApplyBatchSize) target", target_apply)
+        self.assertIn("WHERE NOT EXISTS (", target_apply)
+        self.assertIn("target snapshot merge", agent_page)
+        self.assertIn("matchClauseForColumnSets(matchColumnSets, columns)", target_apply)
         self.assertNotIn("alternateUniqueKeys", target_apply)
-        self.assertIn("COLLATE DATABASE_DEFAULT", agent_page)
-        query_template = target_apply.split("final query = '''", 1)[1].split(
-            "''';", 1
-        )[0]
+        self.assertIn("COLLATE DATABASE_DEFAULT", merge_helper)
+        self.assertNotIn("MERGE ", target_apply)
+        self.assertIn("UPDATE target", merge_helper)
+        self.assertIn("INSERT INTO", merge_helper)
+        query_template = target_apply.split("return '''", 1)[1].split("''';", 1)[0]
         self.assertLess(
             query_template.index("BEGIN TRANSACTION;"),
             query_template.index("${insertStatements.toString()}"),
         )
         self.assertLess(
-            query_template.index("MERGE ${_quoteIdentifier(database)}"),
+            query_template.index("${applyStatements.toString()}"),
             query_template.index("COMMIT TRANSACTION;"),
         )
 
@@ -402,13 +565,18 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("return 1;", control_plane)
         self.assertIn("function periodic_sync_scheduler_agent_limit", control_plane)
+        self.assertIn("function periodic_sync_scheduler_owner_limit", control_plane)
         self.assertIn("function periodic_sync_scheduler_table_limit", control_plane)
         self.assertIn("function agent_recent_enough_for_periodic_sync", control_plane)
+        self.assertIn("const ownerLimit = periodic_sync_scheduler_owner_limit();", control_plane)
+        self.assertIn("!string_array_contains(ownerIds, ownerUserId)", control_plane)
+        self.assertIn("if (ownerIds.length >= ownerLimit) {", control_plane)
         self.assertIn("queuedTableCount >= periodic_sync_scheduler_table_limit()", control_plane)
         self.assertNotIn("!effective_agent_online(agent)", scheduler_body)
         self.assertIn("function json_payload_changed", control_plane)
         self.assertIn("if (tablesChanged || relationshipsChanged)", heartbeat_body)
-        self.assertIn("await _refreshSelectedTableFingerprints();", agent_page)
+        self.assertIn("_scheduleSelectedTableFingerprintRefresh();", agent_page)
+        self.assertNotIn("await _refreshSelectedTableFingerprints();", agent_page)
         self.assertNotIn("_prepareAutomaticSyncQueueIfDue", agent_page)
         self.assertNotIn("_queueEnabledRoleJobs", agent_page)
 

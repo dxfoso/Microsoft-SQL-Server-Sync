@@ -148,6 +148,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void initState() {
     super.initState();
     logStartupEvent('SyncWindowsAgentApp initState');
+    if (Platform.isWindows) {
+      unawaited(
+        WindowsAgentWindowSettings.ensureWatchdogInstalledAndRunning()
+            .catchError((Object error, StackTrace _) {
+              logStartupEvent('Watchdog ensure failed: $error');
+            }),
+      );
+    }
     _clientUpdateCheckTimer = Timer.periodic(
       _shellClientUpdatePollInterval,
       (_) => unawaited(_checkShellClientUpdate()),
@@ -387,11 +395,6 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     super.dispose();
   }
 
-  bool get _dashboardSessionActive =>
-      !_restoringSession &&
-      (_authToken?.isNotEmpty ?? false) &&
-      (_accountUsername?.isNotEmpty ?? false);
-
   String _shellClientUpdateManifestUrl() {
     final overrideBaseUrl =
         (Platform.environment['CLIENT_UPDATE_BASE_URL'] ??
@@ -557,8 +560,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   Future<void> _checkShellClientUpdate() async {
     if (!mounted ||
         _checkingShellClientUpdate ||
-        _applyingShellClientUpdate ||
-        _dashboardSessionActive) {
+        _applyingShellClientUpdate) {
       return;
     }
 
@@ -609,7 +611,6 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         !_shellHasClientUpdate ||
         !_supportsShellAutomaticClientUpdate ||
         _applyingShellClientUpdate ||
-        _dashboardSessionActive ||
         _submittingLogin) {
       return;
     }
