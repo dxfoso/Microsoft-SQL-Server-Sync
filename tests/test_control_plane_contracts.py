@@ -115,7 +115,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
 
         self.assertIn("field windowActionRequestId: string? min=0 max=64", source)
-        self.assertIn("field windowActionName: string min=0 max=32", source)
+        self.assertIn("field windowActionName: string? min=0 max=32", source)
         self.assertIn("function agent_window_action_payload(agent: map<json>): map<json> {", source)
         self.assertIn("function agent_window_action_request_all(action: string = 'minimize', token: string? = null): map<json> {", source)
         self.assertIn("function agent_window_action_ack(clientName: string? = null, requestId: string? = null, action: string = '', status: string = 'completed', message: string = '', token: string? = null): map<json> {", source)
@@ -204,7 +204,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIsNotNone(all_match)
         all_body = all_match.group("body")
-        self.assertIn("const normalizedBatchSize = clamp_int(batchSize, 0, 50);", all_body)
+        self.assertIn("let normalizedBatchSize = batchSize;", all_body)
+        self.assertIn("if (normalizedBatchSize < 0) {", all_body)
+        self.assertIn("if (normalizedBatchSize > 50) {", all_body)
         self.assertIn("const requestedClientNames = online_visible_agent_client_names(current, normalizedBatchSize);", all_body)
         self.assertIn("return agent_diagnostics_request_batch(requestedClientNames, null, token);", all_body)
 
@@ -237,12 +239,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         payload_body = payload_match.group("body")
 
         self.assertIn("pending: window_action_request_pending(agent),", payload_body)
+        self.assertIn("const actionValue = agent.windowActionName == null ? '' : string.from(agent.windowActionName);", payload_body)
+        self.assertIn("const statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);", payload_body)
+        self.assertIn("const messageValue = agent.windowActionMessage == null ? '' : string.from(agent.windowActionMessage);", payload_body)
         self.assertIn("requestId: agent.windowActionRequestId,", payload_body)
-        self.assertIn("action: agent.windowActionName,", payload_body)
+        self.assertIn("action: actionValue,", payload_body)
         self.assertIn("lastRequestId: agent.windowActionLastRequestId,", payload_body)
         self.assertIn("acknowledgedAt: agent.windowActionLastAcknowledgedAt,", payload_body)
-        self.assertIn("status: agent.windowActionStatus,", payload_body)
-        self.assertIn("message: agent.windowActionMessage", payload_body)
+        self.assertIn("status: statusValue,", payload_body)
+        self.assertIn("message: messageValue", payload_body)
 
         ack_match = re.search(
             r"function agent_window_action_ack\(.*?\): map<json> \{(?P<body>.*?)\n\}",

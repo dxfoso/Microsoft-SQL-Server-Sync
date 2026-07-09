@@ -1,0 +1,67 @@
+{
+  "name": "mig_20260710_093000",
+  "timestamp": "2026-07-10T09:30:00+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "windowActionMessage",
+          "action": "changed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "4000",
+            "default": null
+          },
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "4000",
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionStatus",
+          "action": "changed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "32",
+            "default": null
+          },
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "32",
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionName",
+          "action": "changed",
+          "before": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "32",
+            "default": null
+          },
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "32",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

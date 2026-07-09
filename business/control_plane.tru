@@ -65,11 +65,11 @@ class Agent {
   field windowActionRequestId: string? min=0 max=64
   field windowActionRequestedAt: datetime?
   field windowActionRequestedByUserId: string? min=0 max=64
-  field windowActionName: string min=0 max=32
+  field windowActionName: string? min=0 max=32
   field windowActionLastRequestId: string? min=0 max=64
   field windowActionLastAcknowledgedAt: datetime?
-  field windowActionStatus: string min=0 max=32
-  field windowActionMessage: string min=0 max=4000
+  field windowActionStatus: string? min=0 max=32
+  field windowActionMessage: string? min=0 max=4000
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field updatedAt: datetime
@@ -1436,16 +1436,19 @@ function window_action_request_pending(agent: map<json>): bool {
 }
 
 function agent_window_action_payload(agent: map<json>): map<json> {
+  const actionValue = agent.windowActionName == null ? '' : string.from(agent.windowActionName);
+  const statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);
+  const messageValue = agent.windowActionMessage == null ? '' : string.from(agent.windowActionMessage);
   return {
     pending: window_action_request_pending(agent),
     requestId: agent.windowActionRequestId,
     requestedAt: agent.windowActionRequestedAt,
     requestedByUserId: agent.windowActionRequestedByUserId,
-    action: agent.windowActionName,
+    action: actionValue,
     lastRequestId: agent.windowActionLastRequestId,
     acknowledgedAt: agent.windowActionLastAcknowledgedAt,
-    status: agent.windowActionStatus,
-    message: agent.windowActionMessage
+    status: statusValue,
+    message: messageValue
   };
 }
 
@@ -2956,7 +2959,13 @@ function agent_diagnostics_request_all(batchSize: int = 0, token: string? = null
     return raw_json_error(403, 'permission denied');
   }
 
-  const normalizedBatchSize = clamp_int(batchSize, 0, 50);
+  let normalizedBatchSize = batchSize;
+  if (normalizedBatchSize < 0) {
+    normalizedBatchSize = 0;
+  }
+  if (normalizedBatchSize > 50) {
+    normalizedBatchSize = 50;
+  }
   const requestedClientNames = online_visible_agent_client_names(current, normalizedBatchSize);
   return agent_diagnostics_request_batch(requestedClientNames, null, token);
 }
