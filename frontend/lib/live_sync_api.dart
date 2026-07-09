@@ -236,6 +236,29 @@ class LiveSyncApiClient {
     );
   }
 
+  Future<AdminBulkDiagnosticsRequestResult> requestAgentDiagnosticsBatch({
+    required List<String> clientNames,
+    String requestId = '',
+  }) async {
+    final normalizedClientNames =
+        clientNames
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false);
+    final decoded = await _invokeFunction('agent_diagnostics_request_batch', {
+      'clientNames': normalizedClientNames,
+      if (requestId.trim().isNotEmpty) 'requestId': requestId.trim(),
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected diagnostics batch request payload.',
+      );
+    }
+    return AdminBulkDiagnosticsRequestResult.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
   Future<AdminBulkClientUpdateRequestResult>
   requestAllAgentClientUpdates() async {
     final decoded = await _invokeFunction(
@@ -248,6 +271,22 @@ class LiveSyncApiClient {
       );
     }
     return AdminBulkClientUpdateRequestResult.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
+  Future<AdminBulkWindowActionRequestResult> requestAllAgentWindowActions({
+    String action = 'minimize',
+  }) async {
+    final decoded = await _invokeFunction('agent_window_action_request_all', {
+      'action': action.trim(),
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected bulk window action request payload.',
+      );
+    }
+    return AdminBulkWindowActionRequestResult.fromJson(
       Map<String, dynamic>.from(decoded),
     );
   }

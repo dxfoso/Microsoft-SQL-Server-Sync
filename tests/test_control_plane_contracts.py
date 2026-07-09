@@ -170,6 +170,44 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("clientUpdateTargetVersion: targetVersionOrNull,", body)
         self.assertIn("clientUpdateStatus: 'requested',", body)
 
+    def test_diagnostics_request_all_and_batch_target_online_visible_agents(self):
+        source = read_text("business/control_plane.tru")
+
+        helper_match = re.search(
+            r"function online_visible_agent_client_names\(.*?\): array<string> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(helper_match)
+        helper_body = helper_match.group("body")
+        self.assertIn("const visibleAgents = visible_agent_rows_for(current);", helper_body)
+        self.assertIn("if (!effective_agent_online(agent)) {", helper_body)
+        self.assertIn("if (clientName.length == 0 || string_array_contains(requestedClientNames, clientName)) {", helper_body)
+        self.assertIn("if (limit > 0 && requestedClientNames.length >= limit) {", helper_body)
+
+        batch_match = re.search(
+            r"function agent_diagnostics_request_batch\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(batch_match)
+        batch_body = batch_match.group("body")
+        self.assertIn("const visibleClientNames = online_visible_agent_client_names(current);", batch_body)
+        self.assertIn("if (!string_array_contains(visibleClientNames, clientName)) {", batch_body)
+        self.assertIn("diagnosticRequestId: normalizedRequestId,", batch_body)
+        self.assertIn("diagnosticStatus: 'requested',", batch_body)
+
+        all_match = re.search(
+            r"function agent_diagnostics_request_all\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(all_match)
+        all_body = all_match.group("body")
+        self.assertIn("const normalizedBatchSize = clamp_int(batchSize, 0, 50);", all_body)
+        self.assertIn("const requestedClientNames = online_visible_agent_client_names(current, normalizedBatchSize);", all_body)
+        self.assertIn("return agent_diagnostics_request_batch(requestedClientNames, null, token);", all_body)
+
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
         match = re.search(

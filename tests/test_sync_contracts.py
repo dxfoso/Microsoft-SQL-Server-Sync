@@ -86,6 +86,17 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("Install-SymmetricDsRuntime", build_script)
         self.assertNotIn("symmetricds\\bin\\sym.bat", build_script)
         self.assertNotIn("symmetricds/bin/sym.bat", publish_script)
+        self.assertIn("$stoppedProcessIds = [System.Collections.Generic.List[int]]::new()", build_script)
+        self.assertIn("Get-Process -Id $processId -ErrorAction SilentlyContinue", build_script)
+        self.assertIn("Start-Sleep -Milliseconds 250", build_script)
+        self.assertNotIn('Write-Host "Splitting zip archive into 10 parts..."', build_script)
+        self.assertNotIn('$zipPartsDir = Join-Path -Path $OutputRoot -ChildPath "$PortableName-zip-parts"', build_script)
+        self.assertNotIn('Write-Host "Parts:  $($zipPartsInfo.PartsDir)"', build_script)
+        self.assertIn("function New-PortableZipParts {", publish_script)
+        self.assertIn("if ([System.IO.Path]::IsPathRooted(`$OutputZip)) {", publish_script)
+        self.assertIn("if ([System.IO.Path]::IsPathRooted(`$OutputDir)) {", publish_script)
+        self.assertIn("New-PortableZipParts `", publish_script)
+        self.assertNotIn("$PortableZipPartsDir = Join-Path -Path $RepoRoot -ChildPath \"$PortableName-zip-parts\"", publish_script)
 
     def test_frontend_server_only_serves_static_assets_and_client_updates(self):
         node_server = read_text("frontend/server.js")
@@ -236,6 +247,31 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("await process.exitCode.timeout(timeout);", agent_page)
         self.assertIn("sqlcmd timed out after ${_formatDurationForLog(timeout)}.", agent_page)
         self.assertIn("timeout: _snapshotSqlCmdTimeout,", agent_page)
+        self.assertIn("'-y',", agent_page)
+        self.assertIn("'0',", agent_page)
+        self.assertNotIn("'-h',", agent_page)
+        self.assertIn("List<String> _dataOutputLines(String output)", agent_page)
+        self.assertIn("bool _looksLikeHeaderLine(List<String> lines, int index)", agent_page)
+        self.assertIn("bool _isHeaderSeparatorLine(String line)", agent_page)
+        self.assertIn(
+            "const Duration _diagnosticsChangeTrackingTimeout = Duration(seconds: 20);",
+            agent_page,
+        )
+        self.assertIn(
+            "const int _maxDiagnosticsUploadPayloadChars = 60000;",
+            agent_page,
+        )
+        self.assertIn(
+            "Future<Map<String, dynamic>> _buildChangeTrackingDiagnosticsForUpload() async {",
+            agent_page,
+        )
+        self.assertIn(
+            "await _queryChangeTrackingDiagnostics().timeout(",
+            agent_page,
+        )
+        self.assertIn("String _encodeDiagnosticsPayloadForUpload(", agent_page)
+        self.assertIn("_compactChangeTrackingDatabasesForUpload(", agent_page)
+        self.assertIn("_minimalChangeTrackingDatabaseForUpload(", agent_page)
         self.assertIn(
             "const Duration _defaultDiagnosticsUploadRequestTimeout = Duration(minutes: 2);",
             client_api,
@@ -303,7 +339,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("final tablesToQueue = <String>{", agent_page)
         self.assertIn("..._relatedSyncKeysFor(syncKey)", agent_page)
 
-    def test_windows_update_script_stops_existing_instances(self):
+    def test_windows_update_script_restarts_only_the_target_install(self):
         update_script = read_text("update.ps1")
         publish_script = read_text("scripts/publish_windows_client_update.ps1")
         runner_main = read_text("sync_windows_agent/windows/runner/main.cpp")
@@ -324,11 +360,45 @@ class SyncContractsTests(unittest.TestCase):
             "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir",
             update_script,
         )
+        self.assertIn(
+            "Ensuring the prior client instance from this install is stopped before install.",
+            update_script,
+        )
+        self.assertIn(
+            "Stopping any remaining client instance from this install before relaunch.",
+            update_script,
+        )
+        self.assertNotIn(
+            "Stop-AgentProcesses -TargetInstallDir $InstallDir -AllInstances",
+            update_script,
+        )
         self.assertIn('argument == "--start-minimized"', runner_main)
+        self.assertIn("GetInstanceMutexName()", runner_main)
+        self.assertIn(
+            'L"Local\\\\MicrosoftSqlServerSyncAgent_%016llX"',
+            runner_main,
+        )
         self.assertIn("launching minimized to tray", runner_window)
         self.assertIn("!start_minimized_", runner_window)
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
+
+    def test_local_launcher_reuses_backend_and_waits_for_desktop_boot(self):
+        run_script = read_text("run.ps1")
+
+        self.assertIn("$existingBackendProcess = Get-RepoBackendServerProcess", run_script)
+        self.assertIn(
+            'Write-Host "Reusing healthy local backend server on port $backendPort."',
+            run_script,
+        )
+        self.assertIn("function Get-RepoDesktopLauncherProcess {", run_script)
+        self.assertIn("$script:lastDesktopLaunch = $null", run_script)
+        self.assertIn("$script:lastDesktopLaunch = Get-Date", run_script)
+        self.assertIn("$desktopLauncherProcess = Get-RepoDesktopLauncherProcess", run_script)
+        self.assertIn(
+            "if ($null -ne $script:lastDesktopLaunch -and ((Get-Date) - $script:lastDesktopLaunch).TotalSeconds -lt 30)",
+            run_script,
+        )
 
     def test_shell_auto_update_stays_active_for_logged_in_clients(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")
@@ -370,6 +440,28 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Future<RemoteAgentClientUpdate> acknowledgeClientUpdate(", client_api)
         self.assertIn("class RemoteAgentClientUpdate {", client_api)
         self.assertIn("requestAllAgentClientUpdates() async {", web_api)
+
+    def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
+        web_api = read_text("frontend/lib/live_sync_api.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        verifier = read_text("scripts/verify_live_bulk_diagnostics.py")
+
+        self.assertIn(
+            "Future<AdminBulkDiagnosticsRequestResult> requestAgentDiagnosticsBatch({",
+            web_api,
+        )
+        self.assertIn(
+            "_invokeFunction('agent_diagnostics_request_batch', {",
+            web_api,
+        )
+        self.assertIn("const int _bulkDiagnosticsBatchSize = 5;", dashboard)
+        self.assertIn("index < uniqueClientNames.length;", dashboard)
+        self.assertIn("index += _bulkDiagnosticsBatchSize", dashboard)
+        self.assertIn("_api.requestAgentDiagnosticsBatch(", dashboard)
+        self.assertIn("requestId: sharedRequestId,", dashboard)
+        self.assertIn("in batches of $_bulkDiagnosticsBatchSize", dashboard)
+        self.assertIn('parser.add_argument("--batch-size", type=int, default=5)', verifier)
+        self.assertIn('args["batchSize"] = batch_size', verifier)
 
     def test_windows_agent_can_apply_server_requested_window_actions(self):
         control_plane = read_text("business/control_plane.tru")

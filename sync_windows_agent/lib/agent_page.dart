@@ -36,6 +36,8 @@ const String _agentBuildReleaseDate = String.fromEnvironment(
 );
 const Duration _defaultSqlCmdTimeout = Duration(minutes: 2);
 const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);
+const Duration _diagnosticsChangeTrackingTimeout = Duration(seconds: 20);
+const int _maxDiagnosticsUploadPayloadChars = 60000;
 typedef _SqlColumnDefinition = SqlSyncColumnDefinition;
 
 class _PendingWindowActionAck {
@@ -2691,11 +2693,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         )
         .toList(growable: false);
 
-    final changeTracking = _compactChangeTrackingDiagnosticsForUpload(
-      await _queryChangeTrackingDiagnostics(),
-    );
+    final changeTracking = await _buildChangeTrackingDiagnosticsForUpload();
 
-    return jsonEncode({
+    final payload = <String, dynamic>{
       'capturedAt': DateTime.now().toIso8601String(),
       'clientName': widget.clientName,
       'machineName': Platform.localHostname,
@@ -2736,7 +2736,205 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'failedTables': failedTables,
       'tableSummaries': tableSummaries,
       'startupLogTail': _readStartupLogTail(),
-    });
+    };
+
+    return _encodeDiagnosticsPayloadForUpload(payload);
+  }
+
+  Future<Map<String, dynamic>> _buildChangeTrackingDiagnosticsForUpload() async {
+    try {
+      final diagnostics = await _queryChangeTrackingDiagnostics().timeout(
+        _diagnosticsChangeTrackingTimeout,
+      );
+      final compact = _compactChangeTrackingDiagnosticsForUpload(diagnostics);
+      compact['captureStatus'] = 'completed';
+      return compact;
+    } on TimeoutException {
+      return <String, dynamic>{
+        'captureStatus': 'timeout',
+        'message':
+            'Change tracking diagnostics exceeded ${_diagnosticsChangeTrackingTimeout.inSeconds} seconds and were skipped.',
+      };
+    } catch (error) {
+      return <String, dynamic>{
+        'captureStatus': 'error',
+        'message': error.toString(),
+      };
+    }
+  }
+
+  String _encodeDiagnosticsPayloadForUpload(Map<String, dynamic> payload) {
+    String encode(Map<String, dynamic> value) => jsonEncode(value);
+
+    var encoded = encode(payload);
+    if (encoded.length <= _maxDiagnosticsUploadPayloadChars) {
+      return encoded;
+    }
+
+    final reduced = Map<String, dynamic>.from(payload);
+    reduced['activeJobs'] = _boundedUploadList(
+      reduced['activeJobs'],
+      maxItems: 10,
+    );
+    reduced['failedTables'] = _boundedUploadList(
+      reduced['failedTables'],
+      maxItems: 10,
+    );
+    reduced['tableSummaries'] = _boundedUploadList(
+      reduced['tableSummaries'],
+      maxItems: 20,
+    );
+    reduced['startupLogTail'] = _truncateUploadText(
+      reduced['startupLogTail'],
+      maxChars: 4000,
+    );
+    _compactChangeTrackingDatabasesForUpload(reduced, maxDatabases: 8);
+    encoded = encode(reduced);
+    if (encoded.length <= _maxDiagnosticsUploadPayloadChars) {
+      return encoded;
+    }
+
+    final minimal = Map<String, dynamic>.from(reduced);
+    minimal['activeJobs'] = _boundedUploadList(
+      minimal['activeJobs'],
+      maxItems: 5,
+    );
+    minimal['failedTables'] = _boundedUploadList(
+      minimal['failedTables'],
+      maxItems: 5,
+    );
+    minimal['tableSummaries'] = _boundedUploadList(
+      minimal['tableSummaries'],
+      maxItems: 10,
+    );
+    minimal['startupLogTail'] = _truncateUploadText(
+      minimal['startupLogTail'],
+      maxChars: 2000,
+    );
+    _compactChangeTrackingDatabasesForUpload(minimal, maxDatabases: 3);
+    encoded = encode(minimal);
+    if (encoded.length <= _maxDiagnosticsUploadPayloadChars) {
+      return encoded;
+    }
+
+    final emergency = <String, dynamic>{
+      'capturedAt': payload['capturedAt'],
+      'clientName': payload['clientName'],
+      'machineName': payload['machineName'],
+      'app': payload['app'],
+      'controlPlane': payload['controlPlane'],
+      'sql': _minimalSqlDiagnosticsForUpload(payload['sql']),
+      'syncSettings': payload['syncSettings'],
+      'errors': payload['errors'],
+      'activeJobs': _boundedUploadList(payload['activeJobs'], maxItems: 3),
+      'failedTables': _boundedUploadList(payload['failedTables'], maxItems: 3),
+      'tableSummaries': _boundedUploadList(
+        payload['tableSummaries'],
+        maxItems: 5,
+      ),
+      'startupLogTail': _truncateUploadText(
+        payload['startupLogTail'],
+        maxChars: 1000,
+      ),
+      'payloadReduced': true,
+    };
+    return encode(emergency);
+  }
+
+  List<dynamic> _boundedUploadList(dynamic value, {required int maxItems}) {
+    if (value is! List || maxItems < 1) {
+      return const <dynamic>[];
+    }
+    if (value.length <= maxItems) {
+      return List<dynamic>.from(value, growable: false);
+    }
+    return List<dynamic>.from(value.take(maxItems), growable: false);
+  }
+
+  String _truncateUploadText(dynamic value, {required int maxChars}) {
+    final text = value?.toString() ?? '';
+    if (text.length <= maxChars) {
+      return text;
+    }
+    return text.substring(text.length - maxChars);
+  }
+
+  void _compactChangeTrackingDatabasesForUpload(
+    Map<String, dynamic> payload, {
+    required int maxDatabases,
+  }) {
+    final sql = payload['sql'];
+    if (sql is! Map) {
+      return;
+    }
+    final nextSql = Map<String, dynamic>.from(sql);
+    final changeTracking = nextSql['changeTracking'];
+    if (changeTracking is! Map) {
+      payload['sql'] = nextSql;
+      return;
+    }
+    final nextChangeTracking = Map<String, dynamic>.from(changeTracking);
+    final databases = nextChangeTracking['databases'];
+    if (databases is List) {
+      nextChangeTracking['databases'] = databases
+          .whereType<Map>()
+          .take(maxDatabases)
+          .map(_minimalChangeTrackingDatabaseForUpload)
+          .toList(growable: false);
+    }
+    nextSql['changeTracking'] = nextChangeTracking;
+    payload['sql'] = nextSql;
+  }
+
+  Map<String, dynamic> _minimalSqlDiagnosticsForUpload(dynamic value) {
+    if (value is! Map) {
+      return const <String, dynamic>{};
+    }
+    final sql = Map<String, dynamic>.from(value);
+    return <String, dynamic>{
+      'server': sql['server'],
+      'database': sql['database'],
+      'selectedTable': sql['selectedTable'],
+      'databaseCount': sql['databaseCount'],
+      'tableCount': sql['tableCount'],
+      'changeTracking':
+          sql['changeTracking'] is Map
+              ? _minimalChangeTrackingForUpload(sql['changeTracking'])
+              : null,
+    };
+  }
+
+  Map<String, dynamic> _minimalChangeTrackingForUpload(dynamic value) {
+    if (value is! Map) {
+      return const <String, dynamic>{};
+    }
+    final changeTracking = Map<String, dynamic>.from(value);
+    final databases = changeTracking['databases'];
+    return <String, dynamic>{
+      'captureStatus': changeTracking['captureStatus'],
+      'message': changeTracking['message'],
+      'databaseCount': databases is List ? databases.length : 0,
+      if (databases is List)
+        'databases': databases
+            .whereType<Map>()
+            .take(3)
+            .map(_minimalChangeTrackingDatabaseForUpload)
+            .toList(growable: false),
+    };
+  }
+
+  Map<String, dynamic> _minimalChangeTrackingDatabaseForUpload(
+    Map<dynamic, dynamic> database,
+  ) {
+    return <String, dynamic>{
+      'database': database['database'],
+      'checked': database['checked'],
+      'available': database['available'],
+      'tableCount': database['tableCount'],
+      'trackedTableCount': database['trackedTableCount'],
+      'offlineChangesCanBeDetected': database['offlineChangesCanBeDetected'],
+      if (database['error'] != null) 'error': database['error'],
+    };
   }
 
   Map<String, dynamic> _compactChangeTrackingDiagnosticsForUpload(
@@ -3384,13 +3582,8 @@ ORDER BY c.column_id;
     }
 
     final definitions = <_SqlColumnDefinition>[];
-    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
-    for (final line in lines) {
-      final trimmedLine = line.trim();
-      if (_isSkippableOutputLine(trimmedLine)) {
-        continue;
-      }
-      final parts = _splitRowValues(trimmedLine);
+    for (final line in _dataOutputLines(processResult.stdout.toString())) {
+      final parts = _splitRowValues(line);
       if (parts.length < 7) {
         continue;
       }
@@ -3483,13 +3676,8 @@ ORDER BY i.index_id, ic.key_ordinal;
 
     final orderedIndexNames = <String>[];
     final columnsByIndex = <String, List<String>>{};
-    final lines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
-    for (final line in lines) {
-      final trimmedLine = line.trim();
-      if (_isSkippableOutputLine(trimmedLine)) {
-        continue;
-      }
-      final parts = _splitRowValues(trimmedLine);
+    for (final line in _dataOutputLines(processResult.stdout.toString())) {
+      final parts = _splitRowValues(line);
       if (parts.length < 2) {
         continue;
       }
@@ -4902,8 +5090,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       if (database != null && database.isNotEmpty) ...['-d', database],
       '-C',
       '-b',
-      '-h',
-      '-1',
       '-w',
       '32767',
       '-y',
@@ -5149,6 +5335,60 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   List<String> _splitRowValues(String line) =>
       line.split('|').map((value) => value.trim()).toList();
 
+  List<String> _dataOutputLines(String output) {
+    final dataLines = <String>[];
+    final lines = output.split(RegExp(r'\r?\n'));
+
+    for (var index = 0; index < lines.length; index++) {
+      final trimmedLine = lines[index].trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      if (_looksLikeHeaderLine(lines, index)) {
+        index += 1;
+        continue;
+      }
+      dataLines.add(trimmedLine);
+    }
+
+    return dataLines;
+  }
+
+  bool _looksLikeHeaderLine(List<String> lines, int index) {
+    if (index < 0 || index >= lines.length - 1) {
+      return false;
+    }
+
+    final current = lines[index].trim();
+    final next = lines[index + 1].trim();
+    if (current.isEmpty || next.isEmpty) {
+      return false;
+    }
+
+    return !_isSkippableOutputLine(current) && _isHeaderSeparatorLine(next);
+  }
+
+  bool _isHeaderSeparatorLine(String line) {
+    if (line.isEmpty) {
+      return false;
+    }
+
+    var sawDash = false;
+    for (final codeUnit in line.codeUnits) {
+      final char = String.fromCharCode(codeUnit);
+      if (char == '-') {
+        sawDash = true;
+        continue;
+      }
+      if (char == '|' || char == ' ' || char == '\t') {
+        continue;
+      }
+      return false;
+    }
+
+    return sawDash;
+  }
+
   bool _isSkippableOutputLine(String line) {
     if (line.isEmpty) return true;
     final normalized = line.toLowerCase();
@@ -5161,14 +5401,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
   List<String> _parseSingleColumnOutput(String output) {
     final values = <String>[];
-    final lines = output.split(RegExp(r'\r?\n'));
 
-    for (final line in lines) {
-      final trimmedLine = line.trim();
-      if (_isSkippableOutputLine(trimmedLine)) {
-        continue;
-      }
-      final split = _splitRowValues(trimmedLine);
+    for (final line in _dataOutputLines(output)) {
+      final split = _splitRowValues(line);
       if (split.isNotEmpty) {
         values.add(split.first);
       }

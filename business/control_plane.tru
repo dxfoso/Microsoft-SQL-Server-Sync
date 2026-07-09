@@ -2870,17 +2870,7 @@ function agent_diagnostics_request(clientName: string, token: string? = null): m
   };
 }
 
-function agent_diagnostics_request_all(token: string? = null): map<json> {
-  const current = current_user_record(token);
-  if (current == null) {
-    return raw_json_error(401, 'permission denied');
-  }
-  if (!is_admin_user(current) && !is_owner_user(current)) {
-    return raw_json_error(403, 'permission denied');
-  }
-
-  const requestId = uuid.v4();
-  const requestedAt = now_iso();
+function online_visible_agent_client_names(current: map<json>, limit: int = 0): array<string> {
   const visibleAgents = visible_agent_rows_for(current);
   let requestedClientNames = [];
   for (const agent of visibleAgents) {
@@ -2888,14 +2878,51 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
       continue;
     }
     const clientName = normalize_user_name(agent.clientName);
-    if (clientName.length != 0) {
+    if (clientName.length == 0 || string_array_contains(requestedClientNames, clientName)) {
+      continue;
+    }
+    requestedClientNames = requestedClientNames.concat([clientName]);
+    if (limit > 0 && requestedClientNames.length >= limit) {
+      break;
+    }
+  }
+  return requestedClientNames;
+}
+
+function agent_diagnostics_request_batch(clientNames: array<string>? = null, requestId: string? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let normalizedRequestId = '';
+  if (requestId != null) {
+    normalizedRequestId = truncate_text(string.from(requestId).trim(), 64);
+  }
+  if (normalizedRequestId.length == 0) {
+    normalizedRequestId = uuid.v4();
+  }
+  const requestedAt = now_iso();
+  const visibleClientNames = online_visible_agent_client_names(current);
+  let requestedClientNames = [];
+  for (const item of clientNames ?? []) {
+    const clientName = normalize_user_name(item);
+    if (clientName.length == 0) {
+      continue;
+    }
+    if (!string_array_contains(visibleClientNames, clientName)) {
+      continue;
+    }
+    if (!string_array_contains(requestedClientNames, clientName)) {
       requestedClientNames = requestedClientNames.concat([clientName]);
     }
   }
   if (requestedClientNames.length == 0) {
     return {
       ok: true,
-      requestId,
+      requestId: normalizedRequestId,
       requestedAt,
       requestedByUserId: current.id,
       requestedClientCount: 0,
@@ -2903,7 +2930,7 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
     };
   }
   db.updateMany(Agent, { clientName: { in: requestedClientNames } }, {
-    diagnosticRequestId: requestId,
+    diagnosticRequestId: normalizedRequestId,
     diagnosticRequestedAt: requestedAt,
     diagnosticRequestedByUserId: current.id,
     diagnosticStatus: 'requested',
@@ -2912,12 +2939,26 @@ function agent_diagnostics_request_all(token: string? = null): map<json> {
 
   return {
     ok: true,
-    requestId,
+    requestId: normalizedRequestId,
     requestedAt,
     requestedByUserId: current.id,
     requestedClientCount: requestedClientNames.length,
     requestedClientNames
   };
+}
+
+function agent_diagnostics_request_all(batchSize: int = 0, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const normalizedBatchSize = clamp_int(batchSize, 0, 50);
+  const requestedClientNames = online_visible_agent_client_names(current, normalizedBatchSize);
+  return agent_diagnostics_request_batch(requestedClientNames, null, token);
 }
 
 function agent_client_update_request(clientName: string, targetVersion: string? = null, token: string? = null): map<json> {

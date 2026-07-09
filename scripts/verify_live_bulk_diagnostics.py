@@ -85,8 +85,11 @@ def live_state(base_url: str, token: str) -> dict:
     return invoke_function(base_url, "live_state", {"token": token})
 
 
-def request_all_diagnostics(base_url: str, token: str) -> dict:
-    return invoke_function(base_url, "agent_diagnostics_request_all", {"token": token})
+def request_all_diagnostics(base_url: str, token: str, batch_size: int = 0) -> dict:
+    args = {"token": token}
+    if batch_size > 0:
+        args["batchSize"] = batch_size
+    return invoke_function(base_url, "agent_diagnostics_request_all", args)
 
 
 def summarize_progress(state: dict, request_id: str, requested_names: list[str]) -> tuple[list[str], list[str]]:
@@ -125,6 +128,7 @@ def main() -> int:
     parser.add_argument("--password", default=DEFAULT_PASSWORD)
     parser.add_argument("--wait-seconds", type=int, default=120)
     parser.add_argument("--poll-seconds", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--expect-commit", default="")
     args = parser.parse_args()
 
@@ -141,7 +145,7 @@ def main() -> int:
     token, user = login(args.base_url, args.username, args.password)
     print(f"logged_in_as={user.get('username')} role={user.get('role')}")
 
-    request_result = request_all_diagnostics(args.base_url, token)
+    request_result = request_all_diagnostics(args.base_url, token, args.batch_size)
     request_id = str(request_result.get("requestId") or "").strip()
     requested_names = [
         str(item).strip()

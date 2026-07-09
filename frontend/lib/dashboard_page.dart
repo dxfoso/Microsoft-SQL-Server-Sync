@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'browser_bridge.dart';
+import 'client_sync_progress.dart';
 import 'dashboard_widgets.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
@@ -15,8 +16,9 @@ const int _maxHistoryLimit = 100;
 const int _defaultAutoSyncIntervalMinutes = 15;
 const int _minAutoSyncIntervalMinutes = 1;
 const int _maxAutoSyncIntervalMinutes = 1440;
-const Duration _dashboardRefreshInterval = Duration(seconds: 5);
+const Duration _dashboardRefreshInterval = Duration(seconds: 15);
 const Duration _dashboardReconnectDelay = Duration(minutes: 1);
+const int _bulkDiagnosticsBatchSize = 5;
 const String _requestAllLogsAction = 'requestAllClientLogs';
 const String _waitForLogsQueryKey = 'waitForLogs';
 const String _buildCommitHash = String.fromEnvironment(
@@ -56,6 +58,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final TextEditingController _syncSearchController = TextEditingController();
   Timer? _refreshTimer;
   Timer? _reconnectTimer;
+  bool _refreshInFlight = false;
 
   AdminLiveState? _state;
   AdminLiveState? _derivedStateSource;
@@ -92,6 +95,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _bulkSyncBusy = false;
   bool _bulkDiagnosticsBusy = false;
   bool _bulkClientUpdateBusy = false;
+  bool _bulkWindowMinimizeBusy = false;
   bool _serverResetBusy = false;
   bool _handledLaunchAction = false;
   String? _bulkDiagnosticsRequestId;
@@ -181,6 +185,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Future<void> _refreshState({bool silent = false}) async {
+    if (_refreshInFlight) {
+      return;
+    }
+    _refreshInFlight = true;
     if (!silent && mounted) {
       setState(() {
         _loading = true;
@@ -258,6 +266,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _error = error.toString();
       });
       _scheduleReconnectRetry();
+    } finally {
+      _refreshInFlight = false;
     }
   }
 
@@ -2553,42 +2563,96 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _bulkDiagnosticsBusy = true;
     });
     try {
-      final result = await _api.requestAllAgentDiagnostics();
+      final visibleOnlineClientNames = (_state?.agents ?? const <AdminAgent>[])
+          .where((agent) => agent.isOnline)
+          .map((agent) => agent.clientName.trim())
+          .where((name) => name.isNotEmpty)
+          .toList(growable: false);
+      final uniqueClientNames = <String>[];
+      for (final clientName in visibleOnlineClientNames) {
+        if (!uniqueClientNames.contains(clientName)) {
+          uniqueClientNames.add(clientName);
+        }
+      }
+
+      AdminBulkDiagnosticsRequestResult? firstResult;
+      final requestedNames = <String>[];
+      var sharedRequestId = '';
+      if (uniqueClientNames.isEmpty && _state == null) {
+        firstResult = await _api.requestAllAgentDiagnostics();
+        sharedRequestId = firstResult.requestId.trim();
+        for (final clientName in firstResult.requestedClientNames) {
+          final normalized = clientName.trim();
+          if (normalized.isNotEmpty && !requestedNames.contains(normalized)) {
+            requestedNames.add(normalized);
+          }
+        }
+      } else {
+        for (
+          var index = 0;
+          index < uniqueClientNames.length;
+          index += _bulkDiagnosticsBatchSize
+        ) {
+          final batch = uniqueClientNames
+              .skip(index)
+              .take(_bulkDiagnosticsBatchSize)
+              .toList(growable: false);
+          final result = await _api.requestAgentDiagnosticsBatch(
+            clientNames: batch,
+            requestId: sharedRequestId,
+          );
+          firstResult ??= result;
+          if (sharedRequestId.isEmpty) {
+            sharedRequestId = result.requestId.trim();
+          }
+          for (final clientName in result.requestedClientNames) {
+            final normalized = clientName.trim();
+            if (normalized.isNotEmpty && !requestedNames.contains(normalized)) {
+              requestedNames.add(normalized);
+            }
+          }
+        }
+      }
+      final result =
+          firstResult ??
+          const AdminBulkDiagnosticsRequestResult(
+            requestId: '',
+            requestedAt: '',
+            requestedByUserId: null,
+            requestedClientCount: 0,
+            requestedClientNames: <String>[],
+          );
       if (!mounted) {
         return;
       }
-      final requestedNames = List<String>.unmodifiable(
-        result.requestedClientNames
-            .map((item) => item.trim())
-            .where((item) => item.isNotEmpty),
-      );
+      final requestedNamesView = List<String>.unmodifiable(requestedNames);
       setState(() {
         _bulkDiagnosticsRequestId =
-            result.requestId.trim().isEmpty ? null : result.requestId.trim();
+            sharedRequestId.isEmpty ? null : sharedRequestId;
         _bulkDiagnosticsRequestedAt =
             result.requestedAt.trim().isEmpty
                 ? null
                 : result.requestedAt.trim();
-        _bulkDiagnosticsRequestedClientNames = requestedNames;
+        _bulkDiagnosticsRequestedClientNames = requestedNamesView;
         _bulkDiagnosticsCompletedClientNames = const <String>[];
-        _bulkDiagnosticsPendingClientNames = requestedNames;
+        _bulkDiagnosticsPendingClientNames = requestedNamesView;
         _bulkDiagnosticsWaitingForUploads =
-            waitForUploads && requestedNames.isNotEmpty;
+            waitForUploads && requestedNamesView.isNotEmpty;
       });
       final suffix =
-          requestedNames.isEmpty
+          requestedNamesView.isEmpty
               ? 'No visible clients were available.'
-              : requestedNames.length <= 5
-              ? ' Clients: ${requestedNames.join(', ')}.'
-              : ' Clients: ${requestedNames.take(5).join(', ')} and ${requestedNames.length - 5} more.';
+              : requestedNamesView.length <= 5
+              ? ' Clients: ${requestedNamesView.join(', ')}.'
+              : ' Clients: ${requestedNamesView.take(5).join(', ')} and ${requestedNamesView.length - 5} more.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             fromActionUrl
                 ? waitForUploads
-                    ? 'Requested logs from ${result.requestedClientCount} clients in this tab. Waiting for uploads now.$suffix'
-                    : 'Requested logs from ${result.requestedClientCount} clients from the action URL.$suffix'
-                : 'Requested logs from ${result.requestedClientCount} clients.$suffix',
+                    ? 'Requested logs from ${requestedNamesView.length} clients in batches of $_bulkDiagnosticsBatchSize in this tab. Waiting for uploads now.$suffix'
+                    : 'Requested logs from ${requestedNamesView.length} clients from the action URL in batches of $_bulkDiagnosticsBatchSize.$suffix'
+                : 'Requested logs from ${requestedNamesView.length} clients in batches of $_bulkDiagnosticsBatchSize.$suffix',
           ),
           duration: const Duration(seconds: 6),
         ),
@@ -2801,6 +2865,51 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (mounted) {
         setState(() {
           _bulkClientUpdateBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _requestAllAgentWindowMinimize() async {
+    if (_bulkWindowMinimizeBusy) {
+      return;
+    }
+    setState(() {
+      _bulkWindowMinimizeBusy = true;
+    });
+    try {
+      final result = await _api.requestAllAgentWindowActions(
+        action: 'minimize',
+      );
+      if (!mounted) {
+        return;
+      }
+      final names = result.requestedClientNames;
+      final detail =
+          names.isEmpty
+              ? 'No online clients were available.'
+              : names.length <= 5
+              ? ' Clients: ${names.join(', ')}.'
+              : ' Clients: ${names.take(5).join(', ')} and ${names.length - 5} more.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Minimize requested for ${result.requestedClientCount} online client(s).$detail',
+          ),
+        ),
+      );
+      await _refreshState(silent: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bulkWindowMinimizeBusy = false;
         });
       }
     }
@@ -5475,148 +5584,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   _ClientSyncProgress _syncProgressForClient(AdminAgent agent) {
-    final enabledTables =
-        agent.tables
-            .where((table) => table.enabled)
-            .map((table) => table.table.trim())
-            .where((table) => table.isNotEmpty)
-            .toSet();
-    var trackedTables =
-        enabledTables.isEmpty
-            ? agent.tables
-                .map((table) => table.table.trim())
-                .where((table) => table.isNotEmpty)
-                .toSet()
-            : enabledTables;
-
-    final clientJobs = _jobs
-      .where((job) => job.clientName == agent.clientName)
-      .toList(growable: false)..sort(_compareJobsByUpdatedAtDesc);
-    if (trackedTables.isEmpty) {
-      trackedTables =
-          clientJobs
-              .map((job) => job.table.trim())
-              .where((table) => table.isNotEmpty)
-              .toSet();
-    }
-    if (trackedTables.isEmpty) {
-      return _ClientSyncProgress(
-        progress: 0,
-        label: 'No sync jobs',
-        color: const Color(0xFF667085),
-        detail: 'No enabled tables or sync jobs are available yet.',
-      );
-    }
-
-    final latestJobsByTable = <String, AdminJob>{};
-    for (final job in clientJobs) {
-      final table = job.table.trim();
-      if (table.isEmpty ||
-          !trackedTables.contains(table) ||
-          latestJobsByTable.containsKey(table)) {
-        continue;
-      }
-      latestJobsByTable[table] = job;
-    }
-
-    var totalProgress = 0;
-    var completedCount = 0;
-    var activeCount = 0;
-    var failedCount = 0;
-    for (final table in trackedTables) {
-      final job = latestJobsByTable[table];
-      if (job != null) {
-        final status = job.status.toLowerCase();
-        var progress = job.progress.clamp(0, 100);
-        if (status == 'completed') {
-          progress = 100;
-        } else if (job.isActive && progress == 0) {
-          progress = status == 'queued' ? 4 : 8;
-        }
-        totalProgress += progress;
-        if (status == 'completed') {
-          completedCount += 1;
-        } else if (status == 'failed') {
-          failedCount += 1;
-        } else if (job.isActive) {
-          activeCount += 1;
-        }
-        continue;
-      }
-
-      AdminTableState? tableState;
-      for (final state in agent.tables) {
-        if (state.table.trim() == table) {
-          tableState = state;
-          break;
-        }
-      }
-      final status = (tableState?.status ?? '').toLowerCase();
-      final hasLastSync = (tableState?.lastSync.trim().isNotEmpty ?? false);
-      var progress = (tableState?.progress ?? 0).clamp(0, 100);
-      final isFailed = status.contains('fail') || status.contains('error');
-      final isActive =
-          status == 'running' ||
-          status == 'applying' ||
-          (status == 'queued' && !hasLastSync) ||
-          status == 'syncing';
-      final isComplete =
-          status == 'completed' ||
-          status == 'synced' ||
-          status == 'success' ||
-          (hasLastSync && !isFailed && !isActive);
-      if (isComplete) {
-        progress = 100;
-      } else if (isActive && progress == 0) {
-        progress = 4;
-      }
-      totalProgress += progress;
-      if (isComplete) {
-        completedCount += 1;
-      } else if (isFailed) {
-        failedCount += 1;
-      } else if (isActive) {
-        activeCount += 1;
-      }
-    }
-
-    final progress = (totalProgress / trackedTables.length).round().clamp(
-      0,
-      100,
-    );
-    if (failedCount > 0) {
-      return _ClientSyncProgress(
-        progress: progress,
-        label: 'Failed',
-        color: const Color(0xFFB42318),
-        detail:
-            '$failedCount failed, $completedCount complete of ${trackedTables.length} tables.',
-      );
-    }
-    if (completedCount == trackedTables.length && progress >= 100) {
-      return _ClientSyncProgress(
-        progress: 100,
-        label: 'Complete',
-        color: const Color(0xFF0F766E),
-        detail: 'All ${trackedTables.length} enabled tables are complete.',
-      );
-    }
-    if (activeCount > 0) {
-      return _ClientSyncProgress(
-        progress: progress,
-        label: 'Syncing',
-        color: const Color(0xFF2563EB),
-        detail:
-            '$activeCount active, $completedCount complete of ${trackedTables.length} tables.',
-      );
-    }
+    final summary = computeClientSyncProgressSummary(agent: agent, jobs: _jobs);
     return _ClientSyncProgress(
-      progress: progress,
-      label: completedCount > 0 ? 'Partial' : 'Waiting',
-      color: const Color(0xFFB54708),
-      detail:
-          '$completedCount complete of ${trackedTables.length} enabled tables.',
+      progress: summary.progress,
+      label: summary.label,
+      color: _clientSyncProgressColor(summary.label),
+      detail: summary.detail,
     );
+  }
+
+  Color _clientSyncProgressColor(String label) {
+    switch (label) {
+      case 'Failed':
+        return const Color(0xFFB42318);
+      case 'Complete':
+        return const Color(0xFF0F766E);
+      case 'Syncing':
+        return const Color(0xFF2563EB);
+      case 'No sync jobs':
+        return const Color(0xFF667085);
+      case 'Partial':
+      case 'Waiting':
+      default:
+        return const Color(0xFFB54708);
+    }
   }
 
   _ClientSyncDelta? _latestSuccessfulRowDeltaForClient(AdminAgent agent) {
@@ -7195,6 +7186,48 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   size: 16,
                                 ),
                         label: const Text('Reset Server Data'),
+                      ),
+            ),
+          if (widget.authenticatedUser.canManageUsers)
+            Padding(
+              padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
+              child:
+                  compactAppBar
+                      ? IconButton(
+                        tooltip: 'Minimize all online Windows clients',
+                        onPressed:
+                            _bulkWindowMinimizeBusy
+                                ? null
+                                : () =>
+                                    unawaited(_requestAllAgentWindowMinimize()),
+                        icon:
+                            _bulkWindowMinimizeBusy
+                                ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.minimize_rounded),
+                      )
+                      : FilledButton.tonalIcon(
+                        onPressed:
+                            _bulkWindowMinimizeBusy
+                                ? null
+                                : () =>
+                                    unawaited(_requestAllAgentWindowMinimize()),
+                        icon:
+                            _bulkWindowMinimizeBusy
+                                ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.minimize_rounded, size: 16),
+                        label: const Text('Minimize All Clients'),
                       ),
             ),
           if (widget.authenticatedUser.canManageUsers)
