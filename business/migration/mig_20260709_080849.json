@@ -1,0 +1,109 @@
+{
+  "name": "mig_20260709_080849",
+  "timestamp": "2026-07-09T08:08:49.680957200+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "windowActionMessage",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "4000",
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionRequestedByUserId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionStatus",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "32",
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionLastRequestId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionRequestedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionLastAcknowledgedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionRequestId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "windowActionName",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "32",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}
