@@ -1,32 +1,19 @@
-Current Status
+# Sync Verification Progress
 
-- Live clients `c1` and `c2` were verified online, SQL-connected, server-connected, and minimized.
-- Local verifier coverage is green:
-  - `tests/test_live_verifier_scripts.py`: `126 passed`
-  - `tests/test_control_plane_contracts.py` + `tests/test_sync_contracts.py`: `77 passed`
-  - integrated full wrapper Python contracts: `221 passed`
-- Integrated wrapper verification is green:
-  - `python contracts`: passed
-  - `flutter agent tests`: passed
-  - `live system`: passed
-  - `live state recovery`: passed
-- Live recovery is now proven through the wrapper path:
-  - server saved-state reset succeeded
-  - both running clients rebuilt state from heartbeats
-  - post-recovery live verification passed
-  - `verify_full_system.py --include-recovery` finished with `full_system_ok steps=4 passed=4 failed=0`
+## Completed
 
-Latest Changes
+- Committed all root and backend changes: root `4e978bf`, backend `7deec66a`.
+- Local Python contracts: `195` sync/verifier tests passed.
+- Flutter client tests: `77` passed; transfer tests: `69` passed.
+- Backend business-spec compile guard passed.
+- Live health passed: ready, `compile_errors=0`, expected commit `6b8b76bcf084c3f4b80088d9749f3fcfc5d1be36`.
+- Batched diagnostics passed for `c1` and `c2`.
+- Scheduler stress passed: 5 runs, zero errors, average `757 ms`.
+- Repeated minimize action passed: both clients acknowledged.
+- Server saved-state reset recovery passed: both clients rebuilt state and all 7 integrated live checks passed.
+- Final live state: both clients online, SQL/server connected, minimized, version `1.0.105+109`, 22 enabled tables completed, zero active/unresolved failed jobs.
 
-- Added `scripts/verify_live_window_action.py`
-- Added `scripts/verify_live_state_recovery.py`
-- Updated `scripts/verify_live_system.py` to actively verify minimize window actions
-- Updated `scripts/verify_full_system.py` to support `--include-recovery`
+## Remaining
 
-Doing Now
-
-- Continuing only gap-finding and additional edge-case verification.
-
-Remaining
-
-- Find any additional high-value sync edge cases worth proving beyond the current wrapper and recovery coverage.
+- No known product or deployment failure remains.
+- Not force-tested live: physically stopping one client during an active sync, cutting the network during a real transfer, or corrupting a real client cache. These require intentionally disrupting a live user process; local retry, resume, stale/offline, corruption, and recovery contracts are covered.
