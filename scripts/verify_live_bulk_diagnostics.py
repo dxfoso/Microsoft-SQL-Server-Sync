@@ -17,6 +17,42 @@ class ApiError(RuntimeError):
     pass
 
 
+def retryable_transport_error(exc: Exception) -> bool:
+    message = str(exc)
+    return (
+        "WinError 10054" in message
+        or "Errno 10054" in message
+        or "ConnectionResetError" in message
+    )
+
+
+def read_json_request(request: urllib.request.Request, *, attempts: int = 3) -> dict | list:
+    raw = ""
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw = response.read().decode("utf-8")
+            break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ApiError(f"HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            api_error = ApiError(f"request failed: {exc}")
+            if attempt >= attempts or not retryable_transport_error(api_error):
+                raise api_error from exc
+            last_exc = api_error
+            time.sleep(1)
+    else:
+        if last_exc is not None:
+            raise last_exc
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ApiError(f"invalid JSON response: {raw[:400]}") from exc
+
+
 def post_json(url: str, payload: dict) -> dict:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -25,19 +61,9 @@ def post_json(url: str, payload: dict) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise ApiError(f"HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise ApiError(f"request failed: {exc}") from exc
-
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ApiError(f"invalid JSON response: {raw[:400]}") from exc
+    decoded = read_json_request(request)
+    if not isinstance(decoded, dict):
+        raise ApiError(f"unexpected payload: {decoded!r}")
     return decoded
 
 
@@ -60,8 +86,10 @@ def invoke_function(base_url: str, name: str, args: dict) -> dict:
 
 def fetch_health(base_url: str) -> dict:
     request = urllib.request.Request(f"{base_url.rstrip('/')}/admin/health", method="GET")
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    decoded = read_json_request(request)
+    if not isinstance(decoded, dict):
+        raise ApiError(f"unexpected health payload: {decoded!r}")
+    return decoded
 
 
 def login(base_url: str, username: str, password: str) -> tuple[str, dict]:
@@ -93,6 +121,38 @@ def request_all_diagnostics(base_url: str, token: str, batch_size: int = 0) -> d
     return invoke_function(base_url, "agent_diagnostics_request_all", args)
 
 
+def parse_diagnostics_request_result(request_result: dict) -> tuple[str, list[str]]:
+    if not isinstance(request_result, dict):
+        raise ApiError(f"unexpected diagnostics request payload: {request_result!r}")
+
+    request_id = str(request_result.get("requestId") or "").strip()
+    if not request_id:
+        raise ApiError(f"unexpected diagnostics request payload: {request_result!r}")
+
+    raw_names = request_result.get("requestedClientNames")
+    if not isinstance(raw_names, list):
+        raise ApiError(f"unexpected diagnostics request payload: {request_result!r}")
+
+    requested_names = []
+    for item in raw_names:
+        name = str(item or "").strip()
+        if not name:
+            raise ApiError(f"unexpected diagnostics request payload: {request_result!r}")
+        requested_names.append(name)
+
+    if len(set(requested_names)) != len(requested_names):
+        raise ApiError(f"unexpected diagnostics request payload: {request_result!r}")
+
+    requested_count = request_result.get("requestedClientCount")
+    if requested_count is not None:
+        if not isinstance(requested_count, (int, float)):
+            raise ApiError(f"unexpected diagnostics request payload: {request_result!r}")
+        if int(requested_count) != len(requested_names):
+            raise ApiError(f"unexpected diagnostics request payload: {request_result!r}")
+
+    return request_id, requested_names
+
+
 def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> float | None:
     normalized = str(last_heartbeat or "").strip()
     if not normalized:
@@ -104,7 +164,7 @@ def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> f
         return None
     if observed.tzinfo is None:
         observed = observed.replace(tzinfo=timezone.utc)
-    return (current - observed).total_seconds() / 60.0
+    return max((current - observed).total_seconds() / 60.0, 0.0)
 
 
 def summarize_progress(state: dict, request_id: str, requested_names: list[str]) -> tuple[list[str], list[str]]:
@@ -204,12 +264,7 @@ def main() -> int:
     print(f"logged_in_as={user.get('username')} role={user.get('role')}")
 
     request_result = request_all_diagnostics(args.base_url, token, args.batch_size)
-    request_id = str(request_result.get("requestId") or "").strip()
-    requested_names = [
-        str(item).strip()
-        for item in (request_result.get("requestedClientNames") or [])
-        if str(item).strip()
-    ]
+    request_id, requested_names = parse_diagnostics_request_result(request_result)
     print(
         f"request_id={request_id} requested_client_count={request_result.get('requestedClientCount')} requested_clients={requested_names}"
     )
@@ -249,5 +304,13 @@ def main() -> int:
     return 1
 
 
+def run_cli() -> int:
+    try:
+        return main()
+    except ApiError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_cli())

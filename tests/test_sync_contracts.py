@@ -228,6 +228,124 @@ class SyncContractsTests(unittest.TestCase):
             agent_page,
         )
 
+    def test_sync_loop_suppresses_temporary_control_plane_errors_but_records_hard_failures(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        heartbeat_body = agent_page.split("Future<void> _syncWithControlPlane() async {", 1)[
+            1
+        ].split("Future<void> _uploadRequestedDiagnostics(", 1)[0]
+
+        self.assertIn(
+            "final temporaryControlPlaneUnavailable =",
+            heartbeat_body,
+        )
+        self.assertIn(
+            "_isTemporaryControlPlaneUnavailable(error);",
+            heartbeat_body,
+        )
+        self.assertIn("_serverConnected = false;", heartbeat_body)
+        self.assertIn("_checkingServerConnection = false;", heartbeat_body)
+        self.assertIn("_lastServerCheck = DateTime.now();", heartbeat_body)
+        self.assertIn(
+            "_errorMessage =\n            temporaryControlPlaneUnavailable ? null : error.toString();",
+            heartbeat_body,
+        )
+
+    def test_sync_loop_always_clears_busy_flag_and_retries_deferred_client_updates(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        heartbeat_body = agent_page.split("Future<void> _syncWithControlPlane() async {", 1)[
+            1
+        ].split("Future<void> _uploadRequestedDiagnostics(", 1)[0]
+
+        self.assertIn("if (!mounted || _syncLoopBusy) {", heartbeat_body)
+        self.assertIn("_syncLoopBusy = true;", heartbeat_body)
+        self.assertIn("} finally {", heartbeat_body)
+        self.assertIn("_syncLoopBusy = false;", heartbeat_body)
+        self.assertIn("_retryAutomaticClientUpdateIfReady();", heartbeat_body)
+        self.assertLess(
+            heartbeat_body.index("_syncLoopBusy = true;"),
+            heartbeat_body.index("} finally {"),
+        )
+        self.assertLess(
+            heartbeat_body.index("_syncLoopBusy = false;"),
+            heartbeat_body.index("_retryAutomaticClientUpdateIfReady();"),
+        )
+
+    def test_sync_loop_processes_live_state_before_pending_jobs(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        heartbeat_body = agent_page.split("Future<void> _syncWithControlPlane() async {", 1)[
+            1
+        ].split("Future<void> _uploadRequestedDiagnostics(", 1)[0]
+
+        self.assertIn("_scheduleRequestedDiagnosticsUpload(heartbeat.diagnostics);", heartbeat_body)
+        self.assertIn("await _flushPendingWindowActionAck();", heartbeat_body)
+        self.assertIn("await _handleRequestedWindowAction(heartbeat.windowAction);", heartbeat_body)
+        self.assertIn("await _handleRequestedClientUpdate(heartbeat.clientUpdate);", heartbeat_body)
+        self.assertIn("_refreshAutoRequiredTables();", heartbeat_body)
+        self.assertIn("await _processPendingJobs();", heartbeat_body)
+        self.assertLess(
+            heartbeat_body.index("_scheduleRequestedDiagnosticsUpload(heartbeat.diagnostics);"),
+            heartbeat_body.index("await _processPendingJobs();"),
+        )
+        self.assertLess(
+            heartbeat_body.index("_refreshAutoRequiredTables();"),
+            heartbeat_body.index("await _processPendingJobs();"),
+        )
+
+    def test_requested_diagnostics_uploads_dedupe_by_request_id_and_release_busy_state(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        diagnostics_body = agent_page.split(
+            "void _scheduleRequestedDiagnosticsUpload(RemoteAgentDiagnostics diagnostics) {",
+            1,
+        )[1].split("Future<void> _handleRequestedWindowAction(", 1)[0]
+
+        self.assertIn("if (!diagnostics.pending || _diagnosticsUploadBusy) {", diagnostics_body)
+        self.assertIn("final requestId = diagnostics.requestId?.trim() ?? '';", diagnostics_body)
+        self.assertIn(
+            "if (requestId.isNotEmpty && _diagnosticsUploadRequestId == requestId) {",
+            diagnostics_body,
+        )
+        self.assertIn("_diagnosticsUploadBusy = true;", diagnostics_body)
+        self.assertIn(
+            "_diagnosticsUploadRequestId = requestId.isEmpty ? null : requestId;",
+            diagnostics_body,
+        )
+        self.assertIn("_uploadRequestedDiagnostics(diagnostics)", diagnostics_body)
+        self.assertIn("if (requestId.isNotEmpty &&", diagnostics_body)
+        self.assertIn("_diagnosticsUploadRequestId == requestId) {", diagnostics_body)
+        self.assertIn("_diagnosticsUploadRequestId = null;", diagnostics_body)
+        self.assertIn(".whenComplete(() {", diagnostics_body)
+        self.assertIn("_diagnosticsUploadBusy = false;", diagnostics_body)
+
+    def test_pending_window_action_ack_flush_is_non_reentrant_and_clears_only_matching_ack(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        flush_body = agent_page.split(
+            "Future<void> _flushPendingWindowActionAck() async {",
+            1,
+        )[1].split("Future<void> _queueWindowActionAck({", 1)[0]
+        queue_body = agent_page.split(
+            "Future<void> _queueWindowActionAck({",
+            1,
+        )[1].split("Future<void> _syncWithControlPlane() async {", 1)[0]
+
+        self.assertIn(
+            "if (pendingAck == null || _flushingPendingWindowActionAck) {",
+            flush_body,
+        )
+        self.assertIn("_flushingPendingWindowActionAck = true;", flush_body)
+        self.assertIn("await _controlPlaneClient.acknowledgeWindowAction(", flush_body)
+        self.assertIn(
+            "if (_pendingWindowActionAck?.requestId == pendingAck.requestId) {",
+            flush_body,
+        )
+        self.assertIn("_pendingWindowActionAck = null;", flush_body)
+        self.assertIn(
+            "logStartupEvent('Window action acknowledgement retry failed: $error');",
+            flush_body,
+        )
+        self.assertIn("_flushingPendingWindowActionAck = false;", flush_body)
+        self.assertIn("_pendingWindowActionAck = _PendingWindowActionAck(", queue_body)
+        self.assertIn("await _flushPendingWindowActionAck();", queue_body)
+
     def test_snapshot_apply_refreshes_target_fingerprint_after_success(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         apply_body = agent_page.split(
@@ -237,6 +355,144 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("final targetFingerprints = await _queryTableFingerprints(", apply_body)
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
+
+    def test_snapshot_upload_job_advances_through_start_progress_and_chunk_upload_only(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        upload_body = agent_page.split(
+            "Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {", 1
+        )[1].split("Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {", 1)[0]
+
+        self.assertIn("await _controlPlaneClient.startJob(", upload_body)
+        self.assertIn("status: 'snapshotting',", upload_body)
+        self.assertIn("progress: 10,", upload_body)
+        self.assertIn("await _controlPlaneClient.updateJobProgress(", upload_body)
+        self.assertIn("status: 'uploading',", upload_body)
+        self.assertIn("progress: 35,", upload_body)
+        self.assertIn("final uploadResult = await _controlPlaneClient.uploadSnapshot(", upload_body)
+        self.assertIn("_applyRemoteJobState(", upload_body)
+        self.assertIn("appendHistory: true,", upload_body)
+        self.assertIn("success: true,", upload_body)
+        self.assertNotIn("await _controlPlaneClient.completeJob(", upload_body)
+
+    def test_snapshot_download_job_completes_only_after_apply_succeeds(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        download_body = agent_page.split(
+            "Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {", 1
+        )[1].split("Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1)[0]
+
+        self.assertIn("await _controlPlaneClient.startJob(", download_body)
+        self.assertIn("status: 'downloading',", download_body)
+        self.assertIn("final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);", download_body)
+        self.assertIn("await _controlPlaneClient.updateJobProgress(", download_body)
+        self.assertIn("status: 'applying',", download_body)
+        self.assertIn("progress: 80,", download_body)
+        self.assertIn("final targetRowCount = await _applyDownloadedSnapshotToTarget(", download_body)
+        self.assertIn("await _controlPlaneClient.completeJob(", download_body)
+        self.assertIn("status: 'completed',", download_body)
+        self.assertIn("progress: 100,", download_body)
+        self.assertLess(
+            download_body.index("final targetRowCount = await _applyDownloadedSnapshotToTarget("),
+            download_body.index("await _controlPlaneClient.completeJob("),
+        )
+
+    def test_pending_job_failures_are_reported_back_to_control_plane_and_local_history(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        pending_jobs_body = agent_page.split(
+            "Future<void> _processPendingJobs() async {", 1
+        )[1].split("List<RemoteSyncJob> _sortPendingJobsByDependencies(", 1)[0]
+        fail_body = agent_page.split(
+            "Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {", 1
+        )[1].split("Future<List<_SqlColumnDefinition>> _querySyncColumnDefinitions({", 1)[0]
+
+        self.assertIn("await _processSnapshotJob(job);", pending_jobs_body)
+        self.assertIn("await _markRemoteJobFailed(job, error);", pending_jobs_body)
+        self.assertIn("Remote job ${job.id} failed during snapshot processing: $errorMessage", pending_jobs_body)
+        self.assertIn("status: 'failed',", pending_jobs_body)
+        self.assertIn("progress: 100,", pending_jobs_body)
+        self.assertIn("completedAt: DateTime.now().toIso8601String(),", pending_jobs_body)
+        self.assertIn("appendHistory: true,", pending_jobs_body)
+        self.assertIn("success: false,", pending_jobs_body)
+        self.assertIn("overrideMessage: errorMessage,", pending_jobs_body)
+        self.assertIn("await _controlPlaneClient.failJob(", fail_body)
+        self.assertIn("progress: 100,", fail_body)
+        self.assertIn("logStartupEvent('Unable to mark remote job ${job.id} failed: $failError');", fail_body)
+
+    def test_only_successful_download_jobs_trigger_local_row_count_refresh(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        pending_jobs_body = agent_page.split(
+            "Future<void> _processPendingJobs() async {", 1
+        )[1].split("List<RemoteSyncJob> _sortPendingJobsByDependencies(", 1)[0]
+
+        self.assertIn("if (job.direction == 'download') {", pending_jobs_body)
+        self.assertIn("unawaited(_refreshLocalRowCounts());", pending_jobs_body)
+        self.assertLess(
+            pending_jobs_body.index("await _processSnapshotJob(job);"),
+            pending_jobs_body.index("if (job.direction == 'download') {"),
+        )
+        self.assertLess(
+            pending_jobs_body.index("await _markRemoteJobFailed(job, error);"),
+            pending_jobs_body.index("final failedJob = RemoteSyncJob("),
+        )
+
+    def test_pending_jobs_skip_duplicates_and_always_release_processing_ids(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        pending_jobs_body = agent_page.split(
+            "Future<void> _processPendingJobs() async {", 1
+        )[1].split("List<RemoteSyncJob> _sortPendingJobsByDependencies(", 1)[0]
+
+        self.assertIn("if (_processingJobIds.contains(job.id)) {", pending_jobs_body)
+        self.assertIn("_processingJobIds.add(job.id);", pending_jobs_body)
+        self.assertIn("} finally {", pending_jobs_body)
+        self.assertIn("_processingJobIds.remove(job.id);", pending_jobs_body)
+        self.assertLess(
+            pending_jobs_body.index("_processingJobIds.add(job.id);"),
+            pending_jobs_body.index("await _processSnapshotJob(job);"),
+        )
+        self.assertLess(
+            pending_jobs_body.index("} finally {"),
+            pending_jobs_body.index("_processingJobIds.remove(job.id);"),
+        )
+
+    def test_pending_jobs_are_ordered_by_dependency_depth_before_creation_time(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        sort_body = agent_page.split(
+            "List<RemoteSyncJob> _sortPendingJobsByDependencies(List<RemoteSyncJob> jobs) {",
+            1,
+        )[1].split("int _tableDependencyDepth(", 1)[0]
+        depth_body = agent_page.split(
+            "int _tableDependencyDepth(",
+            1,
+        )[1].split("Future<void> _processSnapshotJob(RemoteSyncJob job) async {", 1)[0]
+
+        self.assertIn("if (jobs.length < 2 || _remoteTableDependencies.isEmpty) {", sort_body)
+        self.assertIn("dependencyGraph.putIfAbsent(table, () => <String>{}).add(relatedTable);", sort_body)
+        self.assertIn("final leftDepth = _tableDependencyDepth(", sort_body)
+        self.assertIn("final rightDepth = _tableDependencyDepth(", sort_body)
+        self.assertIn("if (leftDepth != rightDepth) {", sort_body)
+        self.assertIn("return leftDepth.compareTo(rightDepth);", sort_body)
+        self.assertIn("return left.createdAt.compareTo(right.createdAt);", sort_body)
+        self.assertIn("if (!activeStack.add(normalizedTable)) {", depth_body)
+        self.assertIn("return 0;", depth_body)
+        self.assertIn("depth = math.max(", depth_body)
+        self.assertIn("cache[normalizedTable] = depth;", depth_body)
+
+    def test_server_requested_client_updates_acknowledge_unsupported_runtimes(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        update_body = agent_page.split(
+            "Future<void> _handleRequestedClientUpdate(", 1
+        )[1].split("Future<String> _buildDiagnosticsPayload()", 1)[0]
+
+        self.assertIn("if (!_supportsAutomaticClientUpdate) {", update_body)
+        self.assertIn("await _controlPlaneClient.acknowledgeClientUpdate(", update_body)
+        self.assertIn("status: 'unsupported',", update_body)
+        self.assertIn(
+            "Automatic client updates are unavailable in this runtime. Start the packaged Windows client to apply live updates.",
+            update_body,
+        )
+        self.assertIn(
+            "Server-requested client update unsupported acknowledgement failed: $error",
+            update_body,
+        )
 
     def test_sqlcmd_calls_are_bounded_by_timeout(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

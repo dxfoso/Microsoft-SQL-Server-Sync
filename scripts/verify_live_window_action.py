@@ -114,16 +114,44 @@ def live_state(base_url: str, token: str) -> dict:
     return invoke_function(base_url, "live_state", {"token": token})
 
 
-def request_client_update(base_url: str, token: str, client_name: str, target_version: str) -> dict:
+def request_all_window_actions(base_url: str, token: str, action: str) -> dict:
     return invoke_function(
         base_url,
-        "agent_client_update_request",
+        "agent_window_action_request_all",
         {
-            "clientName": client_name,
-            "targetVersion": target_version,
+            "action": action,
             "token": token,
         },
     )
+
+
+def parse_window_action_request_result(request_result: dict) -> tuple[str, str, list[str]]:
+    if not isinstance(request_result, dict):
+        raise ApiError(f"unexpected window action request payload: {request_result!r}")
+
+    action = str(request_result.get("action") or "").strip()
+    request_id = str(request_result.get("requestId") or "").strip()
+    raw_names = request_result.get("requestedClientNames")
+    requested_count = request_result.get("requestedClientCount")
+    if not action or not request_id or not isinstance(raw_names, list):
+        raise ApiError(f"unexpected window action request payload: {request_result!r}")
+
+    requested_names = []
+    for item in raw_names:
+        name = str(item or "").strip()
+        if not name:
+            raise ApiError(f"unexpected window action request payload: {request_result!r}")
+        requested_names.append(name)
+
+    if len(set(requested_names)) != len(requested_names):
+        raise ApiError(f"unexpected window action request payload: {request_result!r}")
+    if requested_count is not None:
+        if not isinstance(requested_count, (int, float)):
+            raise ApiError(f"unexpected window action request payload: {request_result!r}")
+        if int(requested_count) != len(requested_names):
+            raise ApiError(f"unexpected window action request payload: {request_result!r}")
+
+    return action, request_id, requested_names
 
 
 def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> float | None:
@@ -140,53 +168,86 @@ def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> f
     return max((current - observed).total_seconds() / 60.0, 0.0)
 
 
-def summarize_client(agent: dict) -> dict:
-    client_update = agent.get("clientUpdate") if isinstance(agent, dict) else None
-    if not isinstance(client_update, dict):
-        client_update = {}
-    last_heartbeat = str(agent.get("lastHeartbeat") or "").strip()
-    return {
-        "clientName": str(agent.get("clientName") or "").strip(),
-        "machineName": str(agent.get("machineName") or "").strip(),
-        "version": str(agent.get("clientVersion") or "").strip(),
-        "online": bool(agent.get("isOnline")),
-        "serverConnected": bool(agent.get("serverConnected")),
-        "sqlConnected": bool(agent.get("sqlConnected")),
-        "lastHeartbeat": last_heartbeat,
-        "heartbeatAgeMinutes": heartbeat_age_minutes(last_heartbeat),
-        "pending": bool(client_update.get("pending")),
-        "requestId": str(client_update.get("requestId") or "").strip(),
-        "requestedAt": str(client_update.get("requestedAt") or "").strip(),
-        "lastRequestId": str(client_update.get("lastRequestId") or "").strip(),
-        "acknowledgedAt": str(client_update.get("acknowledgedAt") or "").strip(),
-        "status": str(client_update.get("status") or "").strip(),
-        "message": str(client_update.get("message") or "").strip(),
-        "targetVersion": str(client_update.get("targetVersion") or "").strip(),
-    }
-
-
-def find_agent_summary(state: dict, client_name: str) -> dict:
+def summarize_progress(state: dict, request_id: str, requested_names: list[str]) -> tuple[list[str], list[str]]:
     agents = state.get("agents") if isinstance(state, dict) else None
     if not isinstance(agents, list):
         raise ApiError(f"unexpected live_state payload: {state!r}")
+
+    by_name = {}
     for agent in agents:
-        if isinstance(agent, dict) and str(agent.get("clientName") or "").strip() == client_name:
-            return summarize_client(agent)
-    raise ApiError(f"client not found in live_state: {client_name}")
+        if isinstance(agent, dict):
+            by_name[str(agent.get("clientName") or "").strip()] = agent
+
+    pending = []
+    completed = []
+    for name in requested_names:
+        agent = by_name.get(name)
+        window_action = agent.get("windowAction") if isinstance(agent, dict) else None
+        last_request_id = ""
+        status = ""
+        if isinstance(window_action, dict):
+            last_request_id = str(window_action.get("lastRequestId") or "").strip()
+            status = str(window_action.get("status") or "").strip()
+        if last_request_id == request_id and status == "completed":
+            completed.append(name)
+        else:
+            pending.append(name)
+    return pending, completed
+
+
+def summarize_pending_clients(state: dict, pending_names: list[str]) -> list[dict]:
+    agents = state.get("agents") if isinstance(state, dict) else None
+    if not isinstance(agents, list):
+        raise ApiError(f"unexpected live_state payload: {state!r}")
+
+    by_name = {}
+    for agent in agents:
+        if isinstance(agent, dict):
+            by_name[str(agent.get("clientName") or "").strip()] = agent
+
+    summaries = []
+    for name in pending_names:
+        agent = by_name.get(name)
+        if not isinstance(agent, dict):
+            summaries.append(
+                {
+                    "clientName": name,
+                    "online": False,
+                    "lastHeartbeat": "",
+                    "heartbeatAgeMinutes": None,
+                    "windowActionStatus": "",
+                    "lastRequestId": "",
+                    "action": "",
+                }
+            )
+            continue
+        window_action = agent.get("windowAction") if isinstance(agent.get("windowAction"), dict) else {}
+        last_heartbeat = str(agent.get("lastHeartbeat") or "").strip()
+        summaries.append(
+            {
+                "clientName": str(agent.get("clientName") or "").strip(),
+                "online": bool(agent.get("isOnline")),
+                "lastHeartbeat": last_heartbeat,
+                "heartbeatAgeMinutes": heartbeat_age_minutes(last_heartbeat),
+                "windowActionStatus": str(window_action.get("status") or "").strip(),
+                "lastRequestId": str(window_action.get("lastRequestId") or "").strip(),
+                "action": str(window_action.get("action") or "").strip(),
+            }
+        )
+    return summaries
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify a live Windows client update rollout against sync.velvet-leaf.com.",
+        description="Verify the live bulk window-action flow against sync.velvet-leaf.com.",
     )
-    parser.add_argument("client_name")
-    parser.add_argument("target_version")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--username", default=DEFAULT_USERNAME)
     parser.add_argument("--password", default=DEFAULT_PASSWORD)
-    parser.add_argument("--wait-seconds", type=int, default=180)
+    parser.add_argument("--wait-seconds", type=int, default=90)
     parser.add_argument("--poll-seconds", type=int, default=10)
     parser.add_argument("--stale-heartbeat-minutes", type=int, default=20)
+    parser.add_argument("--action", default="minimize")
     parser.add_argument("--expect-commit", default="")
     args = parser.parse_args()
 
@@ -203,48 +264,42 @@ def main() -> int:
     token, user = login(args.base_url, args.username, args.password)
     print(f"logged_in_as={user.get('username')} role={user.get('role')}")
 
-    request_result = request_client_update(args.base_url, token, args.client_name, args.target_version)
+    request_result = request_all_window_actions(args.base_url, token, args.action)
     print(f"request={json.dumps(request_result, sort_keys=True)}")
+    action, request_id, requested_names = parse_window_action_request_result(request_result)
+    if not requested_names:
+        print("window_action_ok requested=0 completed=0")
+        return 0
 
     deadline = time.time() + max(args.wait_seconds, 1)
-    last_summary = None
+    last_pending = requested_names
     while time.time() < deadline:
         state = live_state(args.base_url, token)
-        summary = find_agent_summary(state, args.client_name)
-        last_summary = summary
-        print(
-            "client={clientName} machine={machineName} online={online} serverConnected={serverConnected} "
-            "sqlConnected={sqlConnected} version={version} pending={pending} status={status} "
-            "target={targetVersion} requestId={requestId} lastRequestId={lastRequestId} "
-            "requestedAt={requestedAt} acknowledgedAt={acknowledgedAt} "
-            "heartbeatAgeMinutes={heartbeatAgeMinutes}".format(
-                **summary
-            )
-        )
-        if summary["version"] == args.target_version and not summary["pending"]:
+        pending, completed = summarize_progress(state, request_id, requested_names)
+        last_pending = pending
+        print(f"completed={completed} pending={pending}")
+        if not pending:
+            print(f"window_action_ok requested={len(requested_names)} completed={len(completed)} action={action}")
             return 0
         time.sleep(max(args.poll_seconds, 1))
 
-    if last_summary is None:
-        print("no live state observed", file=sys.stderr)
-        return 1
-
-    age = last_summary.get("heartbeatAgeMinutes")
-    if age is not None and age >= args.stale_heartbeat_minutes:
-        requested_at = last_summary.get("requestedAt") or "unknown"
-        acknowledged_at = last_summary.get("acknowledgedAt") or "never"
+    state = live_state(args.base_url, token)
+    pending_summaries = summarize_pending_clients(state, last_pending)
+    offline_or_stale = True
+    for summary in pending_summaries:
+        age = summary.get("heartbeatAgeMinutes")
+        if summary.get("online") or age is None or age < args.stale_heartbeat_minutes:
+            offline_or_stale = False
+            break
+    if offline_or_stale:
         print(
-            f"timed out waiting for {args.client_name} to update; "
-            f"client is offline/stale at {age:.1f} minutes, "
-            f"last heartbeat {last_summary.get('lastHeartbeat') or 'unknown'}, "
-            f"update requested at {requested_at}, "
-            f"last acknowledged at {acknowledged_at}",
+            f"timed out waiting for window action acknowledgements; pending clients are offline/stale: {json.dumps(pending_summaries, sort_keys=True)}",
             file=sys.stderr,
         )
         return 3
 
     print(
-        f"timed out waiting for {args.client_name} to update; last observed state: {json.dumps(last_summary, sort_keys=True)}",
+        f"timed out waiting for window action acknowledgements; still pending: {last_pending}",
         file=sys.stderr,
     )
     return 1

@@ -2568,7 +2568,25 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     RemoteAgentClientUpdate clientUpdate,
   ) async {
     final requestId = clientUpdate.requestId?.trim() ?? '';
-    if (requestId.isEmpty || !_supportsAutomaticClientUpdate) {
+    if (requestId.isEmpty) {
+      return;
+    }
+
+    if (!_supportsAutomaticClientUpdate) {
+      try {
+        await _controlPlaneClient.acknowledgeClientUpdate(
+          clientName: widget.clientName,
+          requestId: requestId,
+          status: 'unsupported',
+          installedVersion: _agentAppVersion,
+          message:
+              'Automatic client updates are unavailable in this runtime. Start the packaged Windows client to apply live updates.',
+        );
+      } catch (error) {
+        logStartupEvent(
+          'Server-requested client update unsupported acknowledgement failed: $error',
+        );
+      }
       return;
     }
 

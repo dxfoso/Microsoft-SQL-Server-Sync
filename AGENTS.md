@@ -3,8 +3,6 @@
 ## Workflow Rule
 
 - Use `run.ps1` as the single local launcher for `frontend/`, `sync_windows_agent/`, `backend/`, and `business/`.
-- When a `.dart` file is changed under `frontend/` or `sync_windows_agent/`, restart the local stack automatically using `run.ps1`.
-- If both app trees change, restart both locally through the same launcher.
 - Keep the repo layout aligned to the current structure:
   - `frontend/` is the web control plane
   - `backend/` is only the `tru` submodule
@@ -16,7 +14,7 @@ Use this from the repository root:
 .\run.ps1 -SkipGet
 ```
 
-This ensures the affected app is relaunched with the updated Dart code.
+Use the launcher when a local stack restart is actually needed.
 
 ## Windows Client Rule
 

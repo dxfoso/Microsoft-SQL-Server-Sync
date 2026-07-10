@@ -13,11 +13,11 @@ const String _defaultControlPlaneUrl = String.fromEnvironment(
 );
 const String _liveControlPlaneUrl = 'https://sync.velvet-leaf.com/call';
 const int _snapshotTransferChunkSizeBytes = 100 * 1024;
-const int _snapshotTransferMaxAttempts = 10;
-const Duration _snapshotTransferRequestTimeout = Duration(minutes: 10);
+const int _defaultSnapshotTransferMaxAttempts = 10;
+const Duration _defaultSnapshotTransferRequestTimeout = Duration(minutes: 10);
 const Duration _defaultControlPlaneRequestTimeout = Duration(seconds: 10);
 const Duration _defaultDiagnosticsUploadRequestTimeout = Duration(minutes: 2);
-const List<Duration> _snapshotTransferRetryDelays = <Duration>[
+const List<Duration> _defaultSnapshotTransferRetryDelays = <Duration>[
   Duration(seconds: 1),
   Duration(seconds: 2),
   Duration(seconds: 4),
@@ -81,15 +81,39 @@ class AgentControlPlaneClient {
     Duration controlPlaneRequestTimeout = _defaultControlPlaneRequestTimeout,
     Duration diagnosticsUploadRequestTimeout =
         _defaultDiagnosticsUploadRequestTimeout,
+    int? snapshotTransferMaxAttempts,
+    Duration? snapshotTransferRequestTimeout,
+    List<Duration>? snapshotTransferRetryDelays,
   }) : _client = client ?? http.Client(),
        _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultControlPlaneUrl),
        _controlPlaneRequestTimeout = controlPlaneRequestTimeout,
-       _diagnosticsUploadRequestTimeout = diagnosticsUploadRequestTimeout;
+       _diagnosticsUploadRequestTimeout = diagnosticsUploadRequestTimeout,
+       _snapshotTransferMaxAttempts =
+           (snapshotTransferMaxAttempts ?? _defaultSnapshotTransferMaxAttempts) <
+                   1
+               ? 1
+               : (snapshotTransferMaxAttempts ??
+                   _defaultSnapshotTransferMaxAttempts),
+       _snapshotTransferRequestTimeout =
+           snapshotTransferRequestTimeout ??
+           _defaultSnapshotTransferRequestTimeout,
+       _snapshotTransferRetryDelays =
+           (snapshotTransferRetryDelays ??
+                   _defaultSnapshotTransferRetryDelays)
+               .isEmpty
+               ? const <Duration>[Duration.zero]
+               : List<Duration>.unmodifiable(
+                 snapshotTransferRetryDelays ??
+                     _defaultSnapshotTransferRetryDelays,
+               );
 
   final http.Client _client;
   final String _baseUrl;
   final Duration _controlPlaneRequestTimeout;
   final Duration _diagnosticsUploadRequestTimeout;
+  final int _snapshotTransferMaxAttempts;
+  final Duration _snapshotTransferRequestTimeout;
+  final List<Duration> _snapshotTransferRetryDelays;
   String? _authToken;
 
   String get baseUrl => _baseUrl;
@@ -136,6 +160,58 @@ class AgentControlPlaneClient {
     return decoded;
   }
 
+  List<T> _mapListOrThrow<T>(
+    dynamic value,
+    T Function(Map<String, dynamic> item) mapper,
+    String message,
+  ) {
+    final raw = value as List<dynamic>? ?? const [];
+    final items = <T>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        throw AgentControlPlaneException(message);
+      }
+      items.add(mapper(Map<String, dynamic>.from(entry)));
+    }
+    return items;
+  }
+
+  dynamic _decodeJsonOrThrow(String body, String message) {
+    try {
+      return jsonDecode(body);
+    } on FormatException {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  Uint8List _decodeBase64OrThrow(String encoded, String message) {
+    try {
+      return Uint8List.fromList(base64Decode(encoded));
+    } on FormatException {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  String _decodeGzipUtf8OrThrow(Uint8List bytes, String message) {
+    try {
+      return utf8.decode(gzip.decode(bytes));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  Set<int> _intSetOrThrow(dynamic value, String message) {
+    final raw = value as List<dynamic>? ?? const [];
+    final values = <int>{};
+    for (final entry in raw) {
+      if (entry is! num) {
+        throw AgentControlPlaneException(message);
+      }
+      values.add(entry.round());
+    }
+    return values;
+  }
+
   Future<dynamic> _invokeFunction(
     String functionName,
     Map<String, dynamic> args,
@@ -160,7 +236,9 @@ class AgentControlPlaneClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _exceptionFromResponse(response);
     }
-    return _unwrapApiResponse(jsonDecode(response.body));
+    return _unwrapApiResponse(
+      _decodeJsonOrThrow(response.body, 'Unexpected payload returned from $phase.'),
+    );
   }
 
   void setAuthToken(String? token) {
@@ -300,17 +378,10 @@ class AgentControlPlaneClient {
       throw const AgentControlPlaneException('Unexpected login payload.');
     }
 
-    final user = AgentAuthenticatedUser(
-      token: decoded['token'] as String? ?? '',
-      id: (decoded['user'] as Map)['id'] as String? ?? '',
-      username: (decoded['user'] as Map)['username'] as String? ?? '',
-      email: (decoded['user'] as Map)['email'] as String? ?? '',
-      name: (decoded['user'] as Map)['name'] as String? ?? '',
-      role: (decoded['user'] as Map)['role'] as String? ?? '',
-      ownerUserId: (decoded['user'] as Map)['ownerUserId'] as String?,
-      ownerUsername: (decoded['user'] as Map)['ownerUsername'] as String?,
-      ownerEmail: (decoded['user'] as Map)['ownerEmail'] as String?,
-      ownerName: (decoded['user'] as Map)['ownerName'] as String?,
+    final user = _parseAuthenticatedUserPayload(
+      token: decoded['token'],
+      user: decoded['user'],
+      message: 'Unexpected login payload.',
     );
     setAuthToken(user.token);
     return user;
@@ -323,18 +394,10 @@ class AgentControlPlaneClient {
         'Unexpected current-user payload.',
       );
     }
-    final user = Map<String, dynamic>.from(decoded['user'] as Map);
-    return AgentAuthenticatedUser(
-      token: _authToken ?? '',
-      id: user['id'] as String? ?? '',
-      username: user['username'] as String? ?? '',
-      email: user['email'] as String? ?? '',
-      name: user['name'] as String? ?? '',
-      role: user['role'] as String? ?? '',
-      ownerUserId: user['ownerUserId'] as String?,
-      ownerUsername: user['ownerUsername'] as String?,
-      ownerEmail: user['ownerEmail'] as String?,
-      ownerName: user['ownerName'] as String?,
+    return _parseAuthenticatedUserPayload(
+      token: _authToken,
+      user: decoded['user'],
+      message: 'Unexpected current-user payload.',
     );
   }
 
@@ -374,13 +437,19 @@ class AgentControlPlaneClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _exceptionFromResponse(response);
     }
-    final decoded = jsonDecode(response.body);
+    final decoded = _decodeJsonOrThrow(
+      response.body,
+      'Unexpected client update manifest payload.',
+    );
     if (decoded is! Map<String, dynamic>) {
       throw const AgentControlPlaneException(
         'Unexpected client update manifest payload.',
       );
     }
-    return ClientUpdateInfo.fromJson(decoded);
+    return _parseClientUpdateInfoPayload(
+      decoded,
+      'Unexpected client update manifest payload.',
+    );
   }
 
   Future<HeartbeatResult> heartbeat({
@@ -425,58 +494,64 @@ class AgentControlPlaneClient {
     }
     final decoded = response;
 
-    final jobs = decoded['jobs'] as List<dynamic>? ?? const [];
     final syncSettings =
         decoded['syncSettings'] is Map
-            ? RemoteAgentSyncSettings.fromJson(
-              Map<String, dynamic>.from(decoded['syncSettings'] as Map),
+            ? _parseRemoteAgentSyncSettingsPayload(
+              decoded['syncSettings'],
+              'Unexpected heartbeat payload.',
             )
             : RemoteAgentSyncSettings(
               historyLimit: historyLimit,
               autoSyncIntervalMinutes: autoSyncIntervalMinutes,
             );
-    final tablePolicies = (decoded['tablePolicies'] as List<dynamic>? ??
-            const [])
-        .map(
-          (item) => RemoteTableSyncPolicy.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList(growable: false);
-    final tableDependencies = (decoded['tableDependencies'] as List<dynamic>? ??
-            const [])
-        .map(
-          (item) => RemoteTableDependency.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList(growable: false);
+    final tablePolicies = _mapListOrThrow(
+      decoded['tablePolicies'],
+      (item) => _parseRemoteTableSyncPolicyPayload(
+        item,
+        'Unexpected heartbeat payload.',
+      ),
+      'Unexpected heartbeat payload.',
+    );
+    final tableDependencies = _mapListOrThrow(
+      decoded['tableDependencies'],
+      (item) => _parseRemoteTableDependencyPayload(
+        item,
+        'Unexpected heartbeat payload.',
+      ),
+      'Unexpected heartbeat payload.',
+    );
+    final jobs = _mapListOrThrow(
+      decoded['jobs'],
+      (item) => _parseRemoteSyncJobPayload(
+        item,
+        'Unexpected heartbeat payload.',
+      ),
+      'Unexpected heartbeat payload.',
+    );
     return HeartbeatResult(
       syncSettings: syncSettings,
       tablePolicies: tablePolicies,
       tableDependencies: tableDependencies,
-      jobs: jobs
-          .map(
-            (item) =>
-                RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
-          )
-          .toList(growable: false),
+      jobs: jobs,
       diagnostics:
           decoded['diagnostics'] is Map
-              ? RemoteAgentDiagnostics.fromJson(
-                Map<String, dynamic>.from(decoded['diagnostics'] as Map),
+              ? _parseRemoteAgentDiagnosticsPayload(
+                decoded['diagnostics'],
+                'Unexpected heartbeat payload.',
               )
               : const RemoteAgentDiagnostics(),
       clientUpdate:
           decoded['clientUpdate'] is Map
-              ? RemoteAgentClientUpdate.fromJson(
-                Map<String, dynamic>.from(decoded['clientUpdate'] as Map),
+              ? _parseRemoteAgentClientUpdatePayload(
+                decoded['clientUpdate'],
+                'Unexpected heartbeat payload.',
               )
               : const RemoteAgentClientUpdate(),
       windowAction:
           decoded['windowAction'] is Map
-              ? RemoteAgentWindowAction.fromJson(
-                Map<String, dynamic>.from(decoded['windowAction'] as Map),
+              ? _parseRemoteAgentWindowActionPayload(
+                decoded['windowAction'],
+                'Unexpected heartbeat payload.',
               )
               : const RemoteAgentWindowAction(),
     );
@@ -501,8 +576,9 @@ class AgentControlPlaneClient {
         'Unexpected client update acknowledgement payload.',
       );
     }
-    return RemoteAgentClientUpdate.fromJson(
-      Map<String, dynamic>.from(response['clientUpdate'] as Map),
+    return _parseRemoteAgentClientUpdatePayload(
+      response['clientUpdate'],
+      'Unexpected client update acknowledgement payload.',
     );
   }
 
@@ -529,8 +605,9 @@ class AgentControlPlaneClient {
         'Unexpected diagnostics upload payload.',
       );
     }
-    return RemoteAgentDiagnostics.fromJson(
-      Map<String, dynamic>.from(response['diagnostics'] as Map),
+    return _parseRemoteAgentDiagnosticsPayload(
+      response['diagnostics'],
+      'Unexpected diagnostics upload payload.',
     );
   }
 
@@ -553,8 +630,9 @@ class AgentControlPlaneClient {
         'Unexpected window action acknowledgement payload.',
       );
     }
-    return RemoteAgentWindowAction.fromJson(
-      Map<String, dynamic>.from(response['windowAction'] as Map),
+    return _parseRemoteAgentWindowActionPayload(
+      response['windowAction'],
+      'Unexpected window action acknowledgement payload.',
     );
   }
 
@@ -573,8 +651,9 @@ class AgentControlPlaneClient {
         'Unexpected table sync policy payload.',
       );
     }
-    return RemoteTableSyncPolicy.fromJson(
-      Map<String, dynamic>.from(response['policy'] as Map),
+    return _parseRemoteTableSyncPolicyPayload(
+      response['policy'],
+      'Unexpected table sync policy payload.',
     );
   }
 
@@ -594,13 +673,14 @@ class AgentControlPlaneClient {
       throw const AgentControlPlaneException('Unexpected job queue payload.');
     }
     final decoded = response;
-    final jobs = decoded['jobs'] as List<dynamic>? ?? const [];
-    return jobs
-        .map(
-          (item) =>
-              RemoteSyncJob.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList(growable: false);
+    return _mapListOrThrow(
+      decoded['jobs'],
+      (item) => _parseRemoteSyncJobPayload(
+        item,
+        'Unexpected job queue payload.',
+      ),
+      'Unexpected job queue payload.',
+    );
   }
 
   Future<RemoteSyncJob> startJob(
@@ -717,17 +797,21 @@ class AgentControlPlaneClient {
       throw _exceptionFromResponse(startResponse);
     }
 
-    final startDecoded = _unwrapApiResponse(jsonDecode(startResponse.body));
+    final startDecoded = _unwrapApiResponse(
+      _decodeJsonOrThrow(
+        startResponse.body,
+        'Unexpected chunked upload start payload.',
+      ),
+    );
     if (startDecoded is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected chunked upload start payload.',
       );
     }
-    final receivedIndexes =
-        (startDecoded['receivedIndexes'] as List<dynamic>?)
-            ?.map((item) => (item as num).round())
-            .toSet() ??
-        <int>{};
+    final receivedIndexes = _intSetOrThrow(
+      startDecoded['receivedIndexes'],
+      'Unexpected chunked upload start payload.',
+    );
     var bytesTransferred = 0;
 
     for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
@@ -772,7 +856,12 @@ class AgentControlPlaneClient {
       if (chunkResponse.statusCode != 200) {
         throw _exceptionFromResponse(chunkResponse);
       }
-      _unwrapApiResponse(jsonDecode(chunkResponse.body));
+      _unwrapApiResponse(
+        _decodeJsonOrThrow(
+          chunkResponse.body,
+          'Unexpected snapshot chunk payload.',
+        ),
+      );
       bytesTransferred += chunkBytes.length;
       onProgress?.call(
         TransferProgressSnapshot(
@@ -799,7 +888,12 @@ class AgentControlPlaneClient {
     if (response.statusCode != 200) {
       throw _exceptionFromResponse(response);
     }
-    final decoded = _unwrapApiResponse(jsonDecode(response.body));
+    final decoded = _unwrapApiResponse(
+      _decodeJsonOrThrow(
+        response.body,
+        'Unexpected snapshot upload completion payload.',
+      ),
+    );
     if (decoded is! Map ||
         decoded['job'] is! Map ||
         decoded['snapshot'] is! Map) {
@@ -814,11 +908,13 @@ class AgentControlPlaneClient {
       ),
     );
     return UploadSnapshotResult(
-      job: RemoteSyncJob.fromJson(
-        Map<String, dynamic>.from(decoded['job'] as Map),
+      job: _parseRemoteSyncJobPayload(
+        decoded['job'],
+        'Unexpected snapshot upload completion payload.',
       ),
-      snapshot: RemoteSnapshot.fromJson(
-        Map<String, dynamic>.from(decoded['snapshot'] as Map),
+      snapshot: _parseSnapshotPayload(
+        decoded['snapshot'],
+        'Unexpected snapshot upload completion payload.',
       ),
     );
   }
@@ -867,7 +963,12 @@ class AgentControlPlaneClient {
           'Unexpected snapshot chunk payload.',
         );
       }
-      buffer.add(base64Decode(chunkDecoded['chunkData'] as String));
+      buffer.add(
+        _decodeBase64OrThrow(
+          chunkDecoded['chunkData'] as String,
+          'Unexpected snapshot chunk payload.',
+        ),
+      );
     }
 
     final compressedPayload = buffer.takeBytes();
@@ -877,33 +978,43 @@ class AgentControlPlaneClient {
       );
     }
 
-    final snapshotJson = utf8.decode(gzip.decode(compressedPayload));
-    final decoded = jsonDecode(snapshotJson);
+    final snapshotJson = _decodeGzipUtf8OrThrow(
+      compressedPayload,
+      'Unexpected decompressed snapshot payload.',
+    );
+    final decoded = _decodeJsonOrThrow(
+      snapshotJson,
+      'Unexpected decompressed snapshot payload.',
+    );
     if (decoded is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected decompressed snapshot payload.',
       );
     }
-    final snapshot = RemoteSnapshot.fromJson(
-      Map<String, dynamic>.from(decoded),
+    final snapshot = _parseSnapshotPayload(
+      decoded,
+      'Unexpected decompressed snapshot payload.',
     );
     if (snapshot.id.isEmpty && manifestResponse['snapshot'] is Map) {
-      final metadata = Map<String, dynamic>.from(
-        manifestResponse['snapshot'] as Map,
-      );
-      return snapshot.copyWith(
-        id: metadata['id'] as String? ?? '',
-        clientName: metadata['clientName'] as String? ?? '',
-        createdAt: metadata['createdAt'] as String? ?? '',
-        rowCount: (metadata['rowCount'] as num? ?? snapshot.rowCount).round(),
-        checksum: metadata['checksum'] as String? ?? '',
-        snapshotBytes:
-            (metadata['snapshotBytes'] as num? ?? snapshot.snapshotBytes)
-                .round(),
-        sourceJobId: metadata['sourceJobId'] as String?,
+      return _mergeSnapshotMetadataOrThrow(
+        snapshot,
+        manifestResponse['snapshot'],
+        'Unexpected chunked download manifest payload.',
       );
     }
     return snapshot;
+  }
+
+  ClientUpdateInfo _parseClientUpdateInfoPayload(dynamic response, String message) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+
+    try {
+      return ClientUpdateInfo.fromJson(Map<String, dynamic>.from(response));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
   }
 
   RemoteSyncJob _parseJobPayload(dynamic response, String phase) {
@@ -913,10 +1024,198 @@ class AgentControlPlaneClient {
       );
     }
     final decoded = Map<String, dynamic>.from(response);
+    if (decoded['job'] is! Map) {
+      throw AgentControlPlaneException(
+        'Unexpected payload returned from $phase.',
+      );
+    }
 
-    return RemoteSyncJob.fromJson(
-      Map<String, dynamic>.from(decoded['job'] as Map),
+    return _parseRemoteSyncJobPayload(
+      decoded['job'],
+      'Unexpected payload returned from $phase.',
     );
+  }
+
+  RemoteSyncJob _parseRemoteSyncJobPayload(dynamic response, String message) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+
+    try {
+      return RemoteSyncJob.fromJson(Map<String, dynamic>.from(response));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  AgentAuthenticatedUser _parseAuthenticatedUserPayload({
+    required dynamic token,
+    required dynamic user,
+    required String message,
+  }) {
+    if (user is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+
+    try {
+      final decoded = Map<String, dynamic>.from(user);
+      return AgentAuthenticatedUser(
+        token: token as String? ?? '',
+        id: decoded['id'] as String? ?? '',
+        username: decoded['username'] as String? ?? '',
+        email: decoded['email'] as String? ?? '',
+        name: decoded['name'] as String? ?? '',
+        role: decoded['role'] as String? ?? '',
+        ownerUserId: decoded['ownerUserId'] as String?,
+        ownerUsername: decoded['ownerUsername'] as String?,
+        ownerEmail: decoded['ownerEmail'] as String?,
+        ownerName: decoded['ownerName'] as String?,
+      );
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteTableSyncPolicy _parseRemoteTableSyncPolicyPayload(
+    dynamic response,
+    String message,
+  ) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+    try {
+      return RemoteTableSyncPolicy.fromJson(Map<String, dynamic>.from(response));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteAgentSyncSettings _parseRemoteAgentSyncSettingsPayload(
+    dynamic response,
+    String message,
+  ) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+    try {
+      return RemoteAgentSyncSettings.fromJson(
+        Map<String, dynamic>.from(response),
+      );
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteTableDependency _parseRemoteTableDependencyPayload(
+    dynamic response,
+    String message,
+  ) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+    try {
+      return RemoteTableDependency.fromJson(Map<String, dynamic>.from(response));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteAgentDiagnostics _parseRemoteAgentDiagnosticsPayload(
+    dynamic response,
+    String message,
+  ) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+    try {
+      return RemoteAgentDiagnostics.fromJson(Map<String, dynamic>.from(response));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteAgentClientUpdate _parseRemoteAgentClientUpdatePayload(
+    dynamic response,
+    String message,
+  ) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+    try {
+      return RemoteAgentClientUpdate.fromJson(Map<String, dynamic>.from(response));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteAgentWindowAction _parseRemoteAgentWindowActionPayload(
+    dynamic response,
+    String message,
+  ) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+    try {
+      return RemoteAgentWindowAction.fromJson(Map<String, dynamic>.from(response));
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteSnapshot _parseSnapshotPayload(dynamic response, String message) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+
+    final decoded = Map<String, dynamic>.from(response);
+    final columns = decoded['columns'];
+    if (columns != null && columns is! List) {
+      throw AgentControlPlaneException(message);
+    }
+
+    final rows = decoded['rows'];
+    if (rows != null && rows is! List) {
+      throw AgentControlPlaneException(message);
+    }
+    if (rows is List) {
+      for (final row in rows) {
+        if (row is! Map) {
+          throw AgentControlPlaneException(message);
+        }
+      }
+    }
+
+    try {
+      return RemoteSnapshot.fromJson(decoded);
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
+  RemoteSnapshot _mergeSnapshotMetadataOrThrow(
+    RemoteSnapshot snapshot,
+    dynamic metadata,
+    String message,
+  ) {
+    if (metadata is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+
+    try {
+      final decoded = Map<String, dynamic>.from(metadata);
+      return snapshot.copyWith(
+        id: decoded['id'] as String? ?? '',
+        clientName: decoded['clientName'] as String? ?? '',
+        createdAt: decoded['createdAt'] as String? ?? '',
+        rowCount: (decoded['rowCount'] as num? ?? snapshot.rowCount).round(),
+        checksum: decoded['checksum'] as String? ?? '',
+        snapshotBytes:
+            (decoded['snapshotBytes'] as num? ?? snapshot.snapshotBytes).round(),
+        sourceJobId: decoded['sourceJobId'] as String?,
+      );
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
   }
 
   void dispose() {
@@ -925,6 +1224,15 @@ class AgentControlPlaneClient {
 
   String _errorMessageFromResponse(http.Response response) {
     if (response.statusCode == 503) {
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          final detailed = _errorMessageFromMap(decoded).trim();
+          if (detailed.isNotEmpty && detailed != 'Request failed.') {
+            return detailed;
+          }
+        }
+      } catch (_) {}
       return 'Control plane is temporarily unavailable. Retrying automatically.';
     }
     try {

@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 DEFAULT_BASE_URL = "https://sync.velvet-leaf.com"
 DEFAULT_USERNAME = "dxfoso@gmail.com"
 DEFAULT_PASSWORD = "Admin@123"
+DEFAULT_EXPECTED_VERSION = "1.0.105+109"
+DEFAULT_EXPECTED_COMMIT = "6b8b76bcf084c3f4b80088d9749f3fcfc5d1be36"
 
 
 class ApiError(RuntimeError):
     pass
+
+
+def script_path(name: str) -> str:
+    return str((Path(__file__).resolve().parent / name).resolve())
 
 
 def retryable_transport_error(exc: Exception) -> bool:
@@ -114,13 +122,12 @@ def live_state(base_url: str, token: str) -> dict:
     return invoke_function(base_url, "live_state", {"token": token})
 
 
-def request_client_update(base_url: str, token: str, client_name: str, target_version: str) -> dict:
+def reset_server_saved_data(base_url: str, token: str) -> dict:
     return invoke_function(
         base_url,
-        "agent_client_update_request",
+        "server_saved_data_reset",
         {
-            "clientName": client_name,
-            "targetVersion": target_version,
+            "resetAgents": True,
             "token": token,
         },
     )
@@ -140,54 +147,131 @@ def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> f
     return max((current - observed).total_seconds() / 60.0, 0.0)
 
 
-def summarize_client(agent: dict) -> dict:
-    client_update = agent.get("clientUpdate") if isinstance(agent, dict) else None
-    if not isinstance(client_update, dict):
-        client_update = {}
+def summarize_agent(agent: dict) -> dict:
     last_heartbeat = str(agent.get("lastHeartbeat") or "").strip()
+    tables = agent.get("tables") if isinstance(agent.get("tables"), list) else []
     return {
         "clientName": str(agent.get("clientName") or "").strip(),
-        "machineName": str(agent.get("machineName") or "").strip(),
         "version": str(agent.get("clientVersion") or "").strip(),
         "online": bool(agent.get("isOnline")),
         "serverConnected": bool(agent.get("serverConnected")),
         "sqlConnected": bool(agent.get("sqlConnected")),
         "lastHeartbeat": last_heartbeat,
         "heartbeatAgeMinutes": heartbeat_age_minutes(last_heartbeat),
-        "pending": bool(client_update.get("pending")),
-        "requestId": str(client_update.get("requestId") or "").strip(),
-        "requestedAt": str(client_update.get("requestedAt") or "").strip(),
-        "lastRequestId": str(client_update.get("lastRequestId") or "").strip(),
-        "acknowledgedAt": str(client_update.get("acknowledgedAt") or "").strip(),
-        "status": str(client_update.get("status") or "").strip(),
-        "message": str(client_update.get("message") or "").strip(),
-        "targetVersion": str(client_update.get("targetVersion") or "").strip(),
+        "tableCount": len(tables),
     }
 
 
-def find_agent_summary(state: dict, client_name: str) -> dict:
+def summarize_clients(state: dict, client_names: list[str]) -> list[dict]:
     agents = state.get("agents") if isinstance(state, dict) else None
     if not isinstance(agents, list):
         raise ApiError(f"unexpected live_state payload: {state!r}")
+    by_name = {}
     for agent in agents:
-        if isinstance(agent, dict) and str(agent.get("clientName") or "").strip() == client_name:
-            return summarize_client(agent)
-    raise ApiError(f"client not found in live_state: {client_name}")
+        if isinstance(agent, dict):
+            by_name[str(agent.get("clientName") or "").strip()] = summarize_agent(agent)
+    summaries = []
+    for client_name in client_names:
+        summary = by_name.get(client_name)
+        if summary is None:
+            summaries.append(
+                {
+                    "clientName": client_name,
+                    "version": "",
+                    "online": False,
+                    "serverConnected": False,
+                    "sqlConnected": False,
+                    "lastHeartbeat": "",
+                    "heartbeatAgeMinutes": None,
+                    "tableCount": 0,
+                }
+            )
+        else:
+            summaries.append(summary)
+    return summaries
+
+
+def summary_recovered(
+    summary: dict,
+    expected_version: str,
+    min_table_count: int,
+    max_heartbeat_age_minutes: float,
+) -> bool:
+    if not summary.get("online"):
+        return False
+    if not summary.get("serverConnected"):
+        return False
+    if not summary.get("sqlConnected"):
+        return False
+    if str(summary.get("version") or "").strip() != expected_version:
+        return False
+    if int(summary.get("tableCount") or 0) < min_table_count:
+        return False
+    age = summary.get("heartbeatAgeMinutes")
+    if age is None or age > max_heartbeat_age_minutes:
+        return False
+    return True
+
+
+def decode_output(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return value.decode("utf-8", errors="replace")
+
+
+def run_command(command: list[str]) -> dict:
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=False,
+            check=False,
+        )
+        return {
+            "command": command,
+            "returncode": completed.returncode,
+            "stdout": decode_output(completed.stdout),
+            "stderr": decode_output(completed.stderr),
+        }
+    except OSError as exc:
+        return {
+            "command": command,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": str(exc),
+        }
+
+
+def print_result_output(result: dict) -> None:
+    stdout_lines = [line for line in str(result.get("stdout") or "").splitlines() if line.strip()]
+    stderr_lines = [line for line in str(result.get("stderr") or "").splitlines() if line.strip()]
+    if stdout_lines:
+        print(f"stdout_last={stdout_lines[-1]}")
+    if stderr_lines:
+        print(f"stderr_last={stderr_lines[-1]}", file=sys.stderr)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify a live Windows client update rollout against sync.velvet-leaf.com.",
+        description="Verify live client recovery after a server-side saved-state reset.",
     )
-    parser.add_argument("client_name")
-    parser.add_argument("target_version")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--username", default=DEFAULT_USERNAME)
     parser.add_argument("--password", default=DEFAULT_PASSWORD)
-    parser.add_argument("--wait-seconds", type=int, default=180)
-    parser.add_argument("--poll-seconds", type=int, default=10)
-    parser.add_argument("--stale-heartbeat-minutes", type=int, default=20)
-    parser.add_argument("--expect-commit", default="")
+    parser.add_argument("--clients", nargs="+", default=["c1", "c2"])
+    parser.add_argument("--expected-version", default=DEFAULT_EXPECTED_VERSION)
+    parser.add_argument(
+        "--expect-commit",
+        "--expected-commit",
+        dest="expect_commit",
+        default=DEFAULT_EXPECTED_COMMIT,
+    )
+    parser.add_argument("--wait-seconds", type=int, default=120)
+    parser.add_argument("--poll-seconds", type=int, default=5)
+    parser.add_argument("--max-heartbeat-age-minutes", type=float, default=5.0)
+    parser.add_argument("--min-table-count", type=int, default=1)
     args = parser.parse_args()
 
     health = fetch_health(args.base_url)
@@ -203,57 +287,60 @@ def main() -> int:
     token, user = login(args.base_url, args.username, args.password)
     print(f"logged_in_as={user.get('username')} role={user.get('role')}")
 
-    request_result = request_client_update(args.base_url, token, args.client_name, args.target_version)
-    print(f"request={json.dumps(request_result, sort_keys=True)}")
+    reset_result = reset_server_saved_data(args.base_url, token)
+    print(f"reset={json.dumps(reset_result, sort_keys=True)}")
 
     deadline = time.time() + max(args.wait_seconds, 1)
-    last_summary = None
+    last_summaries = []
     while time.time() < deadline:
         state = live_state(args.base_url, token)
-        summary = find_agent_summary(state, args.client_name)
-        last_summary = summary
-        print(
-            "client={clientName} machine={machineName} online={online} serverConnected={serverConnected} "
-            "sqlConnected={sqlConnected} version={version} pending={pending} status={status} "
-            "target={targetVersion} requestId={requestId} lastRequestId={lastRequestId} "
-            "requestedAt={requestedAt} acknowledgedAt={acknowledgedAt} "
-            "heartbeatAgeMinutes={heartbeatAgeMinutes}".format(
-                **summary
+        summaries = summarize_clients(state, args.clients)
+        last_summaries = summaries
+        print(f"recovery_summaries={json.dumps(summaries, sort_keys=True)}")
+        if all(
+            summary_recovered(
+                summary,
+                args.expected_version,
+                args.min_table_count,
+                args.max_heartbeat_age_minutes,
             )
-        )
-        if summary["version"] == args.target_version and not summary["pending"]:
-            return 0
+            for summary in summaries
+        ):
+            break
         time.sleep(max(args.poll_seconds, 1))
-
-    if last_summary is None:
-        print("no live state observed", file=sys.stderr)
-        return 1
-
-    age = last_summary.get("heartbeatAgeMinutes")
-    if age is not None and age >= args.stale_heartbeat_minutes:
-        requested_at = last_summary.get("requestedAt") or "unknown"
-        acknowledged_at = last_summary.get("acknowledgedAt") or "never"
+    else:
         print(
-            f"timed out waiting for {args.client_name} to update; "
-            f"client is offline/stale at {age:.1f} minutes, "
-            f"last heartbeat {last_summary.get('lastHeartbeat') or 'unknown'}, "
-            f"update requested at {requested_at}, "
-            f"last acknowledged at {acknowledged_at}",
+            f"timed out waiting for client state recovery after reset: {json.dumps(last_summaries, sort_keys=True)}",
             file=sys.stderr,
         )
         return 3
 
-    print(
-        f"timed out waiting for {args.client_name} to update; last observed state: {json.dumps(last_summary, sort_keys=True)}",
-        file=sys.stderr,
-    )
-    return 1
+    command = [
+        sys.executable,
+        script_path("verify_live_system.py"),
+        "--expected-commit",
+        args.expect_commit,
+        "--expected-version",
+        args.expected_version,
+    ]
+    result = run_command(command)
+    print(f"command={json.dumps(command)} returncode={result['returncode']}")
+    print_result_output(result)
+    if result["returncode"] != 0:
+        print("recovery verification failed during live system verification", file=sys.stderr)
+        return 1
+
+    print(f"recovery_ok clients={len(args.clients)}")
+    return 0
 
 
 def run_cli() -> int:
     try:
         return main()
     except ApiError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 1
 

@@ -1841,6 +1841,12 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     }
   } catch (err) {
     const repaired = db.update(Agent, { clientName }, {
+      isOnline: false,
+      serverConnected: false,
+      sqlConnected: false,
+      lastHeartbeat: '',
+      selectedTable: null,
+      tables: [],
       tableRelationships: [],
       replicationUseWindowsAuth: true,
       replicationUser: '',
@@ -3682,8 +3688,14 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
 
 function reset_all_agent_saved_state(): int {
   return db.updateMany(Agent, { clientName: { gte: '' } }, {
+    isOnline: false,
+    serverConnected: false,
+    sqlConnected: false,
+    clientVersion: '',
+    lastHeartbeat: '',
     selectedTable: null,
     tables: [],
+    tableRelationships: [],
     diagnosticRequestId: null,
     diagnosticRequestedAt: null,
     diagnosticRequestedByUserId: null,
@@ -3692,6 +3704,14 @@ function reset_all_agent_saved_state(): int {
     diagnosticStatus: 'idle',
     diagnosticSummary: '',
     diagnosticPayload: '',
+    clientUpdateRequestId: null,
+    clientUpdateRequestedAt: null,
+    clientUpdateRequestedByUserId: null,
+    clientUpdateTargetVersion: null,
+    clientUpdateLastRequestId: null,
+    clientUpdateLastAcknowledgedAt: null,
+    clientUpdateStatus: 'idle',
+    clientUpdateMessage: '',
     windowActionRequestId: null,
     windowActionRequestedAt: null,
     windowActionRequestedByUserId: null,

@@ -114,18 +114,6 @@ def live_state(base_url: str, token: str) -> dict:
     return invoke_function(base_url, "live_state", {"token": token})
 
 
-def request_client_update(base_url: str, token: str, client_name: str, target_version: str) -> dict:
-    return invoke_function(
-        base_url,
-        "agent_client_update_request",
-        {
-            "clientName": client_name,
-            "targetVersion": target_version,
-            "token": token,
-        },
-    )
-
-
 def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> float | None:
     normalized = str(last_heartbeat or "").strip()
     if not normalized:
@@ -140,10 +128,16 @@ def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> f
     return max((current - observed).total_seconds() / 60.0, 0.0)
 
 
-def summarize_client(agent: dict) -> dict:
+def summarize_agent(agent: dict) -> dict:
+    diagnostics = agent.get("diagnostics") if isinstance(agent, dict) else None
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
     client_update = agent.get("clientUpdate") if isinstance(agent, dict) else None
     if not isinstance(client_update, dict):
         client_update = {}
+    window_action = agent.get("windowAction") if isinstance(agent, dict) else None
+    if not isinstance(window_action, dict):
+        window_action = {}
     last_heartbeat = str(agent.get("lastHeartbeat") or "").strip()
     return {
         "clientName": str(agent.get("clientName") or "").strip(),
@@ -154,14 +148,14 @@ def summarize_client(agent: dict) -> dict:
         "sqlConnected": bool(agent.get("sqlConnected")),
         "lastHeartbeat": last_heartbeat,
         "heartbeatAgeMinutes": heartbeat_age_minutes(last_heartbeat),
-        "pending": bool(client_update.get("pending")),
-        "requestId": str(client_update.get("requestId") or "").strip(),
-        "requestedAt": str(client_update.get("requestedAt") or "").strip(),
-        "lastRequestId": str(client_update.get("lastRequestId") or "").strip(),
-        "acknowledgedAt": str(client_update.get("acknowledgedAt") or "").strip(),
-        "status": str(client_update.get("status") or "").strip(),
-        "message": str(client_update.get("message") or "").strip(),
-        "targetVersion": str(client_update.get("targetVersion") or "").strip(),
+        "diagnosticsStatus": str(diagnostics.get("status") or "").strip(),
+        "diagnosticsUploadedAt": str(diagnostics.get("uploadedAt") or "").strip(),
+        "clientUpdateStatus": str(client_update.get("status") or "").strip(),
+        "clientUpdatePending": bool(client_update.get("pending")),
+        "clientUpdateTargetVersion": str(client_update.get("targetVersion") or "").strip(),
+        "windowActionStatus": str(window_action.get("status") or "").strip(),
+        "windowActionPending": bool(window_action.get("pending")),
+        "windowActionName": str(window_action.get("action") or "").strip(),
     }
 
 
@@ -171,22 +165,63 @@ def find_agent_summary(state: dict, client_name: str) -> dict:
         raise ApiError(f"unexpected live_state payload: {state!r}")
     for agent in agents:
         if isinstance(agent, dict) and str(agent.get("clientName") or "").strip() == client_name:
-            return summarize_client(agent)
+            return summarize_agent(agent)
     raise ApiError(f"client not found in live_state: {client_name}")
+
+
+def validate_summary(
+    summary: dict,
+    expected_version: str,
+    max_heartbeat_age_minutes: float,
+    require_window_minimized: bool,
+) -> list[str]:
+    failures = []
+    if not summary.get("online"):
+        failures.append("client offline")
+    if not summary.get("serverConnected"):
+        failures.append("server not connected")
+    if not summary.get("sqlConnected"):
+        failures.append("sql not connected")
+    if str(summary.get("version") or "").strip() != expected_version:
+        failures.append(
+            f"version mismatch: observed={summary.get('version')} expected={expected_version}"
+        )
+    age = summary.get("heartbeatAgeMinutes")
+    if age is None:
+        failures.append("missing heartbeat")
+    elif age > max_heartbeat_age_minutes:
+        failures.append(
+            f"heartbeat stale: observed={age:.2f} minutes limit={max_heartbeat_age_minutes}"
+        )
+    if str(summary.get("diagnosticsStatus") or "").strip() != "uploaded":
+        failures.append(f"diagnostics status is {summary.get('diagnosticsStatus')}")
+    if not str(summary.get("diagnosticsUploadedAt") or "").strip():
+        failures.append("diagnostics uploadedAt missing")
+    if bool(summary.get("clientUpdatePending")):
+        failures.append("client update still pending")
+    if str(summary.get("clientUpdateStatus") or "").strip() not in ("current", "updated"):
+        failures.append(f"client update status is {summary.get('clientUpdateStatus')}")
+    if require_window_minimized:
+        if bool(summary.get("windowActionPending")):
+            failures.append("window action still pending")
+        if str(summary.get("windowActionName") or "").strip() != "minimize":
+            failures.append(f"window action is {summary.get('windowActionName')}")
+        if str(summary.get("windowActionStatus") or "").strip() != "completed":
+            failures.append(f"window action status is {summary.get('windowActionStatus')}")
+    return failures
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify a live Windows client update rollout against sync.velvet-leaf.com.",
+        description="Verify live client state invariants against sync.velvet-leaf.com.",
     )
-    parser.add_argument("client_name")
-    parser.add_argument("target_version")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--username", default=DEFAULT_USERNAME)
     parser.add_argument("--password", default=DEFAULT_PASSWORD)
-    parser.add_argument("--wait-seconds", type=int, default=180)
-    parser.add_argument("--poll-seconds", type=int, default=10)
-    parser.add_argument("--stale-heartbeat-minutes", type=int, default=20)
+    parser.add_argument("--clients", nargs="+", default=["c1", "c2"])
+    parser.add_argument("--expected-version", default="1.0.105+109")
+    parser.add_argument("--max-heartbeat-age-minutes", type=float, default=5.0)
+    parser.add_argument("--require-window-minimized", action="store_true")
     parser.add_argument("--expect-commit", default="")
     args = parser.parse_args()
 
@@ -203,51 +238,31 @@ def main() -> int:
     token, user = login(args.base_url, args.username, args.password)
     print(f"logged_in_as={user.get('username')} role={user.get('role')}")
 
-    request_result = request_client_update(args.base_url, token, args.client_name, args.target_version)
-    print(f"request={json.dumps(request_result, sort_keys=True)}")
-
-    deadline = time.time() + max(args.wait_seconds, 1)
-    last_summary = None
-    while time.time() < deadline:
-        state = live_state(args.base_url, token)
-        summary = find_agent_summary(state, args.client_name)
-        last_summary = summary
-        print(
-            "client={clientName} machine={machineName} online={online} serverConnected={serverConnected} "
-            "sqlConnected={sqlConnected} version={version} pending={pending} status={status} "
-            "target={targetVersion} requestId={requestId} lastRequestId={lastRequestId} "
-            "requestedAt={requestedAt} acknowledgedAt={acknowledgedAt} "
-            "heartbeatAgeMinutes={heartbeatAgeMinutes}".format(
-                **summary
-            )
+    state = live_state(args.base_url, token)
+    failures = []
+    summaries = []
+    for client_name in args.clients:
+        summary = find_agent_summary(state, client_name)
+        summaries.append(summary)
+        client_failures = validate_summary(
+            summary,
+            args.expected_version,
+            args.max_heartbeat_age_minutes,
+            args.require_window_minimized,
         )
-        if summary["version"] == args.target_version and not summary["pending"]:
-            return 0
-        time.sleep(max(args.poll_seconds, 1))
+        if client_failures:
+            failures.append({"clientName": client_name, "failures": client_failures})
 
-    if last_summary is None:
-        print("no live state observed", file=sys.stderr)
+    print(f"client_summaries={json.dumps(summaries, sort_keys=True)}")
+    if failures:
+        print(f"client validation failures: {json.dumps(failures, sort_keys=True)}", file=sys.stderr)
         return 1
-
-    age = last_summary.get("heartbeatAgeMinutes")
-    if age is not None and age >= args.stale_heartbeat_minutes:
-        requested_at = last_summary.get("requestedAt") or "unknown"
-        acknowledged_at = last_summary.get("acknowledgedAt") or "never"
-        print(
-            f"timed out waiting for {args.client_name} to update; "
-            f"client is offline/stale at {age:.1f} minutes, "
-            f"last heartbeat {last_summary.get('lastHeartbeat') or 'unknown'}, "
-            f"update requested at {requested_at}, "
-            f"last acknowledged at {acknowledged_at}",
-            file=sys.stderr,
-        )
-        return 3
-
     print(
-        f"timed out waiting for {args.client_name} to update; last observed state: {json.dumps(last_summary, sort_keys=True)}",
-        file=sys.stderr,
+        f"client_state_ok clients={len(summaries)} "
+        f"online={sum(1 for item in summaries if item.get('online'))} "
+        f"minimized={sum(1 for item in summaries if item.get('windowActionStatus') == 'completed')}"
     )
-    return 1
+    return 0
 
 
 def run_cli() -> int:
