@@ -2164,16 +2164,23 @@ function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
   return due_periodic_sync_tables_for_agent_with_policies(agent);
 }
 
-function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null, tableCache: map<json>? = null): array<string> {
+function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null, tableCache: map<json>? = null, maxCount: int? = null): array<string> {
   const enabledTables = unique_string_values(enabled_sync_tables_for_agent_with_policies(agent, policies).concat(enabled_sync_policy_tables_for_agent(agent, policies)));
   let cachedTables = scheduler_agent_table_states(agent, policies);
   if (tableCache != null && tableCache.tables != null) {
     cachedTables = tableCache.tables;
   }
+  let dueTableLimit = 0;
+  if (maxCount != null && maxCount > 0) {
+    dueTableLimit = maxCount;
+  }
   let dueTables = [];
   for (const table of enabledTables) {
     if (sync_table_state_due_for_interval(scheduler_agent_table_state(cachedTables, table), agent.autoSyncIntervalMinutes)) {
       dueTables = dueTables.concat([table]);
+      if (dueTableLimit > 0 && dueTables.length >= dueTableLimit) {
+        return dueTables;
+      }
     }
   }
   return unique_string_values(dueTables);
@@ -2193,7 +2200,7 @@ function sync_peer_agents_for_agent(agent: map<json>, allAgents: array<json>? = 
 function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: array<json>? = null, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null, completedJobRows: array<json>? = null): array<json> {
   const peerAgents = sync_peer_agents_for_agent(agent, allAgents);
   const tableCache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), allTableCaches ?? []);
-  const dueTables = due_periodic_sync_tables_for_agent_with_policies(agent, ownerPolicies, tableCache);
+  const dueTables = due_periodic_sync_tables_for_agent_with_policies(agent, ownerPolicies, tableCache, periodic_sync_scheduler_table_limit());
   if (dueTables.length == 0) {
     return [];
   }

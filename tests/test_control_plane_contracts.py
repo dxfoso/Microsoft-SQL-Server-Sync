@@ -266,6 +266,18 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (!agent_table_sync_enabled(candidate, table, ownerPolicies, candidateTableCache)) {", preferred_source_body)
         self.assertIn("const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table, completedJobRows);", preferred_source_body)
 
+        due_match = re.search(
+            r"function due_periodic_sync_tables_for_agent_with_policies\(agent: map<json>, policies: array<json>\? = null, tableCache: map<json>\? = null, maxCount: int\? = null\): array<string> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(due_match)
+        due_body = due_match.group("body")
+        self.assertIn("let dueTableLimit = 0;", due_body)
+        self.assertIn("if (maxCount != null && maxCount > 0) {", due_body)
+        self.assertIn("if (dueTableLimit > 0 && dueTables.length >= dueTableLimit) {", due_body)
+        self.assertIn("return dueTables;", due_body)
+
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
         match = re.search(
