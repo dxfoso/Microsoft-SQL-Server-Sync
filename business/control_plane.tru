@@ -2067,10 +2067,13 @@ function scheduler_agent_table_state_cache_for_agent(clientName: string, caches:
   return null;
 }
 
-function enabled_sync_policy_tables_for_agent(agent: map<json>): array<string> {
+function enabled_sync_policy_tables_for_agent(agent: map<json>, policies: array<json>? = null): array<string> {
   let enabledTables = [];
-  const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
-  for (const policy of policies) {
+  let sourcePolicies = policies;
+  if (sourcePolicies == null) {
+    sourcePolicies = list_table_sync_policies_for_scope(agent.ownerUserId);
+  }
+  for (const policy of sourcePolicies ?? []) {
     if (policy.enabled == true) {
       const table = table_sync_policy_sync_key(policy);
       if (table.trim().length != 0) {
@@ -2102,7 +2105,7 @@ function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
 }
 
 function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null, tableCache: map<json>? = null): array<string> {
-  const enabledTables = unique_string_values(enabled_sync_tables_for_agent_with_policies(agent, policies).concat(enabled_sync_policy_tables_for_agent(agent)));
+  const enabledTables = unique_string_values(enabled_sync_tables_for_agent_with_policies(agent, policies).concat(enabled_sync_policy_tables_for_agent(agent, policies)));
   let cachedTables = scheduler_agent_table_states(agent, policies);
   if (tableCache != null && tableCache.tables != null) {
     cachedTables = tableCache.tables;
@@ -2127,7 +2130,7 @@ function sync_peer_agents_for_agent(agent: map<json>, allAgents: array<json>? = 
   return peers;
 }
 
-function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: array<json>? = null, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null): array<json> {
+function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: array<json>? = null, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null, completedJobRows: array<json>? = null): array<json> {
   const peerAgents = sync_peer_agents_for_agent(agent, allAgents);
   const tableCache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), allTableCaches ?? []);
   const dueTables = due_periodic_sync_tables_for_agent_with_policies(agent, ownerPolicies, tableCache);
@@ -2140,7 +2143,7 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: arr
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
       break;
     }
-    const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents, ownerPolicies, allTableCaches);
+    const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents, ownerPolicies, allTableCaches, completedJobRows);
     if (sourceClientName.length == 0) {
       continue;
     }
@@ -2156,6 +2159,7 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: arr
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  const completedJobRows = list_completed_scheduler_job_rows(ownerUserId);
   let ownerAgents = [];
   for (const agent of sourceAgents) {
     if (agent.ownerUserId == ownerUserId) {
@@ -2176,7 +2180,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       break;
     }
     checkedAgentCount += 1;
-    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents, ownerPolicies, tableCaches);
+    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents, ownerPolicies, tableCaches, completedJobRows);
     if (agentJobs.length > 0) {
       createdJobs = createdJobs.concat(agentJobs);
     }
@@ -2238,7 +2242,44 @@ function claim_periodic_sync_scheduler_for_owner(ownerUserId: string? = null): b
   return true;
 }
 
-function latest_completed_upload_row_count_for_source(clientName: string, table: string): int {
+function list_completed_scheduler_job_rows(ownerUserId: string? = null): array<json> {
+  const rows = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId: table_sync_policy_scope(ownerUserId),
+      status: 'completed'
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'rowCount'],
+    limit: 500
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function latest_completed_upload_row_count_for_source_from_rows(rows: array<json>, clientName: string, table: string): int {
+  for (const row of rows) {
+    if (row.clientName != clientName
+      || row.sourceClientName != clientName
+      || row.table != table
+      || row.direction != 'upload') {
+      continue;
+    }
+    if (row.rowCount != null) {
+      const rowCount = int.from(row.rowCount);
+      if (rowCount >= 0) {
+        return rowCount;
+      }
+    }
+  }
+  return -1;
+}
+
+function latest_completed_upload_row_count_for_source(clientName: string, table: string, completedJobRows: array<json>? = null): int {
+  if (completedJobRows != null) {
+    return latest_completed_upload_row_count_for_source_from_rows(completedJobRows, clientName, table);
+  }
   const rows = db.selectMany(SyncJob, {
     where: {
       clientName,
@@ -2265,7 +2306,25 @@ function latest_completed_upload_row_count_for_source(clientName: string, table:
   return -1;
 }
 
-function latest_completed_source_for_target_table(targetClientName: string, table: string): string {
+function latest_completed_source_for_target_table_from_rows(rows: array<json>, targetClientName: string, table: string): string {
+  for (const row of rows) {
+    if (row.subscriberClientName != targetClientName || row.table != table) {
+      continue;
+    }
+    if (row.sourceClientName != null) {
+      const sourceClientName = string.from(row.sourceClientName).trim();
+      if (sourceClientName.length != 0 && sourceClientName != targetClientName) {
+        return sourceClientName;
+      }
+    }
+  }
+  return '';
+}
+
+function latest_completed_source_for_target_table(targetClientName: string, table: string, completedJobRows: array<json>? = null): string {
+  if (completedJobRows != null) {
+    return latest_completed_source_for_target_table_from_rows(completedJobRows, targetClientName, table);
+  }
   const rows = db.selectMany(SyncJob, {
     where: {
       subscriberClientName: targetClientName,
@@ -2298,7 +2357,7 @@ function agent_sync_table_state(agent: map<json>, table: string, policies: array
   return scheduler_agent_table_state(cachedTables, table);
 }
 
-function live_row_count_for_agent_table(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null): int {
+function live_row_count_for_agent_table(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null, completedJobRows: array<json>? = null): int {
   const tableState = agent_sync_table_state(agent, table, policies, tableCache);
   if (tableState != null && tableState.rowCount != null) {
     const rowCount = int.from(tableState.rowCount);
@@ -2306,7 +2365,7 @@ function live_row_count_for_agent_table(agent: map<json>, table: string, policie
       return rowCount;
     }
   }
-  return latest_completed_upload_row_count_for_source(string.from(agent.clientName), table);
+  return latest_completed_upload_row_count_for_source(string.from(agent.clientName), table, completedJobRows);
 }
 
 function live_checksum_for_agent_table(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null): string {
@@ -2325,10 +2384,10 @@ function agent_table_sync_enabled(agent: map<json>, table: string, policies: arr
   return tableState.enabled == true;
 }
 
-function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null): string {
+function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null, completedJobRows: array<json>? = null): string {
   const targetClientName = string.from(targetAgent.clientName);
   const targetTableCache = scheduler_agent_table_state_cache_for_agent(targetClientName, allTableCaches ?? []);
-  const targetRowCount = live_row_count_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache);
+  const targetRowCount = live_row_count_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache, completedJobRows);
   const targetChecksum = live_checksum_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache);
   let bestKnownSource = '';
   let bestKnownRowCount = targetRowCount;
@@ -2347,7 +2406,7 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
     if (firstAvailableSource.length == 0) {
       firstAvailableSource = string.from(candidate.clientName);
     }
-    const candidateRowCount = live_row_count_for_agent_table(candidate, table, ownerPolicies, candidateTableCache);
+    const candidateRowCount = live_row_count_for_agent_table(candidate, table, ownerPolicies, candidateTableCache, completedJobRows);
     if (candidateRowCount < 0) {
       continue;
     }
@@ -2374,9 +2433,10 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
     }
     return '';
   }
-  const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table);
+  const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table, completedJobRows);
   if (rememberedSource.length != 0) {
     for (const candidate of visibleAgents) {
+      const candidateTableCache = scheduler_agent_table_state_cache_for_agent(string.from(candidate.clientName), allTableCaches ?? []);
       if (candidate.clientName == rememberedSource
         && candidate.clientName != targetAgent.clientName
         && candidate.ownerUserId == targetAgent.ownerUserId

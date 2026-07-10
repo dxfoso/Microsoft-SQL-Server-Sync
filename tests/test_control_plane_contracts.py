@@ -246,23 +246,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(owner_match)
         owner_body = owner_match.group("body")
         self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);", owner_body)
+        self.assertIn("const completedJobRows = list_completed_scheduler_job_rows(ownerUserId);", owner_body)
         self.assertIn("const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));", owner_body)
         self.assertIn("const sourceAgents = allAgents ?? list_scheduler_agent_rows();", owner_body)
         self.assertIn("for (const agent of sourceAgents) {", owner_body)
-        self.assertIn("const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents, ownerPolicies, tableCaches);", owner_body)
+        self.assertIn("const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents, ownerPolicies, tableCaches, completedJobRows);", owner_body)
 
         preferred_source_match = re.search(
-            r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null\): string \{(?P<body>.*?)\n\}",
+            r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null, completedJobRows: array<json>\? = null\): string \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
         self.assertIsNotNone(preferred_source_match)
         preferred_source_body = preferred_source_match.group("body")
         self.assertIn("const targetTableCache = scheduler_agent_table_state_cache_for_agent(targetClientName, allTableCaches ?? []);", preferred_source_body)
-        self.assertIn("const targetRowCount = live_row_count_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache);", preferred_source_body)
+        self.assertIn("const targetRowCount = live_row_count_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache, completedJobRows);", preferred_source_body)
         self.assertIn("const targetChecksum = live_checksum_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache);", preferred_source_body)
         self.assertIn("const candidateTableCache = scheduler_agent_table_state_cache_for_agent(string.from(candidate.clientName), allTableCaches ?? []);", preferred_source_body)
         self.assertIn("if (!agent_table_sync_enabled(candidate, table, ownerPolicies, candidateTableCache)) {", preferred_source_body)
+        self.assertIn("const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table, completedJobRows);", preferred_source_body)
 
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
@@ -414,10 +416,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
         self.assertIn(
-            "function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null): string {",
+            "function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null, completedJobRows: array<json>? = null): string {",
             source,
         )
-        self.assertIn("const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents, ownerPolicies, allTableCaches);", source)
+        self.assertIn("const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents, ownerPolicies, allTableCaches, completedJobRows);", source)
         self.assertIn("function expand_sync_job_tables_for_owner", source)
         self.assertNotIn("latest_completed_job_tables_for_client", source)
         self.assertNotIn("enabledTables = latest_completed_job_tables_for_client(agent.clientName);", source)
