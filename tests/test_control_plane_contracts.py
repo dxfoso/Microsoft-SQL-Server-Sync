@@ -214,6 +214,41 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const requestedClientNames = online_visible_agent_client_names(current, normalizedBatchSize);", all_body)
         self.assertIn("return agent_diagnostics_request_batch(requestedClientNames, null, token);", all_body)
 
+    def test_auto_sync_tick_uses_lightweight_scheduler_agent_rows(self):
+        source = read_text("business/control_plane.tru")
+        scheduler_rows_match = re.search(
+            r"function list_scheduler_agent_rows\(\): array<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(scheduler_rows_match)
+        scheduler_rows_body = scheduler_rows_match.group("body")
+        self.assertIn("fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'tables', 'clientUserId', 'ownerUserId'],", scheduler_rows_body)
+        self.assertNotIn("diagnosticRequestId", scheduler_rows_body)
+        self.assertNotIn("clientUpdateRequestId", scheduler_rows_body)
+
+        auto_tick_match = re.search(
+            r"function auto_sync_tick\(token: string\? = null\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(auto_tick_match)
+        auto_tick_body = auto_tick_match.group("body")
+        self.assertIn("const allAgents = list_scheduler_agent_rows();", auto_tick_body)
+        self.assertIn("for (const agent of allAgents) {", auto_tick_body)
+        self.assertIn("const ownerJobs = queue_due_periodic_sync_jobs_for_owner(ownerUserId, allAgents);", auto_tick_body)
+
+        owner_match = re.search(
+            r"function queue_due_periodic_sync_jobs_for_owner\(ownerUserId: string\? = null, allAgents: array<json>\? = null\): array<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(owner_match)
+        owner_body = owner_match.group("body")
+        self.assertIn("const sourceAgents = allAgents ?? list_scheduler_agent_rows();", owner_body)
+        self.assertIn("for (const agent of sourceAgents) {", owner_body)
+        self.assertIn("const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents);", owner_body)
+
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
         match = re.search(

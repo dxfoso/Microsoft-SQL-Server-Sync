@@ -1281,6 +1281,19 @@ function list_agent_rows(): array<json> {
   return rows;
 }
 
+function list_scheduler_agent_rows(): array<json> {
+  const rows = db.selectMany(Agent, {
+    where: { clientName: { gte: '' } },
+    orderBy: { field: 'clientName', dir: 'asc' },
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'tables', 'clientUserId', 'ownerUserId'],
+    limit: 1000
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
 function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
@@ -2023,9 +2036,10 @@ function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
   return unique_string_values(dueTables);
 }
 
-function sync_peer_agents_for_agent(agent: map<json>): array<json> {
+function sync_peer_agents_for_agent(agent: map<json>, allAgents: array<json>? = null): array<json> {
+  const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   let peers = [];
-  for (const candidate of list_agent_rows()) {
+  for (const candidate of sourceAgents) {
     if (candidate.ownerUserId == agent.ownerUserId) {
       peers = peers.concat([candidate]);
     }
@@ -2033,8 +2047,8 @@ function sync_peer_agents_for_agent(agent: map<json>): array<json> {
   return peers;
 }
 
-function queue_due_periodic_sync_jobs_for_agent(agent: map<json>): array<json> {
-  const peerAgents = sync_peer_agents_for_agent(agent);
+function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: array<json>? = null): array<json> {
+  const peerAgents = sync_peer_agents_for_agent(agent, allAgents);
   const dueTables = due_periodic_sync_tables_for_agent(agent);
   if (dueTables.length == 0) {
     return [];
@@ -2058,10 +2072,11 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>): array<json> {
   return createdJobs;
 }
 
-function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null): array<json> {
+function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
+  const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   let createdJobs = [];
   let checkedAgentCount = 0;
-  for (const agent of list_agent_rows()) {
+  for (const agent of sourceAgents) {
     if (agent.ownerUserId != ownerUserId) {
       continue;
     }
@@ -2072,7 +2087,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null): ar
       break;
     }
     checkedAgentCount += 1;
-    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent);
+    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents);
     if (agentJobs.length > 0) {
       createdJobs = createdJobs.concat(agentJobs);
     }
@@ -2735,12 +2750,13 @@ function auto_sync_tick(token: string? = null): map<json> {
     return raw_json_error(403, 'permission denied');
   }
 
+  const allAgents = list_scheduler_agent_rows();
   let ownerIds = [];
   if (is_owner_user(current)) {
     ownerIds = ownerIds.concat([current.id]);
   } else {
     const ownerLimit = periodic_sync_scheduler_owner_limit();
-    for (const agent of list_agent_rows()) {
+    for (const agent of allAgents) {
       if (!agent_recent_enough_for_periodic_sync(agent)) {
         continue;
       }
@@ -2761,7 +2777,7 @@ function auto_sync_tick(token: string? = null): map<json> {
       continue;
     }
     checkedOwners = checkedOwners.concat([ownerUserId]);
-    const ownerJobs = queue_due_periodic_sync_jobs_for_owner(ownerUserId);
+    const ownerJobs = queue_due_periodic_sync_jobs_for_owner(ownerUserId, allAgents);
     if (ownerJobs.length > 0) {
       createdJobs = createdJobs.concat(ownerJobs);
     }

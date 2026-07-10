@@ -649,7 +649,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function auto_sync_tick", control_plane)
         self.assertIn("class PeriodicSyncState", control_plane)
         self.assertNotIn("queue_due_periodic_sync_jobs_for_owner", heartbeat_body)
-        self.assertIn("queue_due_periodic_sync_jobs_for_owner(ownerUserId);", control_plane)
+        self.assertIn("const allAgents = list_scheduler_agent_rows();", control_plane)
+        self.assertIn(
+            "queue_due_periodic_sync_jobs_for_owner(ownerUserId, allAgents);",
+            control_plane,
+        )
         self.assertIn("function safe_date_diff_minutes_since", control_plane)
         self.assertIn(
             "safe_date_diff_minutes_since(string.from(existing.lastCheckedAt ?? ''))",
