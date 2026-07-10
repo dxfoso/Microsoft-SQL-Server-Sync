@@ -329,6 +329,66 @@ function safe_date_diff_minutes_since(rawTimestamp: string? = null): int? {
   }
 }
 
+function heartbeat_persist_interval_minutes(): int {
+  return 1;
+}
+
+function heartbeat_write_due(agent: map<json>): bool {
+  const lastHeartbeat = string.from(agent.lastHeartbeat ?? '').trim();
+  if (lastHeartbeat.length == 0) {
+    return true;
+  }
+  const elapsedMinutes = safe_date_diff_minutes_since(lastHeartbeat);
+  if (elapsedMinutes == null) {
+    return true;
+  }
+  return elapsedMinutes >= heartbeat_persist_interval_minutes();
+}
+
+function lightweight_agent_heartbeat_state_changed(agent: map<json>, machineName: string, historyLimit: int, server: string, database: string, replicationUseWindowsAuth: bool, replicationUser: string, replicationPassword: string, serverConnected: bool, sqlConnected: bool, selectedTable: string? = null, clientVersion: string = ''): bool {
+  const nextMachineName = machineName.trim().length == 0 ? string.from(agent.clientName ?? '').trim() : machineName;
+  const nextSelectedTable = selectedTable == null ? '' : string.from(selectedTable).trim();
+  const currentSelectedTable = agent.selectedTable == null ? '' : string.from(agent.selectedTable).trim();
+  const currentClientVersion = string.from(agent.clientVersion ?? '').trim();
+  if (string.from(agent.machineName ?? '').trim() != nextMachineName) {
+    return true;
+  }
+  if (string.from(agent.server ?? '').trim() != server.trim()) {
+    return true;
+  }
+  if (string.from(agent.database ?? '').trim() != database.trim()) {
+    return true;
+  }
+  if ((agent.replicationUseWindowsAuth == true) != (replicationUseWindowsAuth == true)) {
+    return true;
+  }
+  if (string.from(agent.replicationUser ?? '').trim() != replicationUser.trim()) {
+    return true;
+  }
+  if (string.from(agent.replicationPassword ?? '').trim() != replicationPassword.trim()) {
+    return true;
+  }
+  if (agent.isOnline != true) {
+    return true;
+  }
+  if (int.from(agent.historyLimit ?? 0) != historyLimit) {
+    return true;
+  }
+  if ((agent.serverConnected == true) != (serverConnected == true)) {
+    return true;
+  }
+  if ((agent.sqlConnected == true) != (sqlConnected == true)) {
+    return true;
+  }
+  if (currentSelectedTable != nextSelectedTable) {
+    return true;
+  }
+  if (currentClientVersion != clientVersion.trim()) {
+    return true;
+  }
+  return false;
+}
+
 function effective_agent_online(agent: map<json>): bool {
   if (agent.isOnline != true || agent.serverConnected != true || agent.sqlConnected != true) {
     return false;
@@ -2825,41 +2885,58 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   nextTables = bounded_heartbeat_tables(nextTables, selectedTable);
   const tablesChanged = json_payload_changed(agent.tables, nextTables);
   const relationshipsChanged = json_payload_changed(agent.tableRelationships, nextTableRelationships);
+  const nextMachineName = machineName.trim().length == 0 ? resolvedClientName : machineName;
+  const nextHistoryLimit = clamp_history_limit(historyLimit);
+  const nextClientVersion = truncate_text(clientVersion.trim(), 32);
+  const lightweightHeartbeatChanged = lightweight_agent_heartbeat_state_changed(
+    agent,
+    nextMachineName,
+    nextHistoryLimit,
+    server,
+    database,
+    replicationUseWindowsAuth,
+    replicationUser,
+    replicationPassword,
+    serverConnected,
+    sqlConnected,
+    selectedTable,
+    nextClientVersion
+  );
   let updated = null;
   if (tablesChanged || relationshipsChanged) {
     updated = db.update(Agent, { clientName: resolvedClientName }, {
-      machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
+      machineName: nextMachineName,
       server,
       database,
       replicationUseWindowsAuth,
       replicationUser,
       replicationPassword,
       isOnline: true,
-      historyLimit: clamp_history_limit(historyLimit),
+      historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
       serverConnected,
       sqlConnected,
-      clientVersion: truncate_text(clientVersion.trim(), 32),
+      clientVersion: nextClientVersion,
       lastHeartbeat: now_iso(),
       selectedTable,
       tables: nextTables,
       tableRelationships: nextTableRelationships,
       updatedAt: now_iso()
     });
-  } else {
+  } else if (lightweightHeartbeatChanged || heartbeat_write_due(agent)) {
     updated = db.update(Agent, { clientName: resolvedClientName }, {
-      machineName: machineName.trim().length == 0 ? resolvedClientName : machineName,
+      machineName: nextMachineName,
       server,
       database,
       replicationUseWindowsAuth,
       replicationUser,
       replicationPassword,
       isOnline: true,
-      historyLimit: clamp_history_limit(historyLimit),
+      historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
       serverConnected,
       sqlConnected,
-      clientVersion: truncate_text(clientVersion.trim(), 32),
+      clientVersion: nextClientVersion,
       lastHeartbeat: now_iso(),
       selectedTable,
       updatedAt: now_iso()
