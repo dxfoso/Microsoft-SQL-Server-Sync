@@ -8,6 +8,7 @@
 #include <shellapi.h>
 
 #include <memory>
+#include <string>
 
 #include "win32_window.h"
 
@@ -29,6 +30,8 @@ class FlutterWindow : public Win32Window {
 
  private:
   void AddTrayIcon();
+  void UpdateTrayIcon(bool notify_shell = true);
+  HICON CreateTrayProgressIcon(int progress) const;
   void RemoveTrayIcon();
   void MinimizeToTray();
   void RestoreFromTray();
@@ -39,6 +42,10 @@ class FlutterWindow : public Win32Window {
   bool tray_icon_visible_ = false;
   bool start_minimized_ = false;
   NOTIFYICONDATA tray_icon_data_{};
+  HICON tray_dynamic_icon_ = nullptr;
+  bool tray_progress_active_ = false;
+  int tray_progress_ = 0;
+  std::wstring tray_tooltip_ = L"SQL Sync Agent";
 
   // The project to run.
   flutter::DartProject project_;

@@ -15,6 +15,7 @@ import 'sql_sync_merge.dart';
 import 'sql_sync_schema.dart';
 import 'sync_state.dart';
 import 'startup_log.dart';
+import 'tray_progress.dart';
 import 'window_settings.dart';
 
 const String _agentAppVersion = String.fromEnvironment(
@@ -141,6 +142,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _checkingServerConnection = false;
   DateTime? _lastServerCheck;
   bool _syncLoopBusy = false;
+  bool? _lastTrayProgressActive;
+  int? _lastTrayProgressValue;
+  String? _lastTrayProgressStatus;
   bool _diagnosticsUploadBusy = false;
   String? _diagnosticsUploadRequestId;
   bool _rowCountsRefreshing = false;
@@ -1381,6 +1385,36 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               : current.history,
     );
     _updateSyncTableState(job.table, nextState);
+    _updateTraySyncIndicator();
+  }
+
+  void _updateTraySyncIndicator() {
+    if (!Platform.isWindows) {
+      return;
+    }
+
+    final trayProgress = calculateTraySyncProgress(
+      syncLoopBusy: _syncLoopBusy,
+      processingJobCount: _processingJobIds.length,
+      jobs: _activeJobs,
+    );
+    if (trayProgress.active == _lastTrayProgressActive &&
+        trayProgress.progress == _lastTrayProgressValue &&
+        trayProgress.status == _lastTrayProgressStatus) {
+      return;
+    }
+    _lastTrayProgressActive = trayProgress.active;
+    _lastTrayProgressValue = trayProgress.progress;
+    _lastTrayProgressStatus = trayProgress.status;
+    unawaited(
+      WindowsAgentWindowSettings.setTrayProgress(
+        active: trayProgress.active,
+        progress: trayProgress.progress,
+        status: trayProgress.status,
+      ).catchError((error) {
+        logStartupEvent('Tray progress update failed: $error');
+      }),
+    );
   }
 
   String _formatBytes(int bytes) {
@@ -2321,7 +2355,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     unawaited(
       _refreshSelectedTableFingerprints()
           .catchError((Object error, StackTrace stackTrace) {
-            logStartupEvent('Selected table fingerprint refresh failed: $error');
+            logStartupEvent(
+              'Selected table fingerprint refresh failed: $error',
+            );
           })
           .whenComplete(() {
             _refreshingTableFingerprints = false;
@@ -2388,6 +2424,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     _syncLoopBusy = true;
+    _updateTraySyncIndicator();
     try {
       _scheduleSelectedTableFingerprintRefresh();
       final heartbeat = await _controlPlaneClient.heartbeat(
@@ -2473,6 +2510,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       });
     } finally {
       _syncLoopBusy = false;
+      _updateTraySyncIndicator();
       _retryAutomaticClientUpdateIfReady();
     }
   }
@@ -2770,7 +2808,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return _encodeDiagnosticsPayloadForUpload(payload);
   }
 
-  Future<Map<String, dynamic>> _buildChangeTrackingDiagnosticsForUpload() async {
+  Future<Map<String, dynamic>>
+  _buildChangeTrackingDiagnosticsForUpload() async {
     try {
       final diagnostics = await _queryChangeTrackingDiagnostics().timeout(
         _diagnosticsChangeTrackingTimeout,
@@ -3010,7 +3049,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'serverEdition': database['serverEdition'],
       if (database['productVersion'] != null)
         'productVersion': database['productVersion'],
-      if (database['autoCleanup'] != null) 'autoCleanup': database['autoCleanup'],
+      if (database['autoCleanup'] != null)
+        'autoCleanup': database['autoCleanup'],
       if (database['retentionPeriod'] != null)
         'retentionPeriod': database['retentionPeriod'],
       if (database['retentionUnits'] != null)
@@ -3084,57 +3124,64 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         .toList(growable: false);
     final orderedPendingJobs = _sortPendingJobsByDependencies(pendingJobs);
 
-    for (final job in orderedPendingJobs) {
-      if (_processingJobIds.contains(job.id)) {
-        continue;
-      }
-      _processingJobIds.add(job.id);
-      try {
-        await _processSnapshotJob(job);
-      } catch (error, stackTrace) {
-        final errorMessage = error.toString();
-        logStartupEvent(
-          'Remote job ${job.id} failed during snapshot processing: $errorMessage',
-        );
-        logStartupEvent(stackTrace.toString());
-        await _markRemoteJobFailed(job, error);
-        final failedJob = RemoteSyncJob(
-          id: job.id,
-          clientName: job.clientName,
-          sourceClientName: job.sourceClientName,
-          subscriberClientName: job.subscriberClientName,
-          table: job.table,
-          direction: job.direction,
-          publisherServer: job.publisherServer,
-          publisherDatabase: job.publisherDatabase,
-          publisherUseWindowsAuth: job.publisherUseWindowsAuth,
-          publisherUser: job.publisherUser,
-          publisherPassword: job.publisherPassword,
-          status: 'failed',
-          progress: 100,
-          rowCount: job.rowCount,
-          snapshotBytes: job.snapshotBytes,
-          snapshotCreatedAt: job.snapshotCreatedAt,
-          snapshotId: job.snapshotId,
-          createdAt: job.createdAt,
-          updatedAt: DateTime.now().toIso8601String(),
-          startedAt: job.startedAt,
-          completedAt: DateTime.now().toIso8601String(),
-          message: errorMessage,
-          error: errorMessage,
-        );
-        _applyRemoteJobState(
-          failedJob,
-          appendHistory: true,
-          success: false,
-          overrideMessage: errorMessage,
-        );
-        if (job.direction == 'download') {
-          unawaited(_refreshLocalRowCounts());
+    _updateTraySyncIndicator();
+    try {
+      for (final job in orderedPendingJobs) {
+        if (_processingJobIds.contains(job.id)) {
+          continue;
         }
-      } finally {
-        _processingJobIds.remove(job.id);
+        _processingJobIds.add(job.id);
+        _updateTraySyncIndicator();
+        try {
+          await _processSnapshotJob(job);
+        } catch (error, stackTrace) {
+          final errorMessage = error.toString();
+          logStartupEvent(
+            'Remote job ${job.id} failed during snapshot processing: $errorMessage',
+          );
+          logStartupEvent(stackTrace.toString());
+          await _markRemoteJobFailed(job, error);
+          final failedJob = RemoteSyncJob(
+            id: job.id,
+            clientName: job.clientName,
+            sourceClientName: job.sourceClientName,
+            subscriberClientName: job.subscriberClientName,
+            table: job.table,
+            direction: job.direction,
+            publisherServer: job.publisherServer,
+            publisherDatabase: job.publisherDatabase,
+            publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+            publisherUser: job.publisherUser,
+            publisherPassword: job.publisherPassword,
+            status: 'failed',
+            progress: 100,
+            rowCount: job.rowCount,
+            snapshotBytes: job.snapshotBytes,
+            snapshotCreatedAt: job.snapshotCreatedAt,
+            snapshotId: job.snapshotId,
+            createdAt: job.createdAt,
+            updatedAt: DateTime.now().toIso8601String(),
+            startedAt: job.startedAt,
+            completedAt: DateTime.now().toIso8601String(),
+            message: errorMessage,
+            error: errorMessage,
+          );
+          _applyRemoteJobState(
+            failedJob,
+            appendHistory: true,
+            success: false,
+            overrideMessage: errorMessage,
+          );
+          if (job.direction == 'download') {
+            unawaited(_refreshLocalRowCounts());
+          }
+        } finally {
+          _processingJobIds.remove(job.id);
+          _updateTraySyncIndicator();
+        }
       }
+    } finally {
+      _updateTraySyncIndicator();
     }
   }
 

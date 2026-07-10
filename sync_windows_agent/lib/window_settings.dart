@@ -29,6 +29,21 @@ class WindowsAgentWindowSettings {
     await _channel.invokeMethod<void>('setWindowTitle', normalized);
   }
 
+  static Future<void> setTrayProgress({
+    required bool active,
+    required int progress,
+    required String status,
+  }) async {
+    if (!Platform.isWindows) {
+      return;
+    }
+    await _channel.invokeMethod<void>('setTrayProgress', {
+      'active': active,
+      'progress': progress.clamp(0, 100),
+      'status': status,
+    });
+  }
+
   static bool isStartOnStartupEnabledSync() {
     try {
       final shortcut = _startupShortcutFile();

@@ -1,5 +1,7 @@
 #include "flutter_window.h"
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -128,6 +130,60 @@ bool FlutterWindow::OnCreate() {
           result->Success();
           return;
         }
+        if (call.method_name() == "setTrayProgress") {
+          const auto* arguments =
+              std::get_if<flutter::EncodableMap>(call.arguments());
+          if (arguments == nullptr) {
+            result->Error("invalid_tray_progress",
+                          "Tray progress arguments must be a map.");
+            return;
+          }
+
+          bool active = false;
+          int progress = 0;
+          std::string status;
+          for (const auto& entry : *arguments) {
+            const auto* key = std::get_if<std::string>(&entry.first);
+            if (key == nullptr) {
+              continue;
+            }
+            if (*key == "active") {
+              if (const auto* active_value =
+                      std::get_if<bool>(&entry.second)) {
+                active = *active_value;
+              }
+            } else if (*key == "progress") {
+              if (const auto* progress_int32 =
+                      std::get_if<int32_t>(&entry.second)) {
+                progress = *progress_int32;
+              } else if (const auto* progress_int64 =
+                             std::get_if<int64_t>(&entry.second)) {
+                progress = static_cast<int>(*progress_int64);
+              } else if (const auto* progress_double =
+                             std::get_if<double>(&entry.second)) {
+                progress = static_cast<int>(*progress_double);
+              }
+            } else if (*key == "status") {
+              if (const auto* status_value =
+                      std::get_if<std::string>(&entry.second)) {
+                status = *status_value;
+              }
+            }
+          }
+
+          tray_progress_active_ = active;
+          tray_progress_ = std::clamp(progress, 0, 100);
+          const auto status_text = Utf8ToWide(status);
+          tray_tooltip_ = L"SQL Sync Agent";
+          if (tray_progress_active_) {
+            tray_tooltip_ += L" - " +
+                             (status_text.empty() ? L"Syncing" : status_text);
+            tray_tooltip_ += L" (" + std::to_wstring(tray_progress_) + L"%)";
+          }
+          UpdateTrayIcon();
+          result->Success();
+          return;
+        }
         result->NotImplemented();
       });
   const auto flutter_view_window = flutter_controller_->view()->GetNativeWindow();
@@ -185,6 +241,120 @@ void FlutterWindow::OnDestroy() {
   Win32Window::OnDestroy();
 }
 
+HICON FlutterWindow::CreateTrayProgressIcon(int progress) const {
+  auto app_icon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  if (app_icon == nullptr) {
+    app_icon = LoadIcon(nullptr, IDI_APPLICATION);
+  }
+  if (app_icon == nullptr) {
+    return nullptr;
+  }
+
+  auto copied_icon = static_cast<HICON>(
+      CopyImage(app_icon, IMAGE_ICON, 32, 32, LR_COPYFROMRESOURCE));
+  if (copied_icon == nullptr) {
+    return nullptr;
+  }
+
+  ICONINFO icon_info{};
+  if (GetIconInfo(copied_icon, &icon_info) == FALSE ||
+      icon_info.hbmColor == nullptr || icon_info.hbmMask == nullptr) {
+    DestroyIcon(copied_icon);
+    if (icon_info.hbmColor != nullptr) {
+      DeleteObject(icon_info.hbmColor);
+    }
+    if (icon_info.hbmMask != nullptr) {
+      DeleteObject(icon_info.hbmMask);
+    }
+    return nullptr;
+  }
+
+  BITMAP bitmap{};
+  if (GetObject(icon_info.hbmColor, sizeof(bitmap), &bitmap) == 0) {
+    DeleteObject(icon_info.hbmColor);
+    DeleteObject(icon_info.hbmMask);
+    DestroyIcon(copied_icon);
+    return nullptr;
+  }
+
+  const int width = std::max(1L, bitmap.bmWidth);
+  const int height = std::max(1L, bitmap.bmHeight);
+  const int diameter = std::min(width, height);
+  const int margin = std::max(1, diameter / 8);
+  const int pen_width = std::max(1, diameter / 8);
+  const int center_x = width / 2;
+  const int center_y = height / 2;
+  const int radius = std::max(1, diameter / 2 - margin);
+
+  HDC dc = CreateCompatibleDC(nullptr);
+  if (dc == nullptr) {
+    DeleteObject(icon_info.hbmColor);
+    DeleteObject(icon_info.hbmMask);
+    DestroyIcon(copied_icon);
+    return nullptr;
+  }
+
+  const auto old_bitmap = SelectObject(dc, icon_info.hbmColor);
+  const auto pen_color = progress >= 100 ? RGB(34, 197, 94) : RGB(37, 99, 235);
+  HPEN pen = CreatePen(PS_SOLID, pen_width, pen_color);
+  HGDIOBJ old_pen = SelectObject(dc, pen);
+  HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+
+  const int left = center_x - radius;
+  const int top = center_y - radius;
+  const int right = center_x + radius;
+  const int bottom = center_y + radius;
+  if (progress >= 100) {
+    Ellipse(dc, left, top, right, bottom);
+  } else {
+    const double sweep_degrees = progress <= 0 ? 70.0 : progress * 3.6;
+    constexpr double kPi = 3.14159265358979323846;
+    const double end_angle = (90.0 - sweep_degrees) * kPi / 180.0;
+    const int end_x = center_x + static_cast<int>(radius * std::cos(end_angle));
+    const int end_y = center_y - static_cast<int>(radius * std::sin(end_angle));
+    Arc(dc, left, top, right, bottom, center_x + radius, center_y, end_x,
+        end_y);
+  }
+
+  SelectObject(dc, old_brush);
+  SelectObject(dc, old_pen);
+  SelectObject(dc, old_bitmap);
+  DeleteObject(pen);
+  DeleteDC(dc);
+
+  const auto progress_icon = CreateIconIndirect(&icon_info);
+  DeleteObject(icon_info.hbmColor);
+  DeleteObject(icon_info.hbmMask);
+  DestroyIcon(copied_icon);
+  return progress_icon;
+}
+
+void FlutterWindow::UpdateTrayIcon(bool notify_shell) {
+  if (!tray_icon_visible_ && notify_shell) {
+    return;
+  }
+
+  HICON next_dynamic_icon = nullptr;
+  if (tray_progress_active_) {
+    next_dynamic_icon = CreateTrayProgressIcon(tray_progress_);
+  }
+  if (tray_dynamic_icon_ != nullptr) {
+    DestroyIcon(tray_dynamic_icon_);
+  }
+  tray_dynamic_icon_ = next_dynamic_icon;
+
+  auto app_icon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  if (app_icon == nullptr) {
+    app_icon = LoadIcon(nullptr, IDI_APPLICATION);
+  }
+  tray_icon_data_.hIcon = tray_dynamic_icon_ == nullptr ? app_icon : tray_dynamic_icon_;
+  wcscpy_s(tray_icon_data_.szTip, _countof(tray_icon_data_.szTip),
+           tray_tooltip_.c_str());
+  if (notify_shell && tray_icon_visible_) {
+    Shell_NotifyIcon(NIM_MODIFY, &tray_icon_data_);
+  }
+}
+
 void FlutterWindow::AddTrayIcon() {
   if (tray_icon_visible_) {
     return;
@@ -203,13 +373,7 @@ void FlutterWindow::AddTrayIcon() {
   tray_icon_data_.hWnd = window_handle;
   tray_icon_data_.uID = kTrayIconId;
 
-  auto app_icon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
-  if (app_icon == nullptr) {
-    app_icon = LoadIcon(nullptr, IDI_APPLICATION);
-  }
-  tray_icon_data_.hIcon = app_icon;
-  wcscpy_s(
-      tray_icon_data_.szTip, _countof(tray_icon_data_.szTip), L"SQL Sync Agent");
+  UpdateTrayIcon(false);
 
   if (Shell_NotifyIcon(NIM_ADD, &tray_icon_data_) == FALSE) {
     return;
@@ -227,6 +391,10 @@ void FlutterWindow::RemoveTrayIcon() {
   tray_icon_data_.uFlags = 0;
   tray_icon_visible_ = false;
   Shell_NotifyIcon(NIM_DELETE, &tray_icon_data_);
+  if (tray_dynamic_icon_ != nullptr) {
+    DestroyIcon(tray_dynamic_icon_);
+    tray_dynamic_icon_ = nullptr;
+  }
   tray_icon_data_ = {};
 }
 
