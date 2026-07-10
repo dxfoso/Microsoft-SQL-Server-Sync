@@ -661,6 +661,10 @@ function expand_sync_job_tables_for_owner(ownerUserId: string? = null, tables: a
 }
 
 function table_sync_policy_for_table(ownerUserId: string? = null, database: string = '', table: string): map<json>? {
+  return table_sync_policy_for_table_with_policies(ownerUserId, database, table);
+}
+
+function table_sync_policy_for_table_with_policies(ownerUserId: string? = null, database: string = '', table: string, policies: array<json>? = null): map<json>? {
   const scope = table_sync_policy_scope(ownerUserId);
   const reference = sync_table_reference(table);
   let databaseName = database.trim();
@@ -670,6 +674,21 @@ function table_sync_policy_for_table(ownerUserId: string? = null, database: stri
   }
   const localTable = string.from(reference.table).trim();
   if (localTable.length == 0) {
+    return null;
+  }
+  if (policies != null) {
+    for (const policy of policies) {
+      if (string.from(policy.ownerUserId ?? '').trim() != scope) {
+        continue;
+      }
+      if (table_sync_policy_local_name(policy) != localTable) {
+        continue;
+      }
+      if (databaseName.length != 0 && table_sync_policy_database_name(policy) != databaseName) {
+        continue;
+      }
+      return policy;
+    }
     return null;
   }
   if (databaseName.length != 0) {
@@ -762,6 +781,10 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
 }
 
 function apply_table_sync_policies(ownerUserId: string? = null, tables: array<json>? = null, database: string = ''): array<json> {
+  return apply_table_sync_policies_with_policies(ownerUserId, tables, database);
+}
+
+function apply_table_sync_policies_with_policies(ownerUserId: string? = null, tables: array<json>? = null, database: string = '', policies: array<json>? = null): array<json> {
   if (tables == null) {
     return [];
   }
@@ -770,7 +793,7 @@ function apply_table_sync_policies(ownerUserId: string? = null, tables: array<js
   }
   let nextTables = [];
   for (const tableState of tables) {
-    const policy = table_sync_policy_for_table(ownerUserId, database, string.from(tableState.table));
+    const policy = table_sync_policy_for_table_with_policies(ownerUserId, database, string.from(tableState.table), policies);
     if (policy == null) {
       nextTables = nextTables.concat([tableState]);
     } else {
@@ -1982,10 +2005,19 @@ function normalize_agent_tables_payload(agent: map<json>, tables: array<json>): 
 }
 
 function enabled_sync_tables_for_agent(agent: map<json>): array<string> {
+  return enabled_sync_tables_for_agent_with_policies(agent);
+}
+
+function enabled_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null): array<string> {
   let enabledTables = [];
   let tables = [];
   if (agent.tables != null) {
-    tables = apply_table_sync_policies(agent.ownerUserId, agent.tables, string.from(agent.database));
+    tables = apply_table_sync_policies_with_policies(
+      agent.ownerUserId,
+      agent.tables,
+      string.from(agent.database),
+      policies
+    );
   }
   for (const tableState of tables) {
     if (tableState.enabled == true && tableState.table != null) {
@@ -2026,10 +2058,14 @@ function sync_table_state_due_for_interval(tableState: map<json>? = null, interv
 }
 
 function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
-  const enabledTables = unique_string_values(enabled_sync_tables_for_agent(agent).concat(enabled_sync_policy_tables_for_agent(agent)));
+  return due_periodic_sync_tables_for_agent_with_policies(agent);
+}
+
+function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null): array<string> {
+  const enabledTables = unique_string_values(enabled_sync_tables_for_agent_with_policies(agent, policies).concat(enabled_sync_policy_tables_for_agent(agent)));
   let dueTables = [];
   for (const table of enabledTables) {
-    if (sync_table_state_due_for_interval(agent_sync_table_state(agent, table), agent.autoSyncIntervalMinutes)) {
+    if (sync_table_state_due_for_interval(agent_sync_table_state(agent, table, policies), agent.autoSyncIntervalMinutes)) {
       dueTables = dueTables.concat([table]);
     }
   }
@@ -2047,9 +2083,9 @@ function sync_peer_agents_for_agent(agent: map<json>, allAgents: array<json>? = 
   return peers;
 }
 
-function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: array<json>? = null): array<json> {
+function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: array<json>? = null, ownerPolicies: array<json>? = null): array<json> {
   const peerAgents = sync_peer_agents_for_agent(agent, allAgents);
-  const dueTables = due_periodic_sync_tables_for_agent(agent);
+  const dueTables = due_periodic_sync_tables_for_agent_with_policies(agent, ownerPolicies);
   if (dueTables.length == 0) {
     return [];
   }
@@ -2059,7 +2095,7 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: arr
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
       break;
     }
-    const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents);
+    const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents, ownerPolicies);
     if (sourceClientName.length == 0) {
       continue;
     }
@@ -2074,6 +2110,7 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: arr
 
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
   let createdJobs = [];
   let checkedAgentCount = 0;
   for (const agent of sourceAgents) {
@@ -2087,7 +2124,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       break;
     }
     checkedAgentCount += 1;
-    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents);
+    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents, ownerPolicies);
     if (agentJobs.length > 0) {
       createdJobs = createdJobs.concat(agentJobs);
     }
@@ -2201,11 +2238,16 @@ function latest_completed_source_for_target_table(targetClientName: string, tabl
   return '';
 }
 
-function agent_sync_table_state(agent: map<json>, table: string): map<json>? {
+function agent_sync_table_state(agent: map<json>, table: string, policies: array<json>? = null): map<json>? {
   if (agent.tables == null) {
     return null;
   }
-  const tables = apply_table_sync_policies(agent.ownerUserId, agent.tables, string.from(agent.database));
+  const tables = apply_table_sync_policies_with_policies(
+    agent.ownerUserId,
+    agent.tables,
+    string.from(agent.database),
+    policies
+  );
   for (const tableState of tables) {
     if (tableState.table == null) {
       continue;
@@ -2217,8 +2259,8 @@ function agent_sync_table_state(agent: map<json>, table: string): map<json>? {
   return null;
 }
 
-function live_row_count_for_agent_table(agent: map<json>, table: string): int {
-  const tableState = agent_sync_table_state(agent, table);
+function live_row_count_for_agent_table(agent: map<json>, table: string, policies: array<json>? = null): int {
+  const tableState = agent_sync_table_state(agent, table, policies);
   if (tableState != null && tableState.rowCount != null) {
     const rowCount = int.from(tableState.rowCount);
     if (rowCount >= 0) {
@@ -2228,26 +2270,26 @@ function live_row_count_for_agent_table(agent: map<json>, table: string): int {
   return latest_completed_upload_row_count_for_source(string.from(agent.clientName), table);
 }
 
-function live_checksum_for_agent_table(agent: map<json>, table: string): string {
-  const tableState = agent_sync_table_state(agent, table);
+function live_checksum_for_agent_table(agent: map<json>, table: string, policies: array<json>? = null): string {
+  const tableState = agent_sync_table_state(agent, table, policies);
   if (tableState != null && tableState.tableChecksum != null) {
     return string.from(tableState.tableChecksum).trim();
   }
   return '';
 }
 
-function agent_table_sync_enabled(agent: map<json>, table: string): bool {
-  const tableState = agent_sync_table_state(agent, table);
+function agent_table_sync_enabled(agent: map<json>, table: string, policies: array<json>? = null): bool {
+  const tableState = agent_sync_table_state(agent, table, policies);
   if (tableState == null) {
     return false;
   }
   return tableState.enabled == true;
 }
 
-function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>): string {
+function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null): string {
   const targetClientName = string.from(targetAgent.clientName);
-  const targetRowCount = live_row_count_for_agent_table(targetAgent, table);
-  const targetChecksum = live_checksum_for_agent_table(targetAgent, table);
+  const targetRowCount = live_row_count_for_agent_table(targetAgent, table, ownerPolicies);
+  const targetChecksum = live_checksum_for_agent_table(targetAgent, table, ownerPolicies);
   let bestKnownSource = '';
   let bestKnownRowCount = targetRowCount;
   let bestChecksumSource = '';
@@ -2258,13 +2300,13 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
       || !effective_agent_online(candidate)) {
       continue;
     }
-    if (!agent_table_sync_enabled(candidate, table)) {
+    if (!agent_table_sync_enabled(candidate, table, ownerPolicies)) {
       continue;
     }
     if (firstAvailableSource.length == 0) {
       firstAvailableSource = string.from(candidate.clientName);
     }
-    const candidateRowCount = live_row_count_for_agent_table(candidate, table);
+    const candidateRowCount = live_row_count_for_agent_table(candidate, table, ownerPolicies);
     if (candidateRowCount < 0) {
       continue;
     }
@@ -2272,7 +2314,7 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
       bestKnownSource = string.from(candidate.clientName);
       bestKnownRowCount = candidateRowCount;
     }
-    const candidateChecksum = live_checksum_for_agent_table(candidate, table);
+    const candidateChecksum = live_checksum_for_agent_table(candidate, table, ownerPolicies);
     if (candidateRowCount == targetRowCount
       && targetChecksum.length != 0
       && candidateChecksum.length != 0
@@ -2298,7 +2340,7 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
         && candidate.clientName != targetAgent.clientName
         && candidate.ownerUserId == targetAgent.ownerUserId
         && effective_agent_online(candidate)
-        && agent_table_sync_enabled(candidate, table)) {
+        && agent_table_sync_enabled(candidate, table, ownerPolicies)) {
         return rememberedSource;
       }
     }
