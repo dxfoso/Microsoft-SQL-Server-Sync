@@ -8,6 +8,27 @@ const int kMinAutoSyncIntervalMinutes = 1;
 const int kMaxAutoSyncIntervalMinutes = 1440;
 const Object _syncTableStateUnset = Object();
 
+String? resolveSavedDatabaseSelection({
+  required String? saved,
+  required List<String> available,
+  String? defaultDatabase,
+}) {
+  final normalizedSaved = saved?.trim();
+  if (normalizedSaved != null &&
+      normalizedSaved.isNotEmpty &&
+      available.contains(normalizedSaved)) {
+    return normalizedSaved;
+  }
+
+  final normalizedDefault = defaultDatabase?.trim();
+  if (normalizedDefault != null &&
+      normalizedDefault.isNotEmpty &&
+      available.contains(normalizedDefault)) {
+    return normalizedDefault;
+  }
+  return available.isEmpty ? null : available.first;
+}
+
 class SyncHistoryEntry {
   const SyncHistoryEntry({
     required this.timestamp,
@@ -215,6 +236,7 @@ class SyncAppStateStore {
     required this.clients,
     required this.server,
     required this.hasOpenedOnce,
+    this.selectedDatabasesByUser = const <String, String>{},
     this.startMinimized = false,
     this.startOnStartup = false,
     this.authToken,
@@ -232,6 +254,7 @@ class SyncAppStateStore {
     clients: {},
     server: 'localhost',
     hasOpenedOnce: false,
+    selectedDatabasesByUser: {},
     startMinimized: false,
     startOnStartup: false,
     authToken: null,
@@ -248,6 +271,7 @@ class SyncAppStateStore {
   final Map<String, SyncClientState> clients;
   final String server;
   final bool hasOpenedOnce;
+  final Map<String, String> selectedDatabasesByUser;
   final bool startMinimized;
   final bool startOnStartup;
   final String? authToken;
@@ -296,6 +320,9 @@ class SyncAppStateStore {
         startMinimized: json['startMinimized'] as bool? ?? false,
         startOnStartup: json['startOnStartup'] as bool? ?? false,
         server: json['server'] as String? ?? 'localhost',
+        selectedDatabasesByUser: _readStringMap(
+          json['selectedDatabasesByUser'],
+        ),
         authToken: json['authToken'] as String?,
         accountUsername: json['accountUsername'] as String?,
         accountEmail: json['accountEmail'] as String?,
@@ -339,6 +366,9 @@ class SyncAppStateStore {
         startMinimized: json['startMinimized'] as bool? ?? false,
         startOnStartup: json['startOnStartup'] as bool? ?? false,
         server: json['server'] as String? ?? 'localhost',
+        selectedDatabasesByUser: _readStringMap(
+          json['selectedDatabasesByUser'],
+        ),
         authToken: json['authToken'] as String?,
         accountUsername: json['accountUsername'] as String?,
         accountEmail: json['accountEmail'] as String?,
@@ -372,6 +402,7 @@ class SyncAppStateStore {
       'startMinimized': startMinimized,
       'startOnStartup': startOnStartup,
       'server': server,
+      'selectedDatabasesByUser': selectedDatabasesByUser,
       'authToken': authToken,
       'accountUsername': accountUsername,
       'accountEmail': accountEmail,
@@ -384,4 +415,22 @@ class SyncAppStateStore {
     });
     await file.writeAsString(payload);
   }
+}
+
+Map<String, String> _readStringMap(Object? value) {
+  if (value is! Map) {
+    return <String, String>{};
+  }
+
+  final result = <String, String>{};
+  for (final entry in value.entries) {
+    if (entry.key is String && entry.value is String) {
+      final key = (entry.key as String).trim();
+      final selectedDatabase = (entry.value as String).trim();
+      if (key.isNotEmpty && selectedDatabase.isNotEmpty) {
+        result[key] = selectedDatabase;
+      }
+    }
+  }
+  return result;
 }

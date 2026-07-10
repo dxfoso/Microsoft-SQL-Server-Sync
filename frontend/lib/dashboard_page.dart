@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'browser_bridge.dart';
 import 'client_sync_progress.dart';
+import 'database_selection.dart';
 import 'dashboard_widgets.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
@@ -109,6 +110,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     super.initState();
     _api.setAuthToken(widget.authToken);
     _historyLimit = _readStoredHistoryLimit();
+    _selectedDatabaseName = _readStoredDatabaseSelection();
     _syncSearchController.addListener(_handleSearchChange);
     _startRefreshPolling();
     if (widget.authenticatedUser.canManageUsers) {
@@ -152,6 +154,24 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return _defaultHistoryLimit;
     }
     return parsed.clamp(1, _maxHistoryLimit);
+  }
+
+  String? _readStoredDatabaseSelection() {
+    final stored =
+        readBrowserStorage(
+          databaseSelectionStorageKey(widget.authenticatedUser),
+        )?.trim();
+    return stored == null || stored.isEmpty ? null : stored;
+  }
+
+  void _persistDatabaseSelection(String? databaseName) {
+    final key = databaseSelectionStorageKey(widget.authenticatedUser);
+    final normalized = databaseName?.trim() ?? '';
+    if (normalized.isEmpty) {
+      removeBrowserStorage(key);
+      return;
+    }
+    writeBrowserStorage(key, normalized);
   }
 
   bool _isAuthFailure(Object error) {
@@ -212,6 +232,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         nextState,
         nextTableName,
       );
+      if (nextDatabaseName != _selectedDatabaseName) {
+        _persistDatabaseSelection(nextDatabaseName);
+      }
       var nextServerKey = _selectedServerKey;
       var nextPageClientName = _selectedPageClientName;
       if (nextPageClientName != null) {
@@ -738,14 +761,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   String? _resolveSelectedDatabase(AdminLiveState state) {
     final databases = _databaseNamesFromState(state);
-    if (databases.isEmpty) {
-      return null;
-    }
-    if (_selectedDatabaseName != null &&
-        databases.contains(_selectedDatabaseName)) {
-      return _selectedDatabaseName;
-    }
-    return databases.first;
+    return resolveDatabaseSelection(
+      preferred: _selectedDatabaseName,
+      available: databases,
+    );
   }
 
   String? _resolveSelectedTable(AdminLiveState state, {String? databaseName}) {
@@ -785,6 +804,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _selectedClientName = nextClientName;
       _detailTabIndex = 0;
     });
+    _persistDatabaseSelection(databaseName);
   }
 
   String? _resolveSelectedClientForTable(

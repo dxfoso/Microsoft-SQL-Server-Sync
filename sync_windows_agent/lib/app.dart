@@ -94,6 +94,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String? _accountName;
   String? _rememberedLoginName;
   String? _rememberedLoginPassword;
+  Map<String, String> _selectedDatabasesByUser = <String, String>{};
   String? _lastAutoUpdateTarget;
   String? _lastAutoUpdateAttemptedAt;
   String _serverName = 'localhost';
@@ -182,6 +183,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
               ? store.rememberedLoginName!.trim()
               : null;
       _rememberedLoginPassword = store.rememberedLoginPassword ?? '';
+      _selectedDatabasesByUser = store.selectedDatabasesByUser;
       _lastAutoUpdateTarget =
           store.lastAutoUpdateTarget?.trim().isNotEmpty == true
               ? store.lastAutoUpdateTarget!.trim()
@@ -253,6 +255,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       _passwordController.text = '';
       _clientName = 'Local Agent';
       _syncStatesByClient = {};
+      _selectedDatabasesByUser = <String, String>{};
       logStartupEvent(
         'SyncWindowsAgentApp load state failed: $error\n$stackTrace',
       );
@@ -278,6 +281,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       startMinimized: _startMinimized,
       startOnStartup: _startOnStartup,
       server: _serverName,
+      selectedDatabasesByUser: _selectedDatabasesByUser,
       hasOpenedOnce: _hasOpenedOnce,
       authToken: _authToken,
       accountUsername: _accountUsername,
@@ -358,6 +362,32 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     }
     setState(() {
       _serverName = normalized;
+    });
+    _scheduleSave();
+  }
+
+  String _databasePreferenceKey() {
+    final candidates = <String?>[_accountUsername, _accountEmail, _accountName];
+    for (final candidate in candidates) {
+      final normalized = candidate?.trim().toLowerCase() ?? '';
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+    return 'local:${_clientName.trim().toLowerCase()}';
+  }
+
+  void _updateSelectedDatabase(String database) {
+    final normalized = database.trim();
+    final key = _databasePreferenceKey();
+    if (normalized.isEmpty || key.isEmpty) {
+      return;
+    }
+    if (_selectedDatabasesByUser[key] == normalized) {
+      return;
+    }
+    setState(() {
+      _selectedDatabasesByUser[key] = normalized;
     });
     _scheduleSave();
   }
@@ -691,7 +721,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       setState(() {
         _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
-        _accountUsername = user.name;
+        _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
         _clientName = user.name;
@@ -798,7 +828,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       setState(() {
         _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
-        _accountUsername = user.name;
+        _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
         _rememberedLoginName = name;
@@ -857,7 +887,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       setState(() {
         _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
-        _accountUsername = user.name;
+        _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
         _rememberedLoginName = name;
@@ -1196,6 +1226,9 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
                 onMinimizeWindow: _minimizeWindow,
                 initialServer: _serverName,
                 onServerChanged: _updateServerName,
+                initialDatabase:
+                    _selectedDatabasesByUser[_databasePreferenceKey()],
+                onDatabaseChanged: _updateSelectedDatabase,
                 lastAutoUpdateTarget: _lastAutoUpdateTarget,
                 lastAutoUpdateAttemptedAt: _lastAutoUpdateAttemptedAt,
                 onAutoUpdateAttempted: _recordAutoUpdateAttempt,

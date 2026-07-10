@@ -75,6 +75,8 @@ class AgentDashboardPage extends StatefulWidget {
     required this.onMinimizeWindow,
     required this.initialServer,
     required this.onServerChanged,
+    required this.initialDatabase,
+    required this.onDatabaseChanged,
     required this.lastAutoUpdateTarget,
     required this.lastAutoUpdateAttemptedAt,
     required this.onAutoUpdateAttempted,
@@ -98,6 +100,8 @@ class AgentDashboardPage extends StatefulWidget {
   final Future<void> Function() onMinimizeWindow;
   final String initialServer;
   final ValueChanged<String> onServerChanged;
+  final String? initialDatabase;
+  final ValueChanged<String> onDatabaseChanged;
   final String? lastAutoUpdateTarget;
   final String? lastAutoUpdateAttemptedAt;
   final Future<void> Function(String target) onAutoUpdateAttempted;
@@ -173,6 +177,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     super.initState();
     logStartupEvent('AgentDashboardPage initState');
     _syncState = widget.initialSyncState;
+    _selectedDatabase =
+        widget.initialDatabase?.trim().isNotEmpty == true
+            ? widget.initialDatabase!.trim()
+            : null;
     _serverController = TextEditingController(
       text:
           widget.initialServer.trim().isEmpty
@@ -850,12 +858,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
-    var selectedDatabase = _selectedDatabase;
-    if (!preserveSelection ||
-        selectedDatabase == null ||
-        !result.values.contains(selectedDatabase)) {
-      selectedDatabase = _preferredDatabase(result.values);
-    }
+    final selectedDatabase = resolveSavedDatabaseSelection(
+      saved: preserveSelection ? _selectedDatabase : null,
+      available: result.values,
+      defaultDatabase: _preferredDatabase(result.values),
+    );
 
     setState(() {
       _databases = result.values;
@@ -865,6 +872,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       _sortColumnIndex = null;
     });
+    if (selectedDatabase != previousDatabase && selectedDatabase != null) {
+      widget.onDatabaseChanged(selectedDatabase);
+    }
 
     if (loadTables && selectedDatabase != null) {
       await _loadTables(
@@ -985,6 +995,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _localRelatedSyncTables = const {};
       _relatedSyncTables = const {};
     });
+    widget.onDatabaseChanged(database);
 
     await _loadTables(
       profile: _activeProfile(),
