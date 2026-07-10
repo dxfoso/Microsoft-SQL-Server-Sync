@@ -1375,20 +1375,34 @@ function diagnostic_request_pending(agent: map<json>): bool {
   return string.from(agent.diagnosticLastRequestId).trim() != requestId;
 }
 
+function pending_request_awaits_online_client(agent: map<json>, pending: bool): bool {
+  return pending && !effective_agent_online(agent);
+}
+
 function agent_diagnostics_payload(agent: map<json>, includePayload: bool = false): map<json> {
   let payload = null;
   if (includePayload && agent.diagnosticPayload != null) {
     payload = agent.diagnosticPayload;
   }
+  const pending = diagnostic_request_pending(agent);
+  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  let statusValue = agent.diagnosticStatus == null ? 'idle' : string.from(agent.diagnosticStatus);
+  let summaryValue = agent.diagnosticSummary == null ? '' : string.from(agent.diagnosticSummary);
+  if (waitingForClient) {
+    statusValue = 'client_offline';
+    if (summaryValue.trim().length == 0) {
+      summaryValue = 'Waiting for the client to heartbeat before diagnostics can upload.';
+    }
+  }
   return {
-    pending: diagnostic_request_pending(agent),
+    pending: pending && !waitingForClient,
     requestId: agent.diagnosticRequestId,
     requestedAt: agent.diagnosticRequestedAt,
     requestedByUserId: agent.diagnosticRequestedByUserId,
     uploadedAt: agent.diagnosticLastUploadedAt,
     lastRequestId: agent.diagnosticLastRequestId,
-    status: agent.diagnosticStatus,
-    summary: agent.diagnosticSummary,
+    status: statusValue,
+    summary: summaryValue,
     payload: payload
   };
 }
@@ -1408,16 +1422,26 @@ function client_update_request_pending(agent: map<json>): bool {
 }
 
 function agent_client_update_payload(agent: map<json>): map<json> {
+  const pending = client_update_request_pending(agent);
+  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  let statusValue = agent.clientUpdateStatus == null ? 'idle' : string.from(agent.clientUpdateStatus);
+  let messageValue = agent.clientUpdateMessage == null ? '' : string.from(agent.clientUpdateMessage);
+  if (waitingForClient) {
+    statusValue = 'client_offline';
+    if (messageValue.trim().length == 0) {
+      messageValue = 'Waiting for the client to heartbeat before the update request can be delivered.';
+    }
+  }
   return {
-    pending: client_update_request_pending(agent),
+    pending: pending && !waitingForClient,
     requestId: agent.clientUpdateRequestId,
     requestedAt: agent.clientUpdateRequestedAt,
     requestedByUserId: agent.clientUpdateRequestedByUserId,
     targetVersion: agent.clientUpdateTargetVersion,
     lastRequestId: agent.clientUpdateLastRequestId,
     acknowledgedAt: agent.clientUpdateLastAcknowledgedAt,
-    status: agent.clientUpdateStatus,
-    message: agent.clientUpdateMessage
+    status: statusValue,
+    message: messageValue
   };
 }
 
@@ -1437,10 +1461,18 @@ function window_action_request_pending(agent: map<json>): bool {
 
 function agent_window_action_payload(agent: map<json>): map<json> {
   const actionValue = agent.windowActionName == null ? '' : string.from(agent.windowActionName);
-  const statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);
-  const messageValue = agent.windowActionMessage == null ? '' : string.from(agent.windowActionMessage);
+  const pending = window_action_request_pending(agent);
+  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  let statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);
+  let messageValue = agent.windowActionMessage == null ? '' : string.from(agent.windowActionMessage);
+  if (waitingForClient) {
+    statusValue = 'client_offline';
+    if (messageValue.trim().length == 0) {
+      messageValue = 'Waiting for the client to heartbeat before the window action can be delivered.';
+    }
+  }
   return {
-    pending: window_action_request_pending(agent),
+    pending: pending && !waitingForClient,
     requestId: agent.windowActionRequestId,
     requestedAt: agent.windowActionRequestedAt,
     requestedByUserId: agent.windowActionRequestedByUserId,

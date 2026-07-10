@@ -131,13 +131,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(payload_match)
         payload_body = payload_match.group("body")
 
-        self.assertIn("pending: client_update_request_pending(agent),", payload_body)
+        self.assertIn("const pending = client_update_request_pending(agent);", payload_body)
+        self.assertIn("const waitingForClient = pending_request_awaits_online_client(agent, pending);", payload_body)
+        self.assertIn("pending: pending && !waitingForClient,", payload_body)
         self.assertIn("requestId: agent.clientUpdateRequestId,", payload_body)
         self.assertIn("targetVersion: agent.clientUpdateTargetVersion,", payload_body)
         self.assertIn("lastRequestId: agent.clientUpdateLastRequestId,", payload_body)
         self.assertIn("acknowledgedAt: agent.clientUpdateLastAcknowledgedAt,", payload_body)
-        self.assertIn("status: agent.clientUpdateStatus,", payload_body)
-        self.assertIn("message: agent.clientUpdateMessage", payload_body)
+        self.assertIn("statusValue = 'client_offline';", payload_body)
+        self.assertIn("Waiting for the client to heartbeat before the update request can be delivered.", payload_body)
+        self.assertIn("status: statusValue,", payload_body)
+        self.assertIn("message: messageValue", payload_body)
 
         ack_match = re.search(
             r"function agent_client_update_ack\(.*?\): map<json> \{(?P<body>.*?)\n\}",
@@ -238,16 +242,38 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(payload_match)
         payload_body = payload_match.group("body")
 
-        self.assertIn("pending: window_action_request_pending(agent),", payload_body)
+        self.assertIn("const pending = window_action_request_pending(agent);", payload_body)
+        self.assertIn("const waitingForClient = pending_request_awaits_online_client(agent, pending);", payload_body)
+        self.assertIn("pending: pending && !waitingForClient,", payload_body)
         self.assertIn("const actionValue = agent.windowActionName == null ? '' : string.from(agent.windowActionName);", payload_body)
-        self.assertIn("const statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);", payload_body)
-        self.assertIn("const messageValue = agent.windowActionMessage == null ? '' : string.from(agent.windowActionMessage);", payload_body)
+        self.assertIn("let statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);", payload_body)
+        self.assertIn("let messageValue = agent.windowActionMessage == null ? '' : string.from(agent.windowActionMessage);", payload_body)
+        self.assertIn("Waiting for the client to heartbeat before the window action can be delivered.", payload_body)
         self.assertIn("requestId: agent.windowActionRequestId,", payload_body)
         self.assertIn("action: actionValue,", payload_body)
         self.assertIn("lastRequestId: agent.windowActionLastRequestId,", payload_body)
         self.assertIn("acknowledgedAt: agent.windowActionLastAcknowledgedAt,", payload_body)
         self.assertIn("status: statusValue,", payload_body)
         self.assertIn("message: messageValue", payload_body)
+
+    def test_diagnostics_payload_marks_offline_pending_requests_as_client_offline(self):
+        source = read_text("business/control_plane.tru")
+
+        payload_match = re.search(
+            r"function agent_diagnostics_payload\(agent: map<json>, includePayload: bool = false\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(payload_match)
+        payload_body = payload_match.group("body")
+
+        self.assertIn("const pending = diagnostic_request_pending(agent);", payload_body)
+        self.assertIn("const waitingForClient = pending_request_awaits_online_client(agent, pending);", payload_body)
+        self.assertIn("pending: pending && !waitingForClient,", payload_body)
+        self.assertIn("statusValue = 'client_offline';", payload_body)
+        self.assertIn("Waiting for the client to heartbeat before diagnostics can upload.", payload_body)
+        self.assertIn("status: statusValue,", payload_body)
+        self.assertIn("summary: summaryValue,", payload_body)
 
         ack_match = re.search(
             r"function agent_window_action_ack\(.*?\): map<json> \{(?P<body>.*?)\n\}",

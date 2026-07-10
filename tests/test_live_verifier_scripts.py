@@ -105,6 +105,60 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         with self.assertRaises(verifier.ApiError):
             verifier.find_agent_summary({"agents": [{"clientName": "c2"}]}, "c1")
 
+    def test_bulk_diagnostics_pending_client_summary_includes_online_and_heartbeat(self):
+        verifier = load_script_module(
+            "verify_live_bulk_diagnostics_script",
+            "scripts/verify_live_bulk_diagnostics.py",
+        )
+        state = {
+            "agents": [
+                {
+                    "clientName": "c1",
+                    "isOnline": False,
+                    "lastHeartbeat": "2026-07-09T23:54:45.759043585+00:00",
+                    "diagnostics": {
+                        "status": "requested",
+                        "lastRequestId": "req-0",
+                        "uploadedAt": "",
+                    },
+                }
+            ]
+        }
+
+        summaries = verifier.summarize_pending_clients(state, ["c1"])
+
+        self.assertEqual(len(summaries), 1)
+        summary = summaries[0]
+        self.assertEqual(summary["clientName"], "c1")
+        self.assertFalse(summary["online"])
+        self.assertEqual(summary["diagnosticsStatus"], "requested")
+        self.assertEqual(summary["lastRequestId"], "req-0")
+        self.assertEqual(summary["uploadedAt"], "")
+        self.assertIsInstance(summary["heartbeatAgeMinutes"], float)
+
+    def test_bulk_diagnostics_pending_client_summary_handles_missing_agent(self):
+        verifier = load_script_module(
+            "verify_live_bulk_diagnostics_script",
+            "scripts/verify_live_bulk_diagnostics.py",
+        )
+
+        summaries = verifier.summarize_pending_clients({"agents": []}, ["c9"])
+
+        self.assertEqual(
+            summaries,
+            [
+                {
+                    "clientName": "c9",
+                    "online": False,
+                    "lastHeartbeat": "",
+                    "heartbeatAgeMinutes": None,
+                    "diagnosticsStatus": "",
+                    "lastRequestId": "",
+                    "uploadedAt": "",
+                }
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
