@@ -253,105 +253,105 @@ function Get-WatchdogScriptPath {
 }
 
 function Get-WatchdogScriptContent {
-@'
+@"
 param(
-    [switch] $RunOnce
+    [switch] `$RunOnce
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
+`$ErrorActionPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$targetInstallDir = [System.IO.Path]::GetFullPath($scriptDir)
-$executablePath = Join-Path -Path $targetInstallDir -ChildPath 'sync_windows_agent.exe'
-$logPath = Join-Path -Path $targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
+`$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
+`$targetInstallDir = [System.IO.Path]::GetFullPath(`$scriptDir)
+`$executablePath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent.exe'
+`$logPath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
 
 function Write-WatchdogLog {
-    param([string] $Message)
+    param([string] `$Message)
 
     try {
-        $timestamp = [DateTime]::UtcNow.ToString('o')
-        Add-Content -LiteralPath $logPath -Value "[$timestamp] $Message" -Encoding ASCII
+        `$timestamp = [DateTime]::UtcNow.ToString('o')
+        Add-Content -LiteralPath `$logPath -Value "[`$timestamp] `$Message" -Encoding ASCII
     } catch {
     }
 }
 
 function Get-WatchdogMutexName {
-    param([string] $InstallDir)
+    param([string] `$InstallDir)
 
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($InstallDir.ToLowerInvariant())
-    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
-    return 'Local\SqlSyncAgentWatchdog_' + [System.Convert]::ToHexString($hash).Substring(0, 16)
+    `$bytes = [System.Text.Encoding]::UTF8.GetBytes(`$InstallDir.ToLowerInvariant())
+    `$hash = [System.Security.Cryptography.SHA256]::HashData(`$bytes)
+    return 'Local\SqlSyncAgentWatchdog_' + [System.Convert]::ToHexString(`$hash).Substring(0, 16)
 }
 
 function Get-AgentProcesses {
-    param([string] $InstallDir)
+    param([string] `$InstallDir)
 
-    $targetFull = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\', '/')
-    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
+    `$targetFull = [System.IO.Path]::GetFullPath(`$InstallDir).TrimEnd('\', '/')
+    `$targetPrefix = `$targetFull + [System.IO.Path]::DirectorySeparatorChar
 
     return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
-            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
-            ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+            -not [string]::IsNullOrWhiteSpace(`$_.ExecutablePath) -and
+            ([System.IO.Path]::GetFullPath(`$_.ExecutablePath)).StartsWith(`$targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
         })
 }
 
 function Start-AgentProcess {
     param(
-        [string] $ExecutablePath,
-        [string] $InstallDir
+        [string] `$ExecutablePath,
+        [string] `$InstallDir
     )
 
-    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
-        Write-WatchdogLog "Executable not found: $ExecutablePath"
+    if (-not (Test-Path -LiteralPath `$ExecutablePath -PathType Leaf)) {
+        Write-WatchdogLog "Executable not found: `$ExecutablePath"
         return
     }
 
     Write-WatchdogLog 'Starting sync_windows_agent.exe from watchdog.'
-    Start-Process -FilePath $ExecutablePath -ArgumentList '--start-minimized' -WorkingDirectory $InstallDir -WindowStyle Minimized -ErrorAction SilentlyContinue | Out-Null
+    Start-Process -FilePath `$ExecutablePath -ArgumentList '--start-minimized' -WorkingDirectory `$InstallDir -WindowStyle Minimized -ErrorAction SilentlyContinue | Out-Null
 }
 
 function Ensure-AgentRunning {
     param(
-        [string] $ExecutablePath,
-        [string] $InstallDir
+        [string] `$ExecutablePath,
+        [string] `$InstallDir
     )
 
-    $processes = @(Get-AgentProcesses -InstallDir $InstallDir)
-    if ($processes.Count -gt 0) {
+    `$processes = @(Get-AgentProcesses -InstallDir `$InstallDir)
+    if (`$processes.Count -gt 0) {
         return
     }
 
-    Start-AgentProcess -ExecutablePath $ExecutablePath -InstallDir $InstallDir
+    Start-AgentProcess -ExecutablePath `$ExecutablePath -InstallDir `$InstallDir
 }
 
-$mutexName = Get-WatchdogMutexName -InstallDir $targetInstallDir
-$createdNew = $false
-$mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref] $createdNew)
-if (-not $createdNew) {
+`$mutexName = Get-WatchdogMutexName -InstallDir `$targetInstallDir
+`$createdNew = `$false
+`$mutex = [System.Threading.Mutex]::new(`$true, `$mutexName, [ref] `$createdNew)
+if (-not `$createdNew) {
     exit 0
 }
 
 try {
-    Ensure-AgentRunning -ExecutablePath $executablePath -InstallDir $targetInstallDir
-    if ($RunOnce) {
+    Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
+    if (`$RunOnce) {
         exit 0
     }
 
     Write-WatchdogLog 'Watchdog loop started.'
-    while ($true) {
+    while (`$true) {
         Start-Sleep -Seconds 30
-        Ensure-AgentRunning -ExecutablePath $executablePath -InstallDir $targetInstallDir
+        Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
     }
 } finally {
     try {
-        $mutex.ReleaseMutex() | Out-Null
+        `$mutex.ReleaseMutex() | Out-Null
     } catch {
     }
-    $mutex.Dispose()
+    `$mutex.Dispose()
 }
-'@
+"@
 }
 
 function Write-WatchdogScript {
@@ -414,18 +414,18 @@ function Update-StartupShortcutToWatchdog {
     $watchdogPath = Write-WatchdogScript -TargetInstallDir $TargetInstallDir
     $powerShellPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = @"
-\$ErrorActionPreference = 'Stop'
-\$shortcutPath = '$($shortcutPath.Replace("'", "''"))'
-\$targetPath = '$($powerShellPath.Replace("'", "''"))'
-\$workingDirectory = '$($TargetInstallDir.Replace("'", "''"))'
-\$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($watchdogPath.Replace("'", "''"))'''
-\$shell = New-Object -ComObject WScript.Shell
-\$shortcut = \$shell.CreateShortcut(\$shortcutPath)
-\$shortcut.TargetPath = \$targetPath
-\$shortcut.Arguments = \$arguments
-\$shortcut.WorkingDirectory = \$workingDirectory
-\$shortcut.Description = 'SQL Sync Agent'
-\$shortcut.Save()
+`$ErrorActionPreference = 'Stop'
+`$shortcutPath = '$($shortcutPath.Replace("'", "''"))'
+`$targetPath = '$($powerShellPath.Replace("'", "''"))'
+`$workingDirectory = '$($TargetInstallDir.Replace("'", "''"))'
+`$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($watchdogPath.Replace("'", "''"))'''
+`$shell = New-Object -ComObject WScript.Shell
+`$shortcut = `$shell.CreateShortcut(`$shortcutPath)
+`$shortcut.TargetPath = `$targetPath
+`$shortcut.Arguments = `$arguments
+`$shortcut.WorkingDirectory = `$workingDirectory
+`$shortcut.Description = 'SQL Sync Agent'
+`$shortcut.Save()
 "@
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $script | Out-Null
 }
@@ -658,23 +658,23 @@ function Get-WatchdogScriptPath {
 function Get-WatchdogScriptContent {
 @"
 param(
-    [switch] $RunOnce
+    [switch] `$RunOnce
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
+`$ErrorActionPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$targetInstallDir = [System.IO.Path]::GetFullPath($scriptDir)
-$executablePath = Join-Path -Path $targetInstallDir -ChildPath 'sync_windows_agent.exe'
-$logPath = Join-Path -Path $targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
+`$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
+`$targetInstallDir = [System.IO.Path]::GetFullPath(`$scriptDir)
+`$executablePath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent.exe'
+`$logPath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
 
 function Write-WatchdogLog {
     param([string] $Message)
 
     try {
-        $timestamp = [DateTime]::UtcNow.ToString('o')
-        Add-Content -LiteralPath $logPath -Value "[$timestamp] $Message" -Encoding ASCII
+        `$timestamp = [DateTime]::UtcNow.ToString('o')
+        Add-Content -LiteralPath `$logPath -Value "[`$timestamp] `$Message" -Encoding ASCII
     } catch {
     }
 }
@@ -682,21 +682,21 @@ function Write-WatchdogLog {
 function Get-WatchdogMutexName {
     param([string] $InstallDir)
 
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($InstallDir.ToLowerInvariant())
-    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
-    return 'Local\SqlSyncAgentWatchdog_' + [System.Convert]::ToHexString($hash).Substring(0, 16)
+    `$bytes = [System.Text.Encoding]::UTF8.GetBytes(`$InstallDir.ToLowerInvariant())
+    `$hash = [System.Security.Cryptography.SHA256]::HashData(`$bytes)
+    return 'Local\SqlSyncAgentWatchdog_' + [System.Convert]::ToHexString(`$hash).Substring(0, 16)
 }
 
 function Get-AgentProcesses {
     param([string] $InstallDir)
 
-    $targetFull = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\', '/')
-    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
+    `$targetFull = [System.IO.Path]::GetFullPath(`$InstallDir).TrimEnd('\', '/')
+    `$targetPrefix = `$targetFull + [System.IO.Path]::DirectorySeparatorChar
 
     return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
             -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
-            ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+            ([System.IO.Path]::GetFullPath(`$_.ExecutablePath)).StartsWith(`$targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
         })
 }
 
@@ -707,7 +707,7 @@ function Start-AgentProcess {
     )
 
     if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
-        Write-WatchdogLog "Executable not found: $ExecutablePath"
+        Write-WatchdogLog "Executable not found: `$ExecutablePath"
         return
     }
 
@@ -721,38 +721,38 @@ function Ensure-AgentRunning {
         [string] $InstallDir
     )
 
-    $processes = @(Get-AgentProcesses -InstallDir $InstallDir)
-    if ($processes.Count -gt 0) {
+    `$processes = @(Get-AgentProcesses -InstallDir `$InstallDir)
+    if (`$processes.Count -gt 0) {
         return
     }
 
     Start-AgentProcess -ExecutablePath $ExecutablePath -InstallDir $InstallDir
 }
 
-$mutexName = Get-WatchdogMutexName -InstallDir $targetInstallDir
-$createdNew = $false
-$mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref] $createdNew)
-if (-not $createdNew) {
+`$mutexName = Get-WatchdogMutexName -InstallDir `$targetInstallDir
+`$createdNew = `$false
+`$mutex = [System.Threading.Mutex]::new(`$true, `$mutexName, [ref] `$createdNew)
+if (-not `$createdNew) {
     exit 0
 }
 
 try {
-    Ensure-AgentRunning -ExecutablePath $executablePath -InstallDir $targetInstallDir
-    if ($RunOnce) {
+    Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
+    if (`$RunOnce) {
         exit 0
     }
 
     Write-WatchdogLog 'Watchdog loop started.'
     while ($true) {
         Start-Sleep -Seconds 30
-        Ensure-AgentRunning -ExecutablePath $executablePath -InstallDir $targetInstallDir
+        Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
     }
 } finally {
     try {
-        $mutex.ReleaseMutex() | Out-Null
+        `$mutex.ReleaseMutex() | Out-Null
     } catch {
     }
-    $mutex.Dispose()
+    `$mutex.Dispose()
 }
 "@
 }
@@ -804,18 +804,18 @@ function Update-StartupShortcutToWatchdog {
     $watchdogPath = Write-WatchdogScript -TargetInstallDir $TargetInstallDir
     $powerShellPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = @"
-\$ErrorActionPreference = 'Stop'
-\$shortcutPath = '$($shortcutPath.Replace("'", "''"))'
-\$targetPath = '$($powerShellPath.Replace("'", "''"))'
-\$workingDirectory = '$($TargetInstallDir.Replace("'", "''"))'
-\$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($watchdogPath.Replace("'", "''"))'''
-\$shell = New-Object -ComObject WScript.Shell
-\$shortcut = \$shell.CreateShortcut(\$shortcutPath)
-\$shortcut.TargetPath = \$targetPath
-\$shortcut.Arguments = \$arguments
-\$shortcut.WorkingDirectory = \$workingDirectory
-\$shortcut.Description = 'SQL Sync Agent'
-\$shortcut.Save()
+`$ErrorActionPreference = 'Stop'
+`$shortcutPath = '$($shortcutPath.Replace("'", "''"))'
+`$targetPath = '$($powerShellPath.Replace("'", "''"))'
+`$workingDirectory = '$($TargetInstallDir.Replace("'", "''"))'
+`$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($watchdogPath.Replace("'", "''"))'''
+`$shell = New-Object -ComObject WScript.Shell
+`$shortcut = `$shell.CreateShortcut(`$shortcutPath)
+`$shortcut.TargetPath = `$targetPath
+`$shortcut.Arguments = `$arguments
+`$shortcut.WorkingDirectory = `$workingDirectory
+`$shortcut.Description = 'SQL Sync Agent'
+`$shortcut.Save()
 "@
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $script | Out-Null
 }
@@ -963,6 +963,23 @@ if (-not $NoStart) {
 Write-UpdateLog -Message "Finalize helper cleaning work root: $WorkRoot" -LogPath $logPath
 Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
 '@
+
+    $watchdogFunctionStart = $helper.IndexOf('function Get-WatchdogScriptContent {')
+    $watchdogTemplateStart = $helper.IndexOf('@"', $watchdogFunctionStart)
+    $watchdogTemplateEnd = $helper.IndexOf('"@', $watchdogTemplateStart + 2)
+    if ($watchdogFunctionStart -lt 0 -or $watchdogTemplateStart -lt 0 -or $watchdogTemplateEnd -lt 0) {
+        throw 'Could not isolate the generated watchdog template.'
+    }
+
+    $watchdogBody = $helper.Substring(
+        $watchdogTemplateStart + 2,
+        $watchdogTemplateEnd - ($watchdogTemplateStart + 2)
+    ).Replace('`$', '$')
+    $helper = $helper.Substring(0, $watchdogTemplateStart) +
+        "@'" +
+        $watchdogBody +
+        "'@" +
+        $helper.Substring($watchdogTemplateEnd + 2)
 
     Set-Content -LiteralPath $helperPath -Value $helper -Encoding ASCII
 
