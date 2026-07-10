@@ -2103,7 +2103,10 @@ function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
 
 function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null, tableCache: map<json>? = null): array<string> {
   const enabledTables = unique_string_values(enabled_sync_tables_for_agent_with_policies(agent, policies).concat(enabled_sync_policy_tables_for_agent(agent)));
-  const cachedTables = tableCache?.tables ?? scheduler_agent_table_states(agent, policies);
+  let cachedTables = scheduler_agent_table_states(agent, policies);
+  if (tableCache != null && tableCache.tables != null) {
+    cachedTables = tableCache.tables;
+  }
   let dueTables = [];
   for (const table of enabledTables) {
     if (sync_table_state_due_for_interval(scheduler_agent_table_state(cachedTables, table), agent.autoSyncIntervalMinutes)) {
@@ -2288,7 +2291,10 @@ function latest_completed_source_for_target_table(targetClientName: string, tabl
 }
 
 function agent_sync_table_state(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null): map<json>? {
-  const cachedTables = tableCache?.tables ?? scheduler_agent_table_states(agent, policies);
+  let cachedTables = scheduler_agent_table_states(agent, policies);
+  if (tableCache != null && tableCache.tables != null) {
+    cachedTables = tableCache.tables;
+  }
   return scheduler_agent_table_state(cachedTables, table);
 }
 
