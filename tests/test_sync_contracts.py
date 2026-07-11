@@ -140,6 +140,24 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("final bool hasMore;", web_models)
         self.assertNotIn("final int totalDeletedCount;", web_models)
 
+    def test_web_workspace_has_dashboard_and_client_log_navigation(self):
+        app = read_text("frontend/lib/app.dart")
+        clients_page = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("class _AdminWorkspace extends StatefulWidget", app)
+        self.assertIn("_navItem(0, Icons.dashboard_outlined, 'Dashboard'", app)
+        self.assertIn("Icons.devices_other_outlined", app)
+        self.assertIn("'Clients',", app)
+        self.assertIn("return ClientsPage(", app)
+        self.assertIn("class ClientsPage extends StatefulWidget", clients_page)
+        self.assertIn("_api.fetchLiveState()", clients_page)
+        self.assertIn("Table activity", clients_page)
+        self.assertIn("Sync log", clients_page)
+        self.assertIn("Current rows", clients_page)
+        self.assertIn("Rows synced", clients_page)
+        self.assertIn("New / changed", clients_page)
+        self.assertIn("Not reported", clients_page)
+
     def test_control_plane_exposes_snapshot_sync_jobs(self):
         control_plane = read_text("business/control_plane.tru")
 

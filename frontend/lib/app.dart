@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'browser_bridge.dart';
+import 'clients_page.dart';
 import 'dashboard_page.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
@@ -287,7 +288,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
     }
 
     if (_activeUser != null && _authToken != null) {
-      return AdminDashboardPage(
+      return _AdminWorkspace(
         authenticatedUser: _activeUser!,
         authToken: _authToken!,
         onLogout: _handleLogout,
@@ -432,6 +433,204 @@ class _WebsiteShellState extends State<_WebsiteShell> {
           );
         },
       ),
+    );
+  }
+}
+
+class _AdminWorkspace extends StatefulWidget {
+  const _AdminWorkspace({
+    required this.authenticatedUser,
+    required this.authToken,
+    required this.onLogout,
+  });
+
+  final AuthenticatedUser authenticatedUser;
+  final String authToken;
+  final VoidCallback onLogout;
+
+  @override
+  State<_AdminWorkspace> createState() => _AdminWorkspaceState();
+}
+
+class _AdminWorkspaceState extends State<_AdminWorkspace> {
+  int _selectedIndex = 0;
+
+  void _select(int index) {
+    setState(() => _selectedIndex = index);
+    if (MediaQuery.sizeOf(context).width < 900) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  Widget _page() {
+    if (_selectedIndex == 1) {
+      return ClientsPage(
+        authToken: widget.authToken,
+        onLogout: widget.onLogout,
+      );
+    }
+    return AdminDashboardPage(
+      authenticatedUser: widget.authenticatedUser,
+      authToken: widget.authToken,
+      onLogout: widget.onLogout,
+    );
+  }
+
+  Widget _navigation({required bool compact}) {
+    final foreground = Colors.white;
+    final muted = const Color(0xFFB7C7C8);
+    return Container(
+      width: compact ? null : 228,
+      color: const Color(0xFF183234),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 12 : 16,
+        18,
+        compact ? 12 : 16,
+        16,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F766E),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.sync_alt_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'SQL Sync',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'WORKSPACE',
+            style: TextStyle(
+              color: muted,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          _navItem(0, Icons.dashboard_outlined, 'Dashboard', foreground, muted),
+          _navItem(
+            1,
+            Icons.devices_other_outlined,
+            'Clients',
+            foreground,
+            muted,
+          ),
+          const Spacer(),
+          Text(
+            widget.authenticatedUser.name.isEmpty
+                ? widget.authenticatedUser.username
+                : widget.authenticatedUser.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            widget.authenticatedUser.role,
+            style: TextStyle(color: muted, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: widget.onLogout,
+            icon: const Icon(Icons.logout_rounded, size: 16),
+            label: const Text('Sign out'),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _navItem(
+    int index,
+    IconData icon,
+    String label,
+    Color foreground,
+    Color muted,
+  ) {
+    final selected = _selectedIndex == index;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: selected ? const Color(0xFF245153) : Colors.transparent,
+        borderRadius: BorderRadius.circular(7),
+        child: InkWell(
+          onTap: () => _select(index),
+          borderRadius: BorderRadius.circular(7),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon, size: 19, color: selected ? foreground : muted),
+                const SizedBox(width: 10),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? foreground : muted,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 900;
+    if (!compact) {
+      return Scaffold(
+        body: Row(
+          children: [_navigation(compact: false), Expanded(child: _page())],
+        ),
+      );
+    }
+    return Scaffold(
+      drawer: Drawer(child: SafeArea(child: _navigation(compact: true))),
+      appBar: AppBar(
+        title: Text(_selectedIndex == 0 ? 'Dashboard' : 'Clients'),
+        leading: Builder(
+          builder:
+              (context) => IconButton(
+                tooltip: 'Open navigation',
+                onPressed: () => Scaffold.of(context).openDrawer(),
+                icon: const Icon(Icons.menu_rounded),
+              ),
+        ),
+      ),
+      body: _page(),
     );
   }
 }
