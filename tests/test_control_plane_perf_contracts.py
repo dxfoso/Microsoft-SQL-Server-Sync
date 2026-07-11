@@ -34,7 +34,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("let acceptedCount = 0;", bounded_body)
         self.assertIn("acceptedCount >= 1000", bounded_body)
         self.assertNotIn("result = result.concat([normalized])", bounded_body)
-        self.assertIn("table_relationships_for_database(agent.tableRelationships ?? [], trimmedDatabase, remaining)", dependency_body)
+        self.assertIn("table_relationships_for_database(agent.tableRelationships ?? [], trimmedDatabase, 1000)", dependency_body)
         self.assertIn(".filter((relationship) =>", bounded_dependency_body)
         self.assertIn("maxCount", bounded_dependency_body)
         self.assertNotIn("for (const relationship of relationships)", dependency_body)

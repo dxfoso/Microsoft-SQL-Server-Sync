@@ -620,19 +620,13 @@ function bounded_table_relationships(database: string = '', relationships: array
 
 function table_dependency_payloads_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
   const trimmedDatabase = database.trim();
-  let result = [];
-  for (const agent of list_agent_rows()) {
-    if (agent.ownerUserId != ownerUserId && agent.clientUserId != ownerUserId) {
-      continue;
-    }
-    const remaining = 1000 - result.length;
-    if (remaining <= 0) {
-      return result;
-    }
-    const relationships = table_relationships_for_database(agent.tableRelationships ?? [], trimmedDatabase, remaining);
-    result = result.concat(relationships);
-  }
-  return result;
+  const relationshipGroups = list_agent_rows()
+      .filter((agent) => agent.ownerUserId == ownerUserId || agent.clientUserId == ownerUserId)
+      .map((agent) => table_relationships_for_database(agent.tableRelationships ?? [], trimmedDatabase, 1000));
+  return relationshipGroups.reduce(
+    (all, relationships) => table_relationships_for_database(all.concat(relationships), '', 1000),
+    []
+  );
 }
 
 function table_relationships_for_database(relationships: array<json>, database: string, maxCount: int): array<json> {
@@ -652,39 +646,27 @@ function table_relationships_for_database(relationships: array<json>, database: 
 }
 
 function expand_related_table_sync_keys_once(dependencies: array<json>, databaseName: string, visited: array<string>, related: array<string>): map<json> {
-  let nextVisited = visited;
-  let nextRelated = related;
-  for (const dependency of dependencies) {
+  return dependencies.reduce((state, dependency) => {
+    const nextVisited = state.visited ?? [];
+    const nextRelated = state.related ?? [];
     const dependencyTable = string.from(sync_table_reference(string.from(dependency.table)).table).trim();
-    let sourceSeen = false;
-    for (const source of nextVisited) {
-      if (string.from(source) == dependencyTable) {
-        sourceSeen = true;
-      }
-    }
+    const sourceSeen = nextVisited.filter((source) => string.from(source) == dependencyTable).length > 0;
     if (!sourceSeen) {
-      continue;
+      return state;
     }
     const candidate = string.from(sync_table_reference(string.from(dependency.relatedTable)).table).trim();
     if (candidate.length == 0) {
-      continue;
+      return state;
     }
-    let seen = false;
-    for (const value of nextVisited) {
-      if (string.from(value) == candidate) {
-        seen = true;
-      }
-    }
+    const seen = nextVisited.filter((value) => string.from(value) == candidate).length > 0;
     if (seen) {
-      continue;
+      return state;
     }
-    nextVisited = nextVisited.concat([candidate]);
-    nextRelated = nextRelated.concat([table_dependency_sync_key(databaseName, candidate)]);
-  }
-  return {
-    visited: nextVisited,
-    related: nextRelated
-  };
+    return {
+      visited: nextVisited.concat([candidate]),
+      related: nextRelated.concat([table_dependency_sync_key(databaseName, candidate)])
+    };
+  }, { visited, related });
 }
 
 function related_table_sync_keys_for_policy(ownerUserId: string? = null, syncTable: string): array<string> {
