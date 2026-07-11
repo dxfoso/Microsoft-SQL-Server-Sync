@@ -694,19 +694,15 @@ function related_table_sync_keys_for_policy(ownerUserId: string? = null, syncTab
 }
 
 function expand_sync_job_tables_for_owner(ownerUserId: string? = null, tables: array<string>): array<string> {
-  let expanded = [];
-  for (const table of tables) {
+  const expandedGroups = tables.map((table) => {
     const normalizedTable = string.from(table).trim();
     if (normalizedTable.length == 0) {
-      continue;
+      return [];
     }
-    expanded = expanded.concat([normalizedTable]);
     const relatedTables = related_table_sync_keys_for_policy(ownerUserId, normalizedTable);
-    for (const relatedTable of relatedTables) {
-      expanded = expanded.concat([string.from(relatedTable)]);
-    }
-  }
-  return unique_string_values(expanded);
+    return [normalizedTable].concat(relatedTables.map((relatedTable) => string.from(relatedTable)));
+  });
+  return unique_string_values(expandedGroups.reduce((all, group) => all.concat(group), []));
 }
 
 function table_sync_policy_for_table(ownerUserId: string? = null, database: string = '', table: string): map<json>? {
