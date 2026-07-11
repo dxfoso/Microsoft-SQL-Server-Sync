@@ -594,31 +594,28 @@ function bounded_table_relationships(database: string = '', relationships: array
   if (relationships == null || relationships.length == 0) {
     return [];
   }
-  let result = [];
-  let processed = 0;
-  for (const relationship of relationships) {
-    if (processed >= 1000) {
-      return result;
-    }
-    processed = processed + 1;
+  let acceptedCount = 0;
+  return relationships.map((relationship) => {
     const tableName = string.from(relationship.table ?? '').trim();
     const relatedTableName = string.from(relationship.relatedTable ?? '').trim();
     const relationshipType = string.from(relationship.relationshipType ?? 'business').trim();
     if (tableName.length == 0 || relatedTableName.length == 0 || tableName == relatedTableName) {
-      continue;
+      return null;
     }
-    const normalized = normalized_table_dependency_payload(
+    return normalized_table_dependency_payload(
       database,
       tableName,
       relatedTableName,
       relationshipType.length == 0 ? 'business' : relationshipType,
       updatedByClientName
     );
-    if (normalized != null) {
-      result = result.concat([normalized]);
+  }).filter((relationship) => {
+    if (relationship == null || acceptedCount >= 1000) {
+      return false;
     }
-  }
-  return result;
+    acceptedCount = acceptedCount + 1;
+    return true;
+  });
 }
 
 function table_dependency_payloads_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
@@ -628,20 +625,30 @@ function table_dependency_payloads_for_database(ownerUserId: string? = null, dat
     if (agent.ownerUserId != ownerUserId && agent.clientUserId != ownerUserId) {
       continue;
     }
-    const relationships = agent.tableRelationships ?? [];
-    for (const relationship of relationships) {
-      const tableRef = sync_table_reference(string.from(relationship.table));
-      const relationshipDatabase = string.from(tableRef.database).trim();
-      if (trimmedDatabase.length != 0 && relationshipDatabase != trimmedDatabase) {
-        continue;
-      }
-      if (result.length >= 1000) {
-        return result;
-      }
-      result = result.concat([relationship]);
+    const remaining = 1000 - result.length;
+    if (remaining <= 0) {
+      return result;
     }
+    const relationships = table_relationships_for_database(agent.tableRelationships ?? [], trimmedDatabase, remaining);
+    result = result.concat(relationships);
   }
   return result;
+}
+
+function table_relationships_for_database(relationships: array<json>, database: string, maxCount: int): array<json> {
+  let acceptedCount = 0;
+  return relationships.filter((relationship) => {
+    if (acceptedCount >= maxCount) {
+      return false;
+    }
+    const tableRef = sync_table_reference(string.from(relationship.table));
+    const relationshipDatabase = string.from(tableRef.database).trim();
+    const matches = database.length == 0 || relationshipDatabase == database;
+    if (matches) {
+      acceptedCount = acceptedCount + 1;
+    }
+    return matches;
+  });
 }
 
 function expand_related_table_sync_keys_once(dependencies: array<json>, databaseName: string, visited: array<string>, related: array<string>): map<json> {
@@ -1999,6 +2006,26 @@ function active_job_tables_for_client(clientName: string): array<string> {
   return unique_string_values(tables);
 }
 
+function agent_row_for_client_name(agents: array<json>, clientName: string): map<json>? {
+  for (const agent of agents) {
+    if (string.from(agent.clientName) == clientName) {
+      return agent;
+    }
+  }
+  return null;
+}
+
+function active_job_tables_from_cache(clientName: string, activeTableCaches: array<json>? = null): array<string>? {
+  if (activeTableCaches == null) {
+    return null;
+  }
+  const cache = scheduler_agent_table_state_cache_for_agent(clientName, activeTableCaches);
+  if (cache == null || cache.tables == null) {
+    return [];
+  }
+  return cache.tables;
+}
+
 function active_job_for_client_table(clientName: string, table: string): map<json>? {
   const rows = db.selectMany(SyncJob, {
     where: { clientName, table },
@@ -2585,22 +2612,31 @@ function build_snapshot_relay_job_rows(sourceAgent: map<json>, targetClientName:
   return rows;
 }
 
-function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sourceClientName: string = ''): array<json> {
+function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sourceClientName: string = '', activeTableCaches: array<json>? = null, sourceAgentOverride: map<json>? = null): array<json> {
   if (tables.length == 0) {
     return [];
   }
   let sourceAgent = null;
   const resolvedSourceClientName = sourceClientName.trim();
   if (resolvedSourceClientName.length != 0 && resolvedSourceClientName != agent.clientName) {
-    sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
+    sourceAgent = sourceAgentOverride;
+    if (sourceAgent == null || string.from(sourceAgent.clientName) != resolvedSourceClientName) {
+      sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
+    }
     if (sourceAgent == null) {
       return [];
     }
   }
-  const activeTables = active_job_tables_for_client(agent.clientName);
+  let activeTables = active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches);
+  if (activeTables == null) {
+    activeTables = active_job_tables_for_client(agent.clientName);
+  }
   let sourceActiveTables = [];
   if (sourceAgent != null) {
-    sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
+    sourceActiveTables = active_job_tables_from_cache(string.from(sourceAgent.clientName), activeTableCaches);
+    if (sourceActiveTables == null) {
+      sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
+    }
   }
   const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables);
   let tablesToCreate = [];
@@ -3634,43 +3670,55 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   let skippedSourceResolutionTables = [];
 
   const visibleAgents = visible_agent_rows_for(current);
-  for (const agent of visibleAgents) {
-    let enabledTables = unique_string_values(enabled_sync_tables_for_agent(agent).concat(enabled_sync_policy_tables_for_agent(agent)));
-    if (enabledTables.length == 0) {
-      continue;
-    }
-    if (!effective_agent_online(agent)) {
-      skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
-      continue;
-    }
-    const activeTables = active_job_tables_for_client(agent.clientName);
-    let tablesToQueue = [];
-    for (const table of enabledTables) {
-      let busy = false;
-      for (const activeTable of activeTables) {
-        if (activeTable == table) {
-          busy = true;
-        }
-      }
-      if (busy) {
-        skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
-      } else {
-        tablesToQueue = tablesToQueue.concat([table]);
-      }
-    }
-    if (tablesToQueue.length == 0) {
-      continue;
-    }
-    for (const table of tablesToQueue) {
-      const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, visibleAgents);
-      if (sourceClientName.length == 0) {
-        skippedSourceResolutionTables = skippedSourceResolutionTables.concat([string.concat(agent.clientName, '::', table)]);
+  const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
+  for (const ownerUserId of ownerUserIds) {
+    const ownerAgents = visibleAgents.filter((agent) => string.from(agent.ownerUserId) == ownerUserId);
+    const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+    const completedJobRows = list_completed_scheduler_job_rows(ownerUserId);
+    const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
+    const activeTableCaches = ownerAgents.map((agent) => ({
+      clientName: agent.clientName,
+      tables: active_job_tables_for_client(string.from(agent.clientName))
+    }));
+
+    for (const agent of ownerAgents) {
+      const enabledTables = unique_string_values(
+        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+        )
+      );
+      if (enabledTables.length == 0) {
         continue;
       }
-      const clientJobs = create_sync_jobs_for_agent(agent, [table], sourceClientName);
-      if (clientJobs.length > 0) {
-        createdJobs = createdJobs.concat(clientJobs);
-        queuedClientNames = queuedClientNames.concat([string.from(agent.clientName)]);
+      if (!effective_agent_online(agent)) {
+        skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
+        continue;
+      }
+      const activeCache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), activeTableCaches);
+      let activeTables = [];
+      if (activeCache != null && activeCache.tables != null) {
+        activeTables = activeCache.tables;
+      }
+      let tablesToQueue = [];
+      for (const table of enabledTables) {
+        if (string_array_contains(activeTables, table)) {
+          skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
+        } else {
+          tablesToQueue = tablesToQueue.concat([table]);
+        }
+      }
+      for (const table of tablesToQueue) {
+        const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, ownerAgents, ownerPolicies, tableCaches, completedJobRows);
+        if (sourceClientName.length == 0) {
+          skippedSourceResolutionTables = skippedSourceResolutionTables.concat([string.concat(agent.clientName, '::', table)]);
+          continue;
+        }
+        const sourceAgent = agent_row_for_client_name(ownerAgents, sourceClientName);
+        const clientJobs = create_sync_jobs_for_agent(agent, [table], sourceClientName, activeTableCaches, sourceAgent);
+        if (clientJobs.length > 0) {
+          createdJobs = createdJobs.concat(clientJobs);
+          queuedClientNames = queuedClientNames.concat([string.from(agent.clientName)]);
+        }
       }
     }
   }
