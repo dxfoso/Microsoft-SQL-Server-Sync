@@ -836,26 +836,23 @@ function apply_table_sync_policies_with_policies(ownerUserId: string? = null, ta
   if (tables.length == 0) {
     return tables;
   }
-  let nextTables = [];
-  for (const tableState of tables) {
+  return tables.map((tableState) => {
     const policy = table_sync_policy_for_table_with_policies(ownerUserId, database, string.from(tableState.table), policies);
     if (policy == null) {
-      nextTables = nextTables.concat([tableState]);
-    } else {
-      nextTables = nextTables.concat([{
-        table: tableState.table,
-        enabled: policy.enabled,
-        status: tableState.status,
-        lastSync: tableState.lastSync,
-        progress: tableState.progress,
-        rowCount: tableState.rowCount,
-        tableChecksum: tableState.tableChecksum,
-        message: tableState.message,
-        history: tableState.history
-      }]);
+      return tableState;
     }
-  }
-  return nextTables;
+    return {
+      table: tableState.table,
+      enabled: policy.enabled,
+      status: tableState.status,
+      lastSync: tableState.lastSync,
+      progress: tableState.progress,
+      rowCount: tableState.rowCount,
+      tableChecksum: tableState.tableChecksum,
+      message: tableState.message,
+      history: tableState.history
+    };
+  });
 }
 
 function agent_table_payload_limit(): int {
@@ -925,47 +922,22 @@ function bounded_agent_tables(tables: array<json>? = null, selectedTable: string
   if (selectedTable != null) {
     selected = string.from(selectedTable).trim();
   }
-  let result = [];
-  if (selected.length != 0) {
-    for (const tableState of tables) {
-      if (tableState.table == selected && result.length == 0) {
-        result = result.concat([tableState]);
-      }
-    }
-  }
-  for (const tableState of tables) {
-    if (result.length >= agent_table_payload_limit()) {
-      break;
-    }
-    if (tableState.table == selected) {
-      continue;
-    }
-    if (tableState.enabled == true) {
-      let seen = false;
-      for (const existing of result) {
-        if (existing.table == tableState.table) {
-          seen = true;
-        }
-      }
-      if (!seen) {
-        result = result.concat([tableState]);
-      }
-    }
-  }
-  for (const tableState of tables) {
-    if (result.length < agent_table_payload_limit() && tableState.table != selected) {
-      let seen = false;
-      for (const existing of result) {
-        if (existing.table == tableState.table) {
-          seen = true;
-        }
-      }
-      if (!seen) {
-        result = result.concat([tableState]);
-      }
-    }
-  }
-  return result;
+  const selectedRows = selected.length == 0
+    ? []
+    : tables.filter((tableState) => tableState.table == selected).slice(0, 1);
+  const selectedNames = selectedRows.map((tableState) => string.from(tableState.table));
+  const enabledRows = tables
+    .filter((tableState) => tableState.table != selected && tableState.enabled == true)
+    .filter((tableState, index, source) => source.slice(0, index).filter((previous) => previous.table == tableState.table).length == 0)
+    .filter((tableState) => !string_array_contains(selectedNames, string.from(tableState.table)))
+    .slice(0, agent_table_payload_limit() - selectedRows.length);
+  const prioritizedNames = selectedNames.concat(enabledRows.map((tableState) => string.from(tableState.table)));
+  const remainingRows = tables
+    .filter((tableState) => tableState.table != selected)
+    .filter((tableState, index, source) => source.slice(0, index).filter((previous) => previous.table == tableState.table).length == 0)
+    .filter((tableState) => !string_array_contains(prioritizedNames, string.from(tableState.table)))
+    .slice(0, agent_table_payload_limit() - selectedRows.length - enabledRows.length);
+  return selectedRows.concat(enabledRows).concat(remainingRows);
 }
 
 function seed_admin_user(): map<json> {
