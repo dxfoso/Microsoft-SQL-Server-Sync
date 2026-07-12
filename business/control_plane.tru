@@ -3919,8 +3919,7 @@ function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chu
     jobId,
     uploadId,
     chunkIndex,
-    sessionFound: session != null,
-    chunkCount: session == null ? 0 : session.chunkCount
+    sessionFound: session != null
   });
   if (session == null) {
     return raw_json_error(404, 'upload session not found');
