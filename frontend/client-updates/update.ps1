@@ -440,6 +440,13 @@ function Start-UpdatedClient {
     Write-UpdateLog -Message "Starting updated client executable: $ExecutablePath" -LogPath $LogPath
     try {
         Stop-WatchdogProcesses -TargetInstallDir $InstallDir
+        $startedProcess = Start-Process -FilePath $ExecutablePath `
+            -ArgumentList '--start-minimized' `
+            -WorkingDirectory $InstallDir `
+            -WindowStyle Minimized `
+            -PassThru `
+            -ErrorAction Stop
+        Write-UpdateLog -Message "Started updated client process pid=$($startedProcess.Id)." -LogPath $LogPath
         Start-WatchdogProcess -TargetInstallDir $InstallDir
         Write-UpdateLog -Message 'Started watchdog process for updated client.' -LogPath $LogPath
     }
