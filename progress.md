@@ -12,5 +12,6 @@
 
 ## Remaining
 
-- Eleven historical download jobs remain queued from the July 12 outage, while both clients report all 11 enabled tables `Completed` and zero failed jobs. They require a separate stale-job cleanup/repair decision; they are not new client errors.
+- Historical sync-job history was cleared with `server_saved_data_reset(resetAgents=false)`: 278 job records deleted and no client saved state reset.
+- Live sync verifier now passes: `enabled_tables=22`, `active_jobs=0`, `unresolved_failed_jobs=0`; both clients report all 11 enabled tables `Completed`.
 - A controlled network interruption/client-stop recovery test remains to be run when it can be performed without disrupting the currently healthy clients.
