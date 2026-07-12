@@ -1643,6 +1643,7 @@ class RemoteSnapshot {
     required this.columns,
     required this.rows,
     required this.sourceJobId,
+    this.changeTrackingVersion,
   });
 
   final String id;
@@ -1655,6 +1656,7 @@ class RemoteSnapshot {
   final List<String> columns;
   final List<Map<String, String?>> rows;
   final String? sourceJobId;
+  final int? changeTrackingVersion;
 
   factory RemoteSnapshot.fromJson(Map<String, dynamic> json) {
     final rawRows = json['rows'] as List<dynamic>? ?? const [];
@@ -1679,6 +1681,7 @@ class RemoteSnapshot {
           )
           .toList(growable: false),
       sourceJobId: json['sourceJobId'] as String?,
+      changeTrackingVersion: (json['changeTrackingVersion'] as num?)?.round(),
     );
   }
 
@@ -1693,6 +1696,7 @@ class RemoteSnapshot {
     List<String>? columns,
     List<Map<String, String?>>? rows,
     String? sourceJobId,
+    int? changeTrackingVersion,
   }) {
     return RemoteSnapshot(
       id: id ?? this.id,
@@ -1705,6 +1709,8 @@ class RemoteSnapshot {
       columns: columns ?? this.columns,
       rows: rows ?? this.rows,
       sourceJobId: sourceJobId ?? this.sourceJobId,
+      changeTrackingVersion:
+          changeTrackingVersion ?? this.changeTrackingVersion,
     );
   }
 }

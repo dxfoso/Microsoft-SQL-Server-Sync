@@ -81,6 +81,7 @@ class SyncTableState {
     required this.rowCount,
     required this.savedRowCount,
     required this.tableChecksum,
+    required this.changeTrackingVersion,
     required this.changeTrackingStatus,
     required this.changeTrackingMessage,
     required this.message,
@@ -95,6 +96,7 @@ class SyncTableState {
   final int rowCount;
   final int? savedRowCount;
   final String tableChecksum;
+  final int? changeTrackingVersion;
   final String changeTrackingStatus;
   final String changeTrackingMessage;
   final String message;
@@ -116,6 +118,7 @@ class SyncTableState {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       savedRowCount: (json['savedRowCount'] as num?)?.round(),
       tableChecksum: json['tableChecksum'] as String? ?? '',
+      changeTrackingVersion: (json['changeTrackingVersion'] as num?)?.round(),
       changeTrackingStatus:
           json['changeTrackingStatus'] as String? ?? 'unknown',
       changeTrackingMessage: json['changeTrackingMessage'] as String? ?? '',
@@ -133,6 +136,7 @@ class SyncTableState {
     'rowCount': rowCount,
     'savedRowCount': savedRowCount,
     'tableChecksum': tableChecksum,
+    'changeTrackingVersion': changeTrackingVersion,
     'changeTrackingStatus': changeTrackingStatus,
     'changeTrackingMessage': changeTrackingMessage,
     'message': message,
@@ -148,6 +152,7 @@ class SyncTableState {
     int? rowCount,
     Object? savedRowCount = _syncTableStateUnset,
     String? tableChecksum,
+    Object? changeTrackingVersion = _syncTableStateUnset,
     String? changeTrackingStatus,
     String? changeTrackingMessage,
     String? message,
@@ -165,6 +170,10 @@ class SyncTableState {
               ? this.savedRowCount
               : savedRowCount as int?,
       tableChecksum: tableChecksum ?? this.tableChecksum,
+      changeTrackingVersion:
+          identical(changeTrackingVersion, _syncTableStateUnset)
+              ? this.changeTrackingVersion
+              : changeTrackingVersion as int?,
       changeTrackingStatus: changeTrackingStatus ?? this.changeTrackingStatus,
       changeTrackingMessage:
           changeTrackingMessage ?? this.changeTrackingMessage,

@@ -633,6 +633,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rowCount: 0,
       savedRowCount: null,
       tableChecksum: '',
+      changeTrackingVersion: null,
       changeTrackingStatus: 'unknown',
       changeTrackingMessage: '',
       message: 'Remote sync disabled.',
@@ -3306,6 +3307,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       overrideMessage:
           'Uploaded ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
     );
+    if (snapshot.changeTrackingVersion != null) {
+      _updateSyncTableState(
+        job.table,
+        (_syncState.tables[job.table] ?? _defaultSyncTableState(job.table))
+            .copyWith(changeTrackingVersion: snapshot.changeTrackingVersion),
+      );
+    }
     final targetJob = uploadResult.targetJob;
     if (targetJob != null) {
       // The server queues the dependent download when upload completes. Keep
@@ -3357,6 +3365,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       overrideMessage:
           'Applied ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
     );
+    if (snapshot.changeTrackingVersion != null) {
+      _updateSyncTableState(
+        job.table,
+        (_syncState.tables[job.table] ?? _defaultSyncTableState(job.table))
+            .copyWith(changeTrackingVersion: snapshot.changeTrackingVersion),
+      );
+    }
   }
 
   Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(
@@ -3427,29 +3442,54 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final rowCount = rowCountResult.value;
+    final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
+    final tracking = await _queryChangeTrackingState(
+      profile: sourceProfile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    final canUseDelta =
+        tracking != null &&
+        previousVersion != null &&
+        previousVersion > 0 &&
+        previousVersion >= tracking.minValidVersion;
     final rows = <Map<String, String?>>[];
-    const batchSize = 200;
-    var processed = 0;
-    while (processed < rowCount) {
-      final batch = await _fetchSourceTableBatch(
+    var isDelta = false;
+    if (canUseDelta) {
+      final deltaRows = await _fetchChangeTrackingRows(
         profile: sourceProfile,
         database: database,
         schema: tableParts.schema,
         table: tableParts.table,
         columns: syncColumns,
-        orderColumns: primaryKeyColumns,
-        offset: processed,
-        batchSize: math.min(batchSize, rowCount - processed),
+        primaryKeyColumns: primaryKeyColumns,
+        previousVersion: previousVersion,
       );
-      for (final row in batch) {
-        rows.add({
-          for (final column in syncColumns)
-            column.name: row[column.name]?.toString(),
-        });
-      }
-      processed += batch.length;
-      if (batch.isEmpty) {
-        break;
+      rows.addAll(deltaRows);
+      isDelta = true;
+    } else {
+      const batchSize = 200;
+      var processed = 0;
+      while (processed < rowCount) {
+        final batch = await _fetchSourceTableBatch(
+          profile: sourceProfile,
+          database: database,
+          schema: tableParts.schema,
+          table: tableParts.table,
+          columns: syncColumns,
+          orderColumns: primaryKeyColumns,
+          offset: processed,
+          batchSize: math.min(batchSize, rowCount - processed),
+        );
+        for (final row in batch) {
+          rows.add({
+            for (final column in syncColumns)
+              column.name: row[column.name]?.toString(),
+          });
+        }
+        processed += batch.length;
+        if (batch.isEmpty) break;
       }
     }
 
@@ -3467,6 +3507,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           .toList(growable: false),
       'rows': rows,
       'sourceJobId': job.id,
+      'changeTrackingVersion': tracking?.currentVersion,
+      'delta': isDelta,
     };
     var snapshotJson = jsonEncode(payload);
     final snapshotBytes = utf8.encode(snapshotJson).length;
@@ -3478,6 +3520,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rowCount: rows.length,
       snapshotBytes: utf8.encode(snapshotJson).length,
       snapshotJson: snapshotJson,
+      changeTrackingVersion: tracking?.currentVersion,
     );
   }
 
@@ -3554,8 +3597,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       uniqueIndexColumnSets: uniqueIndexColumnSets,
       columns: syncColumns,
     );
-    if (snapshot.rows.isNotEmpty) {
-      final rows = snapshot.rows
+    final deleteRows = snapshot.rows
+        .where((row) => row['__sync_op'] == 'D')
+        .toList(growable: false);
+    final upsertRows = snapshot.rows
+        .where((row) => row['__sync_op'] != 'D')
+        .toList(growable: false);
+    if (upsertRows.isNotEmpty) {
+      final rows = upsertRows
           .map(
             (row) => <String, dynamic>{
               for (final column in syncColumns) column.name: row[column.name],
@@ -3571,6 +3620,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         primaryKeyColumns: primaryKeyColumns,
         matchColumnSets: targetMatchColumnSets,
         rows: rows,
+      );
+    }
+    if (deleteRows.isNotEmpty) {
+      await _deleteSourceRowsFromTarget(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        primaryKeyColumns: primaryKeyColumns,
+        rows: deleteRows,
       );
     }
 
@@ -3833,9 +3892,127 @@ ORDER BY [__sync_agent_row_number];
     );
   }
 
-  String _sourceBatchEncodedColumnExpression(_SqlColumnDefinition column) {
-    final columnName = _quoteIdentifier(column.name);
-    final valueExpression = _sourceBatchColumnValueExpression(column);
+  Future<_ChangeTrackingState?> _queryChangeTrackingState({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+  }) async {
+    final objectName =
+        "${_escapeSqlLiteral(_quoteIdentifier(schema))}.${_escapeSqlLiteral(_quoteIdentifier(table))}";
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT
+  COALESCE(CAST(CHANGE_TRACKING_CURRENT_VERSION() AS nvarchar(40)), N'0'),
+  COALESCE(CAST(CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'$objectName')) AS nvarchar(40)), N'0');
+''';
+    final result = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+      timeout: _snapshotSqlCmdTimeout,
+    );
+    if (result == null || result.exitCode != 0) return null;
+    final lines = _dataOutputLines(result.stdout.toString());
+    final line = lines.isEmpty ? null : lines.first;
+    if (line == null) return null;
+    final values = _splitRowValues(line);
+    if (values.length < 2) return null;
+    final current = int.tryParse(values[0]);
+    final minimum = int.tryParse(values[1]);
+    if (current == null || minimum == null || current <= 0) {
+      return null;
+    }
+    return _ChangeTrackingState(
+      currentVersion: current,
+      minValidVersion: minimum,
+    );
+  }
+
+  Future<List<Map<String, String?>>> _fetchChangeTrackingRows({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> columns,
+    required List<String> primaryKeyColumns,
+    required int previousVersion,
+  }) async {
+    const fieldSeparator = 31;
+    const rowSentinel = 29;
+    final source =
+        '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
+    final join = primaryKeyColumns
+        .map(
+          (column) =>
+              'ct.${_quoteIdentifier(column)} = current.${_quoteIdentifier(column)}',
+        )
+        .join(' AND ');
+    final primaryKeySet =
+        primaryKeyColumns.map((column) => column.toLowerCase()).toSet();
+    final encoded = columns
+        .map((column) {
+          final isKey = primaryKeySet.contains(column.name.toLowerCase());
+          if (isKey) {
+            return _sourceBatchEncodedColumnExpression(
+              column,
+              columnReference: 'ct.${_quoteIdentifier(column.name)}',
+            );
+          }
+          return '''CASE WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN N'\\N'
+ELSE ${_sourceBatchEncodedColumnExpression(column, columnReference: 'current.${_quoteIdentifier(column.name)}')}
+END''';
+        })
+        .join(' + NCHAR($fieldSeparator) + ');
+    final query = '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT
+  ct.SYS_CHANGE_OPERATION + NCHAR($fieldSeparator) + $encoded + NCHAR($rowSentinel)
+FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
+LEFT JOIN $source AS current ON $join
+ORDER BY ct.SYS_CHANGE_VERSION;
+''';
+    final result = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+      timeout: _snapshotSqlCmdTimeout,
+    );
+    if (result == null) throw Exception(_sqlCmdUnavailableMessage(profile));
+    if (result.exitCode != 0)
+      throw Exception(_sqlCmdFailed('change tracking delta fetch', result));
+    final rows = <Map<String, String?>>[];
+    for (final line in _dataOutputLines(result.stdout.toString())) {
+      final payload =
+          line.endsWith(String.fromCharCode(rowSentinel))
+              ? line.substring(0, line.length - 1)
+              : line;
+      final parts = payload.split(String.fromCharCode(fieldSeparator));
+      if (parts.length != columns.length + 1) {
+        throw Exception(
+          'Change tracking delta returned ${parts.length - 1} field(s) for ${columns.length} column(s).',
+        );
+      }
+      rows.add({
+        '__sync_op': parts.first,
+        for (var i = 0; i < columns.length; i++)
+          columns[i].name: _decodeSourceBatchField(parts[i + 1]),
+      });
+    }
+    return rows;
+  }
+
+  String _sourceBatchEncodedColumnExpression(
+    _SqlColumnDefinition column, {
+    String? columnReference,
+  }) {
+    final columnName = columnReference ?? _quoteIdentifier(column.name);
+    final valueExpression = _sourceBatchColumnValueExpression(
+      column,
+      columnReference: columnReference,
+    );
     return '''
 CASE
   WHEN $columnName IS NULL THEN N'\\N'
@@ -3859,8 +4036,11 @@ END
 ''';
   }
 
-  String _sourceBatchColumnValueExpression(_SqlColumnDefinition column) {
-    final columnName = _quoteIdentifier(column.name);
+  String _sourceBatchColumnValueExpression(
+    _SqlColumnDefinition column, {
+    String? columnReference,
+  }) {
+    final columnName = columnReference ?? _quoteIdentifier(column.name);
     final normalized = column.sqlType.trim().toLowerCase();
     if (normalized == 'binary' || normalized == 'varbinary') {
       return 'master.dbo.fn_varbintohexstr(CONVERT(varbinary(max), $columnName))';
@@ -4027,6 +4207,37 @@ END
         profile: profile,
         database: database,
         stageTableName: stageTableName,
+      );
+    }
+  }
+
+  Future<void> _deleteSourceRowsFromTarget({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<String> primaryKeyColumns,
+    required List<Map<String, String?>> rows,
+  }) async {
+    final target =
+        '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
+    for (var offset = 0; offset < rows.length; offset += 100) {
+      final batch = rows.skip(offset).take(100);
+      final predicates = batch
+          .map((row) {
+            return '(${primaryKeyColumns.map((key) {
+              final value = row[key];
+              if (value == null) return '${_quoteIdentifier(key)} IS NULL';
+              return "${_quoteIdentifier(key)} = N'${_escapeSqlLiteral(value)}'";
+            }).join(' AND ')})';
+          })
+          .join(' OR ');
+      await _runSqlCmdOrThrow(
+        profile: profile,
+        database: database,
+        query: 'SET NOCOUNT ON; DELETE FROM $target WHERE $predicates;',
+        context: 'target change tracking delete',
+        timeout: _snapshotSqlCmdTimeout,
       );
     }
   }
@@ -8000,12 +8211,24 @@ class _RelaySnapshotDocument {
     required this.rowCount,
     required this.snapshotBytes,
     required this.snapshotJson,
+    this.changeTrackingVersion,
   });
 
   final String createdAt;
   final int rowCount;
   final int snapshotBytes;
   final String snapshotJson;
+  final int? changeTrackingVersion;
+}
+
+class _ChangeTrackingState {
+  const _ChangeTrackingState({
+    required this.currentVersion,
+    required this.minValidVersion,
+  });
+
+  final int currentVersion;
+  final int minValidVersion;
 }
 
 class _StringQueryResult {
