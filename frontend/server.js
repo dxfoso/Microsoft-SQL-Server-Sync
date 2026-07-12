@@ -7,6 +7,7 @@ const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), "public");
 const CLIENT_UPDATES_DIR =
   process.env.CLIENT_UPDATES_DIR ||
   path.join(process.cwd(), "data", "client-updates");
+const FALLBACK_CLIENT_UPDATES_DIR = path.join(PUBLIC_DIR, "client-updates");
 const BUILD_GIT_COMMIT =
   process.env.BUILD_COMMIT_HASH || process.env.TRU_BUILD_GIT_SHA || "unknown";
 const BUILD_COMMIT_MESSAGE =
@@ -121,28 +122,28 @@ async function tryServeClientUpdate(pathname, res) {
     pathname === "/client"
       ? "latest.json"
       : decodeURIComponent(pathname.substring("/client/".length));
-  const candidatePath = resolveSafePath(CLIENT_UPDATES_DIR, requestedPath);
-  if (!candidatePath) {
-    sendJson(res, 403, { error: "forbidden" });
-    return true;
-  }
-
-  try {
-    const stat = await fs.stat(candidatePath);
-    if (!stat.isFile()) {
-      sendJson(res, 404, { error: "client update artifact not found" });
-      return true;
+  for (const rootDir of [CLIENT_UPDATES_DIR, FALLBACK_CLIENT_UPDATES_DIR]) {
+    const candidatePath = resolveSafePath(rootDir, requestedPath);
+    if (!candidatePath) {
+      continue;
     }
-    const buffer = await fs.readFile(candidatePath);
-    const contentType =
-      MIME_TYPES[path.extname(candidatePath).toLowerCase()] ||
-      "application/octet-stream";
-    sendBuffer(res, 200, buffer, contentType);
-    return true;
-  } catch {
-    sendJson(res, 404, { error: "client update artifact not found" });
-    return true;
+    try {
+      const stat = await fs.stat(candidatePath);
+      if (!stat.isFile()) {
+        continue;
+      }
+      const buffer = await fs.readFile(candidatePath);
+      const contentType =
+        MIME_TYPES[path.extname(candidatePath).toLowerCase()] ||
+        "application/octet-stream";
+      sendBuffer(res, 200, buffer, contentType);
+      return true;
+    } catch {
+      // Try the image-bundled fallback when the persistent volume has no file.
+    }
   }
+  sendJson(res, 404, { error: "client update artifact not found" });
+  return true;
 }
 
 async function tryServeStatic(pathname, res) {

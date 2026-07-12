@@ -44,6 +44,7 @@ ARG TRU_BUILD_RELEASE_DATE=unknown
 
 COPY server.js /app/server.js
 COPY --from=build /app/build/web /app/public
+COPY client-updates /app/public/client-updates
 
 ENV PORT=80
 ENV PUBLIC_DIR=/app/public
