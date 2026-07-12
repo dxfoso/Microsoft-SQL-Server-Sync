@@ -19,6 +19,7 @@ Use the launcher when a local stack restart is actually needed.
 ## Windows Client Rule
 
 - After any shipped `sync_windows_agent/` client change, update `sync_windows_agent/pubspec.yaml` `version:` and publish a new Windows client update before considering the change deployed.
+- After any shipped `sync_windows_agent/` change, automatically run the client contract/build checks, publish the update, start the generated portable client for startup verification, and confirm the live client manifest points to the new version; do not wait for a separate client-update request.
 - Build and publish client updates with `scripts/publish_windows_client_update.ps1`; this must produce `latest.json`, `update.ps1`, a versioned ZIP, and `sync_windows_agent_latest.zip` under the live `/client/` update endpoint.
 - Do not leave live clients depending on an old portable ZIP after client sync logic changes. The app must be able to read `/client/latest.json` and show whether an update is available.
 - Before publishing a Windows client update, run the sync contract tests that guard the live control-plane URL and stale AOT cleanup. The packaged client must be built with `BACKEND_BASE_URL=https://sync.velvet-leaf.com/call`; never ship a client that logs or calls `http://127.0.0.1:6006/call` or `http://127.0.0.1:6006/client/latest.json`.
@@ -38,6 +39,8 @@ Use the launcher when a local stack restart is actually needed.
 ## Deployment Rule
 
 - After any shipped `frontend/` web change, automatically run the relevant frontend and contract tests, commit and push the change, and trigger one Cloud redeploy using the `latest-redeploy` link from `deployment/chart/.env`; do not wait for a separate redeploy request.
+- After any shipped `backend/` or root `business/` server change, automatically run the relevant server/control-plane contract checks, commit and push the change, and trigger one Cloud redeploy using the `latest-redeploy` link from `deployment/chart/.env`; do not wait for a separate redeploy request.
+- When a change includes both server and Windows client work, complete both actions before reporting success: Cloud redeploy for the server and client update publication/verification for the Windows app.
 - Monitor the deployment only through the `latest-debug` link from `deployment/chart/.env` so polling never starts duplicate deployments.
 - A frontend change is not considered deployed until public `/admin/health` reports the new commit with `ready: true` and zero compile errors, and the live `main.dart.js` contains the changed feature markers. If rollout is still pending, report it explicitly instead of claiming success.
 - Always use the deployment environment located at `[deployment/chart/.env](deployment/chart/.env)` (absolute path: `D:\Microsoft-SQL-Server-Sync\deployment\chart\.env`) for deployment-related steps.
