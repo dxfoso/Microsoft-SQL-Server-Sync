@@ -161,6 +161,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_ClientSortField", clients_page)
         self.assertIn("label: const Text('View')", clients_page)
         self.assertIn("Table & data viewer", clients_page)
+        self.assertIn("Rows uploaded", clients_page)
+        self.assertIn("Rows downloaded", clients_page)
+        self.assertIn("_transferRows", clients_page)
 
     def test_control_plane_exposes_snapshot_sync_jobs(self):
         control_plane = read_text("business/control_plane.tru")

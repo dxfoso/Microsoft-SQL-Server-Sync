@@ -268,6 +268,8 @@ class _ClientsPageState extends State<ClientsPage> {
                           DataColumn(label: Text('Database')),
                           DataColumn(label: Text('Tables')),
                           DataColumn(label: Text('Rows')),
+                          DataColumn(label: Text('Rows uploaded')),
+                          DataColumn(label: Text('Rows downloaded')),
                           DataColumn(label: Text('Last heartbeat')),
                           DataColumn(label: Text('Actions')),
                         ],
@@ -414,6 +416,7 @@ class _ClientsPageState extends State<ClientsPage> {
     final selected = agent.clientName == _selectedClientName;
     final color =
         agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    final jobs = _jobsFor(agent);
     return DataRow(
       selected: selected,
       cells: [
@@ -437,6 +440,8 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(Text('${agent.tables.length}')),
         DataCell(Text(_number(_rowCount(agent)))),
+        DataCell(Text(_number(_transferRows(jobs, 'upload')))),
+        DataCell(Text(_number(_transferRows(jobs, 'download')))),
         DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
         DataCell(
           TextButton.icon(
@@ -558,7 +563,7 @@ class _ClientsPageState extends State<ClientsPage> {
       0,
       (sum, table) => sum + table.rowCount,
     );
-    return ListView(
+    return Column(
       children: [
         _buildDetailToolbar(agent),
         const SizedBox(height: 10),
@@ -579,6 +584,13 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
     );
+  }
+
+  int _transferRows(List<AdminJob> jobs, String direction) {
+    final normalizedDirection = direction.toLowerCase();
+    return jobs
+        .where((job) => job.direction.toLowerCase() == normalizedDirection)
+        .fold<int>(0, (sum, job) => sum + job.rowCount);
   }
 
   Widget _buildDetailToolbar(AdminAgent agent) {
