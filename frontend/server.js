@@ -122,7 +122,28 @@ async function tryServeClientUpdate(pathname, res) {
     pathname === "/client"
       ? "latest.json"
       : decodeURIComponent(pathname.substring("/client/".length));
-  for (const rootDir of [CLIENT_UPDATES_DIR, FALLBACK_CLIENT_UPDATES_DIR]) {
+  const roots = [CLIENT_UPDATES_DIR, FALLBACK_CLIENT_UPDATES_DIR];
+  if (requestedPath === "latest.json") {
+    const manifests = [];
+    for (const rootDir of roots) {
+      const candidatePath = resolveSafePath(rootDir, requestedPath);
+      if (!candidatePath) continue;
+      try {
+        const payload = JSON.parse(await fs.readFile(candidatePath, "utf8"));
+        if (payload && typeof payload === "object") {
+          manifests.push(payload);
+        }
+      } catch {
+        // Ignore an unavailable or malformed manifest and try the other source.
+      }
+    }
+    if (manifests.length > 0) {
+      manifests.sort((left, right) => compareClientVersions(left.version, right.version));
+      sendJson(res, 200, manifests[manifests.length - 1]);
+      return true;
+    }
+  }
+  for (const rootDir of roots) {
     const candidatePath = resolveSafePath(rootDir, requestedPath);
     if (!candidatePath) {
       continue;
@@ -144,6 +165,13 @@ async function tryServeClientUpdate(pathname, res) {
   }
   sendJson(res, 404, { error: "client update artifact not found" });
   return true;
+}
+
+function compareClientVersions(left, right) {
+  const parse = (value) => String(value || "0").split(/[.+-]/).slice(0, 2).map((part) => Number(part) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  return (a[0] - b[0]) || (a[1] - b[1]);
 }
 
 async function tryServeStatic(pathname, res) {
