@@ -5,8 +5,8 @@
 - Live server: `7c5f921`, ready, `compile_errors=0`.
 - Live client manifest: `1.0.113+117`; ZIP endpoint returns HTTP 200.
 - Local client tests: 85 passed; backend contract tests: 23 passed; TRU validation passed.
-- `c1`: installed `1.0.112+116`, but offline after automatic restart.
-- `c2`: installed `1.0.112+116`, but offline after automatic restart.
+- `c1`: installed `1.0.112+116`, offline after automatic restart; target `1.0.113+117` queued for next heartbeat.
+- `c2`: installed `1.0.112+116`, offline after automatic restart; target `1.0.113+117` queued for next heartbeat.
 - Diagnostics remain uploaded; the two client machines are not reachable from this host over ICMP, SMB, or WinRM.
 
 ## Remaining
