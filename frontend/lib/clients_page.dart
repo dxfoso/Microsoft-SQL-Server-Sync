@@ -1,9 +1,16 @@
 import 'dart:async';
 
+// Legacy compact-layout helpers remain available for future detail navigation.
+// ignore_for_file: unused_element
+
 import 'package:flutter/material.dart';
 
 import 'live_sync_api.dart';
 import 'models.dart';
+
+enum _ClientSortField { name, status, database, tables, rows, heartbeat }
+
+enum _ClientDetailView { logs, tables }
 
 class ClientsPage extends StatefulWidget {
   const ClientsPage({
@@ -23,12 +30,17 @@ class _ClientsPageState extends State<ClientsPage> {
   static const _refreshInterval = Duration(seconds: 15);
 
   final LiveSyncApiClient _api = LiveSyncApiClient();
+  final TextEditingController _filterController = TextEditingController();
   Timer? _refreshTimer;
   AdminLiveState? _state;
   String? _selectedClientName;
   String? _error;
   bool _loading = true;
   bool _refreshing = false;
+  String _filter = '';
+  _ClientSortField _sortField = _ClientSortField.name;
+  bool _sortAscending = true;
+  _ClientDetailView _detailView = _ClientDetailView.logs;
 
   @override
   void initState() {
@@ -53,6 +65,7 @@ class _ClientsPageState extends State<ClientsPage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _filterController.dispose();
     _api.dispose();
     super.dispose();
   }
@@ -81,9 +94,7 @@ class _ClientsPageState extends State<ClientsPage> {
         _selectedClientName =
             selected != null && availableNames.contains(selected)
                 ? selected
-                : nextState.agents.isEmpty
-                ? null
-                : nextState.agents.first.clientName;
+                : null;
         _loading = false;
         _error = null;
       });
@@ -135,10 +146,6 @@ class _ClientsPageState extends State<ClientsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final compact = width < 980;
-    final showDetail = _selectedAgent != null;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child:
@@ -147,36 +154,29 @@ class _ClientsPageState extends State<ClientsPage> {
               : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildHeader(compact),
+                  _buildHeader(),
                   if (_error != null) ...[
                     const SizedBox(height: 10),
                     _buildMessage(_error!, error: true),
                   ],
                   const SizedBox(height: 12),
                   Expanded(
-                    child:
-                        compact && showDetail
-                            ? _buildDetailWithBack()
-                            : Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                SizedBox(
-                                  width: compact ? double.infinity : 300,
-                                  child: _buildClientList(),
-                                ),
-                                if (!compact) ...[
-                                  const SizedBox(width: 12),
-                                  Expanded(child: _buildDetail()),
-                                ],
-                              ],
-                            ),
+                    child: ListView(
+                      children: [
+                        _buildClientList(),
+                        if (_selectedAgent != null) ...[
+                          const SizedBox(height: 12),
+                          _buildDetail(),
+                        ],
+                      ],
+                    ),
                   ),
                 ],
               ),
     );
   }
 
-  Widget _buildHeader(bool compact) {
+  Widget _buildHeader() {
     final clients = _state?.agents ?? const <AdminAgent>[];
     final online = clients.where((client) => client.isOnline).length;
     return Row(
@@ -213,29 +213,243 @@ class _ClientsPageState extends State<ClientsPage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                   : const Icon(Icons.refresh_rounded, size: 17),
-          label: Text(compact ? 'Refresh' : 'Refresh clients'),
+          label: const Text('Refresh clients'),
         ),
       ],
     );
   }
 
   Widget _buildClientList() {
-    final clients = List<AdminAgent>.from(
-      _state?.agents ?? const <AdminAgent>[],
-    )..sort((left, right) => left.clientName.compareTo(right.clientName));
+    final clients = _filteredClients();
     return _panel(
-      child:
-          clients.isEmpty
-              ? _buildEmpty(
-                'No clients have reported to the control plane yet.',
-              )
-              : ListView.separated(
-                padding: const EdgeInsets.all(10),
-                itemCount: clients.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 6),
-                itemBuilder:
-                    (context, index) => _buildClientListItem(clients[index]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'All clients',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                ),
               ),
+              Text(
+                '${clients.length} shown',
+                style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _buildClientFilters(),
+          const SizedBox(height: 10),
+          if (clients.isEmpty)
+            _buildEmpty(
+              _filter.isEmpty
+                  ? 'No clients have reported to the control plane yet.'
+                  : 'No clients match this filter.',
+            )
+          else
+            LayoutBuilder(
+              builder:
+                  (context, constraints) => SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minWidth: constraints.maxWidth,
+                      ),
+                      child: DataTable(
+                        columnSpacing: 22,
+                        headingRowHeight: 42,
+                        dataRowMinHeight: 62,
+                        dataRowMaxHeight: 72,
+                        columns: const [
+                          DataColumn(label: Text('Client')),
+                          DataColumn(label: Text('Status')),
+                          DataColumn(label: Text('Database')),
+                          DataColumn(label: Text('Tables')),
+                          DataColumn(label: Text('Rows')),
+                          DataColumn(label: Text('Last heartbeat')),
+                          DataColumn(label: Text('Actions')),
+                        ],
+                        rows: clients.map(_buildClientDataRow).toList(),
+                      ),
+                    ),
+                  ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientFilters() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack = constraints.maxWidth < 680;
+        final search = TextField(
+          controller: _filterController,
+          onChanged: (value) => setState(() => _filter = value.trim()),
+          decoration: const InputDecoration(
+            labelText: 'Filter clients',
+            hintText: 'Name, machine, database, or status',
+            prefixIcon: Icon(Icons.search_rounded),
+            isDense: true,
+          ),
+        );
+        final sort = _buildSortMenu();
+        if (stack) {
+          return Column(
+            children: [
+              search,
+              const SizedBox(height: 8),
+              Row(
+                children: [Expanded(child: sort), _buildSortDirectionButton()],
+              ),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: search),
+            const SizedBox(width: 8),
+            SizedBox(width: 190, child: sort),
+            _buildSortDirectionButton(),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSortMenu() {
+    return DropdownButtonFormField<_ClientSortField>(
+      initialValue: _sortField,
+      isExpanded: true,
+      isDense: true,
+      decoration: const InputDecoration(labelText: 'Sort by'),
+      items: const [
+        DropdownMenuItem(
+          value: _ClientSortField.name,
+          child: Text('Client name'),
+        ),
+        DropdownMenuItem(value: _ClientSortField.status, child: Text('Status')),
+        DropdownMenuItem(
+          value: _ClientSortField.database,
+          child: Text('Database'),
+        ),
+        DropdownMenuItem(
+          value: _ClientSortField.tables,
+          child: Text('Table count'),
+        ),
+        DropdownMenuItem(
+          value: _ClientSortField.rows,
+          child: Text('Row count'),
+        ),
+        DropdownMenuItem(
+          value: _ClientSortField.heartbeat,
+          child: Text('Last heartbeat'),
+        ),
+      ],
+      onChanged: (value) {
+        if (value != null) setState(() => _sortField = value);
+      },
+    );
+  }
+
+  Widget _buildSortDirectionButton() {
+    return IconButton(
+      tooltip: _sortAscending ? 'Ascending' : 'Descending',
+      onPressed: () => setState(() => _sortAscending = !_sortAscending),
+      icon: Icon(
+        _sortAscending
+            ? Icons.arrow_upward_rounded
+            : Icons.arrow_downward_rounded,
+      ),
+    );
+  }
+
+  List<AdminAgent> _filteredClients() {
+    final query = _filter.toLowerCase();
+    final clients =
+        (_state?.agents ?? const <AdminAgent>[]).where((agent) {
+          if (query.isEmpty) return true;
+          final searchable =
+              [
+                agent.clientName,
+                agent.machineName,
+                agent.database,
+                agent.server,
+                agent.isOnline ? 'online' : 'offline',
+              ].join(' ').toLowerCase();
+          return searchable.contains(query);
+        }).toList();
+    clients.sort((left, right) {
+      int comparison;
+      switch (_sortField) {
+        case _ClientSortField.name:
+          comparison = left.clientName.toLowerCase().compareTo(
+            right.clientName.toLowerCase(),
+          );
+        case _ClientSortField.status:
+          comparison = (left.isOnline ? 0 : 1).compareTo(
+            right.isOnline ? 0 : 1,
+          );
+        case _ClientSortField.database:
+          comparison = left.database.toLowerCase().compareTo(
+            right.database.toLowerCase(),
+          );
+        case _ClientSortField.tables:
+          comparison = left.tables.length.compareTo(right.tables.length);
+        case _ClientSortField.rows:
+          comparison = _rowCount(left).compareTo(_rowCount(right));
+        case _ClientSortField.heartbeat:
+          comparison = _timestamp(
+            left.lastHeartbeat,
+          ).compareTo(_timestamp(right.lastHeartbeat));
+      }
+      return _sortAscending ? comparison : -comparison;
+    });
+    return clients;
+  }
+
+  DataRow _buildClientDataRow(AdminAgent agent) {
+    final selected = agent.clientName == _selectedClientName;
+    final color =
+        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    return DataRow(
+      selected: selected,
+      cells: [
+        DataCell(
+          SizedBox(
+            width: 210,
+            child: Text(
+              agent.clientName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ),
+        DataCell(_statusChip(agent.isOnline ? 'Online' : 'Offline', color)),
+        DataCell(
+          Text(
+            agent.database.trim().isEmpty ? 'Not reported' : agent.database,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        DataCell(Text('${agent.tables.length}')),
+        DataCell(Text(_number(_rowCount(agent)))),
+        DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
+        DataCell(
+          TextButton.icon(
+            onPressed:
+                () => setState(() {
+                  _selectedClientName = agent.clientName;
+                  _detailView = _ClientDetailView.logs;
+                }),
+            icon: const Icon(Icons.visibility_outlined, size: 16),
+            label: const Text('View'),
+          ),
+        ),
+      ],
     );
   }
 
@@ -346,6 +560,8 @@ class _ClientsPageState extends State<ClientsPage> {
     );
     return ListView(
       children: [
+        _buildDetailToolbar(agent),
+        const SizedBox(height: 10),
         _panel(
           child: _buildClientSummary(
             agent,
@@ -355,9 +571,104 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         const SizedBox(height: 12),
-        _panel(child: _buildTableLog(agent)),
-        const SizedBox(height: 12),
-        _panel(child: _buildJobLog(jobs)),
+        _panel(
+          child:
+              _detailView == _ClientDetailView.logs
+                  ? _buildJobLog(jobs)
+                  : _buildDataViewer(agent),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailToolbar(AdminAgent agent) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Client view · ${agent.clientName}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          ),
+        ),
+        SegmentedButton<_ClientDetailView>(
+          segments: const [
+            ButtonSegment(
+              value: _ClientDetailView.logs,
+              icon: Icon(Icons.receipt_long_outlined),
+              label: Text('Logs'),
+            ),
+            ButtonSegment(
+              value: _ClientDetailView.tables,
+              icon: Icon(Icons.table_view_outlined),
+              label: Text('Table & data viewer'),
+            ),
+          ],
+          selected: {_detailView},
+          onSelectionChanged: (selection) {
+            setState(() => _detailView = selection.first);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDataViewer(AdminAgent agent) {
+    final tables = List<AdminTableState>.from(agent.tables)
+      ..sort((left, right) => left.table.compareTo(right.table));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Table & data viewer',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Table metadata and row counts reported by this client.',
+          style: TextStyle(color: Color(0xFF667085), fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        if (tables.isEmpty)
+          _buildEmpty('No table state has been reported.')
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('Table')),
+                DataColumn(label: Text('Rows')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Last sync')),
+                DataColumn(label: Text('Data')),
+              ],
+              rows:
+                  tables
+                      .map(
+                        (table) => DataRow(
+                          cells: [
+                            DataCell(Text(_displayTable(table.table))),
+                            DataCell(Text(_number(table.rowCount))),
+                            DataCell(
+                              _statusChip(
+                                table.status,
+                                _statusColor(table.status),
+                              ),
+                            ),
+                            DataCell(Text(_formatTimestamp(table.lastSync))),
+                            const DataCell(Text('Row data not reported')),
+                          ],
+                        ),
+                      )
+                      .toList(),
+            ),
+          ),
+        const SizedBox(height: 10),
+        _buildMessage(
+          'The control plane does not store row-level table payloads. Use the Windows client for row-level verification.',
+          error: false,
+        ),
       ],
     );
   }
@@ -667,6 +978,9 @@ class _ClientsPageState extends State<ClientsPage> {
 
   DateTime _timestamp(String value) =>
       DateTime.tryParse(value) ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+  int _rowCount(AdminAgent agent) =>
+      agent.tables.fold<int>(0, (sum, table) => sum + table.rowCount);
 
   String _number(int value) => value.toString().replaceAllMapped(
     RegExp(r'(?<!^)(?=(\d{3})+$)'),
