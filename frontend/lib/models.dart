@@ -452,6 +452,7 @@ class AdminJob {
     required this.status,
     required this.progress,
     required this.rowCount,
+    required this.changedRowCount,
     required this.createdAt,
     required this.updatedAt,
     required this.startedAt,
@@ -472,6 +473,7 @@ class AdminJob {
   final String status;
   final int progress;
   final int rowCount;
+  final int? changedRowCount;
   final String createdAt;
   final String updatedAt;
   final String? startedAt;
@@ -493,6 +495,7 @@ class AdminJob {
       status: json['status'] as String? ?? 'queued',
       progress: (json['progress'] as num? ?? 0).round(),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
+      changedRowCount: (json['changedRowCount'] as num?)?.round(),
       createdAt: json['createdAt'] as String? ?? '',
       updatedAt: json['updatedAt'] as String? ?? '',
       startedAt: json['startedAt'] as String?,

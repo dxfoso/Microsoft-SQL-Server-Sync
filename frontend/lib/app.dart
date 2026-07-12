@@ -455,8 +455,21 @@ class _AdminWorkspace extends StatefulWidget {
 class _AdminWorkspaceState extends State<_AdminWorkspace> {
   int _selectedIndex = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    _selectedIndex =
+        Uri.base.pathSegments.isNotEmpty &&
+                Uri.base.pathSegments.first == 'clients'
+            ? 1
+            : 0;
+  }
+
   void _select(int index) {
     setState(() => _selectedIndex = index);
+    replaceBrowserUrl(
+      Uri.base.replace(path: index == 1 ? '/clients' : '/dashboard').toString(),
+    );
     if (MediaQuery.sizeOf(context).width < 900) {
       Navigator.of(context).maybePop();
     }

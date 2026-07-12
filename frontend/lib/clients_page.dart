@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'browser_bridge.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
 
@@ -49,12 +50,40 @@ class _ClientsPageState extends State<ClientsPage> {
   @override
   void initState() {
     super.initState();
+    _restoreRouteFromUrl();
     _api.setAuthToken(widget.authToken);
     _refreshTimer = Timer.periodic(
       _refreshInterval,
       (_) => _refresh(silent: true),
     );
     unawaited(_refresh());
+  }
+
+  void _restoreRouteFromUrl() {
+    final segments = Uri.base.pathSegments;
+    if (segments.isEmpty || segments.first != 'clients') {
+      return;
+    }
+    if (segments.length >= 2 && segments[1].trim().isNotEmpty) {
+      _selectedClientName = Uri.decodeComponent(segments[1]);
+      _screen = _ClientScreen.detail;
+    }
+    if (segments.length >= 4 && segments[2] == 'tables') {
+      _selectedTable = Uri.decodeComponent(segments[3]);
+      _screen = _ClientScreen.table;
+    }
+  }
+
+  void _replaceRoute() {
+    final client = _selectedClientName;
+    final table = _selectedTable;
+    final path = switch (_screen) {
+      _ClientScreen.list => '/clients',
+      _ClientScreen.detail => '/clients/${Uri.encodeComponent(client ?? '')}',
+      _ClientScreen.table =>
+        '/clients/${Uri.encodeComponent(client ?? '')}/tables/${Uri.encodeComponent(table ?? '')}',
+    };
+    replaceBrowserUrl(Uri.base.replace(path: path, query: '').toString());
   }
 
   @override
@@ -102,6 +131,7 @@ class _ClientsPageState extends State<ClientsPage> {
         if (_selectedClientName == null) {
           _screen = _ClientScreen.list;
           _selectedTable = null;
+          _replaceRoute();
         }
         _loading = false;
         _error = null;
@@ -210,10 +240,12 @@ class _ClientsPageState extends State<ClientsPage> {
                 () => setState(() {
                   if (_screen == _ClientScreen.table) {
                     _screen = _ClientScreen.detail;
+                    _selectedTable = null;
                   } else {
                     _screen = _ClientScreen.list;
                     _selectedTable = null;
                   }
+                  _replaceRoute();
                 }),
             icon: const Icon(Icons.arrow_back_rounded),
           ),
@@ -357,7 +389,7 @@ class _ClientsPageState extends State<ClientsPage> {
                           DataColumn(label: Text('Status')),
                           DataColumn(label: Text('Database')),
                           DataColumn(label: Text('Tables')),
-                          DataColumn(label: Text('Rows')),
+                          DataColumn(label: Text('Changed rows')),
                           DataColumn(label: Text('Rows uploaded')),
                           DataColumn(label: Text('Rows downloaded')),
                           DataColumn(label: Text('Last heartbeat')),
@@ -491,7 +523,9 @@ class _ClientsPageState extends State<ClientsPage> {
         case _ClientSortField.tables:
           comparison = left.tables.length.compareTo(right.tables.length);
         case _ClientSortField.rows:
-          comparison = _rowCount(left).compareTo(_rowCount(right));
+          comparison = (_changedRows(_jobsFor(left)) ?? -1).compareTo(
+            _changedRows(_jobsFor(right)) ?? -1,
+          );
         case _ClientSortField.heartbeat:
           comparison = _timestamp(
             left.lastHeartbeat,
@@ -529,9 +563,9 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(Text('${agent.tables.length}')),
-        DataCell(Text(_number(_rowCount(agent)))),
-        DataCell(Text(_number(_transferRows(jobs, 'upload')))),
-        DataCell(Text(_number(_transferRows(jobs, 'download')))),
+        DataCell(Text(_changedRowsLabel(jobs))),
+        DataCell(Text(_changedRowsLabel(jobs, direction: 'upload'))),
+        DataCell(Text(_changedRowsLabel(jobs, direction: 'download'))),
         DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
         DataCell(
           TextButton.icon(
@@ -541,6 +575,7 @@ class _ClientsPageState extends State<ClientsPage> {
                   _detailView = _ClientDetailView.logs;
                   _screen = _ClientScreen.detail;
                   _selectedTable = null;
+                  _replaceRoute();
                 }),
             icon: const Icon(Icons.visibility_outlined, size: 16),
             label: const Text('View'),
@@ -647,24 +682,10 @@ class _ClientsPageState extends State<ClientsPage> {
       );
     }
     final jobs = _jobsFor(agent);
-    final completedRows = jobs
-        .where((job) => job.status.toLowerCase() == 'completed')
-        .fold<int>(0, (sum, job) => sum + job.rowCount);
     final activeJobs = jobs.where((job) => job.isActive).length;
-    final currentRows = agent.tables.fold<int>(
-      0,
-      (sum, table) => sum + table.rowCount,
-    );
     return Column(
       children: [
-        _panel(
-          child: _buildClientSummary(
-            agent,
-            currentRows,
-            completedRows,
-            activeJobs,
-          ),
-        ),
+        _panel(child: _buildClientSummary(agent, activeJobs)),
         const SizedBox(height: 12),
         _panel(
           child:
@@ -709,7 +730,7 @@ class _ClientsPageState extends State<ClientsPage> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  _metric('Current rows', _number(table.rowCount)),
+                  _metric('Changed rows', _changedRowsLabel(jobs)),
                   _metric('Status', table.status),
                   _metric('Last sync', _formatTimestamp(table.lastSync)),
                 ],
@@ -728,11 +749,26 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
+  int? _changedRows(List<AdminJob> jobs, {String? direction}) {
+    final normalizedDirection = (direction ?? '').toLowerCase();
+    final reported = jobs
+        .where((job) {
+          if (job.changedRowCount == null) return false;
+          return direction == null ||
+              job.direction.toLowerCase() == normalizedDirection;
+        })
+        .toList(growable: false);
+    if (reported.isEmpty) return null;
+    return reported.fold<int>(0, (sum, job) => sum + job.changedRowCount!);
+  }
+
+  String _changedRowsLabel(List<AdminJob> jobs, {String? direction}) {
+    final value = _changedRows(jobs, direction: direction);
+    return value == null ? 'Not reported' : _number(value);
+  }
+
   int _transferRows(List<AdminJob> jobs, String direction) {
-    final normalizedDirection = direction.toLowerCase();
-    return jobs
-        .where((job) => job.direction.toLowerCase() == normalizedDirection)
-        .fold<int>(0, (sum, job) => sum + job.rowCount);
+    return _changedRows(jobs, direction: direction) ?? 0;
   }
 
   Widget _buildDataViewer(AdminAgent agent) {
@@ -759,7 +795,9 @@ class _ClientsPageState extends State<ClientsPage> {
             child: DataTable(
               columns: const [
                 DataColumn(label: Text('Table')),
-                DataColumn(label: Text('Rows')),
+                DataColumn(label: Text('Changed rows')),
+                DataColumn(label: Text('Uploaded')),
+                DataColumn(label: Text('Downloaded')),
                 DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Last sync')),
                 DataColumn(label: Text('Data')),
@@ -770,7 +808,35 @@ class _ClientsPageState extends State<ClientsPage> {
                         (table) => DataRow(
                           cells: [
                             DataCell(Text(_displayTable(table.table))),
-                            DataCell(Text(_number(table.rowCount))),
+                            DataCell(
+                              Text(
+                                _changedRowsLabel(
+                                  _jobsFor(agent)
+                                      .where((job) => job.table == table.table)
+                                      .toList(growable: false),
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                _changedRowsLabel(
+                                  _jobsFor(agent)
+                                      .where((job) => job.table == table.table)
+                                      .toList(growable: false),
+                                  direction: 'upload',
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                _changedRowsLabel(
+                                  _jobsFor(agent)
+                                      .where((job) => job.table == table.table)
+                                      .toList(growable: false),
+                                  direction: 'download',
+                                ),
+                              ),
+                            ),
                             DataCell(
                               _statusChip(
                                 table.status,
@@ -784,6 +850,7 @@ class _ClientsPageState extends State<ClientsPage> {
                                     () => setState(() {
                                       _selectedTable = table.table;
                                       _screen = _ClientScreen.table;
+                                      _replaceRoute();
                                     }),
                                 icon: const Icon(Icons.open_in_new, size: 15),
                                 label: const Text('Open'),
@@ -804,12 +871,7 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
-  Widget _buildClientSummary(
-    AdminAgent agent,
-    int currentRows,
-    int completedRows,
-    int activeJobs,
-  ) {
+  Widget _buildClientSummary(AdminAgent agent, int activeJobs) {
     final color =
         agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
     return Column(
@@ -842,8 +904,8 @@ class _ClientsPageState extends State<ClientsPage> {
           runSpacing: 8,
           children: [
             _metric('Tables', '${agent.tables.length}'),
-            _metric('Current rows', _number(currentRows)),
-            _metric('Rows synced', _number(completedRows)),
+            _metric('Changed rows', _changedRowsLabel(_jobsFor(agent))),
+            _metric('Rows changed', _changedRowsLabel(_jobsFor(agent))),
             _metric('Active jobs', '$activeJobs'),
             _metric('New / changed', 'Not reported'),
           ],
@@ -1003,7 +1065,7 @@ class _ClientsPageState extends State<ClientsPage> {
             _statusChip(job.status, _statusColor(job.status)),
             const SizedBox(height: 3),
             Text(
-              '${job.progress}% · ${_number(job.rowCount)} rows',
+              '${job.progress}% · ${job.changedRowCount == null ? 'Changed rows not reported' : '${_number(job.changedRowCount!)} changed rows'}',
               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 3),
