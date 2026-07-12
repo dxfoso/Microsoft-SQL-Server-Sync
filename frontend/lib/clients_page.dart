@@ -1019,6 +1019,9 @@ class _ClientsPageState extends State<ClientsPage> {
     final failed =
         job.error?.trim().isNotEmpty == true ||
         job.status.toLowerCase() == 'failed';
+    final isUpload = job.direction.toLowerCase() == 'upload';
+    final deltaColor =
+        isUpload ? const Color(0xFF2563EB) : const Color(0xFFB54708);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1027,7 +1030,7 @@ class _ClientsPageState extends State<ClientsPage> {
               ? Icons.arrow_upward_rounded
               : Icons.arrow_downward_rounded,
           size: 17,
-          color: const Color(0xFF667085),
+          color: deltaColor,
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -1064,10 +1067,9 @@ class _ClientsPageState extends State<ClientsPage> {
           children: [
             _statusChip(job.status, _statusColor(job.status)),
             const SizedBox(height: 3),
-            Text(
-              '${job.progress}% · ${job.changedRowCount == null ? 'Changed rows not reported' : '${_number(job.changedRowCount!)} changed rows'}',
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-            ),
+            _deltaChip(job.changedRowCount, deltaColor),
+            const SizedBox(height: 3),
+            Text('${job.progress}%', style: const TextStyle(fontSize: 11)),
             const SizedBox(height: 3),
             Text(
               _formatTimestamp(job.updatedAt),
@@ -1076,6 +1078,28 @@ class _ClientsPageState extends State<ClientsPage> {
           ],
         ),
       ],
+    );
+  }
+
+  Widget _deltaChip(int? changedRows, Color color) {
+    final label =
+        changedRows == null
+            ? 'Additional rows not reported'
+            : '+${_number(changedRows)} rows';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
     );
   }
 

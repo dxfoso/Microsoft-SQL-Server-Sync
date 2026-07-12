@@ -165,6 +165,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Rows downloaded", clients_page)
         self.assertIn("_changedRowsLabel", clients_page)
         self.assertIn("_replaceRoute", clients_page)
+        self.assertIn("Additional rows not reported", clients_page)
+        self.assertIn("+${_number(changedRows)} rows", clients_page)
         self.assertIn("_ClientScreen", clients_page)
         self.assertIn("Sync logs", clients_page)
         self.assertIn("Back to clients", clients_page)
