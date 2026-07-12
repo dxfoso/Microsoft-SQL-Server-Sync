@@ -2,15 +2,15 @@
 
 ## Current
 
-- Live server: `92e0e124`, ready, `compile_errors=0`.
+- Live server: `b352fb0c`, ready, `compile_errors=0`.
 - Live client manifest: `1.0.115+119`; ZIP endpoint returns HTTP 200.
-- Local client tests: 85 passed; backend contract tests: 23 passed; TRU validation passed.
-- `c1`: installed `1.0.112+116`, offline after automatic restart; target `1.0.114+118` queued for next heartbeat.
-- `c2`: installed `1.0.112+116`, offline after automatic restart; target `1.0.114+118` queued for next heartbeat.
-- Diagnostics remain uploaded; the two client machines are not reachable from this host over ICMP, SMB, or WinRM.
-- Root cause found: the client decoded even-length UTF-8 `sqlcmd` output as UTF-16, corrupting Chinese text and causing oversized `agents_heartbeat.database` errors. Fixed with a regression test and redeployed.
+- Both `c1` and `c2` are online, server-connected, SQL-connected, minimized, and current on `1.0.115+119`.
+- Fresh diagnostics uploaded successfully from both clients.
+- Local client suite: 86 passed; the UTF-8/UTF-16 decoder regression is covered.
+- Root cause found: the client decoded even-length UTF-8 `sqlcmd` output as UTF-16, corrupting Chinese text and causing oversized `agents_heartbeat.database` errors. Fixed and redeployed.
+- The only live runtime event is the pre-fix `2026-07-12T21:55:57Z` mojibake error; no post-fix runtime event is present.
 
 ## Remaining
 
-- Relaunch `c1` and `c2` on their machines, then verify fresh heartbeats, minimized state, client `1.0.115+119`, and a completed sync.
-- Run a controlled network interruption/client-stop test after both clients are online.
+- Eleven historical download jobs remain queued from the July 12 outage, while both clients report all 11 enabled tables `Completed` and zero failed jobs. They require a separate stale-job cleanup/repair decision; they are not new client errors.
+- A controlled network interruption/client-stop recovery test remains to be run when it can be performed without disrupting the currently healthy clients.
