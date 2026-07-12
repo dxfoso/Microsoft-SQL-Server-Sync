@@ -34,6 +34,7 @@ class _ClientsPageState extends State<ClientsPage> {
 
   final LiveSyncApiClient _api = LiveSyncApiClient();
   final TextEditingController _filterController = TextEditingController();
+  final TextEditingController _logFilterController = TextEditingController();
   Timer? _refreshTimer;
   AdminLiveState? _state;
   String? _selectedClientName;
@@ -41,6 +42,9 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _loading = true;
   bool _refreshing = false;
   String _filter = '';
+  String _logFilter = '';
+  String _logDirection = 'all';
+  String _logStatus = 'all';
   _ClientSortField _sortField = _ClientSortField.name;
   bool _sortAscending = true;
   _ClientDetailView _detailView = _ClientDetailView.logs;
@@ -99,6 +103,7 @@ class _ClientsPageState extends State<ClientsPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _filterController.dispose();
+    _logFilterController.dispose();
     _api.dispose();
     super.dispose();
   }
@@ -990,6 +995,22 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildJobLog(List<AdminJob> jobs) {
+    final visibleJobs = jobs
+        .where((job) {
+          final query = _logFilter.toLowerCase();
+          final matchesQuery =
+              query.isEmpty ||
+              '${job.table} ${job.direction} ${job.status} ${job.message}'
+                  .toLowerCase()
+                  .contains(query);
+          final matchesDirection =
+              _logDirection == 'all' ||
+              job.direction.toLowerCase() == _logDirection;
+          final matchesStatus =
+              _logStatus == 'all' || job.status.toLowerCase() == _logStatus;
+          return matchesQuery && matchesDirection && matchesStatus;
+        })
+        .toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -999,18 +1020,185 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Each job reports direction, status, progress, and rows transferred.',
+          'Only sync differences are shown. Totals are intentionally excluded.',
           style: TextStyle(color: Color(0xFF667085), fontSize: 12),
         ),
         const SizedBox(height: 10),
-        if (jobs.isEmpty)
-          _buildEmpty('No sync jobs are visible for this client.')
-        else ...[
-          for (var index = 0; index < jobs.length; index++) ...[
-            _buildJobRow(jobs[index]),
-            if (index != jobs.length - 1) const Divider(height: 14),
-          ],
-        ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stack = constraints.maxWidth < 720;
+            final search = TextField(
+              controller: _logFilterController,
+              onChanged: (value) => setState(() => _logFilter = value.trim()),
+              decoration: const InputDecoration(
+                labelText: 'Filter log',
+                hintText: 'Table, direction, status, or message',
+                prefixIcon: Icon(Icons.search_rounded),
+                isDense: true,
+              ),
+            );
+            final direction = _buildLogFilter(
+              label: 'Direction',
+              value: _logDirection,
+              values: const {
+                'all': 'All directions',
+                'upload': 'Upload',
+                'download': 'Download',
+              },
+              onChanged: (value) => setState(() => _logDirection = value),
+            );
+            final statuses = <String, String>{'all': 'All statuses'};
+            for (final job in jobs) {
+              final status = job.status.toLowerCase();
+              if (status.isNotEmpty) statuses[status] = job.status;
+            }
+            final status = _buildLogFilter(
+              label: 'Status',
+              value: _logStatus,
+              values: statuses,
+              onChanged: (value) => setState(() => _logStatus = value),
+            );
+            if (stack) {
+              return Column(
+                children: [
+                  search,
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: direction),
+                      const SizedBox(width: 8),
+                      Expanded(child: status),
+                    ],
+                  ),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: search),
+                const SizedBox(width: 8),
+                SizedBox(width: 160, child: direction),
+                const SizedBox(width: 8),
+                SizedBox(width: 160, child: status),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        if (visibleJobs.isEmpty)
+          _buildEmpty(
+            jobs.isEmpty
+                ? 'No sync jobs are visible for this client.'
+                : 'No logs match the current filters.',
+          )
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columnSpacing: 20,
+              columns: const [
+                DataColumn(label: Text('Updated')),
+                DataColumn(label: Text('Direction')),
+                DataColumn(label: Text('Table')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Progress')),
+                DataColumn(label: Text('Added rows')),
+                DataColumn(label: Text('Uploaded new')),
+                DataColumn(label: Text('Message')),
+              ],
+              rows: visibleJobs.map(_buildLogDataRow).toList(growable: false),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildLogFilter({
+    required String label,
+    required String value,
+    required Map<String, String> values,
+    required ValueChanged<String> onChanged,
+  }) {
+    return DropdownButtonFormField<String>(
+      initialValue: values.containsKey(value) ? value : 'all',
+      isExpanded: true,
+      isDense: true,
+      decoration: InputDecoration(labelText: label),
+      items: values.entries
+          .map(
+            (entry) =>
+                DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+          )
+          .toList(growable: false),
+      onChanged: (next) {
+        if (next != null) onChanged(next);
+      },
+    );
+  }
+
+  DataRow _buildLogDataRow(AdminJob job) {
+    final isUpload = job.direction.toLowerCase() == 'upload';
+    final directionColor =
+        isUpload ? const Color(0xFF2563EB) : const Color(0xFFB54708);
+    final message =
+        job.error?.trim().isNotEmpty == true
+            ? job.error!
+            : (job.message.isEmpty ? 'No message reported.' : job.message);
+    return DataRow(
+      cells: [
+        DataCell(Text(_formatTimestamp(job.updatedAt))),
+        DataCell(
+          Row(
+            children: [
+              Icon(
+                isUpload
+                    ? Icons.arrow_upward_rounded
+                    : Icons.arrow_downward_rounded,
+                size: 16,
+                color: directionColor,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                job.direction,
+                style: TextStyle(
+                  color: directionColor,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+        DataCell(Text(_displayTable(job.table))),
+        DataCell(_statusChip(job.status, _statusColor(job.status))),
+        DataCell(Text('${job.progress}%')),
+        DataCell(
+          Text(
+            job.changedRowCount == null
+                ? 'Not reported'
+                : '+${_number(job.changedRowCount!)}',
+            style: TextStyle(
+              color: directionColor,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            isUpload && job.changedRowCount != null
+                ? '+${_number(job.changedRowCount!)}'
+                : 'Not reported',
+            style: TextStyle(
+              color: isUpload ? directionColor : const Color(0xFF667085),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        DataCell(
+          SizedBox(
+            width: 260,
+            child: Text(message, maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
+        ),
       ],
     );
   }
