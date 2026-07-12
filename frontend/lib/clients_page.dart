@@ -12,6 +12,8 @@ enum _ClientSortField { name, status, database, tables, rows, heartbeat }
 
 enum _ClientDetailView { logs, tables }
 
+enum _ClientScreen { list, detail, table }
+
 class ClientsPage extends StatefulWidget {
   const ClientsPage({
     super.key,
@@ -41,6 +43,8 @@ class _ClientsPageState extends State<ClientsPage> {
   _ClientSortField _sortField = _ClientSortField.name;
   bool _sortAscending = true;
   _ClientDetailView _detailView = _ClientDetailView.logs;
+  _ClientScreen _screen = _ClientScreen.list;
+  String? _selectedTable;
 
   @override
   void initState() {
@@ -95,6 +99,10 @@ class _ClientsPageState extends State<ClientsPage> {
             selected != null && availableNames.contains(selected)
                 ? selected
                 : null;
+        if (_selectedClientName == null) {
+          _screen = _ClientScreen.list;
+          _selectedTable = null;
+        }
         _loading = false;
         _error = null;
       });
@@ -131,6 +139,15 @@ class _ClientsPageState extends State<ClientsPage> {
     return null;
   }
 
+  AdminTableState? get _selectedTableState {
+    final tableName = _selectedTable;
+    if (tableName == null) return null;
+    for (final table in _selectedAgent?.tables ?? const <AdminTableState>[]) {
+      if (table.table == tableName) return table;
+    }
+    return null;
+  }
+
   List<AdminJob> _jobsFor(AdminAgent agent) {
     return (_state?.jobs ?? const <AdminJob>[])
       .where(
@@ -163,11 +180,10 @@ class _ClientsPageState extends State<ClientsPage> {
                   Expanded(
                     child: ListView(
                       children: [
-                        _buildClientList(),
-                        if (_selectedAgent != null) ...[
-                          const SizedBox(height: 12),
-                          _buildDetail(),
-                        ],
+                        if (_screen == _ClientScreen.list) _buildClientList(),
+                        if (_screen == _ClientScreen.detail) _buildDetail(),
+                        if (_screen == _ClientScreen.table)
+                          _buildTableDetailPage(),
                       ],
                     ),
                   ),
@@ -179,6 +195,59 @@ class _ClientsPageState extends State<ClientsPage> {
   Widget _buildHeader() {
     final clients = _state?.agents ?? const <AdminAgent>[];
     final online = clients.where((client) => client.isOnline).length;
+    final agent = _selectedAgent;
+    if (_screen != _ClientScreen.list && agent != null) {
+      final table = _selectedTableState;
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          IconButton(
+            tooltip:
+                _screen == _ClientScreen.table
+                    ? 'Back to client'
+                    : 'Back to clients',
+            onPressed:
+                () => setState(() {
+                  if (_screen == _ClientScreen.table) {
+                    _screen = _ClientScreen.detail;
+                  } else {
+                    _screen = _ClientScreen.list;
+                    _selectedTable = null;
+                  }
+                }),
+            icon: const Icon(Icons.arrow_back_rounded),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _screen == _ClientScreen.table
+                      ? _displayTable(table?.table ?? _selectedTable ?? '')
+                      : agent.clientName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _screen == _ClientScreen.table
+                      ? 'Table detail and sync history'
+                      : 'Client detail and sync activity',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF667085),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_screen == _ClientScreen.detail) _buildDetailNavigation(),
+        ],
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -216,6 +285,27 @@ class _ClientsPageState extends State<ClientsPage> {
           label: const Text('Refresh clients'),
         ),
       ],
+    );
+  }
+
+  Widget _buildDetailNavigation() {
+    return SegmentedButton<_ClientDetailView>(
+      segments: const [
+        ButtonSegment(
+          value: _ClientDetailView.logs,
+          icon: Icon(Icons.receipt_long_outlined),
+          label: Text('Sync logs'),
+        ),
+        ButtonSegment(
+          value: _ClientDetailView.tables,
+          icon: Icon(Icons.table_view_outlined),
+          label: Text('Tables'),
+        ),
+      ],
+      selected: {_detailView},
+      onSelectionChanged: (selection) {
+        setState(() => _detailView = selection.first);
+      },
     );
   }
 
@@ -449,6 +539,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 () => setState(() {
                   _selectedClientName = agent.clientName;
                   _detailView = _ClientDetailView.logs;
+                  _screen = _ClientScreen.detail;
+                  _selectedTable = null;
                 }),
             icon: const Icon(Icons.visibility_outlined, size: 16),
             label: const Text('View'),
@@ -565,8 +657,6 @@ class _ClientsPageState extends State<ClientsPage> {
     );
     return Column(
       children: [
-        _buildDetailToolbar(agent),
-        const SizedBox(height: 10),
         _panel(
           child: _buildClientSummary(
             agent,
@@ -586,44 +676,63 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
+  Widget _buildTableDetailPage() {
+    final agent = _selectedAgent;
+    final table = _selectedTableState;
+    if (agent == null || table == null) {
+      return _panel(child: _buildEmpty('Table detail is no longer available.'));
+    }
+    final jobs = _jobsFor(
+      agent,
+    ).where((job) => job.table == table.table).toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _displayTable(table.table),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${agent.clientName} · ${agent.database.isEmpty ? 'Database not reported' : agent.database}',
+                style: const TextStyle(color: Color(0xFF667085)),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _metric('Current rows', _number(table.rowCount)),
+                  _metric('Status', table.status),
+                  _metric('Last sync', _formatTimestamp(table.lastSync)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _buildMessage(
+                'The control plane does not store row-level table payloads. Use the Windows client for row-level verification.',
+                error: false,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _panel(child: _buildJobLog(jobs)),
+      ],
+    );
+  }
+
   int _transferRows(List<AdminJob> jobs, String direction) {
     final normalizedDirection = direction.toLowerCase();
     return jobs
         .where((job) => job.direction.toLowerCase() == normalizedDirection)
         .fold<int>(0, (sum, job) => sum + job.rowCount);
-  }
-
-  Widget _buildDetailToolbar(AdminAgent agent) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            'Client view · ${agent.clientName}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-          ),
-        ),
-        SegmentedButton<_ClientDetailView>(
-          segments: const [
-            ButtonSegment(
-              value: _ClientDetailView.logs,
-              icon: Icon(Icons.receipt_long_outlined),
-              label: Text('Logs'),
-            ),
-            ButtonSegment(
-              value: _ClientDetailView.tables,
-              icon: Icon(Icons.table_view_outlined),
-              label: Text('Table & data viewer'),
-            ),
-          ],
-          selected: {_detailView},
-          onSelectionChanged: (selection) {
-            setState(() => _detailView = selection.first);
-          },
-        ),
-      ],
-    );
   }
 
   Widget _buildDataViewer(AdminAgent agent) {
@@ -669,7 +778,17 @@ class _ClientsPageState extends State<ClientsPage> {
                               ),
                             ),
                             DataCell(Text(_formatTimestamp(table.lastSync))),
-                            const DataCell(Text('Row data not reported')),
+                            DataCell(
+                              TextButton.icon(
+                                onPressed:
+                                    () => setState(() {
+                                      _selectedTable = table.table;
+                                      _screen = _ClientScreen.table;
+                                    }),
+                                icon: const Icon(Icons.open_in_new, size: 15),
+                                label: const Text('Open'),
+                              ),
+                            ),
                           ],
                         ),
                       )
