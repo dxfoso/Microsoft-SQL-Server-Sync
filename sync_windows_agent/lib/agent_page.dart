@@ -13,6 +13,7 @@ import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_sync_merge.dart';
 import 'sql_sync_schema.dart';
+import 'sql_cmd_output.dart';
 import 'sync_state.dart';
 import 'startup_log.dart';
 import 'tray_progress.dart';
@@ -3980,9 +3981,12 @@ ORDER BY ct.SYS_CHANGE_VERSION;
       query: query,
       timeout: _snapshotSqlCmdTimeout,
     );
-    if (result == null) throw Exception(_sqlCmdUnavailableMessage(profile));
-    if (result.exitCode != 0)
+    if (result == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (result.exitCode != 0) {
       throw Exception(_sqlCmdFailed('change tracking delta fetch', result));
+    }
     final rows = <Map<String, String?>>[];
     for (final line in _dataOutputLines(result.stdout.toString())) {
       final payload =
@@ -5454,10 +5458,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         return ProcessResult(
           process.pid,
           -1,
-          _decodeSqlCmdOutput(stdoutBytes),
+          decodeSqlCmdOutputBytes(stdoutBytes),
           [
             timeoutText,
-            _decodeSqlCmdOutput(stderrBytes),
+            decodeSqlCmdOutputBytes(stderrBytes),
           ].where((part) => part.trim().isNotEmpty).join('\n'),
         );
       }
@@ -5466,8 +5470,8 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       return ProcessResult(
         process.pid,
         exitCode,
-        _decodeSqlCmdOutput(stdoutBytes),
-        _decodeSqlCmdOutput(stderrBytes),
+        decodeSqlCmdOutputBytes(stdoutBytes),
+        decodeSqlCmdOutputBytes(stderrBytes),
       );
     } on ProcessException catch (error) {
       _lastSqlCmdLaunchError =
@@ -5485,21 +5489,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     }
   }
 
-  String _decodeSqlCmdOutput(List<int> bytes) {
-    if (bytes.isEmpty) {
-      return '';
-    }
-
-    final data = Uint8List.fromList(bytes);
-    final utf16Likely = _looksLikeUtf16Le(data);
-    if (data.length.isEven || utf16Likely) {
-      // sqlcmd is invoked with -u, so its stdout/stderr are UTF-16LE. Do not
-      // infer this from zero bytes: Arabic UTF-16 code units often have none.
-      return _decodeUtf16Le(data);
-    }
-    return utf8.decode(data, allowMalformed: true);
-  }
-
   String _formatDurationForLog(Duration duration) {
     final minutes = duration.inMinutes;
     final seconds = duration.inSeconds.remainder(60);
@@ -5510,38 +5499,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       return '${minutes}m';
     }
     return '${duration.inSeconds}s';
-  }
-
-  bool _looksLikeUtf16Le(Uint8List bytes) {
-    if (bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe) {
-      return true;
-    }
-    if (bytes.length < 4) {
-      return false;
-    }
-
-    var oddZeroCount = 0;
-    var sampledPairs = 0;
-    for (var index = 1; index < bytes.length && sampledPairs < 32; index += 2) {
-      sampledPairs += 1;
-      if (bytes[index] == 0) {
-        oddZeroCount += 1;
-      }
-    }
-    return sampledPairs >= 4 && oddZeroCount * 2 >= sampledPairs;
-  }
-
-  String _decodeUtf16Le(Uint8List bytes) {
-    var offset = 0;
-    if (bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe) {
-      offset = 2;
-    }
-    final usableLength = bytes.length - ((bytes.length - offset) % 2);
-    final codeUnits = <int>[];
-    for (var index = offset; index < usableLength; index += 2) {
-      codeUnits.add(bytes[index] | (bytes[index + 1] << 8));
-    }
-    return String.fromCharCodes(codeUnits);
   }
 
   String _sqlCmdUnavailableMessage(_SqlConnectionProfile profile) {
