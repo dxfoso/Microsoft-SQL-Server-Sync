@@ -168,10 +168,10 @@ async function tryServeClientUpdate(pathname, res) {
 }
 
 function compareClientVersions(left, right) {
-  const parse = (value) => String(value || "0").split(/[.+-]/).slice(0, 2).map((part) => Number(part) || 0);
+  const parse = (value) => String(value || "0").split(/[.+-]/).slice(0, 3).map((part) => Number(part) || 0);
   const a = parse(left);
   const b = parse(right);
-  return (a[0] - b[0]) || (a[1] - b[1]);
+  return (a[0] - b[0]) || (a[1] - b[1]) || (a[2] - b[2]);
 }
 
 async function tryServeStatic(pathname, res) {
