@@ -48,7 +48,7 @@ Use the launcher when a local stack restart is actually needed.
 - Always use the deployment environment located at `[deployment/chart/.env](deployment/chart/.env)` (absolute path: `D:\Microsoft-SQL-Server-Sync\deployment\chart\.env`) for deployment-related steps.
 - If deployment behavior regresses, refresh deployment inputs from `deployment/chart/.env` before retrying redeploy.
 - Node target must be supplied by Cloud deployment metadata for each deployment/redeploy; do not hardcode a fixed node name in repo files or scripts.
-- Before changing or diagnosing any deployment-related item, first check the cloud deployment instructions at `https://cloud.divclouds.com/deployment-instructions.txt` to confirm current expected node/DNS/health behavior.
+- Before changing or diagnosing any deployment-related item, always use the canonical Cloud direct-instructions URL: `https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=f722c074-2acb-4bb8-8a5f-ef1ff78e0aba&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com`. Do not use the legacy `deployment-instructions.txt` URL.
 - Any nonzero compile errors in project-owned TRU files under `business/` must be treated as a failed deployment, even if pods start and other health checks pass.
 - Keep the public backend `/admin/health` endpoint readable without admin credentials. Cloud deployment compile gating depends on a public JSON response that includes `ready`, `compile_errors`, and build commit data.
 - Keep dashboard and control-plane polling endpoints bounded. If `/admin/health` reports memory pressure or a TRU endpoint hits the WASM epoch deadline, fix the query/payload bounds first; raising pod memory or `TRU_MEMORY_CAP_MB` alone is not the long-term deployment fix.

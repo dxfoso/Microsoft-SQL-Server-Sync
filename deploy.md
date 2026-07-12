@@ -2,6 +2,12 @@
 
 This repository deploys the web control plane and backend through the Cloud deployment links stored in `deployment/chart/.env`.
 
+The only deployment-instruction source is the Cloud direct-instructions URL below. Do not use the legacy `deployment-instructions.txt` URL.
+
+```text
+https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=f722c074-2acb-4bb8-8a5f-ef1ff78e0aba&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com
+```
+
 ## Preflight
 
 Run from the repository root in PowerShell:
@@ -10,20 +16,13 @@ Run from the repository root in PowerShell:
 git status --short --branch
 git log -1 --oneline
 
-try {
-    $instructions = Invoke-WebRequest -UseBasicParsing `
-        -Uri 'https://cloud.divclouds.com/deployment-instructions.txt' `
-        -TimeoutSec 30
-    "status=$($instructions.StatusCode)"
-} catch {
-    "error=$($_.Exception.Message)"
-}
+$instructionsUrl = 'https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=f722c074-2acb-4bb8-8a5f-ef1ff78e0aba&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com'
+$instructions = Invoke-WebRequest -UseBasicParsing -Uri $instructionsUrl -TimeoutSec 60
+"status=$($instructions.StatusCode)"
 
 Get-Content deployment\chart\.env -Raw |
     Select-String -Pattern 'Namespace:|latest-debug|latest-redeploy'
 ```
-
-The instructions URL currently returns `404`; deployment still uses the repository-provided links in `deployment/chart/.env`.
 
 ## Push The Release
 
