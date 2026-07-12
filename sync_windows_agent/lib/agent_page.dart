@@ -5274,15 +5274,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     }
 
     final data = Uint8List.fromList(bytes);
-    if (_looksLikeUtf16Le(data)) {
+    final utf16Likely = _looksLikeUtf16Le(data);
+    if (data.length.isEven || utf16Likely) {
+      // sqlcmd is invoked with -u, so its stdout/stderr are UTF-16LE. Do not
+      // infer this from zero bytes: Arabic UTF-16 code units often have none.
       return _decodeUtf16Le(data);
     }
-
-    try {
-      return utf8.decode(data);
-    } on FormatException {
-      return utf8.decode(data, allowMalformed: true);
-    }
+    return utf8.decode(data, allowMalformed: true);
   }
 
   String _formatDurationForLog(Duration duration) {
