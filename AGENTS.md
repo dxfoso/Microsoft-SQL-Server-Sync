@@ -37,6 +37,9 @@ Use the launcher when a local stack restart is actually needed.
 
 ## Deployment Rule
 
+- After any shipped `frontend/` web change, automatically run the relevant frontend and contract tests, commit and push the change, and trigger one Cloud redeploy using the `latest-redeploy` link from `deployment/chart/.env`; do not wait for a separate redeploy request.
+- Monitor the deployment only through the `latest-debug` link from `deployment/chart/.env` so polling never starts duplicate deployments.
+- A frontend change is not considered deployed until public `/admin/health` reports the new commit with `ready: true` and zero compile errors, and the live `main.dart.js` contains the changed feature markers. If rollout is still pending, report it explicitly instead of claiming success.
 - Always use the deployment environment located at `[deployment/chart/.env](deployment/chart/.env)` (absolute path: `D:\Microsoft-SQL-Server-Sync\deployment\chart\.env`) for deployment-related steps.
 - If deployment behavior regresses, refresh deployment inputs from `deployment/chart/.env` before retrying redeploy.
 - Node target must be supplied by Cloud deployment metadata for each deployment/redeploy; do not hardcode a fixed node name in repo files or scripts.
