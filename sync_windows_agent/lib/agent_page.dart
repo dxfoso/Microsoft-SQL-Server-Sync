@@ -3306,6 +3306,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       overrideMessage:
           'Uploaded ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
     );
+    final targetJob = uploadResult.targetJob;
+    if (targetJob != null) {
+      // The server queues the dependent download when upload completes. Keep
+      // that transition locally so it runs in this sync cycle.
+      _applyRemoteJobState(targetJob);
+    }
   }
 
   Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {

@@ -89,7 +89,8 @@ class AgentControlPlaneClient {
        _controlPlaneRequestTimeout = controlPlaneRequestTimeout,
        _diagnosticsUploadRequestTimeout = diagnosticsUploadRequestTimeout,
        _snapshotTransferMaxAttempts =
-           (snapshotTransferMaxAttempts ?? _defaultSnapshotTransferMaxAttempts) <
+           (snapshotTransferMaxAttempts ??
+                       _defaultSnapshotTransferMaxAttempts) <
                    1
                ? 1
                : (snapshotTransferMaxAttempts ??
@@ -98,9 +99,8 @@ class AgentControlPlaneClient {
            snapshotTransferRequestTimeout ??
            _defaultSnapshotTransferRequestTimeout,
        _snapshotTransferRetryDelays =
-           (snapshotTransferRetryDelays ??
-                   _defaultSnapshotTransferRetryDelays)
-               .isEmpty
+           (snapshotTransferRetryDelays ?? _defaultSnapshotTransferRetryDelays)
+                   .isEmpty
                ? const <Duration>[Duration.zero]
                : List<Duration>.unmodifiable(
                  snapshotTransferRetryDelays ??
@@ -237,7 +237,10 @@ class AgentControlPlaneClient {
       throw _exceptionFromResponse(response);
     }
     return _unwrapApiResponse(
-      _decodeJsonOrThrow(response.body, 'Unexpected payload returned from $phase.'),
+      _decodeJsonOrThrow(
+        response.body,
+        'Unexpected payload returned from $phase.',
+      ),
     );
   }
 
@@ -544,10 +547,8 @@ class AgentControlPlaneClient {
     );
     final jobs = _mapListOrThrow(
       decoded['jobs'],
-      (item) => _parseRemoteSyncJobPayload(
-        item,
-        'Unexpected heartbeat payload.',
-      ),
+      (item) =>
+          _parseRemoteSyncJobPayload(item, 'Unexpected heartbeat payload.'),
       'Unexpected heartbeat payload.',
     );
     return HeartbeatResult(
@@ -697,10 +698,8 @@ class AgentControlPlaneClient {
     final decoded = response;
     return _mapListOrThrow(
       decoded['jobs'],
-      (item) => _parseRemoteSyncJobPayload(
-        item,
-        'Unexpected job queue payload.',
-      ),
+      (item) =>
+          _parseRemoteSyncJobPayload(item, 'Unexpected job queue payload.'),
       'Unexpected job queue payload.',
     );
   }
@@ -934,6 +933,13 @@ class AgentControlPlaneClient {
         decoded['job'],
         'Unexpected snapshot upload completion payload.',
       ),
+      targetJob:
+          decoded['targetJob'] is Map
+              ? _parseRemoteSyncJobPayload(
+                decoded['targetJob'],
+                'Unexpected target job in snapshot upload completion payload.',
+              )
+              : null,
       snapshot: _parseSnapshotPayload(
         decoded['snapshot'],
         'Unexpected snapshot upload completion payload.',
@@ -1027,7 +1033,10 @@ class AgentControlPlaneClient {
     return snapshot;
   }
 
-  ClientUpdateInfo _parseClientUpdateInfoPayload(dynamic response, String message) {
+  ClientUpdateInfo _parseClientUpdateInfoPayload(
+    dynamic response,
+    String message,
+  ) {
     if (response is! Map) {
       throw AgentControlPlaneException(message);
     }
@@ -1106,7 +1115,9 @@ class AgentControlPlaneClient {
       throw AgentControlPlaneException(message);
     }
     try {
-      return RemoteTableSyncPolicy.fromJson(Map<String, dynamic>.from(response));
+      return RemoteTableSyncPolicy.fromJson(
+        Map<String, dynamic>.from(response),
+      );
     } catch (_) {
       throw AgentControlPlaneException(message);
     }
@@ -1136,7 +1147,9 @@ class AgentControlPlaneClient {
       throw AgentControlPlaneException(message);
     }
     try {
-      return RemoteTableDependency.fromJson(Map<String, dynamic>.from(response));
+      return RemoteTableDependency.fromJson(
+        Map<String, dynamic>.from(response),
+      );
     } catch (_) {
       throw AgentControlPlaneException(message);
     }
@@ -1150,7 +1163,9 @@ class AgentControlPlaneClient {
       throw AgentControlPlaneException(message);
     }
     try {
-      return RemoteAgentDiagnostics.fromJson(Map<String, dynamic>.from(response));
+      return RemoteAgentDiagnostics.fromJson(
+        Map<String, dynamic>.from(response),
+      );
     } catch (_) {
       throw AgentControlPlaneException(message);
     }
@@ -1164,7 +1179,9 @@ class AgentControlPlaneClient {
       throw AgentControlPlaneException(message);
     }
     try {
-      return RemoteAgentClientUpdate.fromJson(Map<String, dynamic>.from(response));
+      return RemoteAgentClientUpdate.fromJson(
+        Map<String, dynamic>.from(response),
+      );
     } catch (_) {
       throw AgentControlPlaneException(message);
     }
@@ -1178,7 +1195,9 @@ class AgentControlPlaneClient {
       throw AgentControlPlaneException(message);
     }
     try {
-      return RemoteAgentWindowAction.fromJson(Map<String, dynamic>.from(response));
+      return RemoteAgentWindowAction.fromJson(
+        Map<String, dynamic>.from(response),
+      );
     } catch (_) {
       throw AgentControlPlaneException(message);
     }
@@ -1232,7 +1251,8 @@ class AgentControlPlaneClient {
         rowCount: (decoded['rowCount'] as num? ?? snapshot.rowCount).round(),
         checksum: decoded['checksum'] as String? ?? '',
         snapshotBytes:
-            (decoded['snapshotBytes'] as num? ?? snapshot.snapshotBytes).round(),
+            (decoded['snapshotBytes'] as num? ?? snapshot.snapshotBytes)
+                .round(),
         sourceJobId: decoded['sourceJobId'] as String?,
       );
     } catch (_) {
@@ -1690,9 +1710,14 @@ class RemoteSnapshot {
 }
 
 class UploadSnapshotResult {
-  const UploadSnapshotResult({required this.job, required this.snapshot});
+  const UploadSnapshotResult({
+    required this.job,
+    required this.snapshot,
+    this.targetJob,
+  });
 
   final RemoteSyncJob job;
+  final RemoteSyncJob? targetJob;
   final RemoteSnapshot snapshot;
 }
 
