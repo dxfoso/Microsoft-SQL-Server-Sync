@@ -466,10 +466,10 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
   }
 
   void _select(int index) {
-    setState(() => _selectedIndex = index);
     replaceBrowserUrl(
       Uri.base.replace(path: index == 1 ? '/clients' : '/dashboard').toString(),
     );
+    setState(() => _selectedIndex = index);
     if (MediaQuery.sizeOf(context).width < 900) {
       Navigator.of(context).maybePop();
     }
@@ -478,6 +478,7 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
   Widget _page() {
     if (_selectedIndex == 1) {
       return ClientsPage(
+        key: ValueKey('clients:${Uri.base.path}'),
         authToken: widget.authToken,
         onLogout: widget.onLogout,
       );
