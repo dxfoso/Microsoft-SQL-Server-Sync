@@ -2502,6 +2502,31 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
   return '';
 }
 
+function bulk_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, completedJobRows: array<json>? = null): string {
+  const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table, completedJobRows);
+  if (rememberedSource.length != 0) {
+    for (const candidate of visibleAgents) {
+      if (string.from(candidate.clientName) == rememberedSource
+        && string.from(candidate.clientName) != string.from(targetAgent.clientName)
+        && candidate.ownerUserId == targetAgent.ownerUserId
+        && effective_agent_online(candidate)
+        && agent_table_sync_enabled(candidate, table, ownerPolicies)) {
+        return rememberedSource;
+      }
+    }
+  }
+  for (const candidate of visibleAgents) {
+    if (string.from(candidate.clientName) == string.from(targetAgent.clientName)
+      || candidate.ownerUserId != targetAgent.ownerUserId
+      || !effective_agent_online(candidate)
+      || !agent_table_sync_enabled(candidate, table, ownerPolicies)) {
+      continue;
+    }
+    return string.from(candidate.clientName);
+  }
+  return '';
+}
+
 function build_snapshot_relay_job_rows(sourceAgent: map<json>, targetClientName: string, targetClientUserId: string? = null, targetOwnerUserId: string? = null, tables: array<string>): array<json> {
   let rows = [];
   for (const table of tables) {
@@ -3658,7 +3683,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         }
       }
       for (const table of tablesToQueue) {
-        const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, ownerAgents, ownerPolicies, tableCaches, completedJobRows);
+        const sourceClientName = bulk_source_client_name_for_agent_table(agent, table, ownerAgents, ownerPolicies, completedJobRows);
         if (sourceClientName.length == 0) {
           skippedSourceResolutionTables = skippedSourceResolutionTables.concat([string.concat(agent.clientName, '::', table)]);
           continue;
