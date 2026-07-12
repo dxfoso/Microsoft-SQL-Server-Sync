@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.114+118",
-    "commit":  "0da3835bbed4",
-    "releaseDate":  "2026-07-12T21:28:59.2302255Z",
+    "version":  "1.0.115+119",
+    "commit":  "d3bc05782052",
+    "releaseDate":  "2026-07-12T21:51:07.1778458Z",
     "packageType":  "files-v1",
-    "filesManifestUrl":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.114-118-0da3835bbed4/files.json",
-    "zipUrl":  "https://sync.velvet-leaf.com/client/sync_windows_agent-1.0.114-118-0da3835bbed4.zip",
+    "filesManifestUrl":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.115-119-d3bc05782052/files.json",
+    "zipUrl":  "https://sync.velvet-leaf.com/client/sync_windows_agent-1.0.115-119-d3bc05782052.zip",
     "updateScriptUrl":  "https://sync.velvet-leaf.com/client/update.ps1",
-    "sha256":  "a87d67ac66d926338bc55729b2a1f6788187516c7b5e86fda6b27da8d07c147a",
-    "sizeBytes":  13587281
+    "sha256":  "c02753c451963f448030f5ea44e9c4173ca6f4b795e7b1ea6d95bca74d8ade4b",
+    "sizeBytes":  13587373
 }
