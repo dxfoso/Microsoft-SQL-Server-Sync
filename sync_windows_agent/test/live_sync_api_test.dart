@@ -561,7 +561,7 @@ void main() {
     );
   });
 
-  test('uploadSnapshot retries transient 503 during chunk upload and resumes remaining chunks', () async {
+  test('uploadSnapshot retries transient API database failures during chunk upload', () async {
     final snapshotJson = _buildLargeSnapshotJson(
       clientName: 'c1',
       table: 'db::gr000',
@@ -582,9 +582,10 @@ void main() {
             final chunkIndex = args['chunkIndex'] as int? ?? -1;
             if (chunkIndex == 1 && callIndex == 2) {
               return (
-                statusCode: 503,
+                statusCode: 200,
                 body: {
-                  'error': 'Control plane is temporarily unavailable. Retrying automatically.',
+                  'status': 'failed',
+                  'error': 'runtime error: db error',
                 },
               );
             }

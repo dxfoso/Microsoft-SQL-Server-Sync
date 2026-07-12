@@ -358,8 +358,6 @@ $packageDirName = "sync_windows_agent-$safeVersion-$commit"
 $packageOutputRoot = Join-Path -Path $OutputDir -ChildPath 'packages'
 $packageOutputDir = Join-Path -Path $packageOutputRoot -ChildPath $packageDirName
 $packageFilesManifest = Join-Path -Path $packageOutputDir -ChildPath 'files.json'
-$multipartOutputRoot = Join-Path -Path $OutputDir -ChildPath 'multipart'
-$multipartOutputDir = Join-Path -Path $multipartOutputRoot -ChildPath $packageDirName
 
 Copy-Item -LiteralPath $PortableZip -Destination $versionedZip -Force
 Copy-Item -LiteralPath $PortableZip -Destination $latestZip -Force
@@ -369,16 +367,6 @@ if (Test-Path -LiteralPath $packageOutputDir) {
     Remove-Item -LiteralPath $packageOutputDir -Recurse -Force
 }
 New-Item -Path $packageOutputDir -ItemType Directory -Force | Out-Null
-if (Test-Path -LiteralPath $multipartOutputDir) {
-    Remove-Item -LiteralPath $multipartOutputDir -Recurse -Force
-}
-New-Item -Path $multipartOutputDir -ItemType Directory -Force | Out-Null
-New-PortableZipParts `
-    -ZipPath $PortableZip `
-    -BaseZipName $PortableName `
-    -PartsDir $multipartOutputDir `
-    -PartCount 10
-
 $extractRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("sql-sync-client-publish-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -Path $extractRoot -ItemType Directory -Force | Out-Null
 try {
@@ -412,7 +400,6 @@ $manifest = [ordered]@{
     filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json"
     zipUrl = "$publicRoot/$zipName"
     updateScriptUrl = "$publicRoot/update.ps1"
-    multipartBaseUrl = "$publicRoot/multipart/$packageDirName"
     sha256 = $zipHash
     sizeBytes = $zipSize
 }
@@ -423,7 +410,6 @@ Write-Host "Client update artifacts written to $OutputDir"
 Write-Host "Manifest: $latestManifest"
 Write-Host "ZIP:      $versionedZip"
 Write-Host "Files:    $packageOutputDir"
-Write-Host "Multipart:$multipartOutputDir"
 
 if ([string]::IsNullOrWhiteSpace($SshTarget)) {
     Write-Host 'No -SshTarget supplied; skipping live upload.'
@@ -436,7 +422,7 @@ if ([string]::IsNullOrWhiteSpace($Namespace)) {
 
 $remoteStage = "/tmp/sql-sync-client-update-$([guid]::NewGuid().ToString('N'))"
 Invoke-CheckedNative -Description "Creating remote staging directory on $SshTarget..." -Command {
-    & ssh $SshTarget "mkdir -p '$remoteStage/packages' '$remoteStage/multipart'"
+    & ssh $SshTarget "mkdir -p '$remoteStage/packages'"
 }
 try {
     Invoke-CheckedNative -Description 'Uploading staged client artifacts to SSH target...' -Command {
@@ -445,10 +431,6 @@ try {
     Invoke-CheckedNative -Description 'Uploading staged differential package to SSH target...' -Command {
         & scp -r $packageOutputDir "$SshTarget`:$remoteStage/packages/"
     }
-    Invoke-CheckedNative -Description 'Uploading staged multipart ZIP package to SSH target...' -Command {
-        & scp -r $multipartOutputDir "$SshTarget`:$remoteStage/multipart/"
-    }
-
     $podOutput = & ssh $SshTarget "kubectl get pods -n '$Namespace' -l app.kubernetes.io/component=frontend -o name"
     if ($LASTEXITCODE -ne 0) {
         throw "Could not list frontend pods in namespace $Namespace"
@@ -464,7 +446,7 @@ try {
 
     foreach ($pod in $pods) {
         Invoke-CheckedNative -Description "Publishing client update files to pod $pod..." -Command {
-            & ssh $SshTarget "kubectl exec -n '$Namespace' '$pod' -- mkdir -p '$RemoteUpdatesDir/packages/$packageDirName' '$RemoteUpdatesDir/multipart/$packageDirName' && kubectl cp '$remoteStage/latest.json' '$Namespace/$pod`:$RemoteUpdatesDir/latest.json' && kubectl cp '$remoteStage/$zipName' '$Namespace/$pod`:$RemoteUpdatesDir/$zipName' && kubectl cp '$remoteStage/sync_windows_agent_latest.zip' '$Namespace/$pod`:$RemoteUpdatesDir/sync_windows_agent_latest.zip' && kubectl cp '$remoteStage/update.ps1' '$Namespace/$pod`:$RemoteUpdatesDir/update.ps1' && kubectl cp '$remoteStage/packages/$packageDirName/.' '$Namespace/$pod`:$RemoteUpdatesDir/packages/$packageDirName' && kubectl cp '$remoteStage/multipart/$packageDirName/.' '$Namespace/$pod`:$RemoteUpdatesDir/multipart/$packageDirName'"
+            & ssh $SshTarget "kubectl exec -n '$Namespace' '$pod' -- mkdir -p '$RemoteUpdatesDir/packages/$packageDirName' && kubectl cp '$remoteStage/latest.json' '$Namespace/$pod`:$RemoteUpdatesDir/latest.json' && kubectl cp '$remoteStage/$zipName' '$Namespace/$pod`:$RemoteUpdatesDir/$zipName' && kubectl cp '$remoteStage/sync_windows_agent_latest.zip' '$Namespace/$pod`:$RemoteUpdatesDir/sync_windows_agent_latest.zip' && kubectl cp '$remoteStage/update.ps1' '$Namespace/$pod`:$RemoteUpdatesDir/update.ps1' && kubectl cp '$remoteStage/packages/$packageDirName/.' '$Namespace/$pod`:$RemoteUpdatesDir/packages/$packageDirName'"
         }
     }
 

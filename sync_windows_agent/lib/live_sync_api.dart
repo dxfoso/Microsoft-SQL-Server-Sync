@@ -281,6 +281,28 @@ class AgentControlPlaneClient {
         statusCode == 504;
   }
 
+  bool _isRetryableTransferResponse(http.Response response) {
+    if (_isRetryableTransferStatus(response.statusCode)) {
+      return true;
+    }
+    if (response.statusCode != 200) {
+      return false;
+    }
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic> || decoded['status'] != 'failed') {
+        return false;
+      }
+      final message = _errorMessageFromMap(decoded).toLowerCase();
+      return message.contains('db error') ||
+          message.contains('database error') ||
+          message.contains('temporarily unavailable') ||
+          message.contains('timeout');
+    } catch (_) {
+      return false;
+    }
+  }
+
   Duration _transferRetryDelay(int attempt) {
     final index =
         attempt.clamp(0, _snapshotTransferRetryDelays.length - 1).toInt();
@@ -301,7 +323,7 @@ class AgentControlPlaneClient {
         final response = await request().timeout(
           _snapshotTransferRequestTimeout,
         );
-        if (!_isRetryableTransferStatus(response.statusCode) ||
+        if (!_isRetryableTransferResponse(response) ||
             attempt == _snapshotTransferMaxAttempts - 1) {
           return response;
         }
