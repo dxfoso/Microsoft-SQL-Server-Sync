@@ -2,7 +2,7 @@
 
 This repository deploys the web control plane and backend through the Cloud deployment links stored in `deployment/chart/.env`.
 
-The only deployment-instruction source is the Cloud direct-instructions URL below. Do not use the legacy `deployment-instructions.txt` URL.
+The only deployment-instruction source is the Cloud direct-instructions URL below. Do not use any other deployment-instruction URL.
 
 ```text
 https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=f722c074-2acb-4bb8-8a5f-ef1ff78e0aba&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com
