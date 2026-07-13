@@ -2485,7 +2485,7 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
   for (const candidate of visibleAgents) {
     if (candidate.clientName == targetClientName
       || candidate.ownerUserId != targetAgent.ownerUserId
-      || !effective_agent_online(candidate)) {
+      ) {
       continue;
     }
     const candidateTableCache = scheduler_agent_table_state_cache_for_agent(string.from(candidate.clientName), allTableCaches ?? []);
@@ -2529,7 +2529,6 @@ function preferred_source_client_name_for_agent_table(targetAgent: map<json>, ta
       if (candidate.clientName == rememberedSource
         && candidate.clientName != targetAgent.clientName
         && candidate.ownerUserId == targetAgent.ownerUserId
-        && effective_agent_online(candidate)
         && agent_table_sync_enabled(candidate, table, ownerPolicies, candidateTableCache)) {
         return rememberedSource;
       }
@@ -2548,7 +2547,6 @@ function bulk_source_client_name_for_agent_table(targetAgent: map<json>, table: 
       if (string.from(candidate.clientName) == rememberedSource
         && string.from(candidate.clientName) != string.from(targetAgent.clientName)
         && candidate.ownerUserId == targetAgent.ownerUserId
-        && effective_agent_online(candidate)
         && agent_table_sync_enabled(candidate, table, ownerPolicies)) {
         return rememberedSource;
       }
@@ -2557,7 +2555,6 @@ function bulk_source_client_name_for_agent_table(targetAgent: map<json>, table: 
   for (const candidate of visibleAgents) {
     if (string.from(candidate.clientName) == string.from(targetAgent.clientName)
       || candidate.ownerUserId != targetAgent.ownerUserId
-      || !effective_agent_online(candidate)
       || !agent_table_sync_enabled(candidate, table, ownerPolicies)) {
       continue;
     }
@@ -3696,10 +3693,6 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         )
       );
       if (enabledTables.length == 0) {
-        continue;
-      }
-      if (!effective_agent_online(agent)) {
-        skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
         continue;
       }
       const activeCache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), activeTableCaches);
