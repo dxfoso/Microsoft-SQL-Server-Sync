@@ -1077,16 +1077,17 @@ class AgentControlPlaneClient {
     String jobId, {
     required String batchId,
   }) async {
-    var offset = 0;
+    String? cursor;
     RemoteSnapshot? firstSnapshot;
     final mergedRows = <Map<String, String?>>[];
     var totalSnapshotBytes = 0;
     while (true) {
-      final decoded = await _invokeFunctionWithRetry(
-        'jobs_multi_writer_download',
-        {'jobId': jobId, 'batchId': batchId, 'offset': offset, 'limit': 250},
-        'downloading merged multi-writer delta',
-      );
+      final decoded =
+          await _invokeFunctionWithRetry('jobs_multi_writer_download', {
+            'jobId': jobId,
+            'batchId': batchId,
+            if (cursor != null && cursor!.isNotEmpty) 'cursor': cursor,
+          }, 'downloading merged multi-writer delta');
       if (decoded is! Map || decoded['snapshot'] is! Map) {
         throw const AgentControlPlaneException(
           'Unexpected merged multi-writer download payload.',
@@ -1107,13 +1108,13 @@ class AgentControlPlaneClient {
           snapshotBytes: totalSnapshotBytes,
         );
       }
-      final nextOffset = (decoded['nextOffset'] as num?)?.round();
-      if (nextOffset == null || nextOffset <= offset) {
+      final nextCursor = decoded['nextCursor']?.toString();
+      if (nextCursor == null || nextCursor.isEmpty || nextCursor == cursor) {
         throw const AgentControlPlaneException(
-          'Merged multi-writer download did not advance its offset.',
+          'Merged multi-writer download did not advance its cursor.',
         );
       }
-      offset = nextOffset;
+      cursor = nextCursor;
     }
   }
 
