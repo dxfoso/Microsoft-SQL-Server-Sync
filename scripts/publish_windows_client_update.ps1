@@ -353,11 +353,13 @@ $zipName = "sync_windows_agent-$safeVersion-$commit.zip"
 $versionedZip = Join-Path -Path $OutputDir -ChildPath $zipName
 $latestZip = Join-Path -Path $OutputDir -ChildPath 'sync_windows_agent_latest.zip'
 $latestManifest = Join-Path -Path $OutputDir -ChildPath 'latest.json'
+$latestFilesManifest = Join-Path -Path $OutputDir -ChildPath 'latest-files.json'
 $publishedUpdater = Join-Path -Path $OutputDir -ChildPath 'update.ps1'
 $packageDirName = "sync_windows_agent-$safeVersion-$commit"
 $packageOutputRoot = Join-Path -Path $OutputDir -ChildPath 'packages'
 $packageOutputDir = Join-Path -Path $packageOutputRoot -ChildPath $packageDirName
 $packageFilesManifest = Join-Path -Path $packageOutputDir -ChildPath 'files.json'
+$latestPackageDir = Join-Path -Path $packageOutputRoot -ChildPath 'latest-package'
 
 Copy-Item -LiteralPath $PortableZip -Destination $versionedZip -Force
 Copy-Item -LiteralPath $PortableZip -Destination $latestZip -Force
@@ -392,13 +394,26 @@ $filesManifest = New-PortableFilesManifest `
     -Version $version `
     -Commit $commit
 $filesManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $packageFilesManifest -Encoding ASCII
+$latestFilesManifestData = New-PortableFilesManifest `
+    -PortableDir $packageOutputDir `
+    -PublicRoot $publicRoot `
+    -PackageDirName 'latest-package' `
+    -Version $version `
+    -Commit $commit
+$latestFilesManifestData | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $latestFilesManifest -Encoding ASCII
+if (Test-Path -LiteralPath $latestPackageDir) {
+    Remove-Item -LiteralPath $latestPackageDir -Recurse -Force
+}
+New-Item -Path $latestPackageDir -ItemType Directory -Force | Out-Null
+Get-ChildItem -LiteralPath $packageOutputDir -Force |
+    Copy-Item -Destination $latestPackageDir -Recurse -Force
 $manifest = [ordered]@{
     version = $version
     commit = $commit
     releaseDate = $releaseDate
     packageType = 'files-v1'
-    filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json"
-    zipUrl = "$publicRoot/$zipName"
+    filesManifestUrl = "$publicRoot/latest-files.json"
+    zipUrl = "$publicRoot/sync_windows_agent_latest.zip"
     updateScriptUrl = "$publicRoot/update.ps1"
     sha256 = $zipHash
     sizeBytes = $zipSize
@@ -426,7 +441,7 @@ Invoke-CheckedNative -Description "Creating remote staging directory on $SshTarg
 }
 try {
     Invoke-CheckedNative -Description 'Uploading staged client artifacts to SSH target...' -Command {
-        & scp $latestManifest $versionedZip $latestZip $publishedUpdater "$SshTarget`:$remoteStage/"
+        & scp $latestManifest $latestFilesManifest $versionedZip $latestZip $publishedUpdater "$SshTarget`:$remoteStage/"
     }
     Invoke-CheckedNative -Description 'Uploading staged differential package to SSH target...' -Command {
         & scp -r $packageOutputDir "$SshTarget`:$remoteStage/packages/"
@@ -446,7 +461,7 @@ try {
 
     foreach ($pod in $pods) {
         Invoke-CheckedNative -Description "Publishing client update files to pod $pod..." -Command {
-            & ssh $SshTarget "kubectl exec -n '$Namespace' '$pod' -- mkdir -p '$RemoteUpdatesDir/packages/$packageDirName' && kubectl cp '$remoteStage/latest.json' '$Namespace/$pod`:$RemoteUpdatesDir/latest.json' && kubectl cp '$remoteStage/$zipName' '$Namespace/$pod`:$RemoteUpdatesDir/$zipName' && kubectl cp '$remoteStage/sync_windows_agent_latest.zip' '$Namespace/$pod`:$RemoteUpdatesDir/sync_windows_agent_latest.zip' && kubectl cp '$remoteStage/update.ps1' '$Namespace/$pod`:$RemoteUpdatesDir/update.ps1' && kubectl cp '$remoteStage/packages/$packageDirName/.' '$Namespace/$pod`:$RemoteUpdatesDir/packages/$packageDirName'"
+            & ssh $SshTarget "kubectl exec -n '$Namespace' '$pod' -- mkdir -p '$RemoteUpdatesDir/packages/$packageDirName' '$RemoteUpdatesDir/packages/latest-package' && kubectl cp '$remoteStage/latest.json' '$Namespace/$pod`:$RemoteUpdatesDir/latest.json' && kubectl cp '$remoteStage/latest-files.json' '$Namespace/$pod`:$RemoteUpdatesDir/latest-files.json' && kubectl cp '$remoteStage/$zipName' '$Namespace/$pod`:$RemoteUpdatesDir/$zipName' && kubectl cp '$remoteStage/sync_windows_agent_latest.zip' '$Namespace/$pod`:$RemoteUpdatesDir/sync_windows_agent_latest.zip' && kubectl cp '$remoteStage/update.ps1' '$Namespace/$pod`:$RemoteUpdatesDir/update.ps1' && kubectl cp '$remoteStage/packages/$packageDirName/.' '$Namespace/$pod`:$RemoteUpdatesDir/packages/$packageDirName' && kubectl cp '$remoteStage/packages/latest-package/.' '$Namespace/$pod`:$RemoteUpdatesDir/packages/latest-package'"
         }
     }
 
