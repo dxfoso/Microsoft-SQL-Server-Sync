@@ -3920,6 +3920,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   let queuedClientNames = [];
   let skippedOfflineClients = [];
   let skippedBusyTables = [];
+  let deferredTables = [];
   const visibleAgents = visible_agent_rows_for(current);
   const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
   for (const ownerUserId of ownerUserIds) {
@@ -3945,7 +3946,15 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       );
     }
     enabledTables = unique_string_values(enabledTables);
+    // Keep a manual all-sync bounded. The scheduler will pick up the
+    // remaining tables on the next cycle instead of materializing every
+    // large table in one server batch.
+    let queuedTablesForOwner = 0;
     for (const table of enabledTables) {
+      if (queuedTablesForOwner >= 1) {
+        deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
+        continue;
+      }
       let tableAgents = [];
       for (const agent of onlineAgents) {
         const agentTables = unique_string_values(
@@ -3974,6 +3983,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       if (jobs.length > 0) {
         createdJobs = createdJobs.concat(jobs);
         queuedClientNames = queuedClientNames.concat(tableAgents.map((agent) => string.from(agent.clientName)));
+        queuedTablesForOwner += 1;
       }
     }
   }
@@ -3985,7 +3995,11 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     queuedClientCount: unique_string_values(queuedClientNames).length,
     skippedOfflineClients: unique_string_values(skippedOfflineClients),
     skippedBusyTables: unique_string_values(skippedBusyTables),
-    skippedSourceResolutionTables: []
+    skippedSourceResolutionTables: [],
+    deferredTables: unique_string_values(deferredTables),
+    message: deferredTables.length > 0
+      ? 'Sync started for the first eligible table; remaining tables are deferred to the scheduler to keep the server bounded.'
+      : 'Sync queued for all eligible tables.'
   };
 }
 

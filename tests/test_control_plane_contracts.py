@@ -571,6 +571,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", source)
         self.assertIn("if (string_array_contains(agentTables, table))", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
+        self.assertIn("let queuedTablesForOwner = 0;", source)
+        self.assertIn("remaining tables are deferred to the scheduler", source)
         self.assertIn("skippedOfflineClients", source)
 
 

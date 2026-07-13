@@ -278,6 +278,10 @@ class AgentControlPlaneClient {
   bool _isRetryableTransferStatus(int statusCode) {
     return statusCode == 408 ||
         statusCode == 429 ||
+        // Final multi-writer chunks use an optimistic batch revision. A
+        // concurrent writer can legitimately return 409; retrying the same
+        // chunk is safe because chunkId makes the upload idempotent.
+        statusCode == 409 ||
         statusCode == 500 ||
         statusCode == 502 ||
         statusCode == 503 ||
