@@ -138,7 +138,17 @@ async function tryServeClientUpdate(pathname, res) {
       }
     }
     if (manifests.length > 0) {
-      manifests.sort((left, right) => compareClientVersions(left.version, right.version));
+      manifests.sort((left, right) => {
+        const versionOrder = compareClientVersions(left.version, right.version);
+        if (versionOrder !== 0) {
+          return versionOrder;
+        }
+        // Persistent updates can temporarily share a version with the image
+        // fallback. Prefer the newest publication metadata in that case.
+        return String(left.releaseDate || "").localeCompare(
+          String(right.releaseDate || ""),
+        );
+      });
       const body = Buffer.from(JSON.stringify(manifests[manifests.length - 1]));
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",

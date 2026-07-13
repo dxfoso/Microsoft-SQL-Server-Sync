@@ -1,7 +1,7 @@
 {
     "version":  "1.0.131+135",
-    "commit":  "64ca546e12ff",
-    "releaseDate":  "2026-07-13T22:57:26.1846081Z",
+    "commit":  "f62a0509cc3c",
+    "releaseDate":  "2026-07-13T23:04:00.8928053Z",
     "packageType":  "files-v1",
     "filesManifestUrl":  "https://sync.velvet-leaf.com/client/latest-files.json",
     "zipUrl":  "https://sync.velvet-leaf.com/client/sync_windows_agent_latest.zip",
