@@ -1,7 +1,7 @@
 {
-    "version":  "1.0.130+134",
-    "commit":  "c5f7afc235f9",
-    "generatedAt":  "2026-07-13T21:47:11.0175700Z",
+    "version":  "1.0.131+135",
+    "commit":  "64ca546e12ff",
+    "generatedAt":  "2026-07-13T22:57:28.2012751Z",
     "packageType":  "files-v1",
     "packageRootUrl":  "https://sync.velvet-leaf.com/client/packages/latest-package",
     "fileCount":  27,
@@ -15,7 +15,7 @@
                   {
                       "path":  "data/app.so",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/data/app.so",
-                      "sha256":  "885abcfa089887ee96f37d433a6675f314063f8d64590005d8c135c49fab5674",
+                      "sha256":  "ade54eacc3ab6eedb38283c16f4a30d6fa182bee34cf307c162ea5f7eeec07f0",
                       "sizeBytes":  6833040
                   },
                   {
@@ -81,7 +81,7 @@
                   {
                       "path":  "file_selector_windows_plugin.dll",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/file_selector_windows_plugin.dll",
-                      "sha256":  "8ca066e6a24bcff111cb803e5d5e943f5328ad5d9afafeba902ed16e3d1414ed",
+                      "sha256":  "b96af26077bec476f45994cf9753b3a188c22303ab7980a3eef48067a344a6ac",
                       "sizeBytes":  111104
                   },
                   {
@@ -123,7 +123,7 @@
                   {
                       "path":  "portable-manifest.txt",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/portable-manifest.txt",
-                      "sha256":  "788c25ad76e607c6537266f0b78831abaafff0b3b839ecaef73c281d52ba3384",
+                      "sha256":  "bea43ee1547742a403ce38ebeb97d8ec0a573a6adc224cec46a04d8db7d6c6c2",
                       "sizeBytes":  2746
                   },
                   {
@@ -135,7 +135,7 @@
                   {
                       "path":  "sync_windows_agent.exe",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/sync_windows_agent.exe",
-                      "sha256":  "d4ca996d3bb17b58413aeae197134b0a943aaa0c4cdf9b796536c298cea38eff",
+                      "sha256":  "a436696762b26bb138339b7c96c377fd9022c3a83026805c4e6eb9cf6e868888",
                       "sizeBytes":  418816
                   },
                   {
