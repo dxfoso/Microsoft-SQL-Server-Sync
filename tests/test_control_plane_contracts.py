@@ -582,6 +582,16 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("remaining tables are deferred to the scheduler", source)
         self.assertIn("skippedOfflineClients", source)
 
+    def test_multi_writer_heartbeat_exposes_upload_and_download_for_same_table(self):
+        source = read_text("business/control_plane.tru")
+        active_jobs = source.split("function active_jobs_for_client(", 1)[1].split(
+            "function unique_string_values(", 1
+        )[0]
+        self.assertIn("const jobKey = batchId.length == 0", active_jobs)
+        self.assertIn("batchId, '::', direction", active_jobs)
+        self.assertIn("seenJobKeys", active_jobs)
+        self.assertNotIn("seenTables", active_jobs)
+
 
 if __name__ == "__main__":
     unittest.main()

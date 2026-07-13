@@ -1971,25 +1971,30 @@ function active_jobs_for_client(clientName: string): array<json> {
     return [];
   }
   let jobs = [];
-  let seenTables = [];
+  let seenJobKeys = [];
   for (const job of rows) {
-    let tableSeen = false;
-    for (const seenTable of seenTables) {
-      if (seenTable == job.table) {
-        tableSeen = true;
+    const batchId = string.from(job.batchId ?? '').trim();
+    const direction = string.from(job.direction).trim();
+    const jobKey = batchId.length == 0
+      ? string.from(job.table)
+      : string.concat(string.from(job.table), '::', batchId, '::', direction);
+    let jobSeen = false;
+    for (const seenJobKey of seenJobKeys) {
+      if (seenJobKey == jobKey) {
+        jobSeen = true;
       }
     }
-    if (tableSeen) {
+    if (jobSeen) {
       continue;
     }
 
     const status = string.from(job.status).trim();
     const isWaitingMultiWriterDownload = status == 'waiting'
-      && string.from(job.direction).trim() == 'download'
-      && string.from(job.batchId).trim().length != 0;
+      && direction == 'download'
+      && batchId.length != 0;
     if (is_active_job_status(status) || isWaitingMultiWriterDownload) {
       jobs = jobs.concat([agent_job_payload(job)]);
-      seenTables = seenTables.concat([job.table]);
+      seenJobKeys = seenJobKeys.concat([jobKey]);
     }
   }
   return jobs;
