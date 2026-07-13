@@ -334,6 +334,13 @@ function Stop-WindowsAgentBuildProcesses {
                 return $false
             }
 
+            # The command shell that launched this build can contain the
+            # project path. Do not terminate the launcher while cleaning stale
+            # build processes.
+            if ($_.Name -in @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe', 'WindowsTerminal.exe')) {
+                return $false
+            }
+
             $executablePath = $_.ExecutablePath
             $commandLine = $_.CommandLine
 
