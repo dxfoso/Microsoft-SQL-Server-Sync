@@ -82,6 +82,7 @@ class SyncTableState {
     required this.savedRowCount,
     required this.tableChecksum,
     required this.changeTrackingVersion,
+    required this.changeTrackingOwner,
     required this.changeTrackingStatus,
     required this.changeTrackingMessage,
     required this.message,
@@ -97,6 +98,7 @@ class SyncTableState {
   final int? savedRowCount;
   final String tableChecksum;
   final int? changeTrackingVersion;
+  final String? changeTrackingOwner;
   final String changeTrackingStatus;
   final String changeTrackingMessage;
   final String message;
@@ -119,6 +121,7 @@ class SyncTableState {
       savedRowCount: (json['savedRowCount'] as num?)?.round(),
       tableChecksum: json['tableChecksum'] as String? ?? '',
       changeTrackingVersion: (json['changeTrackingVersion'] as num?)?.round(),
+      changeTrackingOwner: json['changeTrackingOwner'] as String?,
       changeTrackingStatus:
           json['changeTrackingStatus'] as String? ?? 'unknown',
       changeTrackingMessage: json['changeTrackingMessage'] as String? ?? '',
@@ -137,6 +140,7 @@ class SyncTableState {
     'savedRowCount': savedRowCount,
     'tableChecksum': tableChecksum,
     'changeTrackingVersion': changeTrackingVersion,
+    'changeTrackingOwner': changeTrackingOwner,
     'changeTrackingStatus': changeTrackingStatus,
     'changeTrackingMessage': changeTrackingMessage,
     'message': message,
@@ -153,6 +157,7 @@ class SyncTableState {
     Object? savedRowCount = _syncTableStateUnset,
     String? tableChecksum,
     Object? changeTrackingVersion = _syncTableStateUnset,
+    Object? changeTrackingOwner = _syncTableStateUnset,
     String? changeTrackingStatus,
     String? changeTrackingMessage,
     String? message,
@@ -174,6 +179,10 @@ class SyncTableState {
           identical(changeTrackingVersion, _syncTableStateUnset)
               ? this.changeTrackingVersion
               : changeTrackingVersion as int?,
+      changeTrackingOwner:
+          identical(changeTrackingOwner, _syncTableStateUnset)
+              ? this.changeTrackingOwner
+              : changeTrackingOwner as String?,
       changeTrackingStatus: changeTrackingStatus ?? this.changeTrackingStatus,
       changeTrackingMessage:
           changeTrackingMessage ?? this.changeTrackingMessage,

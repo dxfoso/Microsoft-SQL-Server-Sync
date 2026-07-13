@@ -692,6 +692,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("TaskbarCreated; restoring tray icon", runner_window)
         self.assertIn("function Invoke-AutoUpdate", update_script)
         self.assertIn("No client process detected; checking the live update manifest.", update_script)
+        self.assertIn("changeTrackingOwner", read_text("sync_windows_agent/lib/sync_state.dart"))
+        self.assertIn("changeTrackingOwner == widget.clientName", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn("Applied ${snapshot.rowCount} changed row", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn("_ensureNoLocalChangesBeforeRemoteApply", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
 

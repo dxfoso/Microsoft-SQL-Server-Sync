@@ -635,6 +635,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       savedRowCount: null,
       tableChecksum: '',
       changeTrackingVersion: null,
+      changeTrackingOwner: null,
       changeTrackingStatus: 'unknown',
       changeTrackingMessage: '',
       message: 'Remote sync disabled.',
@@ -3308,7 +3309,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _updateSyncTableState(
         job.table,
         (_syncState.tables[job.table] ?? _defaultSyncTableState(job.table))
-            .copyWith(changeTrackingVersion: snapshot.changeTrackingVersion),
+            .copyWith(
+              changeTrackingVersion: snapshot.changeTrackingVersion,
+              changeTrackingOwner: widget.clientName,
+            ),
       );
     }
     final targetJob = uploadResult.targetJob;
@@ -3339,18 +3343,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     _applyRemoteJobState(activeJob);
 
-    final targetRowCount = await _applyDownloadedSnapshotToTarget(
-      job: job,
-      snapshot: snapshot,
-    );
+    await _ensureNoLocalChangesBeforeRemoteApply(job);
+    await _applyDownloadedSnapshotToTarget(job: job, snapshot: snapshot);
 
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
       status: 'completed',
       progress: 100,
       message:
-          'Applied ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
-      rowCount: targetRowCount,
+          'Applied ${snapshot.rowCount} changed row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
+      // Keep the remote job count as the changed-row count. The local table
+      // state separately records the resulting total row count.
+      rowCount: snapshot.rowCount,
       snapshotId: snapshot.id,
       snapshotCreatedAt: snapshot.createdAt,
       snapshotBytes: snapshot.snapshotBytes,
@@ -3360,13 +3364,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Applied ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
+          'Applied ${snapshot.rowCount} changed row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
     );
-    if (snapshot.changeTrackingVersion != null) {
-      _updateSyncTableState(
-        job.table,
-        (_syncState.tables[job.table] ?? _defaultSyncTableState(job.table))
-            .copyWith(changeTrackingVersion: snapshot.changeTrackingVersion),
+  }
+
+  Future<void> _ensureNoLocalChangesBeforeRemoteApply(RemoteSyncJob job) async {
+    final localState = _syncState.tables[job.table];
+    if (localState?.changeTrackingOwner != widget.clientName ||
+        localState?.changeTrackingVersion == null) {
+      return;
+    }
+
+    final database = _databaseNameFromSyncKey(job.table).trim();
+    final tableParts = _splitQualifiedName(_localTableName(job.table));
+    final tracking = await _queryChangeTrackingState(
+      profile: _activeProfile(),
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
+    if (tracking != null &&
+        tracking.currentVersion > localState!.changeTrackingVersion!) {
+      throw StateError(
+        'Sync conflict for ${job.table}: local changes exist on '
+        '${widget.clientName} after the last local upload. Upload local '
+        'changes before applying ${job.sourceClientName} changes.',
       );
     }
   }
@@ -3449,6 +3471,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final canUseDelta =
         tracking != null &&
         previousVersion != null &&
+        _syncState.tables[job.table]?.changeTrackingOwner ==
+            widget.clientName &&
         previousVersion > 0 &&
         previousVersion >= tracking.minValidVersion;
     final rows = <Map<String, String?>>[];
@@ -3958,7 +3982,8 @@ SELECT
             );
             return '($expression) COLLATE DATABASE_DEFAULT';
           }
-          final expression = '''CASE WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN N'\\N'
+          final expression =
+              '''CASE WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN N'\\N'
 ELSE ${_sourceBatchEncodedColumnExpression(column, columnReference: 'existing_row.${_quoteIdentifier(column.name)}')}
 END''';
           return '($expression) COLLATE DATABASE_DEFAULT';
