@@ -1632,6 +1632,23 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       Platform.resolvedExecutable,
     ).parent.path.replaceAll('/', r'\');
     final localScriptPath = _localClientUpdateScriptPath();
+    // Prefer the script shipped beside the executable so the updater does not
+    // depend on a second network fetch after this process exits.
+    if (localScriptPath != null) {
+      return <String>[
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-File',
+        localScriptPath!,
+        '-ManifestUrl',
+        manifestUrl,
+        '-InstallDir',
+        installDir,
+      ];
+    }
     if (scriptUrl.isNotEmpty) {
       return <String>[
         '-NoProfile',
@@ -1644,21 +1661,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
             "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
             "-InstallDir '${_powershellSingleQuoted(installDir)}'",
-      ];
-    }
-    if (localScriptPath != null) {
-      return <String>[
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-WindowStyle',
-        'Hidden',
-        '-File',
-        localScriptPath,
-        '-ManifestUrl',
-        manifestUrl,
-        '-InstallDir',
-        installDir,
       ];
     }
     return <String>[
