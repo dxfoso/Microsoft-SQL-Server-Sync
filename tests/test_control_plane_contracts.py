@@ -562,6 +562,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("sync batch changed while uploading; retry this chunk", source)
         self.assertIn("clientChangeTrackingVersions", source)
         self.assertIn("multi-writer batch expired", source)
+        self.assertIn("class SyncBatchChunk", source)
+        self.assertIn("db.insert(SyncBatchChunk", source)
+        self.assertIn("db.selectMany(SyncBatchChunk", source)
+        self.assertIn("rows: [],", source)
 
     def test_sync_all_queues_one_batch_for_online_peers(self):
         source = read_text("business/control_plane.tru")

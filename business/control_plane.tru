@@ -131,6 +131,19 @@ class SyncBatch {
   field updatedAt: datetime
 }
 
+class SyncBatchChunk {
+  field id: string min=1 max=128
+  field batchId: string min=1 max=128
+  field chunkId: string min=1 max=128
+  field clientName: string min=1 max=128
+  field ordinal: int min=0
+  field columns: array<json>
+  field keyColumns: array<json>
+  field rows: array<json>
+  field rowCount: int min=0 max=1000000000
+  field createdAt: datetime
+}
+
 class SnapshotRecord {
   field id: string min=1 max=64
   field clientName: string min=1 max=128
@@ -204,6 +217,7 @@ index SyncJob_createdAt on SyncJob(createdAt)
 index SyncJob_batchId on SyncJob(batchId)
 index SyncBatch_id on SyncBatch(id)
 index SyncBatch_ownerUserId_table on SyncBatch(ownerUserId, table)
+index SyncBatchChunk_batchId_ordinal on SyncBatchChunk(batchId, ordinal)
 index SnapshotRecord_id on SnapshotRecord(id)
 index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
 index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
@@ -4191,7 +4205,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (batch.columns.length > 0) {
     resolvedColumns = batch.columns.map((value) => string.from(value));
   }
-  const mergedRows = merge_rows_by_key(batch.rows, incomingRows, resolvedKeyColumns);
+  const nextOrdinal = batch.revision + 1;
   const receivedChunks = batch.receivedChunks.concat([{
     clientName: normalizedClientName,
     chunkId: normalizedChunkId,
@@ -4211,6 +4225,21 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       changeTrackingVersion
     );
   }
+  const chunkRecord = db.insert(SyncBatchChunk, {
+    id: uuid.v4(),
+    batchId: batch.id,
+    chunkId: normalizedChunkId,
+    clientName: normalizedClientName,
+    ordinal: nextOrdinal,
+    columns: resolvedColumns,
+    keyColumns: resolvedKeyColumns,
+    rows: incomingRows,
+    rowCount: incomingRows.length,
+    createdAt: now_iso()
+  });
+  if (chunkRecord == null) {
+    return raw_json_error(500, 'could not store multi-writer delta chunk');
+  }
   const updatedBatch = db.updateMany(SyncBatch, { id: batch.id, revision: batch.revision }, {
     table: batch.table,
     revision: batch.revision + 1,
@@ -4221,12 +4250,13 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     clientChangeTrackingVersions,
     keyColumns: resolvedKeyColumns,
     columns: resolvedColumns,
-    rows: mergedRows,
+    rows: [],
     status: ready ? 'ready' : 'uploading',
     createdAt: batch.createdAt,
     updatedAt: now_iso()
   });
   if (updatedBatch == 0) {
+    db.delete(SyncBatchChunk, { id: chunkRecord.id });
     return raw_json_error(409, 'sync batch changed while uploading; retry this chunk');
   }
   const updatedResult = finalChunk
@@ -4242,7 +4272,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     job: public_job_payload(nextJob),
     batchId,
     acceptedRows: incomingRows.length,
-    mergedRowCount: mergedRows.length,
+    mergedRowCount: incomingRows.length,
     uploadedClients,
     expectedClientCount: batch.expectedClients.length,
     ready,
@@ -4272,19 +4302,38 @@ function jobs_multi_writer_download(jobId: string, batchId: string, offset: int 
   if (offset < 0 || limit < 1 || limit > 500) {
     return raw_json_error(400, 'invalid multi-writer download window');
   }
+  const storedChunks = db.selectMany(SyncBatchChunk, {
+    where: { batchId: batch.id },
+    orderBy: { field: 'ordinal', dir: 'asc' },
+    fields: ['id', 'batchId', 'chunkId', 'clientName', 'ordinal', 'columns', 'keyColumns', 'rows', 'rowCount', 'createdAt'],
+    limit: 1000
+  });
   let chunkRows = [];
+  let totalRowCount = 0;
   let currentIndex = 0;
-  for (const row of batch.rows) {
-    if (currentIndex >= offset && currentIndex < offset + limit) {
-      chunkRows = chunkRows.concat([row]);
+  const rowsByChunk = storedChunks == null ? [] : storedChunks;
+  if (rowsByChunk.length == 0) {
+    for (const row of batch.rows) {
+      totalRowCount += 1;
+      if (currentIndex >= offset && currentIndex < offset + limit) {
+        chunkRows = chunkRows.concat([row]);
+      }
+      currentIndex += 1;
     }
-    currentIndex += 1;
-    if (currentIndex >= offset + limit) {
-      break;
+  } else {
+    for (const storedChunk of rowsByChunk) {
+      const storedRows = storedChunk.rows ?? [];
+      totalRowCount += storedRows.length;
+      for (const row of storedRows) {
+        if (currentIndex >= offset && currentIndex < offset + limit) {
+          chunkRows = chunkRows.concat([row]);
+        }
+        currentIndex += 1;
+      }
     }
   }
   const nextOffset = offset + chunkRows.length;
-  const done = nextOffset >= batch.rows.length;
+  const done = nextOffset >= totalRowCount;
   const snapshot = {
     id: string.concat(batch.id, '-', string.from(job.clientName), '-', string.from(offset)),
     clientName: 'server-merge',
@@ -4302,7 +4351,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, offset: int 
     keyColumns: batch.keyColumns,
     clientChangeTrackingVersions: batch.clientChangeTrackingVersions,
     rows: chunkRows,
-    totalRowCount: batch.rows.length,
+    totalRowCount,
     offset,
     nextOffset,
     done,
