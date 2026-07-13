@@ -2368,6 +2368,38 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return error is AgentControlPlaneException && error.statusCode == 503;
   }
 
+  bool _isRetryableSyncJobError(Object error) {
+    if (error is TimeoutException ||
+        error is SocketException ||
+        error is HttpException) {
+      return true;
+    }
+    if (error is AgentControlPlaneException) {
+      final statusCode = error.statusCode;
+      if (statusCode == 408 ||
+          statusCode == 429 ||
+          statusCode == 500 ||
+          statusCode == 502 ||
+          statusCode == 503 ||
+          statusCode == 504) {
+        return true;
+      }
+    }
+    final message = error.toString().toLowerCase();
+    const transientMarkers = [
+      'connection dropped',
+      'connection reset',
+      'connection closed',
+      'failed host lookup',
+      'network is unreachable',
+      'temporarily unavailable',
+      'timed out',
+      'timeout',
+      'socket',
+    ];
+    return transientMarkers.any(message.contains);
+  }
+
   bool _matchesPendingWindowActionAck(RemoteAgentWindowAction windowAction) {
     final pendingAck = _pendingWindowActionAck;
     if (pendingAck == null) {
@@ -3134,6 +3166,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           await _processSnapshotJob(job);
         } catch (error, stackTrace) {
           final errorMessage = error.toString();
+          if (_isRetryableSyncJobError(error)) {
+            logStartupEvent(
+              'Remote job ${job.id} paused for retry after temporary connectivity failure: $errorMessage',
+            );
+            logStartupEvent(stackTrace.toString());
+            // Keep the server job active. The next successful heartbeat will
+            // fetch it again and resume the operation without losing progress.
+            break;
+          }
           logStartupEvent(
             'Remote job ${job.id} failed during snapshot processing: $errorMessage',
           );
