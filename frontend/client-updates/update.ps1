@@ -246,6 +246,26 @@ function Stop-AgentProcesses {
     }
 }
 
+function Test-PayloadInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string] $PayloadDir,
+        [Parameter(Mandatory = $true)][string] $InstallDir
+    )
+
+    foreach ($source in Get-ChildItem -LiteralPath $PayloadDir -File -Recurse -Force) {
+        $relative = $source.FullName.Substring(($PayloadDir.TrimEnd('\', '/')).Length).TrimStart('\', '/')
+        $target = Join-Path -Path $InstallDir -ChildPath $relative
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            throw "Installed client file is missing: $relative"
+        }
+        $sourceHash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+        if ($sourceHash -ne $targetHash) {
+            throw "Installed client file verification failed: $relative"
+        }
+    }
+}
+
 function Get-WatchdogScriptPath {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
@@ -264,6 +284,7 @@ Set-StrictMode -Version Latest
 `$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
 `$targetInstallDir = [System.IO.Path]::GetFullPath(`$scriptDir)
 `$executablePath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent.exe'
+`$updateScriptPath = Join-Path -Path `$targetInstallDir -ChildPath 'update.ps1'
 `$logPath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
 
 function Write-WatchdogLog {
@@ -326,6 +347,29 @@ function Ensure-AgentRunning {
     Start-AgentProcess -ExecutablePath `$ExecutablePath -InstallDir `$InstallDir
 }
 
+function Invoke-AutoUpdate {
+    param(
+        [string] `$UpdateScriptPath,
+        [string] `$InstallDir
+    )
+
+    if (-not (Test-Path -LiteralPath `$UpdateScriptPath -PathType Leaf)) {
+        return
+    }
+
+    try {
+        Write-WatchdogLog 'No client process detected; checking the live update manifest.'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden `
+            -File `$UpdateScriptPath -InstallDir `$InstallDir -NoStart
+        if (`$LASTEXITCODE -ne 0) {
+            Write-WatchdogLog "Independent updater exited with code `$LASTEXITCODE."
+        }
+        Start-Sleep -Seconds 5
+    } catch {
+        Write-WatchdogLog "Independent updater failed: `$(`$_.Exception.Message)"
+    }
+}
+
 `$mutexName = Get-WatchdogMutexName -InstallDir `$targetInstallDir
 `$createdNew = `$false
 `$mutex = [System.Threading.Mutex]::new(`$true, `$mutexName, [ref] `$createdNew)
@@ -342,6 +386,9 @@ try {
     Write-WatchdogLog 'Watchdog loop started.'
     while (`$true) {
         Start-Sleep -Seconds 30
+        if (@(Get-AgentProcesses -InstallDir `$targetInstallDir).Count -eq 0) {
+            Invoke-AutoUpdate -UpdateScriptPath `$updateScriptPath -InstallDir `$targetInstallDir
+        }
         Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
     }
 } finally {
@@ -634,6 +681,26 @@ function Stop-AgentProcesses {
             throw 'Timed out waiting for all sync_windows_agent.exe processes to exit.'
         }
         throw "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir"
+    }
+}
+
+function Test-PayloadInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string] $PayloadDir,
+        [Parameter(Mandatory = $true)][string] $InstallDir
+    )
+
+    foreach ($source in Get-ChildItem -LiteralPath $PayloadDir -File -Recurse -Force) {
+        $relative = $source.FullName.Substring(($PayloadDir.TrimEnd('\', '/')).Length).TrimStart('\', '/')
+        $target = Join-Path -Path $InstallDir -ChildPath $relative
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            throw "Installed client file is missing: $relative"
+        }
+        $sourceHash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+        if ($sourceHash -ne $targetHash) {
+            throw "Installed client file verification failed: $relative"
+        }
     }
 }
 
@@ -933,6 +1000,7 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
 
 Write-UpdateLog -Message "Ensuring the prior client instance from this install is stopped before install." -LogPath $logPath
 Stop-AgentProcesses -TargetInstallDir $InstallDir
+Start-Sleep -Milliseconds 500
 
 if (-not [string]::IsNullOrWhiteSpace($DeleteListPath) -and (Test-Path -LiteralPath $DeleteListPath -PathType Leaf)) {
     foreach ($relativePath in Get-Content -LiteralPath $DeleteListPath -ErrorAction Stop) {
@@ -952,6 +1020,7 @@ New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
 Write-UpdateLog -Message "Copying payload into install dir." -LogPath $logPath
 Get-ChildItem -LiteralPath $PayloadDir -Force |
     Copy-Item -Destination $InstallDir -Recurse -Force
+Test-PayloadInstalled -PayloadDir $PayloadDir -InstallDir $InstallDir
 Write-WatchdogScript -TargetInstallDir $InstallDir | Out-Null
 Update-StartupShortcutToWatchdog -TargetInstallDir $InstallDir
 
@@ -959,6 +1028,7 @@ $installedExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
 if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
     throw "Update completed but the installed executable is missing: $installedExe"
 }
+Write-UpdateLog -Message "Verified installed client payload for version $Version." -LogPath $logPath
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     Write-UpdateLog -Message "Installed sync_windows_agent to $InstallDir" -LogPath $logPath
