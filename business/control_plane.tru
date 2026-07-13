@@ -3205,6 +3205,9 @@ function online_visible_agent_client_names(current: map<json>, limit: int = 0): 
   const visibleAgents = visible_agent_rows_for(current);
   let requestedClientNames = [];
   for (const agent of visibleAgents) {
+    if (!effective_agent_online(agent)) {
+      continue;
+    }
     const clientName = normalize_user_name(agent.clientName);
     if (clientName.length == 0 || string_array_contains(requestedClientNames, clientName)) {
       continue;
