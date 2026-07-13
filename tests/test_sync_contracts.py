@@ -67,6 +67,18 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("unawaited(_queryChangeTrackingDiagnostics());", agent_page)
         self.assertIn("changeTrackingStatus", read_text("sync_windows_agent/lib/sync_state.dart"))
 
+    def test_change_tracking_delta_query_avoids_reserved_current_alias(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        delta_body = agent_page.split(
+            "Future<List<Map<String, String?>>> _fetchChangeTrackingRows(",
+            1,
+        )[1].split("String _sourceBatchEncodedColumnExpression(", 1)[0]
+        self.assertIn("AS existing_row ON", delta_body)
+        self.assertIn("existing_row.", delta_body)
+        self.assertNotIn("AS current ON", delta_body)
+        self.assertNotIn("current.", delta_body)
+
     def test_symmetricds_client_service_is_removed(self):
         self.assertFalse(
             (ROOT / "sync_windows_agent/lib/symmetricds_service.dart").exists()

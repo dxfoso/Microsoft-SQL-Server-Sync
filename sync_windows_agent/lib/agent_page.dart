@@ -3947,7 +3947,7 @@ SELECT
     final join = primaryKeyColumns
         .map(
           (column) =>
-              'ct.${_quoteIdentifier(column)} = current.${_quoteIdentifier(column)}',
+              'ct.${_quoteIdentifier(column)} = existing_row.${_quoteIdentifier(column)}',
         )
         .join(' AND ');
     final primaryKeySet =
@@ -3962,7 +3962,7 @@ SELECT
             );
           }
           return '''CASE WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN N'\\N'
-ELSE ${_sourceBatchEncodedColumnExpression(column, columnReference: 'current.${_quoteIdentifier(column.name)}')}
+ELSE ${_sourceBatchEncodedColumnExpression(column, columnReference: 'existing_row.${_quoteIdentifier(column.name)}')}
 END''';
         })
         .join(' + NCHAR($fieldSeparator) + ');
@@ -3972,7 +3972,7 @@ USE ${_quoteIdentifier(database)};
 SELECT
   ct.SYS_CHANGE_OPERATION + NCHAR($fieldSeparator) + $encoded + NCHAR($rowSentinel)
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
-LEFT JOIN $source AS current ON $join
+LEFT JOIN $source AS existing_row ON $join
 ORDER BY ct.SYS_CHANGE_VERSION;
 ''';
     final result = await _runSqlCmd(
