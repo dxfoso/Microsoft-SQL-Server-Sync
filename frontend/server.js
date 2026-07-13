@@ -139,7 +139,14 @@ async function tryServeClientUpdate(pathname, res) {
     }
     if (manifests.length > 0) {
       manifests.sort((left, right) => compareClientVersions(left.version, right.version));
-      sendJson(res, 200, manifests[manifests.length - 1]);
+      const body = Buffer.from(JSON.stringify(manifests[manifests.length - 1]));
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": body.length,
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        Pragma: "no-cache",
+      });
+      res.end(body);
       return true;
     }
   }
@@ -157,7 +164,16 @@ async function tryServeClientUpdate(pathname, res) {
       const contentType =
         MIME_TYPES[path.extname(candidatePath).toLowerCase()] ||
         "application/octet-stream";
-      sendBuffer(res, 200, buffer, contentType);
+      const headers = {
+        "Content-Type": contentType,
+        "Content-Length": buffer.length,
+      };
+      if (requestedPath === "update.ps1") {
+        headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
+        headers.Pragma = "no-cache";
+      }
+      res.writeHead(200, headers);
+      res.end(buffer);
       return true;
     } catch {
       // Try the image-bundled fallback when the persistent volume has no file.

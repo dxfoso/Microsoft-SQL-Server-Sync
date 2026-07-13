@@ -115,6 +115,8 @@ class SyncContractsTests(unittest.TestCase):
         node_server = read_text("frontend/server.js")
 
         self.assertIn("async function tryServeClientUpdate(", node_server)
+        self.assertIn('"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"', node_server)
+        self.assertIn('requestedPath === "update.ps1"', node_server)
         self.assertIn("async function tryServeStatic(", node_server)
         self.assertIn('pathname === "/api/env"', node_server)
         self.assertIn('pathname === "/health"', node_server)
