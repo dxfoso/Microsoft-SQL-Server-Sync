@@ -13,7 +13,7 @@ enum _ClientSortField { name, status, database, tables, rows, heartbeat }
 
 enum _ClientDetailView { logs, tables }
 
-enum _ClientScreen { list, detail, table }
+enum _ClientScreen { list, detail, sync, table }
 
 class _SyncLogOperation {
   _SyncLogOperation({
@@ -87,6 +87,59 @@ class _SyncLogOperation {
   }
 }
 
+class _SyncLogBatch {
+  _SyncLogBatch({
+    required this.key,
+    required this.operations,
+    required this.clientName,
+  });
+
+  final String key;
+  final List<_SyncLogOperation> operations;
+  final String clientName;
+
+  _SyncLogOperation get representative => operations.first;
+
+  int? _sum(int? Function(_SyncLogOperation operation) valueFor) {
+    final values = operations
+        .map(valueFor)
+        .whereType<int>()
+        .toList(growable: false);
+    if (values.isEmpty) return null;
+    return values.fold<int>(0, (sum, value) => sum + value);
+  }
+
+  int? get changedRows => _sum((operation) => operation.changedRows);
+  int? get uploadedRows => _sum((operation) => operation.uploadedRows);
+  int? get downloadedRows => _sum((operation) => operation.downloadedRows);
+
+  String get status {
+    final failed = operations.any((operation) => operation.status == 'Failed');
+    if (failed) return 'Failed';
+    final active = operations.firstWhere(
+      (operation) => operation.status.toLowerCase() != 'completed',
+      orElse: () => representative,
+    );
+    return active.status;
+  }
+
+  int get progress {
+    if (operations.isEmpty) return 0;
+    return operations
+        .map((operation) => operation.progress)
+        .reduce((left, right) => left < right ? left : right);
+  }
+
+  String get message {
+    final messages = operations
+        .map((operation) => operation.message)
+        .where((message) => message.trim().isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    return messages.isEmpty ? 'No message reported.' : messages.join(' / ');
+  }
+}
+
 class ClientsPage extends StatefulWidget {
   const ClientsPage({
     super.key,
@@ -122,6 +175,7 @@ class _ClientsPageState extends State<ClientsPage> {
   _ClientDetailView _detailView = _ClientDetailView.logs;
   _ClientScreen _screen = _ClientScreen.list;
   String? _selectedTable;
+  String? _selectedSyncKey;
 
   @override
   void initState() {
@@ -148,14 +202,21 @@ class _ClientsPageState extends State<ClientsPage> {
       _selectedTable = Uri.decodeComponent(segments[3]);
       _screen = _ClientScreen.table;
     }
+    if (segments.length >= 4 && segments[2] == 'sync') {
+      _selectedSyncKey = Uri.decodeComponent(segments[3]);
+      _screen = _ClientScreen.sync;
+    }
   }
 
   void _replaceRoute() {
     final client = _selectedClientName;
     final table = _selectedTable;
+    final sync = _selectedSyncKey;
     final path = switch (_screen) {
       _ClientScreen.list => '/clients',
       _ClientScreen.detail => '/clients/${Uri.encodeComponent(client ?? '')}',
+      _ClientScreen.sync =>
+        '/clients/${Uri.encodeComponent(client ?? '')}/sync/${Uri.encodeComponent(sync ?? '')}',
       _ClientScreen.table =>
         '/clients/${Uri.encodeComponent(client ?? '')}/tables/${Uri.encodeComponent(table ?? '')}',
     };
@@ -208,6 +269,7 @@ class _ClientsPageState extends State<ClientsPage> {
         if (_selectedClientName == null) {
           _screen = _ClientScreen.list;
           _selectedTable = null;
+          _selectedSyncKey = null;
           _replaceRoute();
         }
         _loading = false;
@@ -289,6 +351,8 @@ class _ClientsPageState extends State<ClientsPage> {
                       children: [
                         if (_screen == _ClientScreen.list) _buildClientList(),
                         if (_screen == _ClientScreen.detail) _buildDetail(),
+                        if (_screen == _ClientScreen.sync)
+                          _buildSyncDetailPage(),
                         if (_screen == _ClientScreen.table)
                           _buildTableDetailPage(),
                       ],
@@ -310,17 +374,20 @@ class _ClientsPageState extends State<ClientsPage> {
         children: [
           IconButton(
             tooltip:
-                _screen == _ClientScreen.table
+                _screen == _ClientScreen.table || _screen == _ClientScreen.sync
                     ? 'Back to client'
                     : 'Back to clients',
             onPressed:
                 () => setState(() {
-                  if (_screen == _ClientScreen.table) {
+                  if (_screen == _ClientScreen.table ||
+                      _screen == _ClientScreen.sync) {
                     _screen = _ClientScreen.detail;
                     _selectedTable = null;
+                    _selectedSyncKey = null;
                   } else {
                     _screen = _ClientScreen.list;
                     _selectedTable = null;
+                    _selectedSyncKey = null;
                   }
                   _replaceRoute();
                 }),
@@ -332,9 +399,11 @@ class _ClientsPageState extends State<ClientsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _screen == _ClientScreen.table
-                      ? _displayTable(table?.table ?? _selectedTable ?? '')
-                      : agent.clientName,
+                    _screen == _ClientScreen.table
+                        ? _displayTable(table?.table ?? _selectedTable ?? '')
+                        : _screen == _ClientScreen.sync
+                            ? 'Sync details'
+                        : agent.clientName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -343,9 +412,11 @@ class _ClientsPageState extends State<ClientsPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _screen == _ClientScreen.table
-                      ? 'Table detail and sync history'
-                      : 'Client detail and sync activity',
+                    _screen == _ClientScreen.table
+                        ? 'Table detail and sync history'
+                        : _screen == _ClientScreen.sync
+                            ? 'Per-table changes for this sync'
+                        : 'Client detail and sync activity',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: const Color(0xFF667085),
                   ),
@@ -1071,20 +1142,26 @@ class _ClientsPageState extends State<ClientsPage> {
       jobs,
       clientName: _selectedClientName ?? '',
     );
-    final visibleOperations = operations
-        .where((job) {
+    final batches = _groupSyncLogBatches(
+      operations,
+      clientName: _selectedClientName ?? '',
+    );
+    final visibleBatches = batches
+        .where((batch) {
           final query = _logFilter.toLowerCase();
           final matchesQuery =
               query.isEmpty ||
-              '${job.representative.table} upload download ${job.status} ${job.message}'
+              '${batch.operations.map((operation) => operation.representative.table).join(' ')} upload download ${batch.status} ${batch.message}'
                   .toLowerCase()
                   .contains(query);
           final matchesDirection =
               _logDirection == 'all' ||
-              (_logDirection == 'upload' && job.upload != null) ||
-              (_logDirection == 'download' && job.download != null);
-          final matchesStatus = _logStatus == 'all' ||
-              job.status.toLowerCase() == _logStatus;
+              (_logDirection == 'upload' &&
+                  batch.operations.any((operation) => operation.upload != null)) ||
+              (_logDirection == 'download' &&
+                  batch.operations.any((operation) => operation.download != null));
+          final matchesStatus =
+              _logStatus == 'all' || batch.status.toLowerCase() == _logStatus;
           return matchesQuery && matchesDirection && matchesStatus;
         })
         .toList(growable: false);
@@ -1097,7 +1174,7 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Only sync differences are shown. Totals are intentionally excluded.',
+          'One row represents one sync. Open it to inspect each table difference.',
           style: TextStyle(color: Color(0xFF667085), fontSize: 12),
         ),
         const SizedBox(height: 10),
@@ -1162,9 +1239,9 @@ class _ClientsPageState extends State<ClientsPage> {
           },
         ),
         const SizedBox(height: 10),
-        if (visibleOperations.isEmpty)
+        if (visibleBatches.isEmpty)
           _buildEmpty(
-            operations.isEmpty
+            batches.isEmpty
                 ? 'No sync jobs are visible for this client.'
                 : 'No logs match the current filters.',
           )
@@ -1176,7 +1253,7 @@ class _ClientsPageState extends State<ClientsPage> {
               columns: const [
                 DataColumn(label: Text('Updated')),
                 DataColumn(label: Text('Operation')),
-                DataColumn(label: Text('Table')),
+                DataColumn(label: Text('Tables')),
                 DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Progress')),
                 DataColumn(label: Text('Changed rows')),
@@ -1184,12 +1261,125 @@ class _ClientsPageState extends State<ClientsPage> {
                 DataColumn(label: Text('Downloaded new')),
                 DataColumn(label: Text('Message')),
               ],
-              rows: visibleOperations
-                  .map(_buildLogDataRow)
+              rows: visibleBatches
+                  .map(_buildSyncDataRow)
                   .toList(growable: false),
             ),
           ),
       ],
+    );
+  }
+
+  DataRow _buildSyncDataRow(_SyncLogBatch batch) {
+    final uploadColor = const Color(0xFF2563EB);
+    final downloadColor = const Color(0xFFB54708);
+    return DataRow(
+      onSelectChanged: (_) {
+        setState(() {
+          _selectedSyncKey = batch.key;
+          _screen = _ClientScreen.sync;
+          _replaceRoute();
+        });
+      },
+      cells: [
+        DataCell(Text(_formatTimestamp(batch.representative.representative.updatedAt))),
+        DataCell(
+          Row(
+            children: [
+              Icon(Icons.sync_rounded, size: 16, color: Colors.blueGrey.shade700),
+              const SizedBox(width: 5),
+              const Text('Sync', style: TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(width: 5),
+              const Icon(Icons.chevron_right_rounded, size: 17),
+            ],
+          ),
+        ),
+        DataCell(Text('${batch.operations.length}')),
+        DataCell(_statusChip(batch.status, _statusColor(batch.status))),
+        DataCell(Text('${batch.progress}%')),
+        DataCell(
+          Text(
+            batch.changedRows == null
+                ? 'Not reported'
+                : '+${_number(batch.changedRows!)}',
+            style: const TextStyle(
+              color: Color(0xFFB54708),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            batch.uploadedRows == null ? 'Not reported' : '+${_number(batch.uploadedRows!)}',
+            style: TextStyle(color: uploadColor, fontWeight: FontWeight.w800),
+          ),
+        ),
+        DataCell(
+          Text(
+            batch.downloadedRows == null
+                ? 'Not reported'
+                : '+${_number(batch.downloadedRows!)}',
+            style: TextStyle(color: downloadColor, fontWeight: FontWeight.w800),
+          ),
+        ),
+        DataCell(
+          SizedBox(width: 260, child: Text(batch.message, maxLines: 2, overflow: TextOverflow.ellipsis)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSyncDetailPage() {
+    final agent = _selectedAgent;
+    if (agent == null) {
+      return _panel(child: _buildEmpty('Client is no longer available.'));
+    }
+    final operations = _groupSyncLogOperations(
+      _jobsFor(agent),
+      clientName: agent.clientName,
+    );
+    final batches = _groupSyncLogBatches(operations, clientName: agent.clientName);
+    _SyncLogBatch? batch;
+    for (final candidate in batches) {
+      if (candidate.key == _selectedSyncKey) {
+        batch = candidate;
+        break;
+      }
+    }
+    if (batch == null) {
+      return _panel(child: _buildEmpty('Sync operation is no longer available.'));
+    }
+    return _panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Sync detail · ${_formatTimestamp(batch.representative.representative.updatedAt)}',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${batch.operations.length} tables · totals show only changed rows',
+            style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columnSpacing: 20,
+              columns: const [
+                DataColumn(label: Text('Table')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Changed')),
+                DataColumn(label: Text('Uploaded new')),
+                DataColumn(label: Text('Downloaded new')),
+                DataColumn(label: Text('Message')),
+              ],
+              rows: batch.operations.map(_buildLogDataRow).toList(growable: false),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1246,6 +1436,36 @@ class _ClientsPageState extends State<ClientsPage> {
       }
     }
     return operations;
+  }
+
+  List<_SyncLogBatch> _groupSyncLogBatches(
+    List<_SyncLogOperation> operations, {
+    required String clientName,
+  }) {
+    final grouped = <String, List<_SyncLogOperation>>{};
+    for (final operation in operations) {
+      final representative = operation.representative;
+      final timestamp = representative.createdAt.length >= 16
+          ? representative.createdAt.substring(0, 16)
+          : representative.createdAt;
+      final key = '${representative.sourceClientName}|'
+          '${representative.subscriberClientName}|$timestamp';
+      grouped.putIfAbsent(key, () => <_SyncLogOperation>[]).add(operation);
+    }
+    final batches = grouped.entries
+        .map(
+          (entry) => _SyncLogBatch(
+            key: entry.key,
+            operations: entry.value,
+            clientName: clientName,
+          ),
+        )
+        .toList(growable: false);
+    batches.sort(
+      (left, right) => _timestamp(right.representative.representative.updatedAt)
+          .compareTo(_timestamp(left.representative.representative.updatedAt)),
+    );
+    return batches;
   }
 
   Widget _buildLogFilter({
