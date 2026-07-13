@@ -1,15 +1,12 @@
 # Multi-Writer Sync Progress
 
-Progress: 74%
+Progress: 88%
 
-- Production server commit `9dee922` is healthy with `compile_errors=0`; the first deployment is verified live.
-- Added the multi-writer batch/journal path: online clients upload bounded primary-key deltas first; the server merges by key and releases one merged delta after the upload barrier.
-- Added client support for resumable 250-row multi-writer uploads and merged downloads; offline clients are excluded from the current barrier and can join the next batch.
-- Local verification passed: multi-writer/control-plane contracts, Windows client tests `86/86`, Flutter analysis with only the existing three warnings, and TRU runtime validation (`compiled_files=2`, `objects=10`, `functions=204`).
-- Published client `1.0.126+130` with the live backend URL and no ZIP parts; stale incompatible live jobs were cancelled (`28`).
-- Live update testing reproduced the failure: both old clients stopped heartbeating after the update request and remained `requested` on `1.0.125+129`.
-- Fixed the updater to prefer the packaged local `update.ps1`, published client `1.0.127+131`, and passed Windows tests `86/86`.
-- Slimmed the frontend Docker context to the current client package and stable latest aliases; the live deploy now completes with a much smaller client payload.
-- Production is verified on commit `6f39bae`, `compile_errors=0`, serving client `1.0.127+131`; stable ZIP and 27 differential files download successfully.
-- Both clients advanced to `1.0.126+130`, but their requested `1.0.127+131` update remains unacknowledged after the restart window.
-- Remaining: resolve this final client updater transition, then run live multi-writer tests for concurrent edits, conflicts, deletes, offline/reconnect, retry/resume, Unicode, and convergence.
+- Production is deployed on `e4524c0`; health is ready with `compile_errors=0`, memory 274 MB, and no current timeout/failure counters.
+- Multi-writer flow now has per-table participants, upload barrier, optimistic revision/CAS, idempotent chunk retry for writer conflicts, per-client change-tracking checkpoints, and bounded 250-row downloads.
+- Manual Sync All is bounded to one table per owner per cycle; remaining tables are deferred to the scheduler to prevent large all-table batches from causing server memory pressure.
+- Local verification passed: control-plane contracts `27/27`, Windows client tests `86/86`, and TRU validation (`compiled_files=2`, `objects=10`, `functions=206`).
+- Published stable Windows client `1.0.130+134`; manifest is live and uses `files-v1` with no ZIP parts.
+- The live 44-job all-table test exposed the previous design limit: server memory pressure caused intermittent `503`/timeouts. The batch was cancelled and stale jobs cleared.
+- c1 installed `1.0.130+134` but has not resumed heartbeat; c2 is offline on `1.0.129+133`. Both have a new update request pending/current recovery work.
+- Remaining: restore both live client heartbeats, run a bounded live batch with actual c1/c2 edits, then verify conflict resolution, deletes, offline/reconnect, resume, Unicode, and final convergence.
