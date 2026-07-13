@@ -591,6 +591,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("batchId, '::', direction", active_jobs)
         self.assertIn("seenJobKeys", active_jobs)
         self.assertNotIn("seenTables", active_jobs)
+        self.assertIn("multiWriterDownloadReady", active_jobs)
+        self.assertIn("where: { status: 'ready' }", active_jobs)
+        self.assertIn("if (!multiWriterDownloadReady)", active_jobs)
 
 
 if __name__ == "__main__":

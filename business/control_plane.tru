@@ -1970,6 +1970,12 @@ function active_jobs_for_client(clientName: string): array<json> {
   if (rows == null) {
     return [];
   }
+  const readyMultiWriterBatches = db.selectMany(SyncBatch, {
+    where: { status: 'ready' },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id'],
+    limit: 1000
+  }).map((batch) => string.from(batch.id));
   let jobs = [];
   let seenJobKeys = [];
   for (const job of rows) {
@@ -1989,9 +1995,17 @@ function active_jobs_for_client(clientName: string): array<json> {
     }
 
     const status = string.from(job.status).trim();
+    let multiWriterDownloadReady = true;
+    if (batchId.length != 0 && direction == 'download') {
+      multiWriterDownloadReady = string_array_contains(readyMultiWriterBatches, batchId);
+      if (!multiWriterDownloadReady) {
+        continue;
+      }
+    }
     const isWaitingMultiWriterDownload = status == 'waiting'
       && direction == 'download'
-      && batchId.length != 0;
+      && batchId.length != 0
+      && multiWriterDownloadReady;
     if (is_active_job_status(status) || isWaitingMultiWriterDownload) {
       jobs = jobs.concat([agent_job_payload(job)]);
       seenJobKeys = seenJobKeys.concat([jobKey]);
