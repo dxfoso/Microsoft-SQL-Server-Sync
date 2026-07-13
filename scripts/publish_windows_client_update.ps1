@@ -34,12 +34,10 @@ function Get-PubspecVersion {
 function Get-GitCommit {
     Push-Location $RepoRoot
     try {
-        $commit = (& git rev-parse --short=12 HEAD).Trim()
-        $status = (& git status --porcelain)
-        if ($LASTEXITCODE -eq 0 -and @($status).Count -gt 0) {
-            return "$commit-dirty"
-        }
-        return $commit
+        # Release metadata must identify the source commit embedded in the
+        # binary; unrelated historical artifacts must not create a fake
+        # `-dirty` version that makes the installed client update forever.
+        return (& git rev-parse --short=12 HEAD).Trim()
     }
     finally {
         Pop-Location
