@@ -131,19 +131,6 @@ class SyncBatch {
   field updatedAt: datetime
 }
 
-class SyncBatchChunk {
-  field id: string min=1 max=128
-  field batchId: string min=1 max=128
-  field chunkId: string min=1 max=128
-  field clientName: string min=1 max=128
-  field ordinal: int min=0
-  field columns: array<json>
-  field keyColumns: array<json>
-  field rows: array<json>
-  field rowCount: int min=0 max=1000000000
-  field createdAt: datetime
-}
-
 class SnapshotRecord {
   field id: string min=1 max=64
   field clientName: string min=1 max=128
@@ -217,7 +204,6 @@ index SyncJob_createdAt on SyncJob(createdAt)
 index SyncJob_batchId on SyncJob(batchId)
 index SyncBatch_id on SyncBatch(id)
 index SyncBatch_ownerUserId_table on SyncBatch(ownerUserId, table)
-index SyncBatchChunk_batchId_ordinal on SyncBatchChunk(batchId, ordinal)
 index SnapshotRecord_id on SnapshotRecord(id)
 index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
 index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
@@ -4225,16 +4211,23 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       changeTrackingVersion
     );
   }
-  const chunkRecord = db.insert(SyncBatchChunk, {
+  const chunkRecord = db.insert(SnapshotRecord, {
     id: uuid.v4(),
-    batchId: batch.id,
-    chunkId: normalizedChunkId,
-    clientName: normalizedClientName,
-    ordinal: nextOrdinal,
-    columns: resolvedColumns,
-    keyColumns: resolvedKeyColumns,
-    rows: incomingRows,
+    clientName: 'server-merge',
+    subscriberClientName: normalizedClientName,
+    table: batch.table,
     rowCount: incomingRows.length,
+    checksum: string.concat(normalizedChunkId, '-', string.from(nextOrdinal)),
+    snapshotBytes: 0,
+    columns: resolvedColumns,
+    rows: incomingRows,
+    previewRows: [],
+    compressedBytes: 0,
+    chunkCount: 1,
+    encoding: 'json',
+    sourceJobId: batch.id,
+    clientUserId: normalizedClientName,
+    ownerUserId: batch.ownerUserId,
     createdAt: now_iso()
   });
   if (chunkRecord == null) {
@@ -4256,7 +4249,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     updatedAt: now_iso()
   });
   if (updatedBatch == 0) {
-    db.delete(SyncBatchChunk, { id: chunkRecord.id });
+    db.delete(SnapshotRecord, { id: chunkRecord.id });
     return raw_json_error(409, 'sync batch changed while uploading; retry this chunk');
   }
   const updatedResult = finalChunk
@@ -4302,10 +4295,10 @@ function jobs_multi_writer_download(jobId: string, batchId: string, offset: int 
   if (offset < 0 || limit < 1 || limit > 500) {
     return raw_json_error(400, 'invalid multi-writer download window');
   }
-  const storedChunks = db.selectMany(SyncBatchChunk, {
-    where: { batchId: batch.id },
-    orderBy: { field: 'ordinal', dir: 'asc' },
-    fields: ['id', 'batchId', 'chunkId', 'clientName', 'ordinal', 'columns', 'keyColumns', 'rows', 'rowCount', 'createdAt'],
+  const storedChunks = db.selectMany(SnapshotRecord, {
+    where: { sourceJobId: batch.id },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'createdAt'],
     limit: 1000
   });
   let chunkRows = [];
@@ -4357,7 +4350,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, offset: int 
     done,
     clientChangeTrackingVersions: batch.clientChangeTrackingVersions
   };
-  return raw_json_success({ snapshot, offset, nextOffset, totalRowCount: batch.rows.length, done });
+  return raw_json_success({ snapshot, offset, nextOffset, totalRowCount, done });
 }
 
 function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {
