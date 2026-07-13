@@ -855,6 +855,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function Assert-LiveBackendBaseUrl", build_script)
         self.assertIn("Portable builds must target https://sync.velvet-leaf.com/call", build_script)
         self.assertIn("BackendBaseUrl: $BackendBaseUrl", build_script)
+        self.assertIn("Never classify a shell host as a Flutter dev process.", build_helpers)
+        self.assertIn("'powershell.exe', 'pwsh.exe', 'cmd.exe'", build_helpers)
         self.assertNotIn(
             "defaultValue: 'http://127.0.0.1:6006/call'",
             client_api,

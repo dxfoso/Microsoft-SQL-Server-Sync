@@ -419,6 +419,12 @@ function Get-WindowsAgentConflictingDevProcesses {
                 return $false
             }
 
+            # The launcher PowerShell command line contains the repository
+            # path. Never classify a shell host as a Flutter dev process.
+            if ($_.Name -in @('powershell.exe', 'pwsh.exe', 'cmd.exe', 'conhost.exe', 'WindowsTerminal.exe')) {
+                return $false
+            }
+
             $commandLine = $_.CommandLine
             $executablePath = $_.ExecutablePath
 
