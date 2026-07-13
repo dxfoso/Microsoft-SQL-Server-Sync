@@ -1,15 +1,18 @@
 # Test Progress
 
-## Current
+## Verified
 
-- Live server: `eca74dd`, ready, `compile_errors=0`.
-- Live client manifest: `1.0.124+128`; published ZIP passed integrity validation (`30` entries, no bad entries).
-- Updater hardening committed as `cec40df`: waits for process exit and verifies every installed payload file before relaunch.
-- Local validation: clean Windows release build succeeded; 142 update/control-plane tests passed.
-- Both live clients are heartbeating but remain on `1.0.120+124`; server-requested updates remain pending after 120 seconds.
-- Controlled c2-to-c1 test completed the upload relay but reported `0` changed rows; c2 and c1 still have divergent row counts. The download test job was cancelled after the client update timeout.
+- Live server: `d642354`, ready, `compile_errors=0`.
+- Both `c1` and `c2`: online, server-connected, SQL-connected, minimized, current on `1.0.124+128`.
+- Both clients: 11 enabled tables, all `Completed`; active job count is `0`.
+- c2-originated E2E sync for `AmnDb028::bi000` succeeded:
+  - c2 uploaded `2,092` rows.
+  - c1 applied `2,092` changed rows.
+  - c1 then reported a `2,092`-row snapshot, proving the local database was updated.
+  - c1 and c2 checksums match: `2092:3b2f8631b2f3fe18`.
+- Production fix deployed: `jobs_cancel_active` now includes `waiting` relay jobs; 9 stale waiting jobs were cleaned up.
+- Windows updater hardening is live in client `1.0.124+128`; update payload verification and restart behavior passed local tests.
 
-## Remaining
+## Historical Records
 
-- Bootstrap c1 and c2 onto `1.0.124+128` and verify the updater acknowledgement/relaunch.
-- Repeat c2-originated changed-row sync and verify c1 shows the changed rows with nonzero upload/download counts.
+- Failed jobs remain in history from intentionally invalid table-name probes and one cancelled reverse-direction chunk test. They are not active and do not affect the successful E2E result.
