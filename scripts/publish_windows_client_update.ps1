@@ -444,6 +444,9 @@ try {
     Invoke-CheckedNative -Description 'Uploading staged differential package to SSH target...' -Command {
         & scp -r $packageOutputDir "$SshTarget`:$remoteStage/packages/"
     }
+    Invoke-CheckedNative -Description 'Uploading staged latest differential package to SSH target...' -Command {
+        & scp -r $latestPackageDir "$SshTarget`:$remoteStage/packages/"
+    }
     $podOutput = & ssh $SshTarget "kubectl get pods -n '$Namespace' -l app.kubernetes.io/component=frontend -o name"
     if ($LASTEXITCODE -ne 0) {
         throw "Could not list frontend pods in namespace $Namespace"
