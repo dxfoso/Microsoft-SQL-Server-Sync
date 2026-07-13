@@ -690,6 +690,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Shell_NotifyIcon(NIM_DELETE, &tray_icon_data_);", runner_window)
         self.assertIn('RegisterWindowMessageW(L"TaskbarCreated")', runner_window)
         self.assertIn("TaskbarCreated; restoring tray icon", runner_window)
+        self.assertIn("function Invoke-AutoUpdate", update_script)
+        self.assertIn("No client process detected; checking the live update manifest.", update_script)
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
 

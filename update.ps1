@@ -264,6 +264,7 @@ Set-StrictMode -Version Latest
 `$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
 `$targetInstallDir = [System.IO.Path]::GetFullPath(`$scriptDir)
 `$executablePath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent.exe'
+`$updateScriptPath = Join-Path -Path `$targetInstallDir -ChildPath 'update.ps1'
 `$logPath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
 
 function Write-WatchdogLog {
@@ -326,6 +327,29 @@ function Ensure-AgentRunning {
     Start-AgentProcess -ExecutablePath `$ExecutablePath -InstallDir `$InstallDir
 }
 
+function Invoke-AutoUpdate {
+    param(
+        [string] `$UpdateScriptPath,
+        [string] `$InstallDir
+    )
+
+    if (-not (Test-Path -LiteralPath `$UpdateScriptPath -PathType Leaf)) {
+        return
+    }
+
+    try {
+        Write-WatchdogLog 'No client process detected; checking the live update manifest.'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden `
+            -File `$UpdateScriptPath -InstallDir `$InstallDir -NoStart
+        if (`$LASTEXITCODE -ne 0) {
+            Write-WatchdogLog "Independent updater exited with code `$LASTEXITCODE."
+        }
+        Start-Sleep -Seconds 5
+    } catch {
+        Write-WatchdogLog "Independent updater failed: `$(`$_.Exception.Message)"
+    }
+}
+
 `$mutexName = Get-WatchdogMutexName -InstallDir `$targetInstallDir
 `$createdNew = `$false
 `$mutex = [System.Threading.Mutex]::new(`$true, `$mutexName, [ref] `$createdNew)
@@ -342,6 +366,9 @@ try {
     Write-WatchdogLog 'Watchdog loop started.'
     while (`$true) {
         Start-Sleep -Seconds 30
+        if (@(Get-AgentProcesses -InstallDir `$targetInstallDir).Count -eq 0) {
+            Invoke-AutoUpdate -UpdateScriptPath `$updateScriptPath -InstallDir `$targetInstallDir
+        }
         Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
     }
 } finally {
