@@ -1113,6 +1113,11 @@ try {
             Save-UpdateDeleteList -Path $deleteListPath -RelativePaths $staleManagedPaths
             if ($downloadCount -eq 0 -and $staleManagedPaths.Count -eq 0) {
                 Write-UpdateLog -Message "Client files already match target version $($manifest.version)." -LogPath $mainLogPath
+                $currentExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
+                if (-not $NoStart -and (Test-Path -LiteralPath $currentExe -PathType Leaf)) {
+                    Write-UpdateLog -Message 'No installation required. Relaunching the current client.' -LogPath $mainLogPath
+                    Start-UpdatedClient -ExecutablePath $currentExe -InstallDir $InstallDir -LogPath $mainLogPath
+                }
                 return
             }
 
@@ -1163,6 +1168,20 @@ try {
         -Version ([string] $manifest.version) `
         -NoStart:$NoStart
     Write-UpdateLog -Message "Updater scheduled for version $($manifest.version) in $InstallDir" -LogPath $mainLogPath
+}
+catch {
+    Write-UpdateLog -Message "Updater failed: $($_.Exception.Message)" -LogPath $mainLogPath
+    $currentExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
+    if (-not $NoStart -and (Test-Path -LiteralPath $currentExe -PathType Leaf)) {
+        try {
+            Write-UpdateLog -Message 'Attempting recovery relaunch of the current client.' -LogPath $mainLogPath
+            Start-UpdatedClient -ExecutablePath $currentExe -InstallDir $InstallDir -LogPath $mainLogPath
+        }
+        catch {
+            Write-UpdateLog -Message "Recovery relaunch failed: $($_.Exception.Message)" -LogPath $mainLogPath
+        }
+    }
+    throw
 }
 finally {
     if (-not (Test-Path -LiteralPath (Join-Path -Path $workRoot -ChildPath 'finalize-update.ps1') -PathType Leaf)) {
