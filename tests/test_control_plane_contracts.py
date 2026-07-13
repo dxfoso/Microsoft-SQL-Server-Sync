@@ -540,6 +540,27 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("centralStore: 'symmetricds'", source)
         self.assertNotIn("mode: 'symmetricDs'", source)
 
+    def test_multi_writer_batch_has_upload_barrier_and_merged_download(self):
+        source = read_text("business/control_plane.tru")
+
+        self.assertIn("class SyncBatch {", source)
+        self.assertIn("field expectedClients: array<json>", source)
+        self.assertIn("field uploadedClients: array<json>", source)
+        self.assertIn("field receivedChunks: array<json>", source)
+        self.assertIn("function jobs_multi_writer_upload(", source)
+        self.assertIn("if (incomingRows.length > 500)", source)
+        self.assertIn("const ready = uploadedClients.length >= batch.expectedClients.length;", source)
+        self.assertIn("function jobs_multi_writer_download(", source)
+        self.assertIn("sync batch is still waiting for client uploads", source)
+
+    def test_sync_all_queues_one_batch_for_online_peers(self):
+        source = read_text("business/control_plane.tru")
+
+        self.assertIn("mode: 'multi-writer'", source)
+        self.assertIn("if (effective_agent_online(agent))", source)
+        self.assertIn("create_multi_writer_batch(ownerUserId, table, onlineAgents)", source)
+        self.assertIn("skippedOfflineClients", source)
+
 
 if __name__ == "__main__":
     unittest.main()

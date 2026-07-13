@@ -2393,6 +2393,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'failed host lookup',
       'network is unreachable',
       'temporarily unavailable',
+      'sync batch is still waiting',
       'timed out',
       'timeout',
       'socket',
@@ -3328,6 +3329,52 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     _applyRemoteJobState(activeJob);
 
+    if (job.batchId?.trim().isNotEmpty == true) {
+      const deltaChunkSize = 250;
+      final rows = _snapshotRows(snapshot.snapshotJson);
+      final columns = _snapshotColumns(snapshot.snapshotJson);
+      final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
+      RemoteSyncJob? uploadedJob;
+      if (rows.isEmpty) {
+        uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
+          job.id,
+          batchId: job.batchId!,
+          clientName: widget.clientName,
+          table: job.table,
+          columns: columns,
+          keyColumns: keyColumns,
+          rows: const [],
+          chunkId: '${job.id}-0',
+          finalChunk: true,
+          changeTrackingVersion: snapshot.changeTrackingVersion,
+        );
+      } else {
+        for (var offset = 0; offset < rows.length; offset += deltaChunkSize) {
+          final end = math.min(offset + deltaChunkSize, rows.length);
+          uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
+            job.id,
+            batchId: job.batchId!,
+            clientName: widget.clientName,
+            table: job.table,
+            columns: columns,
+            keyColumns: keyColumns,
+            rows: rows.sublist(offset, end),
+            chunkId: '${job.id}-$offset',
+            finalChunk: end == rows.length,
+            changeTrackingVersion: snapshot.changeTrackingVersion,
+          );
+        }
+      }
+      _applyRemoteJobState(
+        uploadedJob!,
+        appendHistory: true,
+        success: true,
+        overrideMessage:
+            'Uploaded ${snapshot.rowCount} changed row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
+      );
+      return;
+    }
+
     final uploadResult = await _controlPlaneClient.uploadSnapshot(
       job.id,
       clientName: widget.clientName,
@@ -3372,39 +3419,58 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     _applyRemoteJobState(activeJob);
 
-    final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);
+    // Legacy path remains `final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);`.
+    final mergedSnapshot =
+        job.batchId?.trim().isNotEmpty == true
+            ? await _controlPlaneClient.downloadMultiWriterDelta(
+              job.id,
+              batchId: job.batchId!,
+            )
+            : await _controlPlaneClient.downloadSnapshot(job.id);
+    final snapshotToApply = mergedSnapshot;
 
     activeJob = await _controlPlaneClient.updateJobProgress(
       job.id,
       status: 'applying',
       progress: 80,
       message: 'Applying downloaded snapshot to ${_localTableName(job.table)}.',
-      rowCount: snapshot.rowCount,
+      rowCount: snapshotToApply.rowCount,
     );
     _applyRemoteJobState(activeJob);
 
-    await _ensureNoLocalChangesBeforeRemoteApply(job);
-    await _applyDownloadedSnapshotToTarget(job: job, snapshot: snapshot);
+    if (job.batchId?.trim().isNotEmpty != true) {
+      await _ensureNoLocalChangesBeforeRemoteApply(job);
+    }
+    final targetRowCount = await _applyDownloadedSnapshotToTarget(
+      job: job,
+      snapshot: snapshotToApply,
+    );
+    // The remote job records changed rows; targetRowCount remains local state.
+    if (targetRowCount < 0) {
+      throw StateError(
+        'Downloaded snapshot produced an invalid target row count.',
+      );
+    }
 
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
       status: 'completed',
       progress: 100,
       message:
-          'Applied ${snapshot.rowCount} changed row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
+          'Applied ${snapshotToApply.rowCount} changed row${snapshotToApply.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
       // Keep the remote job count as the changed-row count. The local table
       // state separately records the resulting total row count.
-      rowCount: snapshot.rowCount,
-      snapshotId: snapshot.id,
-      snapshotCreatedAt: snapshot.createdAt,
-      snapshotBytes: snapshot.snapshotBytes,
+      rowCount: snapshotToApply.rowCount,
+      snapshotId: snapshotToApply.id,
+      snapshotCreatedAt: snapshotToApply.createdAt,
+      snapshotBytes: snapshotToApply.snapshotBytes,
     );
     _applyRemoteJobState(
       activeJob,
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Applied ${snapshot.rowCount} changed row${snapshot.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
+          'Applied ${snapshotToApply.rowCount} changed row${snapshotToApply.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
     );
   }
 
@@ -3566,6 +3632,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'columns': syncColumns
           .map((column) => column.name)
           .toList(growable: false),
+      'keyColumns': primaryKeyColumns,
       'rows': rows,
       'sourceJobId': job.id,
       'changeTrackingVersion': tracking?.currentVersion,
@@ -3582,7 +3649,46 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       snapshotBytes: utf8.encode(snapshotJson).length,
       snapshotJson: snapshotJson,
       changeTrackingVersion: tracking?.currentVersion,
+      keyColumns: primaryKeyColumns,
     );
+  }
+
+  List<Map<String, String?>> _snapshotRows(String snapshotJson) {
+    final decoded = jsonDecode(snapshotJson);
+    if (decoded is! Map || decoded['rows'] is! List) {
+      return const [];
+    }
+    return (decoded['rows'] as List)
+        .whereType<Map>()
+        .map(
+          (row) => Map<String, String?>.fromEntries(
+            row.entries.map(
+              (entry) =>
+                  MapEntry(entry.key.toString(), entry.value?.toString()),
+            ),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  List<String> _snapshotColumns(String snapshotJson) {
+    final decoded = jsonDecode(snapshotJson);
+    if (decoded is! Map || decoded['columns'] is! List) {
+      return const [];
+    }
+    return (decoded['columns'] as List)
+        .map((column) => column.toString())
+        .toList(growable: false);
+  }
+
+  List<String> _snapshotKeyColumns(String snapshotJson) {
+    final decoded = jsonDecode(snapshotJson);
+    if (decoded is! Map || decoded['keyColumns'] is! List) {
+      return const [];
+    }
+    return (decoded['keyColumns'] as List)
+        .map((column) => column.toString())
+        .toList(growable: false);
   }
 
   Future<int> _applyDownloadedSnapshotToTarget({
@@ -8232,6 +8338,7 @@ class _RelaySnapshotDocument {
     required this.snapshotBytes,
     required this.snapshotJson,
     this.changeTrackingVersion,
+    this.keyColumns = const [],
   });
 
   final String createdAt;
@@ -8239,6 +8346,7 @@ class _RelaySnapshotDocument {
   final int snapshotBytes;
   final String snapshotJson;
   final int? changeTrackingVersion;
+  final List<String> keyColumns;
 }
 
 class _ChangeTrackingState {

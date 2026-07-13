@@ -111,6 +111,22 @@ class SyncJob {
   field error: string? min=0 max=4000
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
+  field batchId: string? min=0 max=128
+}
+
+class SyncBatch {
+  field id: string min=1 max=128
+  field table: string min=1 max=256
+  field ownerUserId: string? min=0 max=64
+  field expectedClients: array<json>
+  field uploadedClients: array<json>
+  field receivedChunks: array<json>
+  field keyColumns: array<json>
+  field columns: array<json>
+  field rows: array<json>
+  field status: string min=1 max=32
+  field createdAt: datetime
+  field updatedAt: datetime
 }
 
 class SnapshotRecord {
@@ -183,6 +199,9 @@ index TableSyncPolicy_ownerUserId_database_table on TableSyncPolicy(ownerUserId,
 index SyncJob_id on SyncJob(id)
 index SyncJob_clientName_createdAt on SyncJob(clientName, createdAt)
 index SyncJob_createdAt on SyncJob(createdAt)
+index SyncJob_batchId on SyncJob(batchId)
+index SyncBatch_id on SyncBatch(id)
+index SyncBatch_ownerUserId_table on SyncBatch(ownerUserId, table)
 index SnapshotRecord_id on SnapshotRecord(id)
 index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
 index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
@@ -1233,7 +1252,7 @@ function find_waiting_download_job(sourceClientName: string, targetClientName: s
   const jobs = db.selectMany(SyncJob, {
     where: { clientName: targetClientName, sourceClientName, table },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
     limit: 20
   });
   if (jobs == null) {
@@ -1377,7 +1396,7 @@ function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1717,7 +1736,8 @@ function public_job_payload(job: map<json>): map<json> {
     startedAt: job.startedAt,
     completedAt: job.completedAt,
     message: job.message,
-    error: job.error
+    error: job.error,
+    batchId: job.batchId
   };
 }
 
@@ -1745,7 +1765,8 @@ function agent_job_payload(job: map<json>): map<json> {
     startedAt: job.startedAt,
     completedAt: job.completedAt,
     message: job.message,
-    error: job.error
+    error: job.error,
+    batchId: job.batchId
   };
 }
 
@@ -1788,7 +1809,7 @@ function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1940,7 +1961,7 @@ function active_jobs_for_client(clientName: string): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { clientName },
     orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1960,7 +1981,10 @@ function active_jobs_for_client(clientName: string): array<json> {
     }
 
     const status = string.from(job.status).trim();
-    if (is_active_job_status(status)) {
+    const isWaitingMultiWriterDownload = status == 'waiting'
+      && string.from(job.direction).trim() == 'download'
+      && string.from(job.batchId).trim().length != 0;
+    if (is_active_job_status(status) || isWaitingMultiWriterDownload) {
       jobs = jobs.concat([agent_job_payload(job)]);
       seenTables = seenTables.concat([job.table]);
     } else if (status == 'completed' || status == 'failed' || status == 'cancelled') {
@@ -2731,6 +2755,119 @@ function normalize_key_columns(keyColumns: array<string>? = null): array<string>
     return [];
   }
   return keyColumns;
+}
+
+function find_sync_batch(batchId: string? = null): map<json>? {
+  if (batchId == null || batchId.trim().length == 0) {
+    return null;
+  }
+  return db.selectOne(SyncBatch, { id: batchId.trim() });
+}
+
+function sync_batch_has_value(values: array<json>, target: string): bool {
+  for (const value of values) {
+    if (string.from(value).trim() == target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sync_batch_chunk_seen(values: array<json>, clientName: string, chunkId: string): bool {
+  for (const value of values) {
+    if (string.from(value.clientName).trim() == clientName && string.from(value.chunkId).trim() == chunkId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string): array<json> {
+  let rows = [];
+  const createdAt = now_iso();
+  for (const agent of agents) {
+    const clientName = string.from(agent.clientName);
+    rows = rows.concat([{
+      id: uuid.v4(),
+      clientName,
+      sourceClientName: '',
+      subscriberClientName: '',
+      table,
+      direction: 'upload',
+      publisherServer: sync_job_text(agent.server),
+      publisherDatabase: sync_job_text(agent.database),
+      publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
+      publisherUser: sync_job_text(agent.replicationUser),
+      publisherPassword: sync_job_text(agent.replicationPassword),
+      status: 'queued',
+      progress: 0,
+      rowCount: 0,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
+      createdAt,
+      updatedAt: createdAt,
+      startedAt: null,
+      completedAt: null,
+      message: string.concat('Queued multi-writer upload for ', table, '.'),
+      error: null,
+      clientUserId: agent.clientUserId,
+      ownerUserId,
+      batchId
+    }, {
+      id: uuid.v4(),
+      clientName,
+      sourceClientName: 'server-merge',
+      subscriberClientName: clientName,
+      table,
+      direction: 'download',
+      publisherServer: '',
+      publisherDatabase: sync_job_text(agent.database),
+      publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
+      publisherUser: '',
+      publisherPassword: '',
+      status: 'waiting',
+      progress: 0,
+      rowCount: 0,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
+      createdAt,
+      updatedAt: createdAt,
+      startedAt: null,
+      completedAt: null,
+      message: string.concat('Waiting for all client uploads for ', table, '.'),
+      error: null,
+      clientUserId: agent.clientUserId,
+      ownerUserId,
+      batchId
+    }]);
+  }
+  return rows;
+}
+
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>): array<json> {
+  if (agents.length == 0) {
+    return [];
+  }
+  const batchId = uuid.v4();
+  const clientNames = agents.map((agent) => string.from(agent.clientName));
+  const createdAt = now_iso();
+  db.insert(SyncBatch, {
+    id: batchId,
+    table,
+    ownerUserId,
+    expectedClients: clientNames,
+    uploadedClients: [],
+    receivedChunks: [],
+    keyColumns: [],
+    columns: [],
+    rows: [],
+    status: 'uploading',
+    createdAt,
+    updatedAt: createdAt
+  });
+  return db.insertMany(SyncJob, multi_writer_job_rows(batchId, table, agents, ownerUserId));
 }
 
 function auth_login(name: string, password: string, app: string = 'web'): map<json> {
@@ -3662,7 +3799,7 @@ function agent_diagnostics_get(clientName: string, token: string? = null): map<j
   };
 }
 
-function jobs_create_all_enabled(token: string? = null): map<json> {
+function jobs_create_all_enabled_legacy(token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -3735,6 +3872,74 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     skippedOfflineClients: unique_string_values(skippedOfflineClients),
     skippedBusyTables: unique_string_values(skippedBusyTables),
     skippedSourceResolutionTables: unique_string_values(skippedSourceResolutionTables)
+  };
+}
+
+function jobs_create_all_enabled(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  let createdJobs = [];
+  let queuedClientNames = [];
+  let skippedOfflineClients = [];
+  let skippedBusyTables = [];
+  const visibleAgents = visible_agent_rows_for(current);
+  const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
+  for (const ownerUserId of ownerUserIds) {
+    const ownerAgents = visibleAgents.filter((agent) => string.from(agent.ownerUserId) == ownerUserId);
+    let onlineAgents = [];
+    for (const agent of ownerAgents) {
+      if (effective_agent_online(agent)) {
+        onlineAgents = onlineAgents.concat([agent]);
+      } else {
+        skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
+      }
+    }
+    if (onlineAgents.length == 0) {
+      continue;
+    }
+    const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+    let enabledTables = [];
+    for (const agent of onlineAgents) {
+      enabledTables = enabledTables.concat(
+        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+        )
+      );
+    }
+    enabledTables = unique_string_values(enabledTables);
+    for (const table of enabledTables) {
+      let busy = false;
+      for (const agent of ownerAgents) {
+        if (string_array_contains(active_job_tables_for_client(string.from(agent.clientName)), table)) {
+          busy = true;
+          skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
+        }
+      }
+      if (busy) {
+        continue;
+      }
+      const jobs = create_multi_writer_batch(ownerUserId, table, onlineAgents);
+      if (jobs.length > 0) {
+        createdJobs = createdJobs.concat(jobs);
+        queuedClientNames = queuedClientNames.concat(onlineAgents.map((agent) => string.from(agent.clientName)));
+      }
+    }
+  }
+  return {
+    ok: true,
+    mode: 'multi-writer',
+    jobs: createdJobs.map((job) => public_job_payload(job)),
+    queuedJobCount: createdJobs.length,
+    queuedClientCount: unique_string_values(queuedClientNames).length,
+    skippedOfflineClients: unique_string_values(skippedOfflineClients),
+    skippedBusyTables: unique_string_values(skippedBusyTables),
+    skippedSourceResolutionTables: []
   };
 }
 
@@ -3884,6 +4089,127 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
     compressedBytes: session.compressedBytes,
     receivedIndexes: []
   });
+}
+
+function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_multi_writer_upload', token, current, job);
+  }
+  if (string.from(job.direction).trim() != 'upload' || string.from(job.batchId).trim() != batchId.trim()) {
+    return raw_json_error(409, 'job is not a multi-writer upload');
+  }
+  const batch = find_sync_batch(batchId);
+  if (batch == null || string.from(batch.table).trim() != table.trim()) {
+    return raw_json_error(404, 'sync batch not found');
+  }
+  const normalizedClientName = clientName.trim();
+  if (!sync_batch_has_value(batch.expectedClients, normalizedClientName)) {
+    return raw_json_error(403, 'client is not part of this sync batch');
+  }
+  const normalizedChunkId = chunkId.trim();
+  if (normalizedChunkId.length == 0) {
+    return raw_json_error(400, 'chunkId is required');
+  }
+  const incomingRows = rows ?? [];
+  if (incomingRows.length > 500) {
+    return raw_json_error(413, 'multi-writer chunk is too large');
+  }
+  if (sync_batch_chunk_seen(batch.receivedChunks, normalizedClientName, normalizedChunkId)) {
+    return raw_json_success({ job: public_job_payload(job), batchId, duplicate: true, ready: batch.status == 'ready' });
+  }
+
+  let resolvedKeyColumns = normalize_key_columns(keyColumns);
+  if (batch.keyColumns.length > 0) {
+    resolvedKeyColumns = batch.keyColumns.map((value) => string.from(value));
+  }
+  let resolvedColumns = columns ?? [];
+  if (batch.columns.length > 0) {
+    resolvedColumns = batch.columns.map((value) => string.from(value));
+  }
+  const mergedRows = merge_rows_by_key(batch.rows, incomingRows, resolvedKeyColumns);
+  const receivedChunks = batch.receivedChunks.concat([{
+    clientName: normalizedClientName,
+    chunkId: normalizedChunkId,
+    rowCount: incomingRows.length,
+    receivedAt: now_iso()
+  }]);
+  let uploadedClients = batch.uploadedClients;
+  if (finalChunk && !sync_batch_has_value(uploadedClients, normalizedClientName)) {
+    uploadedClients = uploadedClients.concat([normalizedClientName]);
+  }
+  const ready = uploadedClients.length >= batch.expectedClients.length;
+  db.update(SyncBatch, { id: batch.id }, {
+    table: batch.table,
+    ownerUserId: batch.ownerUserId,
+    expectedClients: batch.expectedClients,
+    uploadedClients,
+    receivedChunks,
+    keyColumns: resolvedKeyColumns,
+    columns: resolvedColumns,
+    rows: mergedRows,
+    status: ready ? 'ready' : 'uploading',
+    createdAt: batch.createdAt,
+    updatedAt: now_iso()
+  });
+  const updatedResult = finalChunk
+    ? jobs_complete(job.id, 'completed', 100, string.concat('Uploaded ', string.from(incomingRows.length), ' changed rows for ', table, '.'), incomingRows.length, null, null, null, token)
+    : jobs_progress(job.id, 'uploading', 70, string.concat('Uploaded multi-writer chunk for ', table, '.'), incomingRows.length, token);
+  const updatedJob = updatedResult.job ?? job;
+  // Clients poll their waiting batch download until the barrier is ready.
+  let nextJob = job;
+  if (updatedJob != null) {
+    nextJob = updatedJob;
+  }
+  return raw_json_success({
+    job: public_job_payload(nextJob),
+    batchId,
+    acceptedRows: incomingRows.length,
+    mergedRowCount: mergedRows.length,
+    uploadedClients,
+    expectedClientCount: batch.expectedClients.length,
+    ready
+  });
+}
+
+function jobs_multi_writer_download(jobId: string, batchId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current, job)) {
+    return deny_job_access('jobs_multi_writer_download', token, current, job);
+  }
+  const batch = find_sync_batch(batchId);
+  if (batch == null || string.from(job.batchId).trim() != batchId.trim()) {
+    return raw_json_error(404, 'sync batch not found');
+  }
+  if (batch.status != 'ready') {
+    return raw_json_error(409, 'sync batch is still waiting for client uploads');
+  }
+  const snapshot = {
+    id: string.concat(batch.id, '-', string.from(job.clientName)),
+    clientName: 'server-merge',
+    subscriberClientName: job.clientName,
+    table: batch.table,
+    rowCount: batch.rows.length,
+    checksum: snapshot_checksum({ batchId, rows: batch.rows }),
+    createdAt: batch.updatedAt,
+    snapshotBytes: json.stringify(batch.rows).length,
+    compressedBytes: 0,
+    chunkCount: 0,
+    encoding: 'json',
+    sourceJobId: job.id,
+    columns: batch.columns,
+    keyColumns: batch.keyColumns,
+    rows: batch.rows
+  };
+  return raw_json_success({ snapshot });
 }
 
 function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {

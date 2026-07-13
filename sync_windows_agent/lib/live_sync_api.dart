@@ -1033,6 +1033,62 @@ class AgentControlPlaneClient {
     return snapshot;
   }
 
+  Future<RemoteSyncJob> uploadMultiWriterDelta(
+    String jobId, {
+    required String batchId,
+    required String clientName,
+    required String table,
+    required List<String> columns,
+    required List<String> keyColumns,
+    required List<Map<String, String?>> rows,
+    required String chunkId,
+    required bool finalChunk,
+    int? changeTrackingVersion,
+  }) async {
+    final decoded = await _invokeFunctionWithRetry('jobs_multi_writer_upload', {
+      'jobId': jobId,
+      'batchId': batchId,
+      'clientName': clientName,
+      'table': table,
+      'columns': columns,
+      'keyColumns': keyColumns,
+      'rows': rows,
+      'chunkId': chunkId,
+      'finalChunk': finalChunk,
+      if (changeTrackingVersion != null)
+        'changeTrackingVersion': changeTrackingVersion,
+    }, 'uploading multi-writer delta');
+    if (decoded is! Map || decoded['job'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected multi-writer upload payload.',
+      );
+    }
+    return _parseRemoteSyncJobPayload(
+      decoded['job'],
+      'Unexpected multi-writer upload payload.',
+    );
+  }
+
+  Future<RemoteSnapshot> downloadMultiWriterDelta(
+    String jobId, {
+    required String batchId,
+  }) async {
+    final decoded = await _invokeFunctionWithRetry(
+      'jobs_multi_writer_download',
+      {'jobId': jobId, 'batchId': batchId},
+      'downloading merged multi-writer delta',
+    );
+    if (decoded is! Map || decoded['snapshot'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected merged multi-writer download payload.',
+      );
+    }
+    return _parseSnapshotPayload(
+      decoded['snapshot'],
+      'Unexpected merged multi-writer download payload.',
+    );
+  }
+
   ClientUpdateInfo _parseClientUpdateInfoPayload(
     dynamic response,
     String message,
@@ -1568,6 +1624,7 @@ class RemoteSyncJob {
     required this.completedAt,
     required this.message,
     required this.error,
+    this.batchId,
   });
 
   final String id;
@@ -1593,6 +1650,7 @@ class RemoteSyncJob {
   final String? completedAt;
   final String message;
   final String? error;
+  final String? batchId;
 
   factory RemoteSyncJob.fromJson(Map<String, dynamic> json) {
     return RemoteSyncJob(
@@ -1619,6 +1677,7 @@ class RemoteSyncJob {
       completedAt: json['completedAt'] as String?,
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
+      batchId: json['batchId'] as String?,
     );
   }
 
@@ -1628,7 +1687,8 @@ class RemoteSyncJob {
       status == 'snapshotting' ||
       status == 'uploading' ||
       status == 'downloading' ||
-      status == 'applying';
+      status == 'applying' ||
+      (status == 'waiting' && batchId?.trim().isNotEmpty == true);
 }
 
 class RemoteSnapshot {
