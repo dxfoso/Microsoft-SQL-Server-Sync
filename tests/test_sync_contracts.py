@@ -333,14 +333,14 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("await _handleRequestedWindowAction(heartbeat.windowAction);", heartbeat_body)
         self.assertIn("await _handleRequestedClientUpdate(heartbeat.clientUpdate);", heartbeat_body)
         self.assertIn("_refreshAutoRequiredTables();", heartbeat_body)
-        self.assertIn("await _processPendingJobs();", heartbeat_body)
+        self.assertIn("unawaited(_processPendingJobs());", heartbeat_body)
         self.assertLess(
             heartbeat_body.index("_scheduleRequestedDiagnosticsUpload(heartbeat.diagnostics);"),
-            heartbeat_body.index("await _processPendingJobs();"),
+            heartbeat_body.index("unawaited(_processPendingJobs());"),
         )
         self.assertLess(
             heartbeat_body.index("_refreshAutoRequiredTables();"),
-            heartbeat_body.index("await _processPendingJobs();"),
+            heartbeat_body.index("unawaited(_processPendingJobs());"),
         )
 
     def test_requested_diagnostics_uploads_dedupe_by_request_id_and_release_busy_state(self):
@@ -493,6 +493,9 @@ class SyncContractsTests(unittest.TestCase):
         )[1].split("List<RemoteSyncJob> _sortPendingJobsByDependencies(", 1)[0]
 
         self.assertIn("if (_processingJobIds.contains(job.id)) {", pending_jobs_body)
+        self.assertIn("if (_processingPendingJobsBusy) {", pending_jobs_body)
+        self.assertIn("_processingPendingJobsBusy = true;", pending_jobs_body)
+        self.assertIn("_processingPendingJobsBusy = false;", pending_jobs_body)
         self.assertIn("_processingJobIds.add(job.id);", pending_jobs_body)
         self.assertIn("} finally {", pending_jobs_body)
         self.assertIn("_processingJobIds.remove(job.id);", pending_jobs_body)

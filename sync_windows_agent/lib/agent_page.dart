@@ -153,6 +153,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
+  bool _processingPendingJobsBusy = false;
   String? _lastSqlCmdLaunchError;
   ClientUpdateInfo? _clientUpdateInfo;
   String? _clientUpdateError;
@@ -2528,7 +2529,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
       _refreshAutoRequiredTables();
 
-      await _processPendingJobs();
+      // Keep heartbeat delivery independent from long SQL snapshot/apply work.
+      // A large sync must not make the control plane mark this client offline.
+      unawaited(_processPendingJobs());
     } catch (error) {
       if (!mounted) {
         return;
@@ -3152,6 +3155,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _processPendingJobs() async {
+    if (_processingPendingJobsBusy) {
+      return;
+    }
+    _processingPendingJobsBusy = true;
     final pendingJobs = _activeJobs
         .where((job) => job.isActive)
         .toList(growable: false);
@@ -3224,6 +3231,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
     } finally {
       _updateTraySyncIndicator();
+      _processingPendingJobsBusy = false;
     }
   }
 
