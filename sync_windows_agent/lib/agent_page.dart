@@ -3952,21 +3952,23 @@ SELECT
         .map((column) {
           final isKey = primaryKeySet.contains(column.name.toLowerCase());
           if (isKey) {
-            return _sourceBatchEncodedColumnExpression(
+            final expression = _sourceBatchEncodedColumnExpression(
               column,
               columnReference: 'ct.${_quoteIdentifier(column.name)}',
             );
+            return '($expression) COLLATE DATABASE_DEFAULT';
           }
-          return '''CASE WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN N'\\N'
+          final expression = '''CASE WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN N'\\N'
 ELSE ${_sourceBatchEncodedColumnExpression(column, columnReference: 'existing_row.${_quoteIdentifier(column.name)}')}
 END''';
+          return '($expression) COLLATE DATABASE_DEFAULT';
         })
         .join(' + NCHAR($fieldSeparator) + ');
     final query = '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
-  ct.SYS_CHANGE_OPERATION + NCHAR($fieldSeparator) + $encoded + NCHAR($rowSentinel)
+  ct.SYS_CHANGE_OPERATION COLLATE DATABASE_DEFAULT + NCHAR($fieldSeparator) + $encoded + NCHAR($rowSentinel)
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
 LEFT JOIN $source AS existing_row ON $join
 ORDER BY ct.SYS_CHANGE_VERSION;

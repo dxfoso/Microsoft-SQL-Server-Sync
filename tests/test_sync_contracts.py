@@ -78,6 +78,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("existing_row.", delta_body)
         self.assertNotIn("AS current ON", delta_body)
         self.assertNotIn("current.", delta_body)
+        self.assertIn("COLLATE DATABASE_DEFAULT", delta_body)
 
     def test_symmetricds_client_service_is_removed(self):
         self.assertFalse(
