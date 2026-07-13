@@ -3228,7 +3228,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   List<RemoteSyncJob> _sortPendingJobsByDependencies(List<RemoteSyncJob> jobs) {
-    if (jobs.length < 2 || _remoteTableDependencies.isEmpty) {
+    if (jobs.length < 2) {
       return jobs;
     }
 
