@@ -202,7 +202,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       (_) => unawaited(_syncWithControlPlane()),
     );
     _clientUpdateCheckTimer = Timer.periodic(
-      const Duration(minutes: 30),
+      const Duration(minutes: 5),
       (_) => unawaited(_checkClientUpdate()),
     );
     if (widget.autoLoadOnStart) {
@@ -1731,17 +1731,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       logStartupEvent(
         'Applying client update automatically: $targetId from $manifestUrl force=$force',
       );
-      final updaterCommandLine = [
-        'start',
-        '""',
-        '/min',
+      // Launch PowerShell directly. Going through `cmd start` can return
+      // successfully while the hidden updater never starts.
+      await Process.start(
         'powershell.exe',
-        ...psArgs,
-      ];
-      await Process.start('cmd.exe', [
-        '/c',
-        ...updaterCommandLine,
-      ], mode: ProcessStartMode.detached);
+        psArgs,
+        mode: ProcessStartMode.detached,
+      );
       if (!mounted) {
         return;
       }

@@ -25,7 +25,6 @@ const String _shellAgentBuildCommitHash = String.fromEnvironment(
   defaultValue: '',
 );
 const Duration _shellAutoUpdateRetryCooldown = Duration(minutes: 10);
-const Duration _shellClientUpdatePollInterval = Duration(minutes: 30);
 
 const List<String> _uiFontFallback = <String>[
   'Segoe UI',
@@ -158,7 +157,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       );
     }
     _clientUpdateCheckTimer = Timer.periodic(
-      _shellClientUpdatePollInterval,
+      const Duration(minutes: 5),
       (_) => unawaited(_checkShellClientUpdate()),
     );
     _loadState();
@@ -665,14 +664,13 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       logStartupEvent(
         'Applying shell client update automatically: $targetId from $manifestUrl force=$force',
       );
-      await Process.start('cmd.exe', [
-        '/c',
-        'start',
-        '""',
-        '/min',
+      // Launch PowerShell directly so a successful cmd.exe start cannot hide
+      // a failed updater process from the client.
+      await Process.start(
         'powershell.exe',
-        ...psArgs,
-      ], mode: ProcessStartMode.detached);
+        psArgs,
+        mode: ProcessStartMode.detached,
+      );
       await Future<void>.delayed(const Duration(milliseconds: 750));
       if (mounted) {
         exit(0);

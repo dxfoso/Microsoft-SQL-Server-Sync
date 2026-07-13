@@ -624,6 +624,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_related_table_metadata_stays_in_app_state(self):
         control_plane = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        app_source = read_text("sync_windows_agent/lib/app.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
 
         self.assertIn("field tableRelationships: array<json>", control_plane)
@@ -721,6 +722,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_windows_agent_can_apply_server_requested_client_updates(self):
         control_plane = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        app_source = read_text("sync_windows_agent/lib/app.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         web_api = read_text("frontend/lib/live_sync_api.dart")
         web_models = read_text("frontend/lib/models.dart")
@@ -742,9 +744,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_pendingForcedClientUpdateInfo = updateInfo;", agent_page)
         self.assertIn("} finally {", agent_page)
         self.assertIn("_retryAutomaticClientUpdateIfReady();", agent_page)
+        self.assertIn("Process.start(\n        'powershell.exe',", agent_page)
+        self.assertNotIn("Process.start('cmd.exe'", agent_page)
+        self.assertIn("Process.start(\n        'powershell.exe',", app_source)
+        self.assertNotIn("Process.start('cmd.exe'", app_source)
         self.assertIn("Future<RemoteAgentClientUpdate> acknowledgeClientUpdate(", client_api)
         self.assertIn("class RemoteAgentClientUpdate {", client_api)
         self.assertIn("requestAllAgentClientUpdates() async {", web_api)
+
+    def test_update_script_relaunches_after_noop_and_failure(self):
+        update_script = read_text("update.ps1")
+        self.assertIn("No installation required. Relaunching the current client.", update_script)
+        self.assertIn("Attempting recovery relaunch of the current client.", update_script)
+        self.assertIn("Start-UpdatedClient -ExecutablePath $currentExe", update_script)
+        self.assertIn("Updater failed:", update_script)
 
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
