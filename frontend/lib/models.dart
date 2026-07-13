@@ -459,6 +459,7 @@ class AdminJob {
     required this.completedAt,
     required this.message,
     required this.error,
+    required this.snapshotId,
   });
 
   final String id;
@@ -480,6 +481,7 @@ class AdminJob {
   final String? completedAt;
   final String message;
   final String? error;
+  final String? snapshotId;
 
   factory AdminJob.fromJson(Map<String, dynamic> json) {
     return AdminJob(
@@ -502,6 +504,7 @@ class AdminJob {
       completedAt: json['completedAt'] as String?,
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
+      snapshotId: json['snapshotId'] as String?,
     );
   }
 

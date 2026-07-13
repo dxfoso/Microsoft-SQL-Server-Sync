@@ -15,6 +15,78 @@ enum _ClientDetailView { logs, tables }
 
 enum _ClientScreen { list, detail, table }
 
+class _SyncLogOperation {
+  _SyncLogOperation({
+    required this.key,
+    required this.jobs,
+    required this.clientName,
+  });
+
+  final String key;
+  final List<AdminJob> jobs;
+  final String clientName;
+  int? changedRowsOverride;
+
+  AdminJob? get upload => _jobFor('upload');
+  AdminJob? get download => _jobFor('download');
+
+  AdminJob? _jobFor(String direction) {
+    for (final job in jobs) {
+      if (job.direction.toLowerCase() == direction) return job;
+    }
+    return null;
+  }
+
+  AdminJob get representative => download ?? upload ?? jobs.first;
+
+  int? get uploadedRows => _localRows(upload);
+  int? get downloadedRows => _localRows(download);
+  int? get changedRows => downloadedRows ?? uploadedRows;
+
+  String get status {
+    final failed = jobs.any(
+      (job) =>
+          job.status.toLowerCase() == 'failed' ||
+          job.error?.trim().isNotEmpty == true,
+    );
+    if (failed) return 'Failed';
+    final active = jobs.firstWhere(
+      (job) => job.isActive,
+      orElse: () => representative,
+    );
+    return active.status;
+  }
+
+  int get progress {
+    if (jobs.isEmpty) return 0;
+    return jobs.map((job) => job.progress).reduce((left, right) =>
+        left < right ? left : right);
+  }
+
+  String get message {
+    for (final job in [download, upload]) {
+      if (job?.error?.trim().isNotEmpty == true) return job!.error!;
+    }
+    final messages = jobs
+        .map((job) => job.message.trim())
+        .where((message) => message.isNotEmpty)
+        .toList(growable: false);
+    return messages.isEmpty ? 'No message reported.' : messages.join(' / ');
+  }
+
+  int? _reportedRows(AdminJob? job) {
+    if (job == null) return null;
+    if (changedRowsOverride != null) return changedRowsOverride;
+    return job.changedRowCount ?? job.rowCount;
+  }
+
+  int? _localRows(AdminJob? job) {
+    if (job == null) return null;
+    if (job.clientName != clientName) return 0;
+    return _reportedRows(job);
+  }
+}
+
 class ClientsPage extends StatefulWidget {
   const ClientsPage({
     super.key,
@@ -995,19 +1067,24 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildJobLog(List<AdminJob> jobs) {
-    final visibleJobs = jobs
+    final operations = _groupSyncLogOperations(
+      jobs,
+      clientName: _selectedClientName ?? '',
+    );
+    final visibleOperations = operations
         .where((job) {
           final query = _logFilter.toLowerCase();
           final matchesQuery =
               query.isEmpty ||
-              '${job.table} ${job.direction} ${job.status} ${job.message}'
+              '${job.representative.table} upload download ${job.status} ${job.message}'
                   .toLowerCase()
                   .contains(query);
           final matchesDirection =
               _logDirection == 'all' ||
-              job.direction.toLowerCase() == _logDirection;
-          final matchesStatus =
-              _logStatus == 'all' || job.status.toLowerCase() == _logStatus;
+              (_logDirection == 'upload' && job.upload != null) ||
+              (_logDirection == 'download' && job.download != null);
+          final matchesStatus = _logStatus == 'all' ||
+              job.status.toLowerCase() == _logStatus;
           return matchesQuery && matchesDirection && matchesStatus;
         })
         .toList(growable: false);
@@ -1085,9 +1162,9 @@ class _ClientsPageState extends State<ClientsPage> {
           },
         ),
         const SizedBox(height: 10),
-        if (visibleJobs.isEmpty)
+        if (visibleOperations.isEmpty)
           _buildEmpty(
-            jobs.isEmpty
+            operations.isEmpty
                 ? 'No sync jobs are visible for this client.'
                 : 'No logs match the current filters.',
           )
@@ -1098,19 +1175,77 @@ class _ClientsPageState extends State<ClientsPage> {
               columnSpacing: 20,
               columns: const [
                 DataColumn(label: Text('Updated')),
-                DataColumn(label: Text('Direction')),
+                DataColumn(label: Text('Operation')),
                 DataColumn(label: Text('Table')),
                 DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Progress')),
-                DataColumn(label: Text('Added rows')),
+                DataColumn(label: Text('Changed rows')),
                 DataColumn(label: Text('Uploaded new')),
+                DataColumn(label: Text('Downloaded new')),
                 DataColumn(label: Text('Message')),
               ],
-              rows: visibleJobs.map(_buildLogDataRow).toList(growable: false),
+              rows: visibleOperations
+                  .map(_buildLogDataRow)
+                  .toList(growable: false),
             ),
           ),
       ],
     );
+  }
+
+  List<_SyncLogOperation> _groupSyncLogOperations(
+    List<AdminJob> jobs, {
+    required String clientName,
+  }) {
+    final grouped = <String, List<AdminJob>>{};
+    for (final job in jobs) {
+      final snapshot = job.snapshotId?.trim() ?? '';
+      final timestamp = job.createdAt.length >= 19
+          ? job.createdAt.substring(0, 19)
+          : job.createdAt;
+      final key = snapshot.isNotEmpty
+          ? 'snapshot:$snapshot'
+          : '${job.table}|${job.sourceClientName}|${job.subscriberClientName}|$timestamp';
+      grouped.putIfAbsent(key, () => <AdminJob>[]).add(job);
+    }
+    final operations = grouped.entries
+        .map(
+          (entry) => _SyncLogOperation(
+            key: entry.key,
+            jobs: entry.value,
+            clientName: clientName,
+          ),
+        )
+        .toList(growable: false);
+    operations.sort(
+      (left, right) => _timestamp(right.representative.updatedAt).compareTo(
+        _timestamp(left.representative.updatedAt),
+      ),
+    );
+    for (var index = 0; index < operations.length; index++) {
+      final current = operations[index];
+      final currentRows = current.representative.rowCount;
+      if (currentRows <= 0) {
+        current.changedRowsOverride = 0;
+        continue;
+      }
+      final previous = operations.skip(index + 1).firstWhere(
+            (candidate) =>
+                candidate.representative.table == current.representative.table &&
+                candidate.representative.rowCount > 0,
+            orElse: () => _SyncLogOperation(
+              key: '',
+              jobs: const [],
+              clientName: clientName,
+            ),
+          );
+      if (previous.jobs.isNotEmpty &&
+          currentRows >= previous.representative.rowCount) {
+        current.changedRowsOverride =
+            currentRows - previous.representative.rowCount;
+      }
+    }
+    return operations;
   }
 
   Widget _buildLogFilter({
@@ -1136,59 +1271,59 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
-  DataRow _buildLogDataRow(AdminJob job) {
-    final isUpload = job.direction.toLowerCase() == 'upload';
-    final directionColor =
-        isUpload ? const Color(0xFF2563EB) : const Color(0xFFB54708);
-    final message =
-        job.error?.trim().isNotEmpty == true
-            ? job.error!
-            : (job.message.isEmpty ? 'No message reported.' : job.message);
+  DataRow _buildLogDataRow(_SyncLogOperation operation) {
+    final changed = operation.changedRows;
+    final uploadColor = const Color(0xFF2563EB);
+    final downloadColor = const Color(0xFFB54708);
     return DataRow(
       cells: [
-        DataCell(Text(_formatTimestamp(job.updatedAt))),
+        DataCell(Text(_formatTimestamp(operation.representative.updatedAt))),
         DataCell(
           Row(
             children: [
-              Icon(
-                isUpload
-                    ? Icons.arrow_upward_rounded
-                    : Icons.arrow_downward_rounded,
-                size: 16,
-                color: directionColor,
-              ),
+              if (operation.upload != null)
+                Icon(Icons.arrow_upward_rounded, size: 16, color: uploadColor),
+              if (operation.download != null)
+                Icon(Icons.arrow_downward_rounded,
+                    size: 16, color: downloadColor),
               const SizedBox(width: 5),
-              Text(
-                job.direction,
-                style: TextStyle(
-                  color: directionColor,
-                  fontWeight: FontWeight.w800,
-                ),
+              const Text(
+                'Sync',
+                style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ],
           ),
         ),
-        DataCell(Text(_displayTable(job.table))),
-        DataCell(_statusChip(job.status, _statusColor(job.status))),
-        DataCell(Text('${job.progress}%')),
+        DataCell(Text(_displayTable(operation.representative.table))),
+        DataCell(_statusChip(operation.status, _statusColor(operation.status))),
+        DataCell(Text('${operation.progress}%')),
         DataCell(
           Text(
-            job.changedRowCount == null
-                ? 'Not reported'
-                : '+${_number(job.changedRowCount!)}',
-            style: TextStyle(
-              color: directionColor,
+            changed == null ? 'Not reported' : '+${_number(changed)}',
+            style: const TextStyle(
+              color: Color(0xFFB54708),
               fontWeight: FontWeight.w800,
             ),
           ),
         ),
         DataCell(
           Text(
-            isUpload && job.changedRowCount != null
-                ? '+${_number(job.changedRowCount!)}'
-                : 'Not reported',
-            style: TextStyle(
-              color: isUpload ? directionColor : const Color(0xFF667085),
+            operation.uploadedRows == null
+                ? 'Not reported'
+                : '+${_number(operation.uploadedRows!)}',
+            style: const TextStyle(
+              color: Color(0xFF2563EB),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            operation.downloadedRows == null
+                ? 'Not reported'
+                : '+${_number(operation.downloadedRows!)}',
+            style: const TextStyle(
+              color: Color(0xFFB54708),
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -1196,7 +1331,8 @@ class _ClientsPageState extends State<ClientsPage> {
         DataCell(
           SizedBox(
             width: 260,
-            child: Text(message, maxLines: 2, overflow: TextOverflow.ellipsis),
+            child: Text(operation.message,
+                maxLines: 2, overflow: TextOverflow.ellipsis),
           ),
         ),
       ],
