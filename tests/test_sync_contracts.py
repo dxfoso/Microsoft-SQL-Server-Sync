@@ -773,6 +773,13 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Start-UpdatedClient -ExecutablePath $currentExe", update_script)
         self.assertIn("Updater failed:", update_script)
 
+    def test_update_script_verifies_the_installed_payload_before_relaunch(self):
+        update_script = read_text("update.ps1")
+        self.assertIn("function Test-PayloadInstalled {", update_script)
+        self.assertIn("Test-PayloadInstalled -PayloadDir $PayloadDir -InstallDir $InstallDir", update_script)
+        self.assertIn("Verified installed client payload for version $Version.", update_script)
+        self.assertIn("Start-Sleep -Milliseconds 500", update_script)
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")

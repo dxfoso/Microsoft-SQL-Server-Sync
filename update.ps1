@@ -246,6 +246,26 @@ function Stop-AgentProcesses {
     }
 }
 
+function Test-PayloadInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string] $PayloadDir,
+        [Parameter(Mandatory = $true)][string] $InstallDir
+    )
+
+    foreach ($source in Get-ChildItem -LiteralPath $PayloadDir -File -Recurse -Force) {
+        $relative = $source.FullName.Substring(($PayloadDir.TrimEnd('\', '/')).Length).TrimStart('\', '/')
+        $target = Join-Path -Path $InstallDir -ChildPath $relative
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            throw "Installed client file is missing: $relative"
+        }
+        $sourceHash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+        if ($sourceHash -ne $targetHash) {
+            throw "Installed client file verification failed: $relative"
+        }
+    }
+}
+
 function Get-WatchdogScriptPath {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
@@ -664,6 +684,26 @@ function Stop-AgentProcesses {
     }
 }
 
+function Test-PayloadInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string] $PayloadDir,
+        [Parameter(Mandatory = $true)][string] $InstallDir
+    )
+
+    foreach ($source in Get-ChildItem -LiteralPath $PayloadDir -File -Recurse -Force) {
+        $relative = $source.FullName.Substring(($PayloadDir.TrimEnd('\', '/')).Length).TrimStart('\', '/')
+        $target = Join-Path -Path $InstallDir -ChildPath $relative
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            throw "Installed client file is missing: $relative"
+        }
+        $sourceHash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+        if ($sourceHash -ne $targetHash) {
+            throw "Installed client file verification failed: $relative"
+        }
+    }
+}
+
 function Start-UpdatedClient {
     param(
         [Parameter(Mandatory = $true)][string] $ExecutablePath,
@@ -960,6 +1000,7 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
 
 Write-UpdateLog -Message "Ensuring the prior client instance from this install is stopped before install." -LogPath $logPath
 Stop-AgentProcesses -TargetInstallDir $InstallDir
+Start-Sleep -Milliseconds 500
 
 if (-not [string]::IsNullOrWhiteSpace($DeleteListPath) -and (Test-Path -LiteralPath $DeleteListPath -PathType Leaf)) {
     foreach ($relativePath in Get-Content -LiteralPath $DeleteListPath -ErrorAction Stop) {
@@ -979,6 +1020,7 @@ New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
 Write-UpdateLog -Message "Copying payload into install dir." -LogPath $logPath
 Get-ChildItem -LiteralPath $PayloadDir -Force |
     Copy-Item -Destination $InstallDir -Recurse -Force
+Test-PayloadInstalled -PayloadDir $PayloadDir -InstallDir $InstallDir
 Write-WatchdogScript -TargetInstallDir $InstallDir | Out-Null
 Update-StartupShortcutToWatchdog -TargetInstallDir $InstallDir
 
@@ -986,6 +1028,7 @@ $installedExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
 if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
     throw "Update completed but the installed executable is missing: $installedExe"
 }
+Write-UpdateLog -Message "Verified installed client payload for version $Version." -LogPath $logPath
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     Write-UpdateLog -Message "Installed sync_windows_agent to $InstallDir" -LogPath $logPath
