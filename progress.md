@@ -1,11 +1,13 @@
 # Multi-Writer Sync Progress
 
-Progress: 55%
+Progress: 70%
 
-- Verified current production baseline: server `0c3603b` is ready with zero compile errors; c1/c2 are online on client `1.0.125+129`.
-- Added a multi-writer batch/journal path: online clients upload bounded primary-key deltas first; the server merges by key and releases one merged delta only after the upload barrier.
+- Production server commit `9dee922` is healthy with `compile_errors=0`; the first deployment is verified live.
+- Added the multi-writer batch/journal path: online clients upload bounded primary-key deltas first; the server merges by key and releases one merged delta after the upload barrier.
 - Added client support for resumable 250-row multi-writer uploads and merged downloads; offline clients are excluded from the current barrier and can join the next batch.
-- Local verification passed: control-plane contracts `27/27`, Windows client tests `86/86`, Flutter analysis has only the existing three warnings.
-- Backend release runtime validation now passes with `compiled_files=2`, `objects=10`, and `functions=204`; waiting batch downloads remain retryable until the upload barrier is ready.
-- Remaining: add true local/live end-to-end tests for conflicts/deletes/offline/retry/convergence, then deploy and verify production.
-- Multi-writer has not been deployed yet.
+- Local verification passed: multi-writer/control-plane contracts, Windows client tests `86/86`, Flutter analysis with only the existing three warnings, and TRU runtime validation (`compiled_files=2`, `objects=10`, `functions=204`).
+- Published client `1.0.126+130` with the live backend URL and no ZIP parts; stale incompatible live jobs were cancelled (`28`).
+- Live update testing reproduced the failure: both old clients stopped heartbeating after the update request and remained `requested` on `1.0.125+129`.
+- Fixed the updater to prefer the packaged local `update.ps1`, published client `1.0.127+131`, and passed Windows tests `86/86`.
+- Deployment `73535f66-447a-485b-9ce1-8a01e1a5becb` is still compiling after one Cloud builder-instance retry; production remains on the prior verified client package.
+- Remaining: finish deployment verification, retry both client updates, then run live multi-writer tests for concurrent edits, conflicts, deletes, offline/reconnect, retry/resume, Unicode, and convergence.
