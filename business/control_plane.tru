@@ -1989,8 +1989,6 @@ function active_jobs_for_client(clientName: string): array<json> {
     if (is_active_job_status(status) || isWaitingMultiWriterDownload) {
       jobs = jobs.concat([agent_job_payload(job)]);
       seenTables = seenTables.concat([job.table]);
-    } else if (status == 'completed' || status == 'failed' || status == 'cancelled') {
-      seenTables = seenTables.concat([job.table]);
     }
   }
   return jobs;
@@ -2062,9 +2060,8 @@ function active_job_for_client_table(clientName: string, table: string): map<jso
     if (is_active_job_status(status)) {
       return job;
     }
-    if (status == 'completed' || status == 'failed' || status == 'cancelled') {
-      return null;
-    }
+    // Keep scanning older rows. A completed upload can be newer than the
+    // active download belonging to the same multi-writer table.
   }
   return null;
 }
