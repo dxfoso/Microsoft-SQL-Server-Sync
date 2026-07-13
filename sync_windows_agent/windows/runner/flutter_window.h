@@ -46,6 +46,7 @@ class FlutterWindow : public Win32Window {
   bool tray_progress_active_ = false;
   int tray_progress_ = 0;
   std::wstring tray_tooltip_ = L"SQL Sync Agent";
+  UINT taskbar_created_message_ = 0;
 
   // The project to run.
   flutter::DartProject project_;

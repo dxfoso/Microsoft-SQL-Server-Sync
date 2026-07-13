@@ -687,6 +687,9 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("launching minimized to tray", runner_window)
         self.assertIn("!start_minimized_", runner_window)
+        self.assertIn("Shell_NotifyIcon(NIM_DELETE, &tray_icon_data_);", runner_window)
+        self.assertIn('RegisterWindowMessageW(L"TaskbarCreated")', runner_window)
+        self.assertIn("TaskbarCreated; restoring tray icon", runner_window)
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
 

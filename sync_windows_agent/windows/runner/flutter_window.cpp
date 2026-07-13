@@ -48,6 +48,10 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
 
+  // Explorer broadcasts this after restarting. Re-registering here prevents
+  // the tray icon from disappearing until the shell is refreshed.
+  taskbar_created_message_ = RegisterWindowMessageW(L"TaskbarCreated");
+
   RECT frame = GetClientArea();
   wchar_t frame_message[160];
   swprintf_s(frame_message,
@@ -373,6 +377,10 @@ void FlutterWindow::AddTrayIcon() {
   tray_icon_data_.hWnd = window_handle;
   tray_icon_data_.uID = kTrayIconId;
 
+  // A crashed/replaced process can leave the previous shell entry around.
+  // Delete the exact identity before adding it so repeated restarts cannot
+  // accumulate duplicate icons.
+  Shell_NotifyIcon(NIM_DELETE, &tray_icon_data_);
   UpdateTrayIcon(false);
 
   if (Shell_NotifyIcon(NIM_ADD, &tray_icon_data_) == FALSE) {
@@ -383,7 +391,7 @@ void FlutterWindow::AddTrayIcon() {
 }
 
 void FlutterWindow::RemoveTrayIcon() {
-  if (!tray_icon_visible_) {
+  if (tray_icon_data_.hWnd == nullptr) {
     return;
   }
 
@@ -461,6 +469,17 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    default:
+      if (taskbar_created_message_ != 0 &&
+          message == taskbar_created_message_) {
+        LogStartupEvent(L"FlutterWindow TaskbarCreated; restoring tray icon");
+        if (tray_icon_visible_) {
+          tray_icon_visible_ = false;
+          AddTrayIcon();
+        }
+        return 0;
+      }
+      break;
     case WM_CLOSE:
       LogStartupEvent(L"FlutterWindow WM_CLOSE");
       if (!startup_ui_ready_) {
