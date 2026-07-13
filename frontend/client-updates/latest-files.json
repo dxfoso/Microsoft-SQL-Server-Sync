@@ -1,7 +1,7 @@
 {
     "version":  "1.0.127+131",
-    "commit":  "8edf6dcd053d-dirty",
-    "generatedAt":  "2026-07-13T20:37:36.8610723Z",
+    "commit":  "339c4ac3a160",
+    "generatedAt":  "2026-07-13T20:49:47.9076356Z",
     "packageType":  "files-v1",
     "packageRootUrl":  "https://sync.velvet-leaf.com/client/packages/latest-package",
     "fileCount":  27,
@@ -15,7 +15,7 @@
                   {
                       "path":  "data/app.so",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/data/app.so",
-                      "sha256":  "22e98befaf1b6a330bed17e1877b55a46ca1f2cc93b95ba595b7cadd5e752832",
+                      "sha256":  "492349bee067b18b9b682b115796cd8b76167c2ebbf59c657b59d77c75d748b9",
                       "sizeBytes":  6833040
                   },
                   {
@@ -81,7 +81,7 @@
                   {
                       "path":  "file_selector_windows_plugin.dll",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/file_selector_windows_plugin.dll",
-                      "sha256":  "e4b1b7d14449419299fec6877efa6798d1e8596d6daad1a1333f940826f04e66",
+                      "sha256":  "c2fd248cc5c0d6721368f8fe8ee4f3c338d9ec8796063415554cfea923713a5a",
                       "sizeBytes":  111104
                   },
                   {
@@ -123,7 +123,7 @@
                   {
                       "path":  "portable-manifest.txt",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/portable-manifest.txt",
-                      "sha256":  "6b915e836a0d74fa4f94383c6b5cd91657b9c239e0944dba52a51d617e654556",
+                      "sha256":  "886cf015e755c2af6cc6487b5aca4d89210149e1ff44b332d54995e8c0dedaa2",
                       "sizeBytes":  2746
                   },
                   {
@@ -135,7 +135,7 @@
                   {
                       "path":  "sync_windows_agent.exe",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/sync_windows_agent.exe",
-                      "sha256":  "39603cf57b509186581ffab0269937bd3579706d119f3b69fc8e7384ce6d8d72",
+                      "sha256":  "459fae8dee8b2421c5a01fd9f8c55b286bf4bb8259719ac7636422d4ff858a07",
                       "sizeBytes":  418816
                   },
                   {
