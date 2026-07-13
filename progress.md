@@ -2,16 +2,14 @@
 
 ## Current
 
-- Live server: `b352fb0c`, ready, `compile_errors=0`.
-- Live client manifest: `1.0.115+119`; ZIP endpoint returns HTTP 200.
-- Both `c1` and `c2` are online, server-connected, SQL-connected, minimized, and current on `1.0.115+119`.
-- Fresh diagnostics uploaded successfully from both clients.
-- Local client suite: 86 passed; the UTF-8/UTF-16 decoder regression is covered.
-- Root cause found: the client decoded even-length UTF-8 `sqlcmd` output as UTF-16, corrupting Chinese text and causing oversized `agents_heartbeat.database` errors. Fixed and redeployed.
-- The only live runtime event is the pre-fix `2026-07-12T21:55:57Z` mojibake error; no post-fix runtime event is present.
+- Live server: `eca74dd`, ready, `compile_errors=0`.
+- Live client manifest: `1.0.124+128`; published ZIP passed integrity validation (`30` entries, no bad entries).
+- Updater hardening committed as `cec40df`: waits for process exit and verifies every installed payload file before relaunch.
+- Local validation: clean Windows release build succeeded; 142 update/control-plane tests passed.
+- Both live clients are heartbeating but remain on `1.0.120+124`; server-requested updates remain pending after 120 seconds.
+- Controlled c2-to-c1 test completed the upload relay but reported `0` changed rows; c2 and c1 still have divergent row counts. The download test job was cancelled after the client update timeout.
 
 ## Remaining
 
-- Historical sync-job history was cleared with `server_saved_data_reset(resetAgents=false)`: 278 job records deleted and no client saved state reset.
-- Live sync verifier now passes: `enabled_tables=22`, `active_jobs=0`, `unresolved_failed_jobs=0`; both clients report all 11 enabled tables `Completed`.
-- A controlled network interruption/client-stop recovery test remains to be run when it can be performed without disrupting the currently healthy clients.
+- Bootstrap c1 and c2 onto `1.0.124+128` and verify the updater acknowledgement/relaunch.
+- Repeat c2-originated changed-row sync and verify c1 shows the changed rows with nonzero upload/download counts.
