@@ -299,7 +299,7 @@ function kSnapshotTransferEncoding(): string {
 
 function is_active_job_status(status: string? = null): bool {
   const normalized = string.from(status ?? '').trim();
-  return normalized == 'queued' || normalized == 'running' || normalized == 'snapshotting' || normalized == 'uploading' || normalized == 'downloading' || normalized == 'applying';
+  return normalized == 'queued' || normalized == 'waiting' || normalized == 'running' || normalized == 'snapshotting' || normalized == 'uploading' || normalized == 'downloading' || normalized == 'applying';
 }
 
 function truncate_text(value: string, maxLength: int): string {

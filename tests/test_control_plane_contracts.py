@@ -125,6 +125,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function agent_window_action_request_all(action: string = 'minimize', token: string? = null): map<json> {", source)
         self.assertIn("function agent_window_action_ack(clientName: string? = null, requestId: string? = null, action: string = '', status: string = 'completed', message: string = '', token: string? = null): map<json> {", source)
 
+    def test_cancel_active_jobs_includes_waiting_relay_jobs(self):
+        source = read_text("business/control_plane.tru")
+
+        self.assertIn(
+            "normalized == 'queued' || normalized == 'waiting' || normalized == 'running'",
+            source,
+        )
+
     def test_client_update_payload_and_ack_track_pending_and_last_ack_state(self):
         source = read_text("business/control_plane.tru")
 
