@@ -157,7 +157,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("clientUpdateMessage: truncate_text(message, 4000),", ack_body)
         self.assertIn("clientVersion: nextClientVersion,", ack_body)
 
-    def test_client_update_request_all_only_targets_online_agents(self):
+    def test_client_update_request_all_persists_requests_for_offline_agents(self):
         source = read_text("business/control_plane.tru")
         match = re.search(
             r"function agent_client_update_request_all\(.*?\): map<json> \{(?P<body>.*?)\n\}",
@@ -168,7 +168,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         body = match.group("body")
 
         self.assertIn("const visibleAgents = visible_agent_rows_for(current);", body)
-        self.assertIn("if (!effective_agent_online(agent)) {", body)
+        self.assertNotIn("if (!effective_agent_online(agent)) {", body)
         self.assertIn("requestedClientNames = requestedClientNames.concat([clientName]);", body)
         self.assertIn("clientUpdateRequestId: requestId,", body)
         self.assertIn("clientUpdateTargetVersion: targetVersionOrNull,", body)
