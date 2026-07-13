@@ -3245,6 +3245,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final depthCache = <String, int>{};
     final orderedJobs = jobs.toList(growable: false);
     orderedJobs.sort((left, right) {
+      // Multi-writer downloads intentionally wait at the barrier. Process all
+      // uploads first so an expected 409 cannot stop the batch before it can
+      // become ready.
+      final leftBatchUpload =
+          left.batchId?.trim().isNotEmpty == true && left.direction == 'upload';
+      final rightBatchUpload =
+          right.batchId?.trim().isNotEmpty == true &&
+          right.direction == 'upload';
+      if (leftBatchUpload != rightBatchUpload) {
+        return leftBatchUpload ? -1 : 1;
+      }
       final leftDepth = _tableDependencyDepth(
         left.table,
         dependencyGraph,
