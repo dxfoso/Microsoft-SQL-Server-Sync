@@ -4304,8 +4304,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, offset: int 
   let chunkRows = [];
   let totalRowCount = 0;
   let currentIndex = 0;
-  const rowsByChunk = storedChunks == null ? [] : storedChunks;
-  if (rowsByChunk.length == 0) {
+  if (storedChunks == null || storedChunks.length == 0) {
     for (const row of batch.rows) {
       totalRowCount += 1;
       if (currentIndex >= offset && currentIndex < offset + limit) {
@@ -4314,7 +4313,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, offset: int 
       currentIndex += 1;
     }
   } else {
-    for (const storedChunk of rowsByChunk) {
+    for (const storedChunk of storedChunks) {
       const storedRows = storedChunk.rows ?? [];
       totalRowCount += storedRows.length;
       for (const row of storedRows) {
