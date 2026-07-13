@@ -3355,9 +3355,6 @@ function agent_client_update_request_all(targetVersion: string? = null, token: s
   const visibleAgents = visible_agent_rows_for(current);
   let requestedClientNames = [];
   for (const agent of visibleAgents) {
-    if (!effective_agent_online(agent)) {
-      continue;
-    }
     const clientName = normalize_user_name(agent.clientName);
     if (clientName.length != 0) {
       requestedClientNames = requestedClientNames.concat([clientName]);
