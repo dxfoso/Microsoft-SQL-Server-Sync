@@ -117,10 +117,12 @@ class SyncJob {
 class SyncBatch {
   field id: string min=1 max=128
   field table: string min=1 max=256
+  field revision: int min=0
   field ownerUserId: string? min=0 max=64
   field expectedClients: array<json>
   field uploadedClients: array<json>
   field receivedChunks: array<json>
+  field clientChangeTrackingVersions: array<json>
   field keyColumns: array<json>
   field columns: array<json>
   field rows: array<json>
@@ -2014,6 +2016,12 @@ function active_job_tables_for_client(clientName: string): array<string> {
   const jobs = active_jobs_for_client(clientName);
   let tables = [];
   for (const job of jobs) {
+    if (string.from(job.batchId ?? '').trim().length != 0) {
+      const batch = find_sync_batch(string.from(job.batchId));
+      if (batch != null && multi_writer_batch_stale(batch)) {
+        continue;
+      }
+    }
     tables = tables.concat([string.from(job.table)]);
   }
   return unique_string_values(tables);
@@ -2782,6 +2790,23 @@ function sync_batch_chunk_seen(values: array<json>, clientName: string, chunkId:
   return false;
 }
 
+function sync_batch_version_values(values: array<json>, clientName: string, trackingVersion: int): array<json> {
+  let next = [];
+  let replaced = false;
+  for (const value of values) {
+    if (string.from(value.clientName).trim() == clientName) {
+      next = next.concat([{ clientName, changeTrackingVersion: trackingVersion }]);
+      replaced = true;
+    } else {
+      next = next.concat([value]);
+    }
+  }
+  if (!replaced) {
+    next = next.concat([{ clientName, changeTrackingVersion: trackingVersion }]);
+  }
+  return next;
+}
+
 function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string): array<json> {
   let rows = [];
   const createdAt = now_iso();
@@ -2856,10 +2881,12 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
   db.insert(SyncBatch, {
     id: batchId,
     table,
+    revision: 0,
     ownerUserId,
     expectedClients: clientNames,
     uploadedClients: [],
     receivedChunks: [],
+    clientChangeTrackingVersions: [],
     keyColumns: [],
     columns: [],
     rows: [],
@@ -2868,6 +2895,11 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     updatedAt: createdAt
   });
   return db.insertMany(SyncJob, multi_writer_job_rows(batchId, table, agents, ownerUserId));
+}
+
+function multi_writer_batch_stale(batch: map<json>): bool {
+  const ageMinutes = safe_date_diff_minutes_since(string.from(batch.createdAt));
+  return ageMinutes != null && ageMinutes >= 30;
 }
 
 function auth_login(name: string, password: string, app: string = 'web'): map<json> {
@@ -3914,8 +3946,22 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     }
     enabledTables = unique_string_values(enabledTables);
     for (const table of enabledTables) {
+      let tableAgents = [];
+      for (const agent of onlineAgents) {
+        const agentTables = unique_string_values(
+          enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+            enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+          )
+        );
+        if (string_array_contains(agentTables, table)) {
+          tableAgents = tableAgents.concat([agent]);
+        }
+      }
+      if (tableAgents.length == 0) {
+        continue;
+      }
       let busy = false;
-      for (const agent of ownerAgents) {
+      for (const agent of tableAgents) {
         if (string_array_contains(active_job_tables_for_client(string.from(agent.clientName)), table)) {
           busy = true;
           skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
@@ -3924,10 +3970,10 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       if (busy) {
         continue;
       }
-      const jobs = create_multi_writer_batch(ownerUserId, table, onlineAgents);
+      const jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
       if (jobs.length > 0) {
         createdJobs = createdJobs.concat(jobs);
-        queuedClientNames = queuedClientNames.concat(onlineAgents.map((agent) => string.from(agent.clientName)));
+        queuedClientNames = queuedClientNames.concat(tableAgents.map((agent) => string.from(agent.clientName)));
       }
     }
   }
@@ -4107,6 +4153,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (batch == null || string.from(batch.table).trim() != table.trim()) {
     return raw_json_error(404, 'sync batch not found');
   }
+  if (multi_writer_batch_stale(batch)) {
+    return raw_json_error(410, 'multi-writer batch expired; start a new sync');
+  }
   const normalizedClientName = clientName.trim();
   if (!sync_batch_has_value(batch.expectedClients, normalizedClientName)) {
     return raw_json_error(403, 'client is not part of this sync batch');
@@ -4143,12 +4192,22 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     uploadedClients = uploadedClients.concat([normalizedClientName]);
   }
   const ready = uploadedClients.length >= batch.expectedClients.length;
-  db.update(SyncBatch, { id: batch.id }, {
+  let clientChangeTrackingVersions = batch.clientChangeTrackingVersions ?? [];
+  if (finalChunk && changeTrackingVersion != null) {
+    clientChangeTrackingVersions = sync_batch_version_values(
+      clientChangeTrackingVersions,
+      normalizedClientName,
+      changeTrackingVersion
+    );
+  }
+  const updatedBatch = db.updateMany(SyncBatch, { id: batch.id, revision: batch.revision }, {
     table: batch.table,
+    revision: batch.revision + 1,
     ownerUserId: batch.ownerUserId,
     expectedClients: batch.expectedClients,
     uploadedClients,
     receivedChunks,
+    clientChangeTrackingVersions,
     keyColumns: resolvedKeyColumns,
     columns: resolvedColumns,
     rows: mergedRows,
@@ -4156,6 +4215,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     createdAt: batch.createdAt,
     updatedAt: now_iso()
   });
+  if (updatedBatch == 0) {
+    return raw_json_error(409, 'sync batch changed while uploading; retry this chunk');
+  }
   const updatedResult = finalChunk
     ? jobs_complete(job.id, 'completed', 100, string.concat('Uploaded ', string.from(incomingRows.length), ' changed rows for ', table, '.'), incomingRows.length, null, null, null, token)
     : jobs_progress(job.id, 'uploading', 70, string.concat('Uploaded multi-writer chunk for ', table, '.'), incomingRows.length, token);
@@ -4172,11 +4234,12 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     mergedRowCount: mergedRows.length,
     uploadedClients,
     expectedClientCount: batch.expectedClients.length,
-    ready
+    ready,
+    clientChangeTrackingVersions
   });
 }
 
-function jobs_multi_writer_download(jobId: string, batchId: string, token: string? = null): map<json> {
+function jobs_multi_writer_download(jobId: string, batchId: string, offset: int = 0, limit: int = 250, token: string? = null): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -4189,27 +4252,52 @@ function jobs_multi_writer_download(jobId: string, batchId: string, token: strin
   if (batch == null || string.from(job.batchId).trim() != batchId.trim()) {
     return raw_json_error(404, 'sync batch not found');
   }
+  if (multi_writer_batch_stale(batch)) {
+    return raw_json_error(410, 'multi-writer batch expired; start a new sync');
+  }
   if (batch.status != 'ready') {
     return raw_json_error(409, 'sync batch is still waiting for client uploads');
   }
+  if (offset < 0 || limit < 1 || limit > 500) {
+    return raw_json_error(400, 'invalid multi-writer download window');
+  }
+  let chunkRows = [];
+  let currentIndex = 0;
+  for (const row of batch.rows) {
+    if (currentIndex >= offset && currentIndex < offset + limit) {
+      chunkRows = chunkRows.concat([row]);
+    }
+    currentIndex += 1;
+    if (currentIndex >= offset + limit) {
+      break;
+    }
+  }
+  const nextOffset = offset + chunkRows.length;
+  const done = nextOffset >= batch.rows.length;
   const snapshot = {
-    id: string.concat(batch.id, '-', string.from(job.clientName)),
+    id: string.concat(batch.id, '-', string.from(job.clientName), '-', string.from(offset)),
     clientName: 'server-merge',
     subscriberClientName: job.clientName,
     table: batch.table,
-    rowCount: batch.rows.length,
-    checksum: snapshot_checksum({ batchId, rows: batch.rows }),
+    rowCount: chunkRows.length,
+    checksum: snapshot_checksum({ batchId, offset, rows: chunkRows }),
     createdAt: batch.updatedAt,
-    snapshotBytes: json.stringify(batch.rows).length,
+    snapshotBytes: json.stringify(chunkRows).length,
     compressedBytes: 0,
     chunkCount: 0,
     encoding: 'json',
     sourceJobId: job.id,
     columns: batch.columns,
     keyColumns: batch.keyColumns,
-    rows: batch.rows
+    clientChangeTrackingVersions: batch.clientChangeTrackingVersions,
+    rows: chunkRows,
+    totalRowCount: batch.rows.length,
+    offset,
+    nextOffset,
+    done,
+    clientChangeTrackingVersions: batch.clientChangeTrackingVersions
   };
-  return raw_json_success({ snapshot });
+  return raw_json_success({ snapshot, offset, nextOffset, totalRowCount: batch.rows.length, done });
 }
 
 function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {

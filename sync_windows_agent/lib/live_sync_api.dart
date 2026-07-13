@@ -1073,20 +1073,44 @@ class AgentControlPlaneClient {
     String jobId, {
     required String batchId,
   }) async {
-    final decoded = await _invokeFunctionWithRetry(
-      'jobs_multi_writer_download',
-      {'jobId': jobId, 'batchId': batchId},
-      'downloading merged multi-writer delta',
-    );
-    if (decoded is! Map || decoded['snapshot'] is! Map) {
-      throw const AgentControlPlaneException(
+    var offset = 0;
+    RemoteSnapshot? firstSnapshot;
+    final mergedRows = <Map<String, String?>>[];
+    var totalSnapshotBytes = 0;
+    while (true) {
+      final decoded = await _invokeFunctionWithRetry(
+        'jobs_multi_writer_download',
+        {'jobId': jobId, 'batchId': batchId, 'offset': offset, 'limit': 250},
+        'downloading merged multi-writer delta',
+      );
+      if (decoded is! Map || decoded['snapshot'] is! Map) {
+        throw const AgentControlPlaneException(
+          'Unexpected merged multi-writer download payload.',
+        );
+      }
+      final snapshot = _parseSnapshotPayload(
+        decoded['snapshot'],
         'Unexpected merged multi-writer download payload.',
       );
+      firstSnapshot ??= snapshot;
+      mergedRows.addAll(snapshot.rows);
+      totalSnapshotBytes += snapshot.snapshotBytes;
+      final done = decoded['done'] == true;
+      if (done) {
+        return firstSnapshot.copyWith(
+          rowCount: mergedRows.length,
+          rows: mergedRows,
+          snapshotBytes: totalSnapshotBytes,
+        );
+      }
+      final nextOffset = (decoded['nextOffset'] as num?)?.round();
+      if (nextOffset == null || nextOffset <= offset) {
+        throw const AgentControlPlaneException(
+          'Merged multi-writer download did not advance its offset.',
+        );
+      }
+      offset = nextOffset;
     }
-    return _parseSnapshotPayload(
-      decoded['snapshot'],
-      'Unexpected merged multi-writer download payload.',
-    );
   }
 
   ClientUpdateInfo _parseClientUpdateInfoPayload(
@@ -1704,6 +1728,7 @@ class RemoteSnapshot {
     required this.rows,
     required this.sourceJobId,
     this.changeTrackingVersion,
+    this.changeTrackingVersions = const <String, int>{},
   });
 
   final String id;
@@ -1717,6 +1742,7 @@ class RemoteSnapshot {
   final List<Map<String, String?>> rows;
   final String? sourceJobId;
   final int? changeTrackingVersion;
+  final Map<String, int> changeTrackingVersions;
 
   factory RemoteSnapshot.fromJson(Map<String, dynamic> json) {
     final rawRows = json['rows'] as List<dynamic>? ?? const [];
@@ -1742,7 +1768,28 @@ class RemoteSnapshot {
           .toList(growable: false),
       sourceJobId: json['sourceJobId'] as String?,
       changeTrackingVersion: (json['changeTrackingVersion'] as num?)?.round(),
+      changeTrackingVersions: _parseChangeTrackingVersions(
+        json['clientChangeTrackingVersions'],
+      ),
     );
+  }
+
+  static Map<String, int> _parseChangeTrackingVersions(dynamic raw) {
+    if (raw is! List) {
+      return const <String, int>{};
+    }
+    final result = <String, int>{};
+    for (final item in raw) {
+      if (item is! Map) {
+        continue;
+      }
+      final clientName = item['clientName']?.toString().trim() ?? '';
+      final version = (item['changeTrackingVersion'] as num?)?.round();
+      if (clientName.isNotEmpty && version != null && version > 0) {
+        result[clientName] = version;
+      }
+    }
+    return result;
   }
 
   RemoteSnapshot copyWith({
@@ -1757,6 +1804,7 @@ class RemoteSnapshot {
     List<Map<String, String?>>? rows,
     String? sourceJobId,
     int? changeTrackingVersion,
+    Map<String, int>? changeTrackingVersions,
   }) {
     return RemoteSnapshot(
       id: id ?? this.id,
@@ -1771,6 +1819,8 @@ class RemoteSnapshot {
       sourceJobId: sourceJobId ?? this.sourceJobId,
       changeTrackingVersion:
           changeTrackingVersion ?? this.changeTrackingVersion,
+      changeTrackingVersions:
+          changeTrackingVersions ?? this.changeTrackingVersions,
     );
   }
 }

@@ -3485,6 +3485,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       overrideMessage:
           'Applied ${snapshotToApply.rowCount} changed row${snapshotToApply.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
     );
+    if (job.batchId?.trim().isNotEmpty == true) {
+      final appliedVersion =
+          snapshotToApply.changeTrackingVersions[widget.clientName];
+      if (appliedVersion != null && appliedVersion > 0) {
+        final current =
+            _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
+        _updateSyncTableState(
+          job.table,
+          current.copyWith(
+            changeTrackingVersion: appliedVersion,
+            changeTrackingOwner: widget.clientName,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _ensureNoLocalChangesBeforeRemoteApply(RemoteSyncJob job) async {

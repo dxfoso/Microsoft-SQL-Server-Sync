@@ -547,18 +547,30 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field expectedClients: array<json>", source)
         self.assertIn("field uploadedClients: array<json>", source)
         self.assertIn("field receivedChunks: array<json>", source)
+        self.assertIn("field revision: int min=0", source)
+        self.assertIn("field clientChangeTrackingVersions: array<json>", source)
         self.assertIn("function jobs_multi_writer_upload(", source)
         self.assertIn("if (incomingRows.length > 500)", source)
         self.assertIn("const ready = uploadedClients.length >= batch.expectedClients.length;", source)
         self.assertIn("function jobs_multi_writer_download(", source)
+        self.assertIn("offset: int = 0", source)
+        self.assertIn("limit: int = 250", source)
+        self.assertIn("invalid multi-writer download window", source)
+        self.assertIn("done", source)
         self.assertIn("sync batch is still waiting for client uploads", source)
+        self.assertIn("{ id: batch.id, revision: batch.revision }", source)
+        self.assertIn("sync batch changed while uploading; retry this chunk", source)
+        self.assertIn("clientChangeTrackingVersions", source)
+        self.assertIn("multi-writer batch expired", source)
 
     def test_sync_all_queues_one_batch_for_online_peers(self):
         source = read_text("business/control_plane.tru")
 
         self.assertIn("mode: 'multi-writer'", source)
         self.assertIn("if (effective_agent_online(agent))", source)
-        self.assertIn("create_multi_writer_batch(ownerUserId, table, onlineAgents)", source)
+        self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", source)
+        self.assertIn("if (string_array_contains(agentTables, table))", source)
+        self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("skippedOfflineClients", source)
 
 
