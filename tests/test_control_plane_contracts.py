@@ -71,6 +71,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("agent_client_update_payload(agent)", body)
         self.assertIn("agent_window_action_payload(agent)", body)
 
+    def test_command_delivery_uses_recent_heartbeat_not_database_readiness(self):
+        source = read_text("business/control_plane.tru")
+        self.assertIn("function agent_command_delivery_online(agent: map<json>): bool {", source)
+        self.assertIn("return pending && !agent_command_delivery_online(agent);", source)
+
     def test_job_schema_keeps_only_current_snapshot_fields(self):
         source = read_text("business/control_plane.tru")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")

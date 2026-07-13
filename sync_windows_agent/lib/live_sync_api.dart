@@ -437,7 +437,7 @@ class AgentControlPlaneClient {
   Future<bool> checkHealth() async {
     try {
       final response = await _sendRequest(
-        _client.get(_uri('/health')),
+        _client.get(_originUri('/health')),
         'checking backend health',
       );
       return response.statusCode == 200;

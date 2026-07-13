@@ -401,6 +401,20 @@ function effective_agent_online(agent: map<json>): bool {
   return ageMinutes != null && ageMinutes <= agent_online_timeout_minutes(agent);
 }
 
+// Command delivery only needs a live heartbeat. Database readiness is
+// required for sync scheduling, but must not block updates or diagnostics.
+function agent_command_delivery_online(agent: map<json>): bool {
+  if (agent.isOnline != true) {
+    return false;
+  }
+  const heartbeat = string.from(agent.lastHeartbeat ?? '').trim();
+  if (heartbeat.length == 0) {
+    return false;
+  }
+  const ageMinutes = safe_date_diff_minutes_since(heartbeat);
+  return ageMinutes != null && ageMinutes <= agent_online_timeout_minutes(agent);
+}
+
 function default_admin_username(): string {
   return 'dxfoso@gmail.com';
 }
@@ -1454,7 +1468,7 @@ function diagnostic_request_pending(agent: map<json>): bool {
 }
 
 function pending_request_awaits_online_client(agent: map<json>, pending: bool): bool {
-  return pending && !effective_agent_online(agent);
+  return pending && !agent_command_delivery_online(agent);
 }
 
 function agent_diagnostics_payload(agent: map<json>, includePayload: bool = false): map<json> {

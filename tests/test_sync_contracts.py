@@ -543,6 +543,8 @@ class SyncContractsTests(unittest.TestCase):
             "Server-requested client update unsupported acknowledgement failed: $error",
             update_body,
         )
+        self.assertIn("_maybeAutoApplyClientUpdate(updateInfo, force: true);", update_body)
+        self.assertNotIn("_pendingForcedClientUpdateInfo = updateInfo;", update_body)
 
     def test_sqlcmd_calls_are_bounded_by_timeout(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -693,7 +695,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function Invoke-AutoUpdate", update_script)
         self.assertIn("No client process detected; checking the live update manifest.", update_script)
         self.assertIn("changeTrackingOwner", read_text("sync_windows_agent/lib/sync_state.dart"))
-        self.assertIn("changeTrackingOwner == widget.clientName", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn("changeTrackingOwner != widget.clientName", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertIn("Applied ${snapshot.rowCount} changed row", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertIn("_ensureNoLocalChangesBeforeRemoteApply", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertNotIn("manifest.latestZipUrl", update_script)

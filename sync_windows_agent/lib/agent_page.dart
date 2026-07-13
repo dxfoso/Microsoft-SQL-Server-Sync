@@ -2689,10 +2689,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       logStartupEvent(
         'Server requested client update $requestId for ${widget.clientName}; live version=$manifestVersion current=${currentVersion.isEmpty ? 'unknown' : currentVersion}.',
       );
-      if (_syncLoopBusy) {
-        _pendingForcedClientUpdateInfo = updateInfo;
-        return;
-      }
+      // The request was delivered by the heartbeat that owns this loop. Do
+      // not defer it while that loop is busy; deferring here can leave a
+      // client permanently on an old build behind a long-running sync job.
       await _maybeAutoApplyClientUpdate(updateInfo, force: true);
     } catch (error) {
       logStartupEvent('Server-requested client update failed: $error');
