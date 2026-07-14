@@ -14,6 +14,10 @@ class ChartContractsTests(unittest.TestCase):
         )
         self.assertIn('suspend: false', cronjob)
 
+    def test_auto_scheduler_does_not_retain_failed_history(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        self.assertIn("failedJobsHistoryLimit: 0", values_yaml)
+
     def test_backend_does_not_require_admin_key_for_public_health(self):
         backend_deployment = (
             ROOT / "templates" / "backend-deployment.yaml"

@@ -78,7 +78,7 @@ autoScheduler:
   adminNameKey: ADMIN_NAME
   adminPasswordKey: ADMIN_PASSWORD
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 0
   backoffLimit: 0
 
 postgres:
