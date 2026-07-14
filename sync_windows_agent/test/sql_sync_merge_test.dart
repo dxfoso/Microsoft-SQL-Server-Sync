@@ -164,4 +164,33 @@ void main() {
       {'Id': 8, 'Name': 'other'},
     ]);
   });
+
+  test('delta rows prefer the newest database commit timestamp', () {
+    final latestByKey = <String, DateTime?>{};
+    final first = coalesceSqlSyncDeltaRows(
+      rows: [
+        {
+          'Id': 7,
+          'Name': 'newer',
+          '__sync_modified_at_utc': '2026-07-14T10:00:00Z',
+        },
+      ],
+      primaryKeyColumns: const ['Id'],
+      latestModifiedAtByKey: latestByKey,
+    );
+    final stale = coalesceSqlSyncDeltaRows(
+      rows: [
+        {
+          'Id': 7,
+          'Name': 'stale',
+          '__sync_modified_at_utc': '2026-07-14T09:00:00Z',
+        },
+      ],
+      primaryKeyColumns: const ['Id'],
+      latestModifiedAtByKey: latestByKey,
+    );
+
+    expect(first.single['Name'], 'newer');
+    expect(stale, isEmpty);
+  });
 }

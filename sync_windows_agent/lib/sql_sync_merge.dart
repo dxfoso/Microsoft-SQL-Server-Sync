@@ -333,11 +333,13 @@ String stageTableReference(String stageTableName) =>
 List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
   required List<Map<String, dynamic>> rows,
   required List<String> primaryKeyColumns,
+  Map<String, DateTime?>? latestModifiedAtByKey,
 }) {
-  if (rows.length < 2 || primaryKeyColumns.isEmpty) {
+  if (rows.isEmpty || primaryKeyColumns.isEmpty) {
     return rows;
   }
   final coalesced = <String, Map<String, dynamic>>{};
+  const modifiedAtKey = '__sync_modified_at_utc';
   final rowsWithoutCompleteKeys = <Map<String, dynamic>>[];
   for (final row in rows) {
     final keyValues = primaryKeyColumns.map((column) => row[column]).toList();
@@ -345,9 +347,43 @@ List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
       rowsWithoutCompleteKeys.add(row);
       continue;
     }
-    coalesced[jsonEncode(keyValues)] = row;
+    final key = jsonEncode(keyValues);
+    final candidateTime = _parseSyncUtcTimestamp(row[modifiedAtKey]);
+    final previousTime = latestModifiedAtByKey?[key];
+    if (latestModifiedAtByKey?.containsKey(key) == true &&
+        previousTime != null &&
+        (candidateTime == null || candidateTime.isBefore(previousTime))) {
+      continue;
+    }
+    final current = coalesced[key];
+    if (current == null) {
+      coalesced[key] = row;
+      continue;
+    }
+    final currentTime = _parseSyncUtcTimestamp(current[modifiedAtKey]);
+    if (candidateTime != null &&
+        (currentTime == null || !candidateTime.isBefore(currentTime))) {
+      coalesced[key] = row;
+    } else if (candidateTime == null && currentTime == null) {
+      coalesced[key] = row;
+    }
+  }
+  if (latestModifiedAtByKey != null) {
+    for (final entry in coalesced.entries) {
+      latestModifiedAtByKey[entry.key] = _parseSyncUtcTimestamp(
+        entry.value[modifiedAtKey],
+      );
+    }
   }
   return [...coalesced.values, ...rowsWithoutCompleteKeys];
+}
+
+DateTime? _parseSyncUtcTimestamp(dynamic value) {
+  final text = value?.toString().trim() ?? '';
+  if (text.isEmpty) {
+    return null;
+  }
+  return DateTime.tryParse(text)?.toUtc();
 }
 
 String _buildSourceTempIndexStatements(List<List<String>> matchColumnSets) {

@@ -3456,6 +3456,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     final isMultiWriter = job.batchId?.trim().isNotEmpty == true;
     var streamedTargetRowCount = -1;
+    final latestDeltaModifiedAtByKey = <String, DateTime?>{};
     if (isMultiWriter) {
       // Apply each bounded relay page as it arrives. Keeping the whole
       // multi-writer delta in memory makes a valid change backlog look like a
@@ -3481,6 +3482,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   job: job,
                   snapshot: snapshot,
                   refreshLocalState: false,
+                  latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
                 );
               },
             )
@@ -3782,6 +3784,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required RemoteSyncJob job,
     required RemoteSnapshot snapshot,
     bool refreshLocalState = true,
+    Map<String, DateTime?>? latestDeltaModifiedAtByKey,
   }) async {
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
     if (targetDatabase.isEmpty) {
@@ -3865,6 +3868,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   .map((row) => Map<String, dynamic>.from(row))
                   .toList(growable: false),
               primaryKeyColumns: primaryKeyColumns,
+              latestModifiedAtByKey: latestDeltaModifiedAtByKey,
             )
             : snapshot.rows;
     if (applyDelta && rowsForApply.length != snapshot.rows.length) {
@@ -4311,26 +4315,57 @@ END''';
           return '($expression) COLLATE DATABASE_DEFAULT';
         })
         .join(' + NCHAR($fieldSeparator) + ');
-    final query = '''
+    String buildQuery({required bool includeCommitTime}) {
+      final commitExpression =
+          includeCommitTime
+              ? "COALESCE(CONVERT(nvarchar(33), commit_table.commit_time, 127) + N'Z', N'')"
+              : "N''";
+      final commitJoin =
+          includeCommitTime
+              ? '''
+LEFT JOIN sys.dm_tran_commit_table AS commit_table
+  ON commit_table.commit_ts = ct.SYS_CHANGE_VERSION'''
+              : '';
+      return '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
-  ct.SYS_CHANGE_OPERATION COLLATE DATABASE_DEFAULT + NCHAR($fieldSeparator) + $encoded + NCHAR($rowSentinel)
+  ct.SYS_CHANGE_OPERATION COLLATE DATABASE_DEFAULT + NCHAR($fieldSeparator) +
+  $commitExpression + NCHAR($fieldSeparator) +
+  $encoded + NCHAR($rowSentinel)
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
 LEFT JOIN $source AS existing_row ON $join
+$commitJoin
 ORDER BY ct.SYS_CHANGE_VERSION;
 ''';
-    final result = await _runSqlCmd(
+    }
+
+    var includesCommitTime = true;
+    var result = await _runSqlCmd(
       profile: profile,
       database: database,
-      query: query,
+      query: buildQuery(includeCommitTime: true),
       timeout: _snapshotSqlCmdTimeout,
     );
     if (result == null) {
       throw Exception(_sqlCmdUnavailableMessage(profile));
     }
     if (result.exitCode != 0) {
-      throw Exception(_sqlCmdFailed('change tracking delta fetch', result));
+      // Some SQL Server installations restrict access to the commit DMV.
+      // Preserve sync functionality and use an empty timestamp fallback.
+      includesCommitTime = false;
+      result = await _runSqlCmd(
+        profile: profile,
+        database: database,
+        query: buildQuery(includeCommitTime: false),
+        timeout: _snapshotSqlCmdTimeout,
+      );
+      if (result == null) {
+        throw Exception(_sqlCmdUnavailableMessage(profile));
+      }
+      if (result.exitCode != 0) {
+        throw Exception(_sqlCmdFailed('change tracking delta fetch', result));
+      }
     }
     final rows = <Map<String, String?>>[];
     for (final line in _dataOutputLines(result.stdout.toString())) {
@@ -4339,15 +4374,19 @@ ORDER BY ct.SYS_CHANGE_VERSION;
               ? line.substring(0, line.length - 1)
               : line;
       final parts = payload.split(String.fromCharCode(fieldSeparator));
-      if (parts.length != columns.length + 1) {
+      final metadataFieldCount = includesCommitTime ? 2 : 1;
+      if (parts.length != columns.length + metadataFieldCount) {
         throw Exception(
-          'Change tracking delta returned ${parts.length - 1} field(s) for ${columns.length} column(s).',
+          'Change tracking delta returned ${parts.length - metadataFieldCount} column field(s) for ${columns.length} column(s).',
         );
       }
+      final columnOffset = includesCommitTime ? 2 : 1;
       rows.add({
         '__sync_op': parts.first,
+        '__sync_modified_at_utc':
+            includesCommitTime && parts[1].trim().isNotEmpty ? parts[1] : null,
         for (var i = 0; i < columns.length; i++)
-          columns[i].name: _decodeSourceBatchField(parts[i + 1]),
+          columns[i].name: _decodeSourceBatchField(parts[i + columnOffset]),
       });
     }
     return rows;
