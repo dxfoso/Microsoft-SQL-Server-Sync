@@ -7,6 +7,11 @@ sync_windows_agent/release/
 sync_windows_agent-windows-portable/
 sync_windows_agent-windows-portable.zip
 sync_windows_agent-windows-portable-zip-parts/
+# Published client archives are deployment output; keep the tracked manifest
+# and canonical package paths, but do not add historical local build artifacts.
+/frontend/client-updates/*.zip
+/frontend/client-updates/latest-package/
+/frontend/client-updates/packages/sync_windows_agent-*/
 update.log
 business/logs/
 .codex-run/
