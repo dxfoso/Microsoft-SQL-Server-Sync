@@ -1,9 +1,8 @@
 # Multi-Writer Sync Progress
-Progress: 92%
+Progress: 98%
 
-- Deployed server commit `4d39acf` with storage-backed relay chunks, delta metadata, and non-destructive target delta merges.
-- Published client `1.0.137+141`; C1 and C2 are online, SQL-connected, minimized, and current.
-- Validation passed: TRU compile, control-plane contracts `28/28`, Flutter tests `88/88`.
-- Live large-delta test exposed the remaining production gap: a pending change-tracking backlog was relayed as `13,593` rows and both clients stayed in `applying`.
-- The unsafe test batch was cancelled/cleaned; health remained `ready=true`, `compile_errors=0`, with no backend restart.
-- Remaining: server-side conflict consolidation/deduplication, bounded chunk-by-chunk apply, and a successful two-writer convergence test with actual changed rows.
+- Published client `1.0.143+147`; C1 and C2 are online, SQL-connected, minimized, and current.
+- Multi-writer relay now stores delta chunks, waits for all writers, streams bounded pages, applies by primary key, avoids trigger schema locks, and reconciles local state once per sync.
+- Live end-to-end batch `b362797e-4eb5-4bcd-9a17-9676059e9cd5` completed on both clients; each applied `7,000` changed rows with no job errors.
+- Verification passed: Flutter tests `91/91`, server `ready=true`, `compile_errors=0`, health failures/timeouts `0`, both clients online/minimized.
+- Remaining edge case: simultaneous edits to the same primary key use deterministic arrival-order last-write-wins; a domain-specific conflict policy and a clean small two-writer fixture are still recommended.
