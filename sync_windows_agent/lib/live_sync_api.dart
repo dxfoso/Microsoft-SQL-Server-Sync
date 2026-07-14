@@ -1048,7 +1048,10 @@ class AgentControlPlaneClient {
     required String chunkId,
     required bool finalChunk,
     int? changeTrackingVersion,
+    String? payloadBase64,
   }) async {
+    final encodedPayload =
+        payloadBase64 ?? base64Encode(utf8.encode(jsonEncode(rows)));
     final decoded = await _invokeFunctionWithRetry('jobs_multi_writer_upload', {
       'jobId': jobId,
       'batchId': batchId,
@@ -1056,11 +1059,15 @@ class AgentControlPlaneClient {
       'table': table,
       'columns': columns,
       'keyColumns': keyColumns,
-      'rows': rows,
+      // The relay stores the encoded payload as a blob. Do not send the same
+      // rows again in the request or retain them in the control-plane record.
+      'rows': const <Map<String, String?>>[],
       'chunkId': chunkId,
       'finalChunk': finalChunk,
       if (changeTrackingVersion != null)
         'changeTrackingVersion': changeTrackingVersion,
+      'payloadBase64': encodedPayload,
+      'payloadRowCount': rows.length,
     }, 'uploading multi-writer delta');
     if (decoded is! Map || decoded['job'] is! Map) {
       throw const AgentControlPlaneException(
@@ -1093,8 +1100,22 @@ class AgentControlPlaneClient {
           'Unexpected merged multi-writer download payload.',
         );
       }
+      final snapshotPayload = Map<String, dynamic>.from(
+        decoded['snapshot'] as Map,
+      );
+      final encodedChunk = decoded['payloadBase64']?.toString() ?? '';
+      if (encodedChunk.isNotEmpty) {
+        final chunkJson = utf8.decode(base64Decode(encodedChunk));
+        final chunkRows = jsonDecode(chunkJson);
+        if (chunkRows is! List) {
+          throw const AgentControlPlaneException(
+            'Unexpected stored multi-writer payload.',
+          );
+        }
+        snapshotPayload['rows'] = chunkRows;
+      }
       final snapshot = _parseSnapshotPayload(
-        decoded['snapshot'],
+        snapshotPayload,
         'Unexpected merged multi-writer download payload.',
       );
       firstSnapshot ??= snapshot;

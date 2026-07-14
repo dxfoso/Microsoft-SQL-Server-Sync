@@ -132,7 +132,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "normalized == 'queued' || normalized == 'waiting' || normalized == 'running'",
             source,
         )
-        self.assertIn("db.deleteMany(SnapshotRecord, { sourceJobId: { in: cancelledBatchIds } })", source)
+        self.assertIn("cleanup_multi_writer_batch_storage(batchId)", source)
         self.assertIn("function jobs_cleanup_multi_writer_batch(", source)
 
     def test_client_update_payload_and_ack_track_pending_and_last_ack_state(self):
@@ -553,8 +553,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field revision: int min=0", source)
         self.assertIn("field clientChangeTrackingVersions: array<json>", source)
         self.assertIn("function jobs_multi_writer_upload(", source)
-        self.assertIn("if (incomingRows.length > 500)", source)
-        self.assertIn("incomingBytes = json.stringify(incomingRows).length", source)
+        self.assertIn("if (incomingRowCount > 500)", source)
+        self.assertIn("let incomingBytes = json.stringify(incomingRows).length", source)
         self.assertIn("receivedBytes + incomingBytes > 128000000", source)
         self.assertIn("const ready = uploadedClients.length >= batch.expectedClients.length;", source)
         self.assertIn("function jobs_multi_writer_download(", source)
@@ -572,6 +572,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("clientChangeTrackingVersions", source)
         self.assertIn("multi-writer batch expired", source)
         self.assertIn("db.insert(SnapshotRecord", source)
+        self.assertIn("storage.put({", source)
+        self.assertIn("field storageId: string", source)
+        self.assertIn("payloadBase64", source)
+        self.assertIn("payloadRowCount", source)
+        self.assertIn("let incomingRowCount = incomingRows.length", source)
         self.assertIn("where: { sourceJobId: batch.id }", source)
         self.assertIn("rows: []", source)
         self.assertIn("rows: [],", source)

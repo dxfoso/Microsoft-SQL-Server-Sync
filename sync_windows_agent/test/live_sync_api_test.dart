@@ -3214,4 +3214,118 @@ void main() {
     );
     expect(chunkRequestCount, 3);
   });
+
+  test('multi-writer upload sends base64 JSON payloads for storage-backed relay', () async {
+    final client = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        expect(name, 'jobs_multi_writer_upload');
+        expect(args['rows'], isEmpty);
+        expect(args['payloadBase64'], isNotEmpty);
+        expect(args['payloadRowCount'], 1);
+        final decoded = jsonDecode(utf8.decode(base64Decode(args['payloadBase64'] as String)));
+        expect(decoded, [
+          {'Id': '1', 'Name': 'Arabic مرحبا'},
+        ]);
+        return (
+          statusCode: 200,
+          body: {
+            'status': 'success',
+            'value': {
+              'job': {
+                'id': 'job-mw-upload',
+                'clientName': 'c1',
+                'sourceClientName': 'c1',
+                'subscriberClientName': 'c2',
+                'table': 'db::mt000',
+                'direction': 'upload',
+                'publisherServer': '',
+                'publisherDatabase': '',
+                'publisherUseWindowsAuth': true,
+                'publisherUser': '',
+                'publisherPassword': '',
+                'status': 'completed',
+                'progress': 100,
+                'rowCount': 1,
+                'snapshotBytes': 32,
+                'createdAt': '2026-07-10T03:05:00Z',
+                'updatedAt': '2026-07-10T03:05:05Z',
+                'message': 'uploaded',
+                'error': null,
+              },
+            },
+          },
+        );
+      },
+    );
+    final api = AgentControlPlaneClient(
+      client: client,
+      baseUrl: 'https://example.com/call',
+    );
+
+    await api.uploadMultiWriterDelta(
+      'job-mw-upload',
+      batchId: 'batch-1',
+      clientName: 'c1',
+      table: 'db::mt000',
+      columns: const ['Id', 'Name'],
+      keyColumns: const ['Id'],
+      rows: const [
+        {'Id': '1', 'Name': 'Arabic مرحبا'},
+      ],
+      chunkId: 'chunk-0',
+      finalChunk: true,
+      changeTrackingVersion: 4,
+    );
+  });
+
+  test('multi-writer download decodes a storage-backed base64 payload', () async {
+    final encoded = base64Encode(
+      utf8.encode(jsonEncode([
+        {'Id': '1', 'Name': 'Arabic مرحبا'},
+      ])),
+    );
+    final client = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        expect(name, 'jobs_multi_writer_download');
+        return (
+          statusCode: 200,
+          body: {
+            'status': 'success',
+            'value': {
+              'done': true,
+              'nextCursor': null,
+              'payloadBase64': encoded,
+              'snapshot': {
+                'id': 'batch-1-c2-first',
+                'clientName': 'server-merge',
+                'subscriberClientName': 'c2',
+                'table': 'db::mt000',
+                'createdAt': '2026-07-10T03:05:00Z',
+                'rowCount': 1,
+                'checksum': 'checksum-1',
+                'snapshotBytes': 32,
+                'columns': ['Id', 'Name'],
+                'rows': const [],
+                'sourceJobId': 'job-mw-download',
+                'clientChangeTrackingVersions': const [],
+              },
+            },
+          },
+        );
+      },
+    );
+    final api = AgentControlPlaneClient(
+      client: client,
+      baseUrl: 'https://example.com/call',
+    );
+
+    final snapshot = await api.downloadMultiWriterDelta(
+      'job-mw-download',
+      batchId: 'batch-1',
+    );
+
+    expect(snapshot.rows, [
+      {'Id': '1', 'Name': 'Arabic مرحبا'},
+    ]);
+  });
 }

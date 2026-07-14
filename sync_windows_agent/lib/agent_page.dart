@@ -3351,8 +3351,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _applyRemoteJobState(activeJob);
 
     if (job.batchId?.trim().isNotEmpty == true) {
-      // Row count alone is unsafe because SQL rows can contain large text.
-      const deltaChunkSize = 25;
+      // Bound serialized payload size; SQL rows can contain large text.
+      const maxDeltaPayloadBytes = 500000;
       final rows = _snapshotRows(snapshot.snapshotJson);
       final columns = _snapshotColumns(snapshot.snapshotJson);
       final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
@@ -3371,8 +3371,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           changeTrackingVersion: snapshot.changeTrackingVersion,
         );
       } else {
-        for (var offset = 0; offset < rows.length; offset += deltaChunkSize) {
-          final end = math.min(offset + deltaChunkSize, rows.length);
+        for (var offset = 0; offset < rows.length;) {
+          var end = math.min(offset + 500, rows.length);
+          while (end > offset + 1 &&
+              utf8.encode(jsonEncode(rows.sublist(offset, end))).length >
+                  maxDeltaPayloadBytes) {
+            end--;
+          }
+          final isFinalChunk = end == rows.length;
+          final payloadBase64 = base64Encode(
+            utf8.encode(jsonEncode(rows.sublist(offset, end))),
+          );
           uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
             job.id,
             batchId: job.batchId!,
@@ -3380,11 +3389,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             table: job.table,
             columns: columns,
             keyColumns: keyColumns,
-            rows: rows.sublist(offset, end),
+            rows: const [],
             chunkId: '${job.id}-$offset',
-            finalChunk: end == rows.length,
+            finalChunk: isFinalChunk,
             changeTrackingVersion: snapshot.changeTrackingVersion,
+            payloadBase64: payloadBase64,
           );
+          offset = end;
         }
       }
       _applyRemoteJobState(
