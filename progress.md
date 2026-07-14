@@ -1,9 +1,9 @@
 # Multi-Writer Sync Progress
-Progress: 99%
+Progress: 95%
 
-- Published client `1.0.144+148`; C1 and C2 are online, SQL-connected, minimized, and current.
-- Multi-writer relay stores delta chunks, waits for all writers, streams bounded pages, applies by primary key, avoids trigger schema locks, and reconciles local state once per sync.
-- Duplicate primary keys, including delete/upsert pairs, are coalesced deterministically with `last-arrival-wins` and logged.
-- Live end-to-end batch `16b23364-b079-459a-aaeb-e9ef9b329161` completed on both clients; each applied `7,000` changed rows with no job errors.
-- Verification passed: Flutter tests `92/92`, server `ready=true`, `compile_errors=0`, health failures/timeouts `0`, both clients online/minimized.
-- Remaining only if required by the business: replace last-arrival-wins with a domain-specific merge policy; current transport and convergence path are production-tested.
+- Production policy implemented: SQL Server Change Tracking commit time is used as the UTC conflict timestamp; arrival order is used only when the commit DMV is unavailable or timestamps are missing.
+- Client `1.0.145+149` is published from commit `fa78c80654cd`; live manifest and ZIP hash match, and the ZIP opens and contains the executable.
+- Local Flutter verification passed: `93/93` tests.
+- C2 is online, server-connected, SQL-connected, minimized, and current on `1.0.145+149`.
+- C1 acknowledged the same version and is SQL-connected, but its heartbeat stopped at `2026-07-14T06:36:25Z`; it must be restarted/recovered before live multi-writer end-to-end proof is complete.
+- No server redeploy is required for this client-only change. The remaining risk is C1 process/startup recovery, not the conflict-selection implementation or package integrity.
