@@ -267,7 +267,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));", owner_body)
         self.assertIn("const sourceAgents = allAgents ?? list_scheduler_agent_rows();", owner_body)
         self.assertIn("for (const agent of ownerAgents) {", owner_body)
+        self.assertIn("const activeTableCaches = ownerAgents.map", owner_body)
+        self.assertIn("if (cache.tables.length > 0)", owner_body)
+        self.assertIn("return [];", owner_body)
         self.assertIn("const agentTables = due_periodic_sync_tables_for_agent_with_policies(", owner_body)
+
+    def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
+        source = read_text("business/control_plane.tru")
+        body = source.split("function jobs_create_all_enabled(", 1)[1].split(
+            "function reset_all_agent_saved_state(", 1
+        )[0]
+
+        self.assertIn("let ownerHasActiveJobs = false;", body)
+        self.assertIn(
+            "const activeTableCaches = onlineAgents.map",
+            body,
+        )
+        self.assertIn("if (cache.tables.length > 0)", body)
+        self.assertIn("if (ownerHasActiveJobs) {", body)
+        self.assertIn("deferredTables = deferredTables.concat(", body)
 
         preferred_source_match = re.search(
             r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null, completedJobRows: array<json>\? = null\): string \{(?P<body>.*?)\n\}",

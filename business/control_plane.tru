@@ -2311,6 +2311,18 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     return [];
   }
 
+  // Clients execute table jobs sequentially. Do not refill this owner's queue
+  // until the current bounded group has fully crossed upload and download.
+  const activeTableCaches = ownerAgents.map((agent) => ({
+    clientName: agent.clientName,
+    tables: active_job_tables_for_client(string.from(agent.clientName))
+  }));
+  for (const cache of activeTableCaches) {
+    if (cache.tables.length > 0) {
+      return [];
+    }
+  }
+
   // Periodic sync uses the same multi-writer barrier as manual Sync All:
   // every online client uploads first, then every client downloads the merge.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
@@ -2340,7 +2352,10 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         )
       );
       if (string_array_contains(enabledTables, table) &&
-          !string_array_contains(active_job_tables_for_client(string.from(agent.clientName)), table)) {
+          !string_array_contains(
+            active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches) ?? [],
+            table
+          )) {
         tableAgents = tableAgents.concat([agent]);
       }
     }
@@ -3994,6 +4009,22 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       );
     }
     enabledTables = unique_string_values(enabledTables);
+    const activeTableCaches = onlineAgents.map((agent) => ({
+      clientName: agent.clientName,
+      tables: active_job_tables_for_client(string.from(agent.clientName))
+    }));
+    let ownerHasActiveJobs = false;
+    for (const cache of activeTableCaches) {
+      if (cache.tables.length > 0) {
+        ownerHasActiveJobs = true;
+      }
+    }
+    if (ownerHasActiveJobs) {
+      deferredTables = deferredTables.concat(
+        enabledTables.map((table) => string.concat(ownerUserId, '::', table))
+      );
+      continue;
+    }
     // Keep a manual all-sync bounded while allowing the automatic scheduler
     // to drain the remaining tables without another user click.
     let queuedTablesForOwner = 0;
@@ -4018,7 +4049,10 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       }
       let busy = false;
       for (const agent of tableAgents) {
-        if (string_array_contains(active_job_tables_for_client(string.from(agent.clientName)), table)) {
+        if (string_array_contains(
+          active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches) ?? [],
+          table
+        )) {
           busy = true;
           skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
         }

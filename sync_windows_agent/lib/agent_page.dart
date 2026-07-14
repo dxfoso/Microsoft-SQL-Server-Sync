@@ -12,6 +12,7 @@ import 'agent_widgets.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_sync_merge.dart';
+import 'sql_sync_row_isolation.dart';
 import 'sql_sync_schema.dart';
 import 'sql_cmd_output.dart';
 import 'sync_state.dart';
@@ -3457,6 +3458,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final isMultiWriter = job.batchId?.trim().isNotEmpty == true;
     var streamedTargetRowCount = -1;
     final latestDeltaModifiedAtByKey = <String, DateTime?>{};
+    final rejectedRows = <SqlSyncRejectedRow>[];
+    final rejectedRowKeyColumns = <String>[];
     if (isMultiWriter) {
       // Apply each bounded relay page as it arrives. Keeping the whole
       // multi-writer delta in memory makes a valid change backlog look like a
@@ -3483,6 +3486,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   snapshot: snapshot,
                   refreshLocalState: false,
                   latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
+                  rejectedRows: rejectedRows,
+                  rejectedRowKeyColumns: rejectedRowKeyColumns,
                 );
               },
             )
@@ -3510,6 +3515,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               job: job,
               snapshot: snapshotToApply,
             );
+    if (rejectedRows.isNotEmpty) {
+      final detail = formatSqlSyncRejectedRows(
+        rejected: rejectedRows,
+        keyColumns: rejectedRowKeyColumns,
+      );
+      logStartupEvent('Quarantined sync changes for ${job.table}: $detail');
+      throw Exception(
+        '$detail. Valid rows were applied; rejected rows remain pending and the Change Tracking checkpoint was not advanced.',
+      );
+    }
     final reconciledTargetRowCount =
         isMultiWriter
             ? await _refreshTargetStateAfterRemoteApply(job)
@@ -3785,6 +3800,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required RemoteSnapshot snapshot,
     bool refreshLocalState = true,
     Map<String, DateTime?>? latestDeltaModifiedAtByKey,
+    List<SqlSyncRejectedRow>? rejectedRows,
+    List<String>? rejectedRowKeyColumns,
   }) async {
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
     if (targetDatabase.isEmpty) {
@@ -3889,6 +3906,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final upsertRows = rowsForApply
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
+    final isolatedRejectedRows = <SqlSyncRejectedRow>[];
     if (upsertRows.isNotEmpty) {
       final rows = upsertRows
           .map(
@@ -3898,15 +3916,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           )
           .toList(growable: false);
       if (applyDelta) {
-        await _applyDeltaRowsToTarget(
-          profile: targetProfile,
-          database: targetDatabase,
-          schema: targetTable.schema,
-          table: targetTable.table,
-          columns: syncColumns,
-          primaryKeyColumns: primaryKeyColumns,
-          matchColumnSets: deltaMatchColumnSets,
-          rows: rows,
+        isolatedRejectedRows.addAll(
+          await applySqlSyncRowsWithIsolation(
+            rows: rows,
+            applyBatch:
+                (batch) => _applyDeltaRowsToTarget(
+                  profile: targetProfile,
+                  database: targetDatabase,
+                  schema: targetTable.schema,
+                  table: targetTable.table,
+                  columns: syncColumns,
+                  primaryKeyColumns: primaryKeyColumns,
+                  matchColumnSets: deltaMatchColumnSets,
+                  rows: batch,
+                ),
+            shouldIsolateError: _isIsolatableTargetSqlError,
+          ),
         );
       } else {
         await _applySourceRowsToTarget(
@@ -3922,14 +3947,50 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
     }
     if (deleteRows.isNotEmpty) {
-      await _deleteSourceRowsFromTarget(
-        profile: targetProfile,
-        database: targetDatabase,
-        schema: targetTable.schema,
-        table: targetTable.table,
-        primaryKeyColumns: primaryKeyColumns,
-        rows: deleteRows,
+      isolatedRejectedRows.addAll(
+        await applySqlSyncRowsWithIsolation(
+          rows: deleteRows
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false),
+          applyBatch:
+              (batch) => _deleteSourceRowsFromTarget(
+                profile: targetProfile,
+                database: targetDatabase,
+                schema: targetTable.schema,
+                table: targetTable.table,
+                primaryKeyColumns: primaryKeyColumns,
+                rows: batch
+                    .map(
+                      (row) => Map<String, String?>.fromEntries(
+                        row.entries.map(
+                          (entry) =>
+                              MapEntry(entry.key, entry.value?.toString()),
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+          shouldIsolateError: _isIsolatableTargetSqlError,
+        ),
       );
+    }
+
+    if (isolatedRejectedRows.isNotEmpty) {
+      if (rejectedRows != null) {
+        rejectedRows.addAll(isolatedRejectedRows);
+        if (rejectedRowKeyColumns != null && rejectedRowKeyColumns.isEmpty) {
+          rejectedRowKeyColumns.addAll(primaryKeyColumns);
+        }
+      } else {
+        final detail = formatSqlSyncRejectedRows(
+          rejected: isolatedRejectedRows,
+          keyColumns: primaryKeyColumns,
+        );
+        logStartupEvent('Quarantined sync changes for ${job.table}: $detail');
+        throw Exception(
+          '$detail. Valid rows were applied; rejected rows remain pending and the Change Tracking checkpoint was not advanced.',
+        );
+      }
     }
 
     if (!refreshLocalState) {
@@ -4699,6 +4760,12 @@ END
     if (processResult.exitCode != 0) {
       throw Exception(_sqlCmdFailed(context, processResult));
     }
+  }
+
+  bool _isIsolatableTargetSqlError(Object error) {
+    final message = error.toString();
+    return message.contains('sqlcmd failed during target ') &&
+        !message.contains('(exit -1)');
   }
 
   List<List<String>> _targetMatchColumnSets({

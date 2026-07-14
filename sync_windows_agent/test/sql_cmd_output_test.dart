@@ -12,6 +12,12 @@ void main() {
     expect(decodeSqlCmdOutputBytes(bytes), value);
   });
 
+  test('keeps UTF-8 Arabic SQL errors intact', () {
+    const value = 'AmnW0062: رصيد المنتج أقل من صفر';
+
+    expect(decodeSqlCmdOutputBytes(utf8.encode(value)), value);
+  });
+
   test('decodes UTF-16LE sqlcmd output with a BOM', () {
     const value = '\u6570\u636e\u5e93\u9519\u8bef';
     final bytes = <int>[0xff, 0xfe];

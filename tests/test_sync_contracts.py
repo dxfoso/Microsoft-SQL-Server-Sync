@@ -108,7 +108,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function New-PortableZipParts {", publish_script)
         self.assertIn("if ([System.IO.Path]::IsPathRooted(`$OutputZip)) {", publish_script)
         self.assertIn("if ([System.IO.Path]::IsPathRooted(`$OutputDir)) {", publish_script)
-        self.assertIn("New-PortableZipParts `", publish_script)
+        self.assertNotIn("New-PortableZipParts `", publish_script)
         self.assertNotIn("$PortableZipPartsDir = Join-Path -Path $RepoRoot -ChildPath \"$PortableName-zip-parts\"", publish_script)
 
     def test_frontend_server_only_serves_static_assets_and_client_updates(self):
@@ -183,7 +183,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Additional rows not reported", clients_page)
         self.assertIn("+${_number(changedRows)} rows", clients_page)
         self.assertIn("Filter log", clients_page)
-        self.assertIn("Added rows", clients_page)
+        self.assertIn("Downloaded new", clients_page)
         self.assertIn("Uploaded new", clients_page)
         self.assertIn("_buildLogDataRow", clients_page)
         self.assertIn("_ClientScreen", clients_page)
@@ -438,12 +438,13 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("await _controlPlaneClient.updateJobProgress(", download_body)
         self.assertIn("status: 'applying',", download_body)
         self.assertIn("progress: 80,", download_body)
-        self.assertIn("final targetRowCount = await _applyDownloadedSnapshotToTarget(", download_body)
+        self.assertIn("final targetRowCount =", download_body)
+        self.assertIn(": await _applyDownloadedSnapshotToTarget(", download_body)
         self.assertIn("await _controlPlaneClient.completeJob(", download_body)
         self.assertIn("status: 'completed',", download_body)
         self.assertIn("progress: 100,", download_body)
         self.assertLess(
-            download_body.index("final targetRowCount = await _applyDownloadedSnapshotToTarget("),
+            download_body.index("final targetRowCount ="),
             download_body.index("await _controlPlaneClient.completeJob("),
         )
 
@@ -519,7 +520,8 @@ class SyncContractsTests(unittest.TestCase):
             1,
         )[1].split("Future<void> _processSnapshotJob(RemoteSyncJob job) async {", 1)[0]
 
-        self.assertIn("if (jobs.length < 2 || _remoteTableDependencies.isEmpty) {", sort_body)
+        self.assertIn("if (jobs.length < 2) {", sort_body)
+        self.assertIn("leftBatchUpload", sort_body)
         self.assertIn("dependencyGraph.putIfAbsent(table, () => <String>{}).add(relatedTable);", sort_body)
         self.assertIn("final leftDepth = _tableDependencyDepth(", sort_body)
         self.assertIn("final rightDepth = _tableDependencyDepth(", sort_body)
@@ -575,7 +577,7 @@ class SyncContractsTests(unittest.TestCase):
             agent_page,
         )
         self.assertIn(
-            "Future<Map<String, dynamic>> _buildChangeTrackingDiagnosticsForUpload() async {",
+            "_buildChangeTrackingDiagnosticsForUpload() async {",
             agent_page,
         )
         self.assertIn(
@@ -701,7 +703,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("No client process detected; checking the live update manifest.", update_script)
         self.assertIn("changeTrackingOwner", read_text("sync_windows_agent/lib/sync_state.dart"))
         self.assertIn("changeTrackingOwner != widget.clientName", read_text("sync_windows_agent/lib/agent_page.dart"))
-        self.assertIn("Applied ${snapshot.rowCount} changed row", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn("Applied ${snapshotToApply.rowCount} changed row", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertIn("_ensureNoLocalChangesBeforeRemoteApply", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
@@ -753,7 +755,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("ClientUpdateInfo? _pendingForcedClientUpdateInfo;", agent_page)
         self.assertIn("final forcedUpdateInfo = _pendingForcedClientUpdateInfo;", agent_page)
         self.assertIn("unawaited(_maybeAutoApplyClientUpdate(forcedUpdateInfo, force: true));", agent_page)
-        self.assertIn("if (_syncLoopBusy) {", agent_page)
+        self.assertIn("await _maybeAutoApplyClientUpdate(updateInfo, force: true);", agent_page)
         self.assertIn("_pendingForcedClientUpdateInfo = updateInfo;", agent_page)
         self.assertIn("if (!force &&", agent_page)
         self.assertIn("if (_applyingClientUpdate || _checkingClientUpdate) {", agent_page)
@@ -959,6 +961,17 @@ class SyncContractsTests(unittest.TestCase):
             query_template.index("${applyStatements.toString()}"),
             query_template.index("COMMIT TRANSACTION;"),
         )
+
+    def test_windows_client_isolates_rejected_delta_rows_without_advancing_checkpoint(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        isolation = read_text("sync_windows_agent/lib/sql_sync_row_isolation.dart")
+
+        self.assertIn("applySqlSyncRowsWithIsolation", agent_page)
+        self.assertIn("Valid rows were applied", agent_page)
+        self.assertIn("Change Tracking checkpoint was not advanced", agent_page)
+        self.assertIn("if (rows.length == 1)", isolation)
+        self.assertIn("rows.sublist(0, midpoint)", isolation)
+        self.assertIn("rows.sublist(midpoint)", isolation)
 
     def test_table_policy_upsert_updates_existing_stored_key(self):
         control_plane = read_text("business/control_plane.tru")

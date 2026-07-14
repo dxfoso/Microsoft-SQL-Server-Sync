@@ -44,18 +44,11 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         jobs_body = control_plane.split(
             "function jobs_create_all_enabled(", 1
         )[1].split("function reset_all_agent_saved_state", 1)[0]
-        create_body = control_plane.split(
-            "function create_sync_jobs_for_agent(", 1
-        )[1].split("function row_key", 1)[0]
-
         self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);", jobs_body)
-        self.assertIn("const completedJobRows = list_completed_scheduler_job_rows(ownerUserId);", jobs_body)
-        self.assertIn("const activeTableCaches = ownerAgents.map", jobs_body)
-        self.assertIn("bulk_source_client_name_for_agent_table(agent, table, ownerAgents, ownerPolicies, completedJobRows)", jobs_body)
-        self.assertNotIn("preferred_source_client_name_for_agent_table(agent, table, ownerAgents, ownerPolicies, tableCaches, completedJobRows)", jobs_body)
-        self.assertIn("create_sync_jobs_for_agent(agent, [table], sourceClientName, activeTableCaches, sourceAgent)", jobs_body)
-        self.assertIn("active_job_tables_from_cache", create_body)
-        self.assertIn("sourceAgentOverride", create_body)
+        self.assertIn("const activeTableCaches = onlineAgents.map", jobs_body)
+        self.assertEqual(jobs_body.count("active_job_tables_for_client("), 1)
+        self.assertIn("active_job_tables_from_cache", jobs_body)
+        self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", jobs_body)
 
 
 if __name__ == "__main__":
