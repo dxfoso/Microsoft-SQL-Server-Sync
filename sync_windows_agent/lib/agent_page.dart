@@ -3846,6 +3846,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       uniqueIndexColumnSets: uniqueIndexColumnSets,
       columns: syncColumns,
     );
+    // Change Tracking identifies rows by the primary key. Matching a delta
+    // against every alternate unique index can scan the target and can also
+    // reinterpret a legitimate key update as a different row.
+    final deltaMatchColumnSets = <List<String>>[primaryKeyColumns];
     final deleteRows = snapshot.rows
         .where((row) => row['__sync_op'] == 'D')
         .toList(growable: false);
@@ -3870,7 +3874,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           table: targetTable.table,
           columns: syncColumns,
           primaryKeyColumns: primaryKeyColumns,
-          matchColumnSets: targetMatchColumnSets,
+          matchColumnSets: deltaMatchColumnSets,
           rows: rows,
         );
       } else {
