@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
+import 'client_version.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_sync_merge.dart';
@@ -1507,17 +1508,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     final currentVersion = _agentAppVersion.trim();
     final latestVersion = updateInfo.version.trim();
-    final currentCommit = _agentBuildCommitHash.trim().toLowerCase();
-    final latestCommit = updateInfo.commit.trim().toLowerCase();
-    if (latestVersion.isNotEmpty &&
-        currentVersion.isNotEmpty &&
-        latestVersion != currentVersion) {
-      return true;
-    }
-    if (latestCommit.isNotEmpty && currentCommit.isNotEmpty) {
-      return latestCommit != currentCommit;
-    }
-    return latestVersion.isNotEmpty && latestVersion != currentVersion;
+    return isStrictlyNewerClientVersion(
+      current: currentVersion,
+      candidate: latestVersion,
+    );
   }
 
   String _clientUpdateLabel() {

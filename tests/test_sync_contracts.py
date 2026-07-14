@@ -778,6 +778,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Start-UpdatedClient -ExecutablePath $currentExe", update_script)
         self.assertIn("Updater failed:", update_script)
 
+    def test_windows_client_updates_only_move_forward(self):
+        app_source = read_text("sync_windows_agent/lib/app.dart")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        version_source = read_text("sync_windows_agent/lib/client_version.dart")
+
+        self.assertIn("isStrictlyNewerClientVersion(", app_source)
+        self.assertIn("isStrictlyNewerClientVersion(", agent_page)
+        self.assertIn("candidateVersion.compareTo(currentVersion) > 0", version_source)
+        self.assertIn("if (currentVersion == null || candidateVersion == null)", version_source)
+
     def test_update_script_verifies_the_installed_payload_before_relaunch(self):
         update_script = read_text("update.ps1")
         self.assertIn("function Test-PayloadInstalled {", update_script)

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 
 import 'agent_page.dart';
+import 'client_version.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
 import 'startup_log.dart';
@@ -20,10 +21,6 @@ const String _shellClientUpdateBaseUrlOverride = String.fromEnvironment(
 );
 const String _shellLiveClientUpdateBaseUrl =
     'https://sync.velvet-leaf.com/client';
-const String _shellAgentBuildCommitHash = String.fromEnvironment(
-  'BUILD_COMMIT_HASH',
-  defaultValue: '',
-);
 const Duration _shellAutoUpdateRetryCooldown = Duration(minutes: 10);
 
 const List<String> _uiFontFallback = <String>[
@@ -510,17 +507,10 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     }
     final currentVersion = _shellAgentAppVersion.trim();
     final latestVersion = updateInfo.version.trim();
-    final currentCommit = _shellAgentBuildCommitHash.trim().toLowerCase();
-    final latestCommit = updateInfo.commit.trim().toLowerCase();
-    if (latestVersion.isNotEmpty &&
-        currentVersion.isNotEmpty &&
-        latestVersion != currentVersion) {
-      return true;
-    }
-    if (latestCommit.isNotEmpty && currentCommit.isNotEmpty) {
-      return latestCommit != currentCommit;
-    }
-    return latestVersion.isNotEmpty && latestVersion != currentVersion;
+    return isStrictlyNewerClientVersion(
+      current: currentVersion,
+      candidate: latestVersion,
+    );
   }
 
   String _powershellSingleQuoted(String value) => value.replaceAll("'", "''");
@@ -589,9 +579,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   }
 
   Future<void> _checkShellClientUpdate() async {
-    if (!mounted ||
-        _checkingShellClientUpdate ||
-        _applyingShellClientUpdate) {
+    if (!mounted || _checkingShellClientUpdate || _applyingShellClientUpdate) {
       return;
     }
 
