@@ -3454,32 +3454,59 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     _applyRemoteJobState(activeJob);
 
+    final isMultiWriter = job.batchId?.trim().isNotEmpty == true;
+    var streamedTargetRowCount = -1;
+    if (isMultiWriter) {
+      // Apply each bounded relay page as it arrives. Keeping the whole
+      // multi-writer delta in memory makes a valid change backlog look like a
+      // duplicate/full snapshot and can stall both clients at once.
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'applying',
+        progress: 20,
+        message: 'Applying streamed changes to ${_localTableName(job.table)}.',
+        rowCount: 0,
+      );
+      _applyRemoteJobState(activeJob);
+    }
+
     // Legacy path remains `final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);`.
-    final mergedSnapshot =
-        job.batchId?.trim().isNotEmpty == true
+    final snapshotToApply =
+        isMultiWriter
             ? await _controlPlaneClient.downloadMultiWriterDelta(
               job.id,
               batchId: job.batchId!,
+              onChunk: (snapshot) async {
+                streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
+                  job: job,
+                  snapshot: snapshot,
+                );
+              },
             )
             : await _controlPlaneClient.downloadSnapshot(job.id);
-    final snapshotToApply = mergedSnapshot;
 
-    activeJob = await _controlPlaneClient.updateJobProgress(
-      job.id,
-      status: 'applying',
-      progress: 80,
-      message: 'Applying downloaded snapshot to ${_localTableName(job.table)}.',
-      rowCount: snapshotToApply.rowCount,
-    );
-    _applyRemoteJobState(activeJob);
+    if (!isMultiWriter) {
+      activeJob = await _controlPlaneClient.updateJobProgress(
+        job.id,
+        status: 'applying',
+        progress: 80,
+        message:
+            'Applying downloaded snapshot to ${_localTableName(job.table)}.',
+        rowCount: snapshotToApply.rowCount,
+      );
+      _applyRemoteJobState(activeJob);
+    }
 
     if (job.batchId?.trim().isNotEmpty != true) {
       await _ensureNoLocalChangesBeforeRemoteApply(job);
     }
-    final targetRowCount = await _applyDownloadedSnapshotToTarget(
-      job: job,
-      snapshot: snapshotToApply,
-    );
+    final targetRowCount =
+        streamedTargetRowCount >= 0
+            ? streamedTargetRowCount
+            : await _applyDownloadedSnapshotToTarget(
+              job: job,
+              snapshot: snapshotToApply,
+            );
     // The remote job records changed rows; targetRowCount remains local state.
     if (targetRowCount < 0) {
       throw StateError(

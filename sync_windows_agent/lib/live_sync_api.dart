@@ -1085,10 +1085,12 @@ class AgentControlPlaneClient {
   Future<RemoteSnapshot> downloadMultiWriterDelta(
     String jobId, {
     required String batchId,
+    Future<void> Function(RemoteSnapshot snapshot)? onChunk,
   }) async {
     String? cursor;
     RemoteSnapshot? firstSnapshot;
     final mergedRows = <Map<String, String?>>[];
+    var mergedRowCount = 0;
     var totalSnapshotBytes = 0;
     while (true) {
       final decoded =
@@ -1121,13 +1123,18 @@ class AgentControlPlaneClient {
         'Unexpected merged multi-writer download payload.',
       );
       firstSnapshot ??= snapshot;
-      mergedRows.addAll(snapshot.rows);
+      mergedRowCount += snapshot.rows.length;
+      if (onChunk != null) {
+        await onChunk(snapshot);
+      } else {
+        mergedRows.addAll(snapshot.rows);
+      }
       totalSnapshotBytes += snapshot.snapshotBytes;
       final done = decoded['done'] == true;
       if (done) {
         return firstSnapshot.copyWith(
-          rowCount: mergedRows.length,
-          rows: mergedRows,
+          rowCount: mergedRowCount,
+          rows: onChunk == null ? mergedRows : const [],
           snapshotBytes: totalSnapshotBytes,
           isDelta: firstSnapshot.isDelta && snapshot.isDelta,
         );
