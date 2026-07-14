@@ -251,6 +251,15 @@ String buildTargetSnapshotStageApplySql({
       manageTriggers ? 'ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;' : '';
   final triggerEnableStatement =
       manageTriggers ? 'ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;' : '';
+  final triggerRestoreBlock =
+      manageTriggers
+          ? '''
+  BEGIN TRY
+    $triggerEnableStatement
+  END TRY
+  BEGIN CATCH
+  END CATCH;'''
+          : '';
   final deleteMissingBlock =
       deleteMissing
           ? '''
@@ -288,11 +297,7 @@ BEGIN CATCH
   BEGIN
     ROLLBACK TRANSACTION;
   END;
-  BEGIN TRY
-    $triggerEnableStatement
-  END TRY
-  BEGIN CATCH
-  END CATCH;
+  $triggerRestoreBlock
   IF OBJECT_ID(N'$stageTarget', N'U') IS NOT NULL
   BEGIN
     DROP TABLE $stageTarget;

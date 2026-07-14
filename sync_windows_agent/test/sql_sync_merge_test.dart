@@ -146,5 +146,6 @@ void main() {
 
     expect(sql, isNot(contains('DISABLE TRIGGER')));
     expect(sql, isNot(contains('ENABLE TRIGGER')));
+    expect(sql, isNot(contains('BEGIN TRY\n  \n  END TRY')));
   });
 }
