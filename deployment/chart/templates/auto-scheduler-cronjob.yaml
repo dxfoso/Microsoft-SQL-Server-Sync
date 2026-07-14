@@ -8,6 +8,7 @@ metadata:
     {{- include "sync-admin-web.labels" . | nindent 4 }}
 spec:
   schedule: {{ .Values.autoScheduler.schedule | quote }}
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: {{ .Values.autoScheduler.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit: {{ .Values.autoScheduler.failedJobsHistoryLimit }}

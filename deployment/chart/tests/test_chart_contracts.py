@@ -8,6 +8,12 @@ PROJECT_ROOT = ROOT.parents[1]
 
 
 class ChartContractsTests(unittest.TestCase):
+    def test_auto_scheduler_is_not_deployed_suspended(self):
+        cronjob = (ROOT / "templates" / "auto-scheduler-cronjob.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('suspend: false', cronjob)
+
     def test_backend_does_not_require_admin_key_for_public_health(self):
         backend_deployment = (
             ROOT / "templates" / "backend-deployment.yaml"
