@@ -5,7 +5,7 @@ This repository deploys the web control plane and backend through the Cloud depl
 The only deployment-instruction source is the Cloud direct-instructions URL below. Do not use any other deployment-instruction URL.
 
 ```text
-https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=f722c074-2acb-4bb8-8a5f-ef1ff78e0aba&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com
+https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=0cedfba0-7e39-4ca1-b5aa-71ebe15957b8&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com
 ```
 
 ## Preflight
@@ -16,12 +16,12 @@ Run from the repository root in PowerShell:
 git status --short --branch
 git log -1 --oneline
 
-$instructionsUrl = 'https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=f722c074-2acb-4bb8-8a5f-ef1ff78e0aba&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com'
+$instructionsUrl = 'https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=0cedfba0-7e39-4ca1-b5aa-71ebe15957b8&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com'
 $instructions = Invoke-WebRequest -UseBasicParsing -Uri $instructionsUrl -TimeoutSec 60
 "status=$($instructions.StatusCode)"
 
 Get-Content deployment\chart\.env -Raw |
-    Select-String -Pattern 'Namespace:|latest-debug|latest-redeploy'
+    Select-String -Pattern 'Namespace:|latest-debug|resources|direct-instructions'
 ```
 
 ## Push The Release
@@ -43,9 +43,13 @@ git commit -m "<release message>"
 git push origin master
 ```
 
-## Start One Redeploy
+## Start The Release
 
-`latest-redeploy` is an action endpoint. Call it once with `GET`; do not poll it and do not call it with `POST`.
+Push the selected release commit to `master`, or use the configured repository workflow's supported `workflow_dispatch` event with authorized repository access. The direct-instructions, debug, and namespace-resource links are read-only and must never be used as deployment triggers.
+
+## Monitor Safely
+
+Use `latest-debug` for monitoring. This endpoint does not start a deployment.
 
 ```powershell
 $text = Get-Content deployment\chart\.env -Raw
@@ -58,25 +62,6 @@ $authToken = [regex]::Match(
     'authToken=([0-9a-f-]{36})'
 ).Groups[1].Value
 $namespace = 'velvet-sql-server-sync'
-$redeployUrl = (
-    'https://cloud.divclouds.com/call/repositories/{0}/deployments/' +
-    'latest-redeploy?authToken={1}&namespaceName={2}'
-    -f $repositoryId, $authToken, $namespace
-)
-
-$deployment = Invoke-WebRequest -UseBasicParsing `
-    -Uri $redeployUrl -Method Get -TimeoutSec 60
-$deployment.Content |
-    ConvertFrom-Json |
-    Select-Object id, status, commitHash, startedAt, errorMessage |
-    ConvertTo-Json -Compress
-```
-
-## Monitor Safely
-
-Use `latest-debug` for monitoring. This endpoint does not start a deployment.
-
-```powershell
 $debugUrl = (
     'https://cloud.divclouds.com/call/repositories/{0}/deployments/' +
     'latest-debug?authToken={1}&namespaceName={2}'

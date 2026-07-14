@@ -57,19 +57,20 @@ Use the launcher when a local stack restart is actually needed.
 - Keep `deployment/chart/values.yaml` free of dead admin-auth settings. If the chart no longer consumes an `admin` block, remove it from default values in the same change so redeploy records do not preserve misleading rendered values.
 
 --------- Cloud repo instruction ------------
-Direct deployment instructions:
 https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=0cedfba0-7e39-4ca1-b5aa-71ebe15957b8&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com
 
-Repository-owned deployment instructions
+Cloud deployment instructions v13
 
-The repository owns deployment. Use the repository deployment workflow under .action-server/workflows/ and its task scripts.
+Deploy only through this repository's configured release workflow.
+This page and its links are read-only verification tools; they cannot start a deployment.
+Choose the commit to deploy, then push it through the release workflow or start its supported manual dispatch with authorized repository access.
+If you cannot dispatch the workflow, request authorized access. Do not retry these links as a deployment trigger.
 Do not use the Cloud deployment UI, latest-redeploy, old deployment runbooks, or generic deployment guide pages.
 
 Repository: Microsoft-SQL-Server-Sync
 Repository URL: git@github.com:dxfoso/Microsoft-SQL-Server-Sync.git
 Namespace: velvet-sql-server-sync
 Server: velvet-leaf-1
-Commit: 7972da4f04a9024338b1814feb407b0f25e40113
 Server ID: 5d40f9d2-c3d5-4bc3-88d8-1de2d9f7a002
 Server address: 75.119.136.143
 DNS sync: disabled
@@ -81,24 +82,19 @@ Verification URLs:
 - Namespace resources: https://cloud.divclouds.com/call/servers/5d40f9d2-c3d5-4bc3-88d8-1de2d9f7a002/kubectl/namespaces/velvet-sql-server-sync/resources?authToken=0cedfba0-7e39-4ca1-b5aa-71ebe15957b8
 
 Execution requirements:
-- Trigger deployment from the repository workflow by pushing the release commit or using its supported manual dispatch event.
-- Treat the repository workflow result and persisted task-status.json/task-results.json files as the deployment record.
+- The direct link is for instructions and verification only; use the repository release workflow to start deployment.
 - After triggering a deployment, monitor the active deployment until it reaches a terminal result. Do not treat the trigger response alone as a successful deployment.
 - Keep polling, investigating, and retrying until the newest deployment row reaches success. Do not stop after an intermediate failure or an older successful deployment; stop only for a concrete blocker that requires new user authority or an external change.
+- Do not send a final response or completion statement while the newest requested deployment is running, failed without a completed retry, or lacks matching public commit and health verification. Keep the one-minute monitoring loop active until the success condition is met.
+- Whole-deployment success requires all release workloads ready, registry image pulls working, ingress and the requested public page free of 5xx responses, public env.js reporting the pushed commit, and public admin health reporting ready = true with compile_errors = 0. Check every item after each retry; a successful row alone is not sufficient.
 - Work only in namespace velvet-sql-server-sync.
 - Use the namespace resources link for scoped Kubernetes access; it injects the selected namespace and rejects cross-namespace flags.
 - Never use an unrestricted local kubeconfig or copy credentials from this link.
 - Keep the release pinned to the selected target node when one is specified.
-- Verify the live app reports commit 7972da4f04a9024338b1814feb407b0f25e40113.
+- Verify the live app reports the commit you selected.
 - When an admin health endpoint is available, require ready = true and compile_errors = 0 before treating the deploy as successful.
 - Check the newest deployment row, workflow, debug log, live commit, readiness, and compile errors about once per minute. Investigate and fix any concrete issue, then retry until the newest deployment row reaches success.
 - Confirm to the user that the deployment is complete and successful only after the newest deployment row succeeds and the one-minute public checks agree; report it as not successful if the deployment rolls back or health regresses.
-
-Repository workflow files:
-- .action-server/workflows/push.yaml
-- .action-server/workflows/nightly.yaml
-- .action-server/tasks/ci.sh
-- .action-server/tasks/nightly.sh
-
-The push workflow is the supported release trigger. Its persisted CI artifacts are workspace/tests/ci/task-status.json, workspace/tests/ci/task-results.json, workspace/tests/ci/task-step-results.json, and workspace/tests/ci/final-summary.txt.
+- In the repository AGENTS.md, save this direct deployment link and the complete copied instruction bundle between the exact Cloud repo instruction markers surrounding this block.
+- This marker block identifies the content as this repository's Cloud deployment instructions. If this repository has only one deployment target, use the default deployment entry; if another link uses a different namespace or server, replace the default entry with that namespace/server-specific link and instructions.
 ---------------------------------------------
