@@ -5082,6 +5082,7 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
 
   let cancelledJobs = [];
   let cancelledJobIds = [];
+  let cancelledBatchIds = [];
   const completedAt = now_iso();
   for (const job of visible_job_rows_for(current)) {
     const status = string.from(job.status).trim();
@@ -5093,6 +5094,10 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
       continue;
     }
     cancelledJobIds = cancelledJobIds.concat([job.id]);
+    const batchId = string.from(job.batchId ?? '').trim();
+    if (batchId.length != 0 && !string_array_contains(cancelledBatchIds, batchId)) {
+      cancelledBatchIds = cancelledBatchIds.concat([batchId]);
+    }
     cancelledJobs = cancelledJobs.concat([public_job_payload({
       id: job.id,
       clientName: job.clientName,
@@ -5130,10 +5135,28 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
       updatedAt: completedAt
     });
   }
+  for (const batchId of cancelledBatchIds) {
+    // Staged rows are disposable relay data. Remove them with the cancelled
+    // batch so a failed large sync cannot consume memory on later startups.
+    db.deleteMany(SnapshotRecord, { sourceJobId: batchId });
+  }
 
   return {
     ok: true,
     cancelledJobCount: cancelledJobs.length,
     jobs: cancelledJobs
   };
+}
+
+function jobs_cleanup_multi_writer_batch(batchId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null || !is_admin_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedBatchId = batchId.trim();
+  if (normalizedBatchId.length == 0) {
+    return raw_json_error(400, 'batchId is required');
+  }
+  const deletedCount = db.deleteMany(SnapshotRecord, { sourceJobId: normalizedBatchId });
+  return raw_json_success({ ok: true, batchId: normalizedBatchId, deletedCount });
 }
