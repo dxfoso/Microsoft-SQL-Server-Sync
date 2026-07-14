@@ -148,6 +148,7 @@ class SnapshotRecord {
   field chunkCount: int min=0 max=10000
   field encoding: string min=1 max=16
   field storageId: string min=0 max=128
+  field isDelta: bool
   field sourceJobId: string? min=0 max=64
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
@@ -4170,7 +4171,7 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   });
 }
 
-function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null): map<json> {
+function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -4281,6 +4282,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     chunkCount: 1,
     encoding: 'json',
     storageId,
+    isDelta: payloadIsDelta,
     sourceJobId: batch.id,
     clientUserId: normalizedClientName,
     ownerUserId: batch.ownerUserId,
@@ -4355,20 +4357,25 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
     orderBy: [{ field: 'createdAt', dir: 'asc' }, { field: 'id', dir: 'asc' }],
-    fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'snapshotBytes', 'storageId', 'createdAt'],
+    fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'snapshotBytes', 'storageId', 'isDelta', 'createdAt'],
     limit: 1,
     cursor
   });
   const storedChunks = storedChunkPage.rows;
   let chunkRows = [];
   let chunkPayloadBase64 = '';
+  let chunkIsDelta = true;
   if (batch.receivedChunks.length == 0) {
+    chunkIsDelta = false;
     for (const row of batch.rows) {
       chunkRows = chunkRows.concat([row]);
     }
   } else {
     for (const storedChunk of storedChunks) {
       const storedPayloadId = string.from(storedChunk.storageId ?? '').trim();
+      if (storedChunk.isDelta != true) {
+        chunkIsDelta = false;
+      }
       if (storedPayloadId.length != 0) {
         const storedPayload = storage.get(storedPayloadId);
         chunkPayloadBase64 = string.from(storedPayload.content_base64 ?? '').trim();
@@ -4401,6 +4408,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     keyColumns: batch.keyColumns,
     clientChangeTrackingVersions: batch.clientChangeTrackingVersions,
     rows: chunkRows,
+    isDelta: chunkIsDelta,
     totalRowCount,
     done,
     nextCursor
@@ -4409,7 +4417,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     snapshot.rows = [];
     snapshot.snapshotBytes = int.from(storedChunks[0].snapshotBytes ?? 0);
   }
-  return raw_json_success({ snapshot, cursor, nextCursor, totalRowCount, done, payloadBase64: chunkPayloadBase64 });
+  return raw_json_success({ snapshot, cursor, nextCursor, totalRowCount, done, payloadBase64: chunkPayloadBase64, isDelta: chunkIsDelta });
 }
 
 function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {

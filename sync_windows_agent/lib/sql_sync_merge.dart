@@ -10,6 +10,7 @@ String buildTargetSnapshotMergeSql({
   required List<Map<String, dynamic>> rows,
   int targetMergeInsertBatchSize = 100,
   int targetMergeApplyBatchSize = 500,
+  bool deleteMissing = true,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -97,6 +98,22 @@ ${_buildBatchedInsertStatement(database: database, schema: schema, table: table,
 ''');
   }
 
+  final deleteMissingStatements = deleteMissing
+      ? '''
+WHILE 1 = 1
+BEGIN
+  DELETE TOP ($targetMergeApplyBatchSize) target
+  FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM #source_rows AS source
+    WHERE $joinClause
+  );
+  IF @@ROWCOUNT = 0 BREAK;
+END;
+'''
+      : '';
+
   return '''
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
@@ -110,17 +127,7 @@ ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
 $identityInsertOn
 ${insertStatements.toString()}
 ${applyStatements.toString()}
-WHILE 1 = 1
-BEGIN
-  DELETE TOP ($targetMergeApplyBatchSize) target
-  FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
-  WHERE NOT EXISTS (
-    SELECT 1
-    FROM #source_rows AS source
-    WHERE $joinClause
-  );
-  IF @@ROWCOUNT = 0 BREAK;
-END;
+$deleteMissingStatements
 $identityInsertOff
 ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
 DROP TABLE #source_rows;

@@ -3365,10 +3365,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           table: job.table,
           columns: columns,
           keyColumns: keyColumns,
-          rows: const [],
+          rows: rows,
           chunkId: '${job.id}-0',
           finalChunk: true,
           changeTrackingVersion: snapshot.changeTrackingVersion,
+          payloadIsDelta: snapshot.isDelta,
         );
       } else {
         for (var offset = 0; offset < rows.length;) {
@@ -3389,11 +3390,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             table: job.table,
             columns: columns,
             keyColumns: keyColumns,
-            rows: const [],
+            rows: rows.sublist(offset, end),
             chunkId: '${job.id}-$offset',
             finalChunk: isFinalChunk,
             changeTrackingVersion: snapshot.changeTrackingVersion,
             payloadBase64: payloadBase64,
+            payloadIsDelta: snapshot.isDelta,
           );
           offset = end;
         }
@@ -3643,6 +3645,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       rows.addAll(deltaRows);
       isDelta = true;
+    } else if (job.batchId?.trim().isNotEmpty == true) {
+      // A multi-writer relay carries only changes. Never turn a missing or
+      // expired tracking baseline into a destructive full-table upload.
+      isDelta = true;
     } else {
       const batchSize = 200;
       var processed = 0;
@@ -3698,6 +3704,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       snapshotJson: snapshotJson,
       changeTrackingVersion: tracking?.currentVersion,
       keyColumns: primaryKeyColumns,
+      isDelta: isDelta,
     );
   }
 
@@ -3826,16 +3833,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             },
           )
           .toList(growable: false);
-      await _applySourceRowsToTarget(
-        profile: targetProfile,
-        database: targetDatabase,
-        schema: targetTable.schema,
-        table: targetTable.table,
-        columns: syncColumns,
-        primaryKeyColumns: primaryKeyColumns,
-        matchColumnSets: targetMatchColumnSets,
-        rows: rows,
-      );
+      final applyDelta =
+          job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
+      if (applyDelta) {
+        await _applyDeltaRowsToTarget(
+          profile: targetProfile,
+          database: targetDatabase,
+          schema: targetTable.schema,
+          table: targetTable.table,
+          columns: syncColumns,
+          primaryKeyColumns: primaryKeyColumns,
+          matchColumnSets: targetMatchColumnSets,
+          rows: rows,
+        );
+      } else {
+        await _applySourceRowsToTarget(
+          profile: targetProfile,
+          database: targetDatabase,
+          schema: targetTable.schema,
+          table: targetTable.table,
+          columns: syncColumns,
+          primaryKeyColumns: primaryKeyColumns,
+          matchColumnSets: targetMatchColumnSets,
+          rows: rows,
+        );
+      }
     }
     if (deleteRows.isNotEmpty) {
       await _deleteSourceRowsFromTarget(
@@ -4363,6 +4385,34 @@ END
       buffer.write(char);
     }
     return buffer.toString();
+  }
+
+  Future<void> _applyDeltaRowsToTarget({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> columns,
+    required List<String> primaryKeyColumns,
+    required List<List<String>> matchColumnSets,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    await _runSqlCmdOrThrow(
+      profile: profile,
+      database: database,
+      query: buildTargetSnapshotMergeSql(
+        database: database,
+        schema: schema,
+        table: table,
+        columns: columns,
+        primaryKeyColumns: primaryKeyColumns,
+        matchColumnSets: matchColumnSets,
+        rows: rows,
+        deleteMissing: false,
+      ),
+      context: 'target delta merge',
+      timeout: _snapshotSqlCmdTimeout,
+    );
   }
 
   Future<void> _applySourceRowsToTarget({
@@ -8387,6 +8437,7 @@ class _RelaySnapshotDocument {
     required this.snapshotJson,
     this.changeTrackingVersion,
     this.keyColumns = const [],
+    this.isDelta = false,
   });
 
   final String createdAt;
@@ -8395,6 +8446,7 @@ class _RelaySnapshotDocument {
   final String snapshotJson;
   final int? changeTrackingVersion;
   final List<String> keyColumns;
+  final bool isDelta;
 }
 
 class _ChangeTrackingState {

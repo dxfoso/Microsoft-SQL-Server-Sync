@@ -1049,6 +1049,7 @@ class AgentControlPlaneClient {
     required bool finalChunk,
     int? changeTrackingVersion,
     String? payloadBase64,
+    bool payloadIsDelta = true,
   }) async {
     final encodedPayload =
         payloadBase64 ?? base64Encode(utf8.encode(jsonEncode(rows)));
@@ -1068,6 +1069,7 @@ class AgentControlPlaneClient {
         'changeTrackingVersion': changeTrackingVersion,
       'payloadBase64': encodedPayload,
       'payloadRowCount': rows.length,
+      'payloadIsDelta': payloadIsDelta,
     }, 'uploading multi-writer delta');
     if (decoded is! Map || decoded['job'] is! Map) {
       throw const AgentControlPlaneException(
@@ -1127,6 +1129,7 @@ class AgentControlPlaneClient {
           rowCount: mergedRows.length,
           rows: mergedRows,
           snapshotBytes: totalSnapshotBytes,
+          isDelta: firstSnapshot.isDelta && snapshot.isDelta,
         );
       }
       final nextCursor = decoded['nextCursor']?.toString();
@@ -1755,6 +1758,7 @@ class RemoteSnapshot {
     required this.sourceJobId,
     this.changeTrackingVersion,
     this.changeTrackingVersions = const <String, int>{},
+    this.isDelta = false,
   });
 
   final String id;
@@ -1769,6 +1773,7 @@ class RemoteSnapshot {
   final String? sourceJobId;
   final int? changeTrackingVersion;
   final Map<String, int> changeTrackingVersions;
+  final bool isDelta;
 
   factory RemoteSnapshot.fromJson(Map<String, dynamic> json) {
     final rawRows = json['rows'] as List<dynamic>? ?? const [];
@@ -1797,6 +1802,7 @@ class RemoteSnapshot {
       changeTrackingVersions: _parseChangeTrackingVersions(
         json['clientChangeTrackingVersions'],
       ),
+      isDelta: json['isDelta'] == true,
     );
   }
 
@@ -1831,6 +1837,7 @@ class RemoteSnapshot {
     String? sourceJobId,
     int? changeTrackingVersion,
     Map<String, int>? changeTrackingVersions,
+    bool? isDelta,
   }) {
     return RemoteSnapshot(
       id: id ?? this.id,
@@ -1847,6 +1854,7 @@ class RemoteSnapshot {
           changeTrackingVersion ?? this.changeTrackingVersion,
       changeTrackingVersions:
           changeTrackingVersions ?? this.changeTrackingVersions,
+      isDelta: isDelta ?? this.isDelta,
     );
   }
 }
