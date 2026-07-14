@@ -3856,10 +3856,33 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     // against every alternate unique index can scan the target and can also
     // reinterpret a legitimate key update as a different row.
     final deltaMatchColumnSets = <List<String>>[primaryKeyColumns];
-    final deleteRows = snapshot.rows
+    final applyDelta =
+        job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
+    final rowsForApply =
+        applyDelta
+            ? coalesceSqlSyncDeltaRows(
+              rows: snapshot.rows
+                  .map((row) => Map<String, dynamic>.from(row))
+                  .toList(growable: false),
+              primaryKeyColumns: primaryKeyColumns,
+            )
+            : snapshot.rows;
+    if (applyDelta && rowsForApply.length != snapshot.rows.length) {
+      logStartupEvent(
+        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} duplicate primary-key row(s) for ${job.table}; policy=last-arrival-wins.',
+      );
+    }
+    final deleteRows = rowsForApply
         .where((row) => row['__sync_op'] == 'D')
+        .map(
+          (row) => Map<String, String?>.fromEntries(
+            row.entries.map(
+              (entry) => MapEntry(entry.key, entry.value?.toString()),
+            ),
+          ),
+        )
         .toList(growable: false);
-    final upsertRows = snapshot.rows
+    final upsertRows = rowsForApply
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
     if (upsertRows.isNotEmpty) {
@@ -3870,8 +3893,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             },
           )
           .toList(growable: false);
-      final applyDelta =
-          job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
       if (applyDelta) {
         await _applyDeltaRowsToTarget(
           profile: targetProfile,

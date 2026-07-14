@@ -148,4 +148,20 @@ void main() {
     expect(sql, isNot(contains('ENABLE TRIGGER')));
     expect(sql, isNot(contains('BEGIN TRY\n  \n  END TRY')));
   });
+
+  test('delta rows keep the last value for duplicate primary keys', () {
+    final rows = coalesceSqlSyncDeltaRows(
+      rows: [
+        {'Id': 7, 'Name': 'first'},
+        {'Id': 8, 'Name': 'other'},
+        {'Id': 7, 'Name': 'last'},
+      ],
+      primaryKeyColumns: const ['Id'],
+    );
+
+    expect(rows, [
+      {'Id': 7, 'Name': 'last'},
+      {'Id': 8, 'Name': 'other'},
+    ]);
+  });
 }

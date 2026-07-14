@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'sql_sync_schema.dart';
 
 String buildTargetSnapshotMergeSql({
@@ -324,6 +326,29 @@ END;
 
 String stageTableReference(String stageTableName) =>
     'tempdb.dbo.${quoteIdentifier(stageTableName)}';
+
+/// Keeps the last row for each primary key in a streamed multi-writer page.
+/// The relay order is deterministic, so this makes last-arrival-wins explicit
+/// and prevents duplicate source keys from reaching the SQL join.
+List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
+  required List<Map<String, dynamic>> rows,
+  required List<String> primaryKeyColumns,
+}) {
+  if (rows.length < 2 || primaryKeyColumns.isEmpty) {
+    return rows;
+  }
+  final coalesced = <String, Map<String, dynamic>>{};
+  final rowsWithoutCompleteKeys = <Map<String, dynamic>>[];
+  for (final row in rows) {
+    final keyValues = primaryKeyColumns.map((column) => row[column]).toList();
+    if (keyValues.any((value) => value == null)) {
+      rowsWithoutCompleteKeys.add(row);
+      continue;
+    }
+    coalesced[jsonEncode(keyValues)] = row;
+  }
+  return [...coalesced.values, ...rowsWithoutCompleteKeys];
+}
 
 String _buildSourceTempIndexStatements(List<List<String>> matchColumnSets) {
   final buffer = StringBuffer();
