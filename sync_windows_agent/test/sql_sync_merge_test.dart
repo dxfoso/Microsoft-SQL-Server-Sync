@@ -91,4 +91,31 @@ void main() {
     expect(clause, contains('target.[Code] COLLATE DATABASE_DEFAULT'));
     expect(clause, contains('source.[Code] IS NOT NULL'));
   });
+
+  test('staged delta apply does not delete rows absent from delta', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'items',
+      stageTableName: '#stage_items',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: true,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['Id'],
+      matchColumnSets: const [
+        ['Id'],
+      ],
+      deleteMissing: false,
+    );
+
+    expect(sql, isNot(contains('DELETE TOP (500) target')));
+  });
 }

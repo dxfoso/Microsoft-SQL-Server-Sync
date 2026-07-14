@@ -98,8 +98,9 @@ ${_buildBatchedInsertStatement(database: database, schema: schema, table: table,
 ''');
   }
 
-  final deleteMissingStatements = deleteMissing
-      ? '''
+  final deleteMissingStatements =
+      deleteMissing
+          ? '''
 WHILE 1 = 1
 BEGIN
   DELETE TOP ($targetMergeApplyBatchSize) target
@@ -112,7 +113,7 @@ BEGIN
   IF @@ROWCOUNT = 0 BREAK;
 END;
 '''
-      : '';
+          : '';
 
   return '''
 SET NOCOUNT ON;
@@ -198,6 +199,7 @@ String buildTargetSnapshotStageApplySql({
   required List<String> primaryKeyColumns,
   required List<List<String>> matchColumnSets,
   int targetMergeApplyBatchSize = 500,
+  bool deleteMissing = true,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -244,6 +246,21 @@ String buildTargetSnapshotStageApplySql({
           : 'SET IDENTITY_INSERT ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} OFF;';
   final triggerTarget =
       '${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}';
+  final deleteMissingBlock =
+      deleteMissing
+          ? '''
+  WHILE 1 = 1
+  BEGIN
+    DELETE TOP ($targetMergeApplyBatchSize) target
+    FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM $stageTarget AS source
+      WHERE $joinClause
+    );
+    IF @@ROWCOUNT = 0 BREAK;
+  END;'''
+          : '';
 
   return '''
 SET NOCOUNT ON;
@@ -255,17 +272,7 @@ BEGIN TRY
   $identityInsertOn
   ${_buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
-  WHILE 1 = 1
-  BEGIN
-    DELETE TOP ($targetMergeApplyBatchSize) target
-    FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
-    WHERE NOT EXISTS (
-      SELECT 1
-      FROM $stageTarget AS source
-      WHERE $joinClause
-    );
-    IF @@ROWCOUNT = 0 BREAK;
-  END;
+  $deleteMissingBlock
   $identityInsertOff
   ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
   COMMIT TRANSACTION;

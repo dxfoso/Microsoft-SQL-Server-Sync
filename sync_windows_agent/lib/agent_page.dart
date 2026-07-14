@@ -4428,21 +4428,16 @@ END
     required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
   }) async {
-    await _runSqlCmdOrThrow(
+    await _applySourceRowsToTarget(
       profile: profile,
       database: database,
-      query: buildTargetSnapshotMergeSql(
-        database: database,
-        schema: schema,
-        table: table,
-        columns: columns,
-        primaryKeyColumns: primaryKeyColumns,
-        matchColumnSets: matchColumnSets,
-        rows: rows,
-        deleteMissing: false,
-      ),
-      context: 'target delta merge',
-      timeout: _snapshotSqlCmdTimeout,
+      schema: schema,
+      table: table,
+      columns: columns,
+      primaryKeyColumns: primaryKeyColumns,
+      matchColumnSets: matchColumnSets,
+      rows: rows,
+      deleteMissing: false,
     );
   }
 
@@ -4455,6 +4450,7 @@ END
     required List<String> primaryKeyColumns,
     required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
+    bool deleteMissing = true,
   }) async {
     final stageTableName = _nextTargetSnapshotStageTableName(table);
     try {
@@ -4500,6 +4496,7 @@ END
           columns: columns,
           primaryKeyColumns: primaryKeyColumns,
           matchColumnSets: matchColumnSets,
+          deleteMissing: deleteMissing,
         ),
         context: 'target snapshot merge',
         timeout: _snapshotSqlCmdTimeout,
