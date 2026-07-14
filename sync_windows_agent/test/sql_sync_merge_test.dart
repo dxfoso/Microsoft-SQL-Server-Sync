@@ -118,4 +118,33 @@ void main() {
 
     expect(sql, isNot(contains('DELETE TOP (500) target')));
   });
+
+  test('staged delta apply does not toggle triggers', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'items',
+      stageTableName: '#stage_items',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: true,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['Id'],
+      matchColumnSets: const [
+        ['Id'],
+      ],
+      deleteMissing: false,
+      manageTriggers: false,
+    );
+
+    expect(sql, isNot(contains('DISABLE TRIGGER')));
+    expect(sql, isNot(contains('ENABLE TRIGGER')));
+  });
 }

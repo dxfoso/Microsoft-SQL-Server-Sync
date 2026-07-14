@@ -4438,6 +4438,7 @@ END
       matchColumnSets: matchColumnSets,
       rows: rows,
       deleteMissing: false,
+      manageTriggers: false,
     );
   }
 
@@ -4451,6 +4452,7 @@ END
     required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
     bool deleteMissing = true,
+    bool manageTriggers = true,
   }) async {
     final stageTableName = _nextTargetSnapshotStageTableName(table);
     try {
@@ -4497,6 +4499,7 @@ END
           primaryKeyColumns: primaryKeyColumns,
           matchColumnSets: matchColumnSets,
           deleteMissing: deleteMissing,
+          manageTriggers: manageTriggers,
         ),
         context: 'target snapshot merge',
         timeout: _snapshotSqlCmdTimeout,

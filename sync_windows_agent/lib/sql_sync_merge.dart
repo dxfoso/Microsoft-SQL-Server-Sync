@@ -200,6 +200,7 @@ String buildTargetSnapshotStageApplySql({
   required List<List<String>> matchColumnSets,
   int targetMergeApplyBatchSize = 500,
   bool deleteMissing = true,
+  bool manageTriggers = true,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -246,6 +247,10 @@ String buildTargetSnapshotStageApplySql({
           : 'SET IDENTITY_INSERT ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} OFF;';
   final triggerTarget =
       '${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}';
+  final triggerDisableStatement =
+      manageTriggers ? 'ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;' : '';
+  final triggerEnableStatement =
+      manageTriggers ? 'ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;' : '';
   final deleteMissingBlock =
       deleteMissing
           ? '''
@@ -268,13 +273,13 @@ SET XACT_ABORT ON;
 BEGIN TRY
   $sourceIndexStatements
   BEGIN TRANSACTION;
-  ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;
+  $triggerDisableStatement
   $identityInsertOn
   ${_buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
   $deleteMissingBlock
   $identityInsertOff
-  ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
+  $triggerEnableStatement
   COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
@@ -284,7 +289,7 @@ BEGIN CATCH
     ROLLBACK TRANSACTION;
   END;
   BEGIN TRY
-    ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;
+    $triggerEnableStatement
   END TRY
   BEGIN CATCH
   END CATCH;
