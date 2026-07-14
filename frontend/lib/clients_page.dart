@@ -57,6 +57,33 @@ class _SyncLogOperation {
     return active.status;
   }
 
+  String get phase {
+    if (jobs.any(
+      (job) =>
+          job.status.toLowerCase() == 'failed' ||
+          job.error?.trim().isNotEmpty == true,
+    )) {
+      return 'Failed';
+    }
+    final downloadStatus = download?.status.toLowerCase() ?? '';
+    if (downloadStatus == 'downloading' || downloadStatus == 'applying') {
+      return 'Download';
+    }
+    final uploadStatus = upload?.status.toLowerCase() ?? '';
+    if (uploadStatus == 'queued' ||
+        uploadStatus == 'running' ||
+        uploadStatus == 'snapshotting' ||
+        uploadStatus == 'uploading') {
+      return 'Upload';
+    }
+    if (downloadStatus == 'waiting') return 'Waiting';
+    if (uploadStatus == 'completed' &&
+        (downloadStatus == 'completed' || download == null)) {
+      return 'Completed';
+    }
+    return status;
+  }
+
   int get progress {
     if (jobs.isEmpty) return 0;
     return jobs
@@ -831,7 +858,7 @@ class _ClientsPageState extends State<ClientsPage> {
       );
     }
     final jobs = _jobsFor(agent);
-    final activeJobs = jobs.where((job) => job.isActive).length;
+    final activeJobs = _activeSyncCount(agent, jobs);
     return Column(
       children: [
         _panel(child: _buildClientSummary(agent, activeJobs)),
@@ -844,6 +871,24 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
     );
+  }
+
+  int _activeSyncCount(AdminAgent agent, List<AdminJob> jobs) {
+    final operations = _groupSyncLogOperations(
+      jobs,
+      clientName: agent.clientName,
+    );
+    final batches = _groupSyncLogBatches(
+      operations,
+      clientName: agent.clientName,
+    );
+    return batches
+        .where(
+          (batch) =>
+              batch.status.toLowerCase() != 'completed' &&
+              batch.status.toLowerCase() != 'failed',
+        )
+        .length;
   }
 
   Widget _buildTableDetailPage() {
@@ -1425,6 +1470,7 @@ class _ClientsPageState extends State<ClientsPage> {
               columnSpacing: 20,
               columns: const [
                 DataColumn(label: Text('Table')),
+                DataColumn(label: Text('Phase')),
                 DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Changed')),
                 DataColumn(label: Text('Uploaded new')),
@@ -1582,6 +1628,7 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(Text(_displayTable(operation.representative.table))),
+        DataCell(_statusChip(operation.phase, _phaseColor(operation.phase))),
         DataCell(_statusChip(operation.status, _statusColor(operation.status))),
         DataCell(Text('${operation.progress}%')),
         DataCell(
@@ -1627,6 +1674,23 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
     );
+  }
+
+  Color _phaseColor(String phase) {
+    switch (phase.toLowerCase()) {
+      case 'upload':
+        return const Color(0xFF2563EB);
+      case 'download':
+        return const Color(0xFFB54708);
+      case 'waiting':
+        return const Color(0xFF667085);
+      case 'failed':
+        return const Color(0xFFB42318);
+      case 'completed':
+        return const Color(0xFF15803D);
+      default:
+        return const Color(0xFF667085);
+    }
   }
 
   Widget _buildJobRow(AdminJob job) {
