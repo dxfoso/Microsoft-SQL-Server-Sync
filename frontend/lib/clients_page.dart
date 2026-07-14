@@ -59,8 +59,9 @@ class _SyncLogOperation {
 
   int get progress {
     if (jobs.isEmpty) return 0;
-    return jobs.map((job) => job.progress).reduce((left, right) =>
-        left < right ? left : right);
+    return jobs
+        .map((job) => job.progress)
+        .reduce((left, right) => left < right ? left : right);
   }
 
   String get message {
@@ -399,11 +400,11 @@ class _ClientsPageState extends State<ClientsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                    _screen == _ClientScreen.table
-                        ? _displayTable(table?.table ?? _selectedTable ?? '')
-                        : _screen == _ClientScreen.sync
-                            ? 'Sync details'
-                        : agent.clientName,
+                  _screen == _ClientScreen.table
+                      ? _displayTable(table?.table ?? _selectedTable ?? '')
+                      : _screen == _ClientScreen.sync
+                      ? 'Sync details'
+                      : agent.clientName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -412,11 +413,11 @@ class _ClientsPageState extends State<ClientsPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                    _screen == _ClientScreen.table
-                        ? 'Table detail and sync history'
-                        : _screen == _ClientScreen.sync
-                            ? 'Per-table changes for this sync'
-                        : 'Client detail and sync activity',
+                  _screen == _ClientScreen.table
+                      ? 'Table detail and sync history'
+                      : _screen == _ClientScreen.sync
+                      ? 'Per-table changes for this sync'
+                      : 'Client detail and sync activity',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: const Color(0xFF667085),
                   ),
@@ -1096,6 +1097,7 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildTableRow(AdminTableState table) {
+    final displayStatus = _displayTableStatus(table);
     return Row(
       children: [
         Expanded(
@@ -1125,7 +1127,7 @@ class _ClientsPageState extends State<ClientsPage> {
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 3),
-            _statusChip(table.status, _statusColor(table.status)),
+            _statusChip(displayStatus, _statusColor(displayStatus)),
             const SizedBox(height: 3),
             Text(
               _formatTimestamp(table.lastSync),
@@ -1135,6 +1137,36 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
     );
+  }
+
+  String _displayTableStatus(AdminTableState table) {
+    final agent = _selectedAgent;
+    if (agent == null) {
+      return table.status;
+    }
+    final jobs = _jobsFor(
+      agent,
+    ).where((job) => job.table == table.table).toList(growable: false);
+    final active = jobs.where((job) => job.isActive).toList(growable: false);
+    if (active.isNotEmpty) {
+      return active.first.status;
+    }
+    final latestCompleted = jobs.where(
+      (job) => job.status.toLowerCase() == 'completed',
+    );
+    if (latestCompleted.isNotEmpty) {
+      return 'Completed';
+    }
+    final stale = table.status.toLowerCase();
+    if (stale == 'applying' ||
+        stale == 'running' ||
+        stale == 'uploading' ||
+        stale == 'downloading' ||
+        stale == 'failed' ||
+        stale == 'error') {
+      return table.lastSync.trim().isNotEmpty ? 'Completed' : 'Waiting';
+    }
+    return table.status;
   }
 
   Widget _buildJobLog(List<AdminJob> jobs) {
@@ -1157,9 +1189,13 @@ class _ClientsPageState extends State<ClientsPage> {
           final matchesDirection =
               _logDirection == 'all' ||
               (_logDirection == 'upload' &&
-                  batch.operations.any((operation) => operation.upload != null)) ||
+                  batch.operations.any(
+                    (operation) => operation.upload != null,
+                  )) ||
               (_logDirection == 'download' &&
-                  batch.operations.any((operation) => operation.download != null));
+                  batch.operations.any(
+                    (operation) => operation.download != null,
+                  ));
           final matchesStatus =
               _logStatus == 'all' || batch.status.toLowerCase() == _logStatus;
           return matchesQuery && matchesDirection && matchesStatus;
@@ -1282,11 +1318,17 @@ class _ClientsPageState extends State<ClientsPage> {
         });
       },
       cells: [
-        DataCell(Text(_formatTimestamp(batch.representative.representative.updatedAt))),
+        DataCell(
+          Text(_formatTimestamp(batch.representative.representative.updatedAt)),
+        ),
         DataCell(
           Row(
             children: [
-              Icon(Icons.sync_rounded, size: 16, color: Colors.blueGrey.shade700),
+              Icon(
+                Icons.sync_rounded,
+                size: 16,
+                color: Colors.blueGrey.shade700,
+              ),
               const SizedBox(width: 5),
               const Text('Sync', style: TextStyle(fontWeight: FontWeight.w800)),
               const SizedBox(width: 5),
@@ -1310,7 +1352,9 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(
           Text(
-            batch.uploadedRows == null ? 'Not reported' : '+${_number(batch.uploadedRows!)}',
+            batch.uploadedRows == null
+                ? 'Not reported'
+                : '+${_number(batch.uploadedRows!)}',
             style: TextStyle(color: uploadColor, fontWeight: FontWeight.w800),
           ),
         ),
@@ -1323,7 +1367,14 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(
-          SizedBox(width: 260, child: Text(batch.message, maxLines: 2, overflow: TextOverflow.ellipsis)),
+          SizedBox(
+            width: 260,
+            child: Text(
+              batch.message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ),
       ],
     );
@@ -1338,7 +1389,10 @@ class _ClientsPageState extends State<ClientsPage> {
       _jobsFor(agent),
       clientName: agent.clientName,
     );
-    final batches = _groupSyncLogBatches(operations, clientName: agent.clientName);
+    final batches = _groupSyncLogBatches(
+      operations,
+      clientName: agent.clientName,
+    );
     _SyncLogBatch? batch;
     for (final candidate in batches) {
       if (candidate.key == _selectedSyncKey) {
@@ -1347,7 +1401,9 @@ class _ClientsPageState extends State<ClientsPage> {
       }
     }
     if (batch == null) {
-      return _panel(child: _buildEmpty('Sync operation is no longer available.'));
+      return _panel(
+        child: _buildEmpty('Sync operation is no longer available.'),
+      );
     }
     return _panel(
       child: Column(
@@ -1375,7 +1431,9 @@ class _ClientsPageState extends State<ClientsPage> {
                 DataColumn(label: Text('Downloaded new')),
                 DataColumn(label: Text('Message')),
               ],
-              rows: batch.operations.map(_buildLogDataRow).toList(growable: false),
+              rows: batch.operations
+                  .map(_buildLogDataRow)
+                  .toList(growable: false),
             ),
           ),
         ],
@@ -1390,12 +1448,14 @@ class _ClientsPageState extends State<ClientsPage> {
     final grouped = <String, List<AdminJob>>{};
     for (final job in jobs) {
       final snapshot = job.snapshotId?.trim() ?? '';
-      final timestamp = job.createdAt.length >= 19
-          ? job.createdAt.substring(0, 19)
-          : job.createdAt;
-      final key = snapshot.isNotEmpty
-          ? 'snapshot:$snapshot'
-          : '${job.table}|${job.sourceClientName}|${job.subscriberClientName}|$timestamp';
+      final timestamp =
+          job.createdAt.length >= 19
+              ? job.createdAt.substring(0, 19)
+              : job.createdAt;
+      final key =
+          snapshot.isNotEmpty
+              ? 'snapshot:$snapshot'
+              : '${job.table}|${job.sourceClientName}|${job.subscriberClientName}|$timestamp';
       grouped.putIfAbsent(key, () => <AdminJob>[]).add(job);
     }
     final operations = grouped.entries
@@ -1408,9 +1468,9 @@ class _ClientsPageState extends State<ClientsPage> {
         )
         .toList(growable: false);
     operations.sort(
-      (left, right) => _timestamp(right.representative.updatedAt).compareTo(
-        _timestamp(left.representative.updatedAt),
-      ),
+      (left, right) => _timestamp(
+        right.representative.updatedAt,
+      ).compareTo(_timestamp(left.representative.updatedAt)),
     );
     for (var index = 0; index < operations.length; index++) {
       final current = operations[index];
@@ -1419,15 +1479,19 @@ class _ClientsPageState extends State<ClientsPage> {
         current.changedRowsOverride = 0;
         continue;
       }
-      final previous = operations.skip(index + 1).firstWhere(
+      final previous = operations
+          .skip(index + 1)
+          .firstWhere(
             (candidate) =>
-                candidate.representative.table == current.representative.table &&
+                candidate.representative.table ==
+                    current.representative.table &&
                 candidate.representative.rowCount > 0,
-            orElse: () => _SyncLogOperation(
-              key: '',
-              jobs: const [],
-              clientName: clientName,
-            ),
+            orElse:
+                () => _SyncLogOperation(
+                  key: '',
+                  jobs: const [],
+                  clientName: clientName,
+                ),
           );
       if (previous.jobs.isNotEmpty &&
           currentRows >= previous.representative.rowCount) {
@@ -1445,10 +1509,12 @@ class _ClientsPageState extends State<ClientsPage> {
     final grouped = <String, List<_SyncLogOperation>>{};
     for (final operation in operations) {
       final representative = operation.representative;
-      final timestamp = representative.createdAt.length >= 16
-          ? representative.createdAt.substring(0, 16)
-          : representative.createdAt;
-      final key = '${representative.sourceClientName}|'
+      final timestamp =
+          representative.createdAt.length >= 16
+              ? representative.createdAt.substring(0, 16)
+              : representative.createdAt;
+      final key =
+          '${representative.sourceClientName}|'
           '${representative.subscriberClientName}|$timestamp';
       grouped.putIfAbsent(key, () => <_SyncLogOperation>[]).add(operation);
     }
@@ -1462,8 +1528,9 @@ class _ClientsPageState extends State<ClientsPage> {
         )
         .toList(growable: false);
     batches.sort(
-      (left, right) => _timestamp(right.representative.representative.updatedAt)
-          .compareTo(_timestamp(left.representative.representative.updatedAt)),
+      (left, right) => _timestamp(
+        right.representative.representative.updatedAt,
+      ).compareTo(_timestamp(left.representative.representative.updatedAt)),
     );
     return batches;
   }
@@ -1504,13 +1571,13 @@ class _ClientsPageState extends State<ClientsPage> {
               if (operation.upload != null)
                 Icon(Icons.arrow_upward_rounded, size: 16, color: uploadColor),
               if (operation.download != null)
-                Icon(Icons.arrow_downward_rounded,
-                    size: 16, color: downloadColor),
+                Icon(
+                  Icons.arrow_downward_rounded,
+                  size: 16,
+                  color: downloadColor,
+                ),
               const SizedBox(width: 5),
-              const Text(
-                'Sync',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
+              const Text('Sync', style: TextStyle(fontWeight: FontWeight.w800)),
             ],
           ),
         ),
@@ -1551,8 +1618,11 @@ class _ClientsPageState extends State<ClientsPage> {
         DataCell(
           SizedBox(
             width: 260,
-            child: Text(operation.message,
-                maxLines: 2, overflow: TextOverflow.ellipsis),
+            child: Text(
+              operation.message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
       ],

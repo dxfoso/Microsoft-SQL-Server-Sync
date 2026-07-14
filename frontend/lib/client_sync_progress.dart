@@ -94,17 +94,15 @@ ClientSyncProgressSummary computeClientSyncProgressSummary({
     final status = (tableState?.status ?? '').toLowerCase();
     final hasLastSync = (tableState?.lastSync.trim().isNotEmpty ?? false);
     var progress = (tableState?.progress ?? 0).clamp(0, 100);
-    final isFailed = status.contains('fail') || status.contains('error');
-    final isActive =
-        status == 'running' ||
-        status == 'applying' ||
-        (status == 'queued' && !hasLastSync) ||
-        status == 'syncing';
+    // A table state is only the client's last report. Without a current job
+    // it must not make the dashboard show an old Applying/Failed status as
+    // live work; the job ledger is authoritative for current execution.
+    final isActive = status == 'queued' && !hasLastSync;
     final isComplete =
         status == 'completed' ||
         status == 'synced' ||
         status == 'success' ||
-        (hasLastSync && !isFailed && !isActive);
+        hasLastSync;
     if (isComplete) {
       progress = 100;
     } else if (isActive && progress == 0) {
@@ -113,8 +111,6 @@ ClientSyncProgressSummary computeClientSyncProgressSummary({
     totalProgress += progress;
     if (isComplete) {
       completedCount += 1;
-    } else if (isFailed) {
-      failedCount += 1;
     } else if (isActive) {
       activeCount += 1;
     }

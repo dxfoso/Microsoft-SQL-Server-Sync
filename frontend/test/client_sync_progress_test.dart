@@ -3,7 +3,7 @@ import 'package:sync_admin_web/client_sync_progress.dart';
 import 'package:sync_admin_web/models.dart';
 
 void main() {
-  test('reports failed when any tracked table failed', () {
+  test('does not report an orphaned table failure as an active failure', () {
     final summary = computeClientSyncProgressSummary(
       agent: _agent(
         tables: [
@@ -19,8 +19,8 @@ void main() {
       jobs: const [],
     );
 
-    expect(summary.label, 'Failed');
-    expect(summary.detail, '1 failed, 1 complete of 2 tables.');
+    expect(summary.label, 'Complete');
+    expect(summary.detail, 'All 2 enabled tables are complete.');
   });
 
   test(
