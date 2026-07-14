@@ -39,17 +39,17 @@ Use the launcher when a local stack restart is actually needed.
 
 ## Deployment Rule
 
-- After any shipped `frontend/` web change, automatically run the relevant frontend and contract tests, commit and push the change, and trigger one Cloud redeploy using the `latest-redeploy` link from `deployment/chart/.env`; do not wait for a separate redeploy request.
-- After any shipped `backend/` or root `business/` server change, automatically run the relevant server/control-plane contract checks, commit and push the change, and trigger one Cloud redeploy using the `latest-redeploy` link from `deployment/chart/.env`; do not wait for a separate redeploy request.
-- When a change includes both server and Windows client work, complete both actions before reporting success: Cloud redeploy for the server and client update publication/verification for the Windows app.
-- Monitor the deployment only through the `latest-debug` link from `deployment/chart/.env` so polling never starts duplicate deployments.
+- After any shipped `frontend/` web change, run the relevant frontend and contract tests, commit and push the release through the repository-owned `.action-server/workflows/push.yaml`; do not use Cloud `latest-redeploy`.
+- After any shipped `backend/` or root `business/` server change, run the relevant server/control-plane contract checks, commit and push the release through the repository-owned workflow; do not use Cloud `latest-redeploy`.
+- When a change includes both server and Windows client work, complete both actions before reporting success: repository workflow deployment for the server and client update publication/verification for the Windows app.
+- Monitor deployment results through the repository workflow artifacts and the scoped Cloud debug/resources links recorded below; polling must never start duplicate deployments.
 - After starting a redeploy, wait at least 2 minutes before the first rollout assessment, then poll `latest-debug` every 15 seconds until the Cloud runner reaches a terminal state or the monitoring window expires. After the runner reports success, verify `/admin/health` reports the pushed commit, `ready: true`, and zero compile errors; report the deployment as pending or failed when any check is not satisfied.
 - After every deploy, wait a few minutes and perform a post-deployment verification: confirm the pushed commit is live, `/admin/health` is ready with zero compile errors, the web endpoint loads, and connected clients remain online and healthy. Never report deployment success until these checks pass.
 - A frontend change is not considered deployed until public `/admin/health` reports the new commit with `ready: true` and zero compile errors, and the live `main.dart.js` contains the changed feature markers. If rollout is still pending, report it explicitly instead of claiming success.
 - Always use the deployment environment located at `[deployment/chart/.env](deployment/chart/.env)` (absolute path: `D:\Microsoft-SQL-Server-Sync\deployment\chart\.env`) for deployment-related steps.
 - If deployment behavior regresses, refresh deployment inputs from `deployment/chart/.env` before retrying redeploy.
 - Node target must be supplied by Cloud deployment metadata for each deployment/redeploy; do not hardcode a fixed node name in repo files or scripts.
-- Before changing or diagnosing any deployment-related item, always use the canonical Cloud direct-instructions URL: `https://cloud.divclouds.com/call/deployments/direct-instructions?authToken=f722c074-2acb-4bb8-8a5f-ef1ff78e0aba&controlPlaneBaseUrl=https%3A%2F%2Fcloud.divclouds.com`. Do not use any other deployment-instruction URL.
+- Before changing or diagnosing any deployment-related item, use the repository-owned Cloud direct-instructions URL and instruction block recorded below.
 - Any nonzero compile errors in project-owned TRU files under `business/` must be treated as a failed deployment, even if pods start and other health checks pass.
 - Keep the public backend `/admin/health` endpoint readable without admin credentials. Cloud deployment compile gating depends on a public JSON response that includes `ready`, `compile_errors`, and build commit data.
 - Keep dashboard and control-plane polling endpoints bounded. If `/admin/health` reports memory pressure or a TRU endpoint hits the WASM epoch deadline, fix the query/payload bounds first; raising pod memory or `TRU_MEMORY_CAP_MB` alone is not the long-term deployment fix.
