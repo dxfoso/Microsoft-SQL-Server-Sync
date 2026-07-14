@@ -1,7 +1,7 @@
 {
-    "version":  "1.0.131+135",
-    "commit":  "f62a0509cc3c",
-    "generatedAt":  "2026-07-13T23:04:02.7228261Z",
+    "version":  "1.0.147+151",
+    "commit":  "3bf294550ce4",
+    "generatedAt":  "2026-07-14T21:45:02.4854900Z",
     "packageType":  "files-v1",
     "packageRootUrl":  "https://sync.velvet-leaf.com/client/packages/latest-package",
     "fileCount":  27,
@@ -15,8 +15,8 @@
                   {
                       "path":  "data/app.so",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/data/app.so",
-                      "sha256":  "ade54eacc3ab6eedb38283c16f4a30d6fa182bee34cf307c162ea5f7eeec07f0",
-                      "sizeBytes":  6833040
+                      "sha256":  "d210478d96eab569b2b61446a5f4ef3becae657c3776ea0d903880145d240df8",
+                      "sizeBytes":  6865808
                   },
                   {
                       "path":  "data/flutter_assets/.last_build_id",
@@ -81,7 +81,7 @@
                   {
                       "path":  "file_selector_windows_plugin.dll",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/file_selector_windows_plugin.dll",
-                      "sha256":  "b96af26077bec476f45994cf9753b3a188c22303ab7980a3eef48067a344a6ac",
+                      "sha256":  "25fe9a5742255509fc8a20f37d825d901a2182b688eb4cd9b22102d475fae077",
                       "sizeBytes":  111104
                   },
                   {
@@ -123,7 +123,7 @@
                   {
                       "path":  "portable-manifest.txt",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/portable-manifest.txt",
-                      "sha256":  "bea43ee1547742a403ce38ebeb97d8ec0a573a6adc224cec46a04d8db7d6c6c2",
+                      "sha256":  "e0a3cba0fc21fcc19274c3bdc66460947c2e85028a2a361d834243c8b12348d8",
                       "sizeBytes":  2746
                   },
                   {
@@ -135,7 +135,7 @@
                   {
                       "path":  "sync_windows_agent.exe",
                       "url":  "https://sync.velvet-leaf.com/client/packages/latest-package/sync_windows_agent.exe",
-                      "sha256":  "a436696762b26bb138339b7c96c377fd9022c3a83026805c4e6eb9cf6e868888",
+                      "sha256":  "310535091e3cdcac1ac4093aa3a52f13c4366406f0fc5a9804ab7f4dcb2c4200",
                       "sizeBytes":  418816
                   },
                   {
