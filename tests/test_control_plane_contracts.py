@@ -261,11 +261,13 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(owner_match)
         owner_body = owner_match.group("body")
         self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);", owner_body)
-        self.assertIn("const completedJobRows = list_completed_scheduler_job_rows(ownerUserId);", owner_body)
+        self.assertNotIn("list_completed_scheduler_job_rows(ownerUserId)", owner_body)
+        self.assertIn("effective_agent_online(agent)", owner_body)
+        self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", owner_body)
         self.assertIn("const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));", owner_body)
         self.assertIn("const sourceAgents = allAgents ?? list_scheduler_agent_rows();", owner_body)
-        self.assertIn("for (const agent of sourceAgents) {", owner_body)
-        self.assertIn("const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents, ownerPolicies, tableCaches, completedJobRows);", owner_body)
+        self.assertIn("for (const agent of ownerAgents) {", owner_body)
+        self.assertIn("const agentTables = due_periodic_sync_tables_for_agent_with_policies(", owner_body)
 
         preferred_source_match = re.search(
             r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null, completedJobRows: array<json>\? = null\): string \{(?P<body>.*?)\n\}",
@@ -590,7 +592,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (string_array_contains(agentTables, table))", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("let queuedTablesForOwner = 0;", source)
-        self.assertIn("remaining tables are deferred to the scheduler", source)
+        self.assertIn("remaining tables are queued for the automatic scheduler", source)
+        self.assertIn("Periodic sync uses the same multi-writer barrier as manual Sync All", source)
+        self.assertIn("every online client uploads first, then every client downloads the merge", source)
         self.assertIn("skippedOfflineClients", source)
 
     def test_multi_writer_heartbeat_exposes_upload_and_download_for_same_table(self):

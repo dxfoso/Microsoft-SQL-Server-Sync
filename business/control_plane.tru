@@ -2299,30 +2299,58 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: arr
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
-  const completedJobRows = list_completed_scheduler_job_rows(ownerUserId);
   let ownerAgents = [];
   for (const agent of sourceAgents) {
-    if (agent.ownerUserId == ownerUserId) {
+    if (agent.ownerUserId == ownerUserId &&
+        agent_recent_enough_for_periodic_sync(agent) &&
+        effective_agent_online(agent)) {
       ownerAgents = ownerAgents.concat([agent]);
     }
   }
+  if (ownerAgents.length == 0) {
+    return [];
+  }
+
+  // Periodic sync uses the same multi-writer barrier as manual Sync All:
+  // every online client uploads first, then every client downloads the merge.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
+  let dueTables = [];
+  for (const agent of ownerAgents) {
+    const cache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
+    const agentTables = due_periodic_sync_tables_for_agent_with_policies(
+      agent,
+      ownerPolicies,
+      cache,
+      periodic_sync_scheduler_table_limit()
+    );
+    dueTables = unique_string_values(dueTables.concat(agentTables));
+  }
+
   let createdJobs = [];
-  let checkedAgentCount = 0;
-  for (const agent of sourceAgents) {
-    if (agent.ownerUserId != ownerUserId) {
-      continue;
-    }
-    if (!agent_recent_enough_for_periodic_sync(agent)) {
-      continue;
-    }
-    if (checkedAgentCount >= periodic_sync_scheduler_agent_limit()) {
+  let queuedTableCount = 0;
+  for (const table of dueTables) {
+    if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
       break;
     }
-    checkedAgentCount += 1;
-    const agentJobs = queue_due_periodic_sync_jobs_for_agent(agent, sourceAgents, ownerPolicies, tableCaches, completedJobRows);
-    if (agentJobs.length > 0) {
-      createdJobs = createdJobs.concat(agentJobs);
+    let tableAgents = [];
+    for (const agent of ownerAgents) {
+      const enabledTables = unique_string_values(
+        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+        )
+      );
+      if (string_array_contains(enabledTables, table) &&
+          !string_array_contains(active_job_tables_for_client(string.from(agent.clientName)), table)) {
+        tableAgents = tableAgents.concat([agent]);
+      }
+    }
+    if (tableAgents.length == 0) {
+      continue;
+    }
+    const jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
+    if (jobs.length > 0) {
+      createdJobs = createdJobs.concat(jobs);
+      queuedTableCount += 1;
     }
   }
   return createdJobs;
@@ -2337,7 +2365,7 @@ function periodic_sync_scheduler_owner_limit(): int {
 }
 
 function periodic_sync_scheduler_table_limit(): int {
-  return 1;
+  return 4;
 }
 
 function periodic_sync_recent_agent_window_minutes(): int {
@@ -3966,12 +3994,11 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       );
     }
     enabledTables = unique_string_values(enabledTables);
-    // Keep a manual all-sync bounded. The scheduler will pick up the
-    // remaining tables on the next cycle instead of materializing every
-    // large table in one server batch.
+    // Keep a manual all-sync bounded while allowing the automatic scheduler
+    // to drain the remaining tables without another user click.
     let queuedTablesForOwner = 0;
     for (const table of enabledTables) {
-      if (queuedTablesForOwner >= 1) {
+      if (queuedTablesForOwner >= periodic_sync_scheduler_table_limit()) {
         deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
         continue;
       }
@@ -4018,7 +4045,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     skippedSourceResolutionTables: [],
     deferredTables: unique_string_values(deferredTables),
     message: deferredTables.length > 0
-      ? 'Sync started for the first eligible table; remaining tables are deferred to the scheduler to keep the server bounded.'
+      ? 'Sync started for the first eligible table batch; remaining tables are queued for the automatic scheduler.'
       : 'Sync queued for all eligible tables.'
   };
 }
