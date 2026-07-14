@@ -3480,6 +3480,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
                   job: job,
                   snapshot: snapshot,
+                  refreshLocalState: false,
                 );
               },
             )
@@ -3507,8 +3508,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               job: job,
               snapshot: snapshotToApply,
             );
+    final reconciledTargetRowCount =
+        isMultiWriter
+            ? await _refreshTargetStateAfterRemoteApply(job)
+            : targetRowCount;
     // The remote job records changed rows; targetRowCount remains local state.
-    if (targetRowCount < 0) {
+    if (reconciledTargetRowCount < 0) {
       throw StateError(
         'Downloaded snapshot produced an invalid target row count.',
       );
@@ -3776,6 +3781,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Future<int> _applyDownloadedSnapshotToTarget({
     required RemoteSyncJob job,
     required RemoteSnapshot snapshot,
+    bool refreshLocalState = true,
   }) async {
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
     if (targetDatabase.isEmpty) {
@@ -3901,6 +3907,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
 
+    if (!refreshLocalState) {
+      return -1;
+    }
+
     final targetRowCountResult = await _queryTableRowCount(
       profile: targetProfile,
       database: targetDatabase,
@@ -3940,6 +3950,50 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       unawaited(_syncWithControlPlane());
     }
 
+    return targetRowCountResult.value;
+  }
+
+  Future<int> _refreshTargetStateAfterRemoteApply(RemoteSyncJob job) async {
+    final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
+    final localTableName = _localTableName(job.table);
+    final targetTable = _splitQualifiedName(localTableName);
+    final targetProfile = _activeProfile();
+    final targetRowCountResult = await _queryTableRowCount(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
+    if (!targetRowCountResult.success) {
+      throw Exception(
+        targetRowCountResult.errorText ?? 'Target row count lookup failed.',
+      );
+    }
+    final visibleTableName = _stripKnownDatabaseAndDefaultSchema(
+      localTableName,
+      database: targetDatabase,
+    );
+    final targetFingerprints = await _queryTableFingerprints(
+      profile: targetProfile,
+      database: targetDatabase,
+      tables: [visibleTableName],
+    );
+    _applyTableFingerprints(
+      database: targetDatabase,
+      fingerprints: targetFingerprints,
+    );
+    if (_selectedDatabase == targetDatabase) {
+      _applyTableRowCounts(
+        database: targetDatabase,
+        rowCounts: {visibleTableName: targetRowCountResult.value},
+      );
+      if (_selectedTable == visibleTableName) {
+        setState(() {
+          _totalTableRows = targetRowCountResult.value;
+        });
+      }
+      unawaited(_syncWithControlPlane());
+    }
     return targetRowCountResult.value;
   }
 
