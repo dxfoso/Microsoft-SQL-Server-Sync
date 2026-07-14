@@ -5135,10 +5135,10 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
       updatedAt: completedAt
     });
   }
-  for (const batchId of cancelledBatchIds) {
+  if (cancelledBatchIds.length != 0) {
     // Staged rows are disposable relay data. Remove them with the cancelled
-    // batch so a failed large sync cannot consume memory on later startups.
-    db.deleteMany(SnapshotRecord, { sourceJobId: batchId });
+    // batches so failed large syncs cannot consume memory on later startups.
+    db.deleteMany(SnapshotRecord, { sourceJobId: { in: cancelledBatchIds } });
   }
 
   return {

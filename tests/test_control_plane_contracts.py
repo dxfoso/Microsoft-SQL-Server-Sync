@@ -132,7 +132,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "normalized == 'queued' || normalized == 'waiting' || normalized == 'running'",
             source,
         )
-        self.assertIn("db.deleteMany(SnapshotRecord, { sourceJobId: batchId })", source)
+        self.assertIn("db.deleteMany(SnapshotRecord, { sourceJobId: { in: cancelledBatchIds } })", source)
         self.assertIn("function jobs_cleanup_multi_writer_batch(", source)
 
     def test_client_update_payload_and_ack_track_pending_and_last_ack_state(self):
