@@ -122,6 +122,7 @@ class SyncBatch {
   field expectedClients: array<json>
   field uploadedClients: array<json>
   field receivedChunks: array<json>
+  field receivedBytes: int min=0 max=2147483647
   field clientChangeTrackingVersions: array<json>
   field keyColumns: array<json>
   field columns: array<json>
@@ -2902,6 +2903,7 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     expectedClients: clientNames,
     uploadedClients: [],
     receivedChunks: [],
+    receivedBytes: 0,
     clientChangeTrackingVersions: [],
     keyColumns: [],
     columns: [],
@@ -4198,6 +4200,14 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (incomingRows.length > 500) {
     return raw_json_error(413, 'multi-writer chunk is too large');
   }
+  const incomingBytes = json.stringify(incomingRows).length;
+  if (incomingBytes > 4000000) {
+    return raw_json_error(413, 'multi-writer chunk exceeds the 4 MB payload limit; retry with smaller chunks');
+  }
+  const receivedBytes = int.from(batch.receivedBytes ?? 0);
+  if (receivedBytes + incomingBytes > 128000000) {
+    return raw_json_error(413, 'multi-writer batch exceeds the 128 MB staging limit; split the sync by table or reduce the changed set');
+  }
   if (sync_batch_chunk_seen(batch.receivedChunks, normalizedClientName, normalizedChunkId)) {
     return raw_json_success({ job: public_job_payload(job), batchId, duplicate: true, ready: batch.status == 'ready' });
   }
@@ -4259,6 +4269,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     expectedClients: batch.expectedClients,
     uploadedClients,
     receivedChunks,
+    receivedBytes: receivedBytes + incomingBytes,
     clientChangeTrackingVersions,
     keyColumns: resolvedKeyColumns,
     columns: resolvedColumns,
@@ -4315,7 +4326,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     where: { sourceJobId: batch.id },
     orderBy: [{ field: 'createdAt', dir: 'asc' }, { field: 'id', dir: 'asc' }],
     fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'createdAt'],
-    limit: 25,
+    limit: 1,
     cursor
   });
   const storedChunks = storedChunkPage.rows;

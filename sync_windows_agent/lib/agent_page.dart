@@ -3351,7 +3351,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _applyRemoteJobState(activeJob);
 
     if (job.batchId?.trim().isNotEmpty == true) {
-      const deltaChunkSize = 250;
+      // Row count alone is unsafe because SQL rows can contain large text.
+      const deltaChunkSize = 25;
       final rows = _snapshotRows(snapshot.snapshotJson);
       final columns = _snapshotColumns(snapshot.snapshotJson);
       final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
