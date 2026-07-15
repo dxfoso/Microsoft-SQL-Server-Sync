@@ -4581,6 +4581,18 @@ END
     bool insertOnly = true,
   }) async {
     final stageTableName = _nextTargetSnapshotStageTableName(table);
+    final rowCountBefore = await _queryTableRowCount(
+      profile: profile,
+      database: database,
+      schema: schema,
+      table: table,
+    );
+    if (!rowCountBefore.success) {
+      throw Exception(
+        rowCountBefore.errorText ??
+            'Unable to read the target row count before insert-only apply.',
+      );
+    }
     try {
       final applyResult = await _runSqlCmdOrThrow(
         profile: profile,
@@ -4632,7 +4644,32 @@ END
         timeout: _snapshotSqlCmdTimeout,
         captureOutputFile: true,
       );
-      return _insertedRowCountFromSqlOutput(applyResult.stdout.toString());
+      final reportedInsertedRows = _insertedRowCountFromSqlOutput(
+        applyResult.stdout.toString(),
+      );
+      if (reportedInsertedRows != null) {
+        return reportedInsertedRows;
+      }
+      final rowCountAfter = await _queryTableRowCount(
+        profile: profile,
+        database: database,
+        schema: schema,
+        table: table,
+      );
+      if (!rowCountAfter.success) {
+        throw Exception(
+          rowCountAfter.errorText ??
+              'Unable to read the target row count after insert-only apply.',
+        );
+      }
+      final insertedRows = math.max(
+        0,
+        rowCountAfter.value - rowCountBefore.value,
+      );
+      logStartupEvent(
+        'sqlcmd omitted the insert-only result marker for $database.$schema.$table; counted $insertedRows inserted row(s) from target cardinality.',
+      );
+      return insertedRows;
     } finally {
       await _dropTargetSnapshotStage(
         profile: profile,
@@ -4688,12 +4725,10 @@ END
     return processResult;
   }
 
-  int _insertedRowCountFromSqlOutput(String output) {
+  int? _insertedRowCountFromSqlOutput(String output) {
     final match = RegExp(r'__SQL_SYNC_INSERTED__=(\d+)').firstMatch(output);
     if (match == null) {
-      throw const FormatException(
-        'Target insert-only apply did not report its inserted row count.',
-      );
+      return null;
     }
     return int.parse(match.group(1)!);
   }

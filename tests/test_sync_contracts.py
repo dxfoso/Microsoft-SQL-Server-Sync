@@ -993,6 +993,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("__SQL_SYNC_INSERTED__=", merge_helper)
         self.assertIn("captureOutputFile: true", agent_page)
         self.assertIn("arguments.addAll(['-o', outputFile.path])", agent_page)
+        self.assertIn("counted $insertedRows inserted row(s) from target cardinality", agent_page)
+        self.assertNotIn("Target insert-only apply did not report its inserted row count", agent_page)
         self.assertIn("if (rows.length == 1)", isolation)
         self.assertIn("rows.sublist(0, midpoint)", isolation)
         self.assertIn("rows.sublist(midpoint)", isolation)
