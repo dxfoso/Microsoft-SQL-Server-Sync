@@ -398,9 +398,10 @@ class _ClientsPageState extends State<ClientsPage> {
     if (_screen != _ClientScreen.list && agent != null) {
       final table = _selectedTableState;
       return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           IconButton(
+            visualDensity: VisualDensity.compact,
             tooltip:
                 _screen == _ClientScreen.table || _screen == _ClientScreen.sync
                     ? 'Back to client'
@@ -423,33 +424,17 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           const SizedBox(width: 4),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _screen == _ClientScreen.table
-                      ? _displayTable(table?.table ?? _selectedTable ?? '')
-                      : _screen == _ClientScreen.sync
-                      ? 'Sync details'
-                      : agent.clientName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _screen == _ClientScreen.table
-                      ? 'Table detail and sync history'
-                      : _screen == _ClientScreen.sync
-                      ? 'Per-table changes for this sync'
-                      : 'Client detail and sync activity',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF667085),
-                  ),
-                ),
-              ],
+            child: Text(
+              _screen == _ClientScreen.table
+                  ? _displayTable(table?.table ?? _selectedTable ?? '')
+                  : _screen == _ClientScreen.sync
+                  ? 'Sync details'
+                  : agent.clientName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
           if (_screen == _ClientScreen.detail) _buildDetailNavigation(),
@@ -862,7 +847,7 @@ class _ClientsPageState extends State<ClientsPage> {
     return Column(
       children: [
         _panel(child: _buildClientSummary(agent, activeJobs)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _panel(
           child:
               _detailView == _ClientDetailView.logs
@@ -1068,46 +1053,49 @@ class _ClientsPageState extends State<ClientsPage> {
   Widget _buildClientSummary(AdminAgent agent, int activeJobs) {
     final color =
         agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    final jobs = _jobsFor(agent);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(Icons.monitor_heart_rounded, color: color, size: 24),
-            const SizedBox(width: 9),
+            Icon(Icons.monitor_heart_rounded, color: color, size: 18),
+            const SizedBox(width: 7),
             Expanded(
               child: Text(
-                agent.clientName,
+                '${agent.machineName.isEmpty ? 'Machine not reported' : agent.machineName} · ${agent.database.isEmpty ? 'Database not reported' : agent.database}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
             _statusChip(agent.isOnline ? 'Online' : 'Offline', color),
           ],
         ),
-        const SizedBox(height: 5),
-        Text(
-          '${agent.machineName.isEmpty ? 'Machine not reported' : agent.machineName} · ${agent.database.isEmpty ? 'Database not reported' : agent.database}',
-          style: const TextStyle(color: Color(0xFF667085)),
-        ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 8),
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
+          spacing: 6,
+          runSpacing: 6,
           children: [
             _metric('Tables', '${agent.tables.length}'),
-            _metric('Changed rows', _changedRowsLabel(_jobsFor(agent))),
-            _metric('Rows changed', _changedRowsLabel(_jobsFor(agent))),
-            _metric('Active jobs', '$activeJobs'),
-            _metric('New / changed', 'Not reported'),
+            _metric(
+              'Uploaded new',
+              _changedRowsLabel(jobs, direction: 'upload'),
+            ),
+            _metric(
+              'Downloaded new',
+              _changedRowsLabel(jobs, direction: 'download'),
+            ),
+            _metric('Active syncs', '$activeJobs'),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 7),
         Text(
-          'Last heartbeat ${_formatTimestamp(agent.lastHeartbeat)} · SQL ${agent.sqlConnected ? 'connected' : 'not connected'} · Client ${agent.clientVersion.isEmpty ? 'unknown' : agent.clientVersion}',
-          style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+          'Heartbeat ${_formatTimestamp(agent.lastHeartbeat)} · SQL ${agent.sqlConnected ? 'connected' : 'not connected'} · v${agent.clientVersion.isEmpty ? 'unknown' : agent.clientVersion}',
+          style: const TextStyle(color: Color(0xFF667085), fontSize: 11),
         ),
       ],
     );
@@ -1493,13 +1481,16 @@ class _ClientsPageState extends State<ClientsPage> {
   }) {
     final grouped = <String, List<AdminJob>>{};
     for (final job in jobs) {
+      final batch = job.batchId.trim();
       final snapshot = job.snapshotId?.trim() ?? '';
       final timestamp =
           job.createdAt.length >= 19
               ? job.createdAt.substring(0, 19)
               : job.createdAt;
       final key =
-          snapshot.isNotEmpty
+          batch.isNotEmpty
+              ? 'batch:$batch|${job.table}'
+              : snapshot.isNotEmpty
               ? 'snapshot:$snapshot'
               : '${job.table}|${job.sourceClientName}|${job.subscriberClientName}|$timestamp';
       grouped.putIfAbsent(key, () => <AdminJob>[]).add(job);
@@ -1825,7 +1816,7 @@ class _ClientsPageState extends State<ClientsPage> {
   );
 
   Widget _metric(String label, String value) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
     decoration: BoxDecoration(
       color: const Color(0xFFF8FAFC),
       borderRadius: BorderRadius.circular(7),

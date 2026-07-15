@@ -158,6 +158,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_web_workspace_has_dashboard_and_client_log_navigation(self):
         app = read_text("frontend/lib/app.dart")
         clients_page = read_text("frontend/lib/clients_page.dart")
+        web_models = read_text("frontend/lib/models.dart")
 
         self.assertIn("class _AdminWorkspace extends StatefulWidget", app)
         self.assertIn("_navItem(0, Icons.dashboard_outlined, 'Dashboard'", app)
@@ -170,7 +171,6 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Sync log", clients_page)
         self.assertIn("Changed rows", clients_page)
         self.assertIn("changedRowCount", clients_page)
-        self.assertIn("New / changed", clients_page)
         self.assertIn("Not reported", clients_page)
         self.assertIn("Filter clients", clients_page)
         self.assertIn("_ClientSortField", clients_page)
@@ -191,6 +191,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Back to clients", clients_page)
         self.assertIn("Back to client", clients_page)
         self.assertIn("_buildTableDetailPage", clients_page)
+        self.assertIn("required this.batchId,", web_models)
+        self.assertIn("batchId: json['batchId'] as String? ?? ''", web_models)
+        self.assertIn("'batch:$batch|${job.table}'", clients_page)
+        self.assertIn("_metric('Active syncs', '$activeJobs')", clients_page)
 
     def test_control_plane_exposes_snapshot_sync_jobs(self):
         control_plane = read_text("business/control_plane.tru")
