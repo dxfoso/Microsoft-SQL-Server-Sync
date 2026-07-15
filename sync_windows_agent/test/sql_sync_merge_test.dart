@@ -149,6 +149,111 @@ void main() {
     expect(sql, isNot(contains('BEGIN TRY\n  \n  END TRY')));
   });
 
+  test(
+    'insert-only staged apply never updates or deletes existing target rows',
+    () {
+      final sql = buildTargetSnapshotStageApplySql(
+        database: 'db',
+        schema: 'dbo',
+        table: 'items',
+        stageTableName: '#stage_items',
+        columns: const [
+          SqlSyncColumnDefinition(
+            name: 'Id',
+            sqlType: 'uniqueidentifier',
+            maxLength: 16,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'TenantId',
+            sqlType: 'uniqueidentifier',
+            maxLength: 16,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'Code',
+            sqlType: 'nvarchar',
+            maxLength: 40,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'Value',
+            sqlType: 'nvarchar',
+            maxLength: 100,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+        ],
+        primaryKeyColumns: const ['Id'],
+        matchColumnSets: const [
+          ['Id'],
+          ['TenantId', 'Code'],
+        ],
+        insertOnly: true,
+        deleteMissing: true,
+        manageTriggers: false,
+      );
+
+      expect(sql, isNot(contains('UPDATE target')));
+      expect(sql, isNot(contains('DELETE TOP')));
+      expect(sql, isNot(contains('DISABLE TRIGGER')));
+      expect(sql, contains('INSERT INTO [db].[dbo].[items]'));
+      expect(sql, contains('WHERE NOT EXISTS ('));
+      expect(sql, contains('target.[Id] = source.[Id]'));
+      expect(sql, contains('target.[TenantId] = source.[TenantId]'));
+      expect(sql, contains('target.[Code] COLLATE DATABASE_DEFAULT'));
+      expect(sql, contains('__SQL_SYNC_INSERTED__='));
+    },
+  );
+
+  test('non insert-only staged apply retains legacy update capability', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'items',
+      stageTableName: '#stage_items',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Value',
+          sqlType: 'nvarchar',
+          maxLength: 100,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['Id'],
+      matchColumnSets: const [
+        ['Id'],
+      ],
+      insertOnly: false,
+    );
+
+    expect(sql, contains('UPDATE target'));
+    expect(sql, contains('DELETE TOP'));
+  });
+
   test('delta rows keep the last value for duplicate primary keys', () {
     final rows = coalesceSqlSyncDeltaRows(
       rows: [

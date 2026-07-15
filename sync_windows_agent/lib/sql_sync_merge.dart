@@ -203,6 +203,7 @@ String buildTargetSnapshotStageApplySql({
   int targetMergeApplyBatchSize = 500,
   bool deleteMissing = true,
   bool manageTriggers = true,
+  bool insertOnly = false,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -263,7 +264,7 @@ String buildTargetSnapshotStageApplySql({
   END CATCH;'''
           : '';
   final deleteMissingBlock =
-      deleteMissing
+      deleteMissing && !insertOnly
           ? '''
   WHILE 1 = 1
   BEGIN
@@ -286,12 +287,15 @@ BEGIN TRY
   BEGIN TRANSACTION;
   $triggerDisableStatement
   $identityInsertOn
-  ${_buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
+  DECLARE @SqlSyncInsertedRows INT = 0;
+  ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
+  SET @SqlSyncInsertedRows += @@ROWCOUNT;
   $deleteMissingBlock
   $identityInsertOff
   $triggerEnableStatement
   COMMIT TRANSACTION;
+  SELECT N'__SQL_SYNC_INSERTED__=' + CONVERT(NVARCHAR(20), @SqlSyncInsertedRows);
 END TRY
 BEGIN CATCH
   DECLARE @SqlSyncStageErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();

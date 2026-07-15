@@ -703,7 +703,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("No client process detected; checking the live update manifest.", update_script)
         self.assertIn("changeTrackingOwner", read_text("sync_windows_agent/lib/sync_state.dart"))
         self.assertIn("changeTrackingOwner != widget.clientName", read_text("sync_windows_agent/lib/agent_page.dart"))
-        self.assertIn("Applied ${snapshotToApply.rowCount} changed row", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn(
+            "Added ${applyStats.insertedRows} missing row",
+            read_text("sync_windows_agent/lib/agent_page.dart"),
+        )
         self.assertIn("_ensureNoLocalChangesBeforeRemoteApply", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
@@ -972,13 +975,22 @@ class SyncContractsTests(unittest.TestCase):
             query_template.index("COMMIT TRANSACTION;"),
         )
 
-    def test_windows_client_isolates_rejected_delta_rows_without_advancing_checkpoint(self):
+    def test_windows_client_insert_only_sync_quarantines_rejections_and_advances_checkpoint(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
         isolation = read_text("sync_windows_agent/lib/sql_sync_row_isolation.dart")
 
         self.assertIn("applySqlSyncRowsWithIsolation", agent_page)
-        self.assertIn("Valid rows were applied", agent_page)
-        self.assertIn("Change Tracking checkpoint was not advanced", agent_page)
+        self.assertIn("insertOnly: true", agent_page)
+        self.assertIn("Insert-only sync ignored", agent_page)
+        self.assertIn("Quarantined insert-only sync changes", agent_page)
+        self.assertIn("rowCount: applyStats.insertedRows", agent_page)
+        self.assertIn("changeTrackingVersion: appliedVersion", agent_page)
+        self.assertNotIn("Change Tracking checkpoint was not advanced", agent_page)
+        self.assertIn("bool insertOnly = false", merge_helper)
+        self.assertIn("deleteMissing && !insertOnly", merge_helper)
+        self.assertIn("${insertOnly ? '' : _buildBatchedUpdateStatement", merge_helper)
+        self.assertIn("__SQL_SYNC_INSERTED__=", merge_helper)
         self.assertIn("if (rows.length == 1)", isolation)
         self.assertIn("rows.sublist(0, midpoint)", isolation)
         self.assertIn("rows.sublist(midpoint)", isolation)

@@ -3452,8 +3452,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final isMultiWriter = job.batchId?.trim().isNotEmpty == true;
     var streamedTargetRowCount = -1;
     final latestDeltaModifiedAtByKey = <String, DateTime?>{};
-    final rejectedRows = <SqlSyncRejectedRow>[];
-    final rejectedRowKeyColumns = <String>[];
+    final applyStats = _InsertOnlyApplyStats();
     if (isMultiWriter) {
       // Apply each bounded relay page as it arrives. Keeping the whole
       // multi-writer delta in memory makes a valid change backlog look like a
@@ -3480,8 +3479,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   snapshot: snapshot,
                   refreshLocalState: false,
                   latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
-                  rejectedRows: rejectedRows,
-                  rejectedRowKeyColumns: rejectedRowKeyColumns,
+                  applyStats: applyStats,
                 );
               },
             )
@@ -3508,15 +3506,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             : await _applyDownloadedSnapshotToTarget(
               job: job,
               snapshot: snapshotToApply,
+              applyStats: applyStats,
             );
-    if (rejectedRows.isNotEmpty) {
-      final detail = formatSqlSyncRejectedRows(
-        rejected: rejectedRows,
-        keyColumns: rejectedRowKeyColumns,
+    if (applyStats.rejectedRows.isNotEmpty) {
+      final quarantineDetail = formatSqlSyncRejectedRows(
+        rejected: applyStats.rejectedRows,
+        keyColumns: applyStats.rejectedRowKeyColumns,
       );
-      logStartupEvent('Quarantined sync changes for ${job.table}: $detail');
-      throw Exception(
-        '$detail. Valid rows were applied; rejected rows remain pending and the Change Tracking checkpoint was not advanced.',
+      logStartupEvent(
+        'Quarantined insert-only sync changes for ${job.table}: $quarantineDetail',
       );
     }
     final reconciledTargetRowCount =
@@ -3535,10 +3533,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       status: 'completed',
       progress: 100,
       message:
-          'Applied ${snapshotToApply.rowCount} changed row${snapshotToApply.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
-      // Keep the remote job count as the changed-row count. The local table
-      // state separately records the resulting total row count.
-      rowCount: snapshotToApply.rowCount,
+          'Added ${applyStats.insertedRows} missing row${applyStats.insertedRows == 1 ? '' : 's'} to ${_localTableName(job.table)}; skipped ${applyStats.skippedExistingRows} existing, ${applyStats.ignoredDeleteRows} delete, and quarantined ${applyStats.rejectedRows.length} rejected row${applyStats.rejectedRows.length == 1 ? '' : 's'}.',
+      rowCount: applyStats.insertedRows,
       snapshotId: snapshotToApply.id,
       snapshotCreatedAt: snapshotToApply.createdAt,
       snapshotBytes: snapshotToApply.snapshotBytes,
@@ -3548,7 +3544,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Applied ${snapshotToApply.rowCount} changed row${snapshotToApply.rowCount == 1 ? '' : 's'} from ${job.sourceClientName} into ${_localTableName(job.table)}.',
+          'Added ${applyStats.insertedRows} missing row${applyStats.insertedRows == 1 ? '' : 's'}; existing rows were unchanged.',
     );
     if (job.batchId?.trim().isNotEmpty == true) {
       final appliedVersion =
@@ -3794,9 +3790,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required RemoteSnapshot snapshot,
     bool refreshLocalState = true,
     Map<String, DateTime?>? latestDeltaModifiedAtByKey,
-    List<SqlSyncRejectedRow>? rejectedRows,
-    List<String>? rejectedRowKeyColumns,
+    _InsertOnlyApplyStats? applyStats,
   }) async {
+    final stats = applyStats ?? _InsertOnlyApplyStats();
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
     if (targetDatabase.isEmpty) {
       throw Exception(
@@ -3866,10 +3862,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       uniqueIndexColumnSets: uniqueIndexColumnSets,
       columns: syncColumns,
     );
-    // A multi-writer delta can contain the same logical row with different
-    // local primary keys. Use every writable unique identity so that the
-    // newest database commit updates the existing row instead of attempting
-    // a duplicate insert.
+    // All writable unique identities define existence. Existing rows are
+    // intentionally never updated by synchronization.
     final deltaMatchColumnSets = targetMatchColumnSets;
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
@@ -3903,6 +3897,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
     final isolatedRejectedRows = <SqlSyncRejectedRow>[];
+    var insertedRows = 0;
     if (upsertRows.isNotEmpty) {
       final rows = upsertRows
           .map(
@@ -3911,81 +3906,39 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             },
           )
           .toList(growable: false);
-      if (applyDelta) {
-        isolatedRejectedRows.addAll(
-          await applySqlSyncRowsWithIsolation(
-            rows: rows,
-            applyBatch:
-                (batch) => _applyDeltaRowsToTarget(
-                  profile: targetProfile,
-                  database: targetDatabase,
-                  schema: targetTable.schema,
-                  table: targetTable.table,
-                  columns: syncColumns,
-                  primaryKeyColumns: primaryKeyColumns,
-                  matchColumnSets: deltaMatchColumnSets,
-                  rows: batch,
-                ),
-            shouldIsolateError: _isIsolatableTargetSqlError,
-          ),
-        );
-      } else {
-        await _applySourceRowsToTarget(
-          profile: targetProfile,
-          database: targetDatabase,
-          schema: targetTable.schema,
-          table: targetTable.table,
-          columns: syncColumns,
-          primaryKeyColumns: primaryKeyColumns,
-          matchColumnSets: targetMatchColumnSets,
-          rows: rows,
-        );
-      }
-    }
-    if (deleteRows.isNotEmpty) {
       isolatedRejectedRows.addAll(
         await applySqlSyncRowsWithIsolation(
-          rows: deleteRows
-              .map((row) => Map<String, dynamic>.from(row))
-              .toList(growable: false),
-          applyBatch:
-              (batch) => _deleteSourceRowsFromTarget(
-                profile: targetProfile,
-                database: targetDatabase,
-                schema: targetTable.schema,
-                table: targetTable.table,
-                primaryKeyColumns: primaryKeyColumns,
-                rows: batch
-                    .map(
-                      (row) => Map<String, String?>.fromEntries(
-                        row.entries.map(
-                          (entry) =>
-                              MapEntry(entry.key, entry.value?.toString()),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
+          rows: rows,
+          applyBatch: (batch) async {
+            insertedRows += await _applyDeltaRowsToTarget(
+              profile: targetProfile,
+              database: targetDatabase,
+              schema: targetTable.schema,
+              table: targetTable.table,
+              columns: syncColumns,
+              primaryKeyColumns: primaryKeyColumns,
+              matchColumnSets: deltaMatchColumnSets,
+              rows: batch,
+            );
+          },
           shouldIsolateError: _isIsolatableTargetSqlError,
         ),
+      );
+      stats.insertedRows += insertedRows;
+      stats.skippedExistingRows +=
+          rows.length - insertedRows - isolatedRejectedRows.length;
+    }
+    if (deleteRows.isNotEmpty) {
+      stats.ignoredDeleteRows += deleteRows.length;
+      logStartupEvent(
+        'Insert-only sync ignored ${deleteRows.length} delete row(s) for ${job.table}.',
       );
     }
 
     if (isolatedRejectedRows.isNotEmpty) {
-      if (rejectedRows != null) {
-        rejectedRows.addAll(isolatedRejectedRows);
-        if (rejectedRowKeyColumns != null && rejectedRowKeyColumns.isEmpty) {
-          rejectedRowKeyColumns.addAll(primaryKeyColumns);
-        }
-      } else {
-        final detail = formatSqlSyncRejectedRows(
-          rejected: isolatedRejectedRows,
-          keyColumns: primaryKeyColumns,
-        );
-        logStartupEvent('Quarantined sync changes for ${job.table}: $detail');
-        throw Exception(
-          '$detail. Valid rows were applied; rejected rows remain pending and the Change Tracking checkpoint was not advanced.',
-        );
+      stats.rejectedRows.addAll(isolatedRejectedRows);
+      if (stats.rejectedRowKeyColumns.isEmpty) {
+        stats.rejectedRowKeyColumns.addAll(primaryKeyColumns);
       }
     }
 
@@ -4589,7 +4542,7 @@ END
     return buffer.toString();
   }
 
-  Future<void> _applyDeltaRowsToTarget({
+  Future<int> _applyDeltaRowsToTarget({
     required _SqlConnectionProfile profile,
     required String database,
     required String schema,
@@ -4599,7 +4552,7 @@ END
     required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
   }) async {
-    await _applySourceRowsToTarget(
+    return _applySourceRowsToTarget(
       profile: profile,
       database: database,
       schema: schema,
@@ -4610,10 +4563,11 @@ END
       rows: rows,
       deleteMissing: false,
       manageTriggers: false,
+      insertOnly: true,
     );
   }
 
-  Future<void> _applySourceRowsToTarget({
+  Future<int> _applySourceRowsToTarget({
     required _SqlConnectionProfile profile,
     required String database,
     required String schema,
@@ -4624,10 +4578,11 @@ END
     required List<Map<String, dynamic>> rows,
     bool deleteMissing = true,
     bool manageTriggers = true,
+    bool insertOnly = true,
   }) async {
     final stageTableName = _nextTargetSnapshotStageTableName(table);
     try {
-      await _runSqlCmdOrThrow(
+      final applyResult = await _runSqlCmdOrThrow(
         profile: profile,
         database: database,
         query: buildTargetSnapshotStageSetupSql(
@@ -4671,46 +4626,17 @@ END
           matchColumnSets: matchColumnSets,
           deleteMissing: deleteMissing,
           manageTriggers: manageTriggers,
+          insertOnly: insertOnly,
         ),
         context: 'target snapshot merge',
         timeout: _snapshotSqlCmdTimeout,
       );
+      return _insertedRowCountFromSqlOutput(applyResult.stdout.toString());
     } finally {
       await _dropTargetSnapshotStage(
         profile: profile,
         database: database,
         stageTableName: stageTableName,
-      );
-    }
-  }
-
-  Future<void> _deleteSourceRowsFromTarget({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String schema,
-    required String table,
-    required List<String> primaryKeyColumns,
-    required List<Map<String, String?>> rows,
-  }) async {
-    final target =
-        '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
-    for (var offset = 0; offset < rows.length; offset += 100) {
-      final batch = rows.skip(offset).take(100);
-      final predicates = batch
-          .map((row) {
-            return '(${primaryKeyColumns.map((key) {
-              final value = row[key];
-              if (value == null) return '${_quoteIdentifier(key)} IS NULL';
-              return "${_quoteIdentifier(key)} = N'${_escapeSqlLiteral(value)}'";
-            }).join(' AND ')})';
-          })
-          .join(' OR ');
-      await _runSqlCmdOrThrow(
-        profile: profile,
-        database: database,
-        query: 'SET NOCOUNT ON; DELETE FROM $target WHERE $predicates;',
-        context: 'target change tracking delete',
-        timeout: _snapshotSqlCmdTimeout,
       );
     }
   }
@@ -4737,7 +4663,7 @@ END
     }
   }
 
-  Future<void> _runSqlCmdOrThrow({
+  Future<ProcessResult> _runSqlCmdOrThrow({
     required _SqlConnectionProfile profile,
     required String database,
     required String query,
@@ -4756,6 +4682,17 @@ END
     if (processResult.exitCode != 0) {
       throw Exception(_sqlCmdFailed(context, processResult));
     }
+    return processResult;
+  }
+
+  int _insertedRowCountFromSqlOutput(String output) {
+    final match = RegExp(r'__SQL_SYNC_INSERTED__=(\d+)').firstMatch(output);
+    if (match == null) {
+      throw const FormatException(
+        'Target insert-only apply did not report its inserted row count.',
+      );
+    }
+    return int.parse(match.group(1)!);
   }
 
   bool _isIsolatableTargetSqlError(Object error) {
@@ -8665,6 +8602,14 @@ class _ChangeTrackingState {
 
   final int currentVersion;
   final int minValidVersion;
+}
+
+class _InsertOnlyApplyStats {
+  int insertedRows = 0;
+  int skippedExistingRows = 0;
+  int ignoredDeleteRows = 0;
+  final List<SqlSyncRejectedRow> rejectedRows = <SqlSyncRejectedRow>[];
+  final List<String> rejectedRowKeyColumns = <String>[];
 }
 
 class _StringQueryResult {
