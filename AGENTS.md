@@ -39,19 +39,14 @@ Use the launcher when a local stack restart is actually needed.
 
 ## Deployment Rule
 
-- After any shipped `frontend/` web change, run the relevant frontend and contract tests, commit the release, and use an explicitly configured deployment mechanism. A source push or CI run alone is not a deployment.
-- After any shipped `backend/` or root `business/` server change, run the relevant server/control-plane contract checks, commit the release, and use an explicitly configured deployment mechanism.
-- When a change includes both server and Windows client work, complete both actions before reporting success: verified server deployment and client update publication/verification.
-- Monitor deployment results through the scoped Cloud debug/resources links; polling must never start duplicate deployments.
-- After starting a redeploy, wait at least 2 minutes before the first rollout assessment, then poll `latest-debug` every 15 seconds until the Cloud runner reaches a terminal state or the monitoring window expires. After the runner reports success, verify `/admin/health` reports the pushed commit, `ready: true`, and zero compile errors; report the deployment as pending or failed when any check is not satisfied.
-- After every deploy, wait a few minutes and perform a post-deployment verification: confirm the pushed commit is live, `/admin/health` is ready with zero compile errors, the web endpoint loads, and connected clients remain online and healthy. Never report deployment success until these checks pass.
-- A frontend change is not considered deployed until public `/admin/health` reports the new commit with `ready: true` and zero compile errors, and the live `main.dart.js` contains the changed feature markers. If rollout is still pending, report it explicitly instead of claiming success.
-- Always use the deployment environment located at `[deployment/chart/.env](deployment/chart/.env)` (absolute path: `D:\Microsoft-SQL-Server-Sync\deployment\chart\.env`) for deployment-related steps.
-- If deployment behavior regresses, refresh deployment inputs from `deployment/chart/.env` before retrying redeploy.
-- Node target must be supplied by Cloud deployment metadata for each deployment/redeploy; do not hardcode a fixed node name in repo files or scripts.
-- Before changing or diagnosing deployment, verify that the selected mechanism can actually create a deployment row and has the required authorization.
-- Any nonzero compile errors in project-owned TRU files under `business/` must be treated as a failed deployment, even if pods start and other health checks pass.
-- Keep the public backend `/admin/health` endpoint readable without admin credentials. Cloud deployment compile gating depends on a public JSON response that includes `ready`, `compile_errors`, and build commit data.
-- Keep dashboard and control-plane polling endpoints bounded. If `/admin/health` reports memory pressure or a TRU endpoint hits the WASM epoch deadline, fix the query/payload bounds first; raising pod memory or `TRU_MEMORY_CAP_MB` alone is not the long-term deployment fix.
-- Keep `business/tru.json` aligned with that contract. `settings.admin.requireKey`, `admin.requireKey`, and `adminRequireKey` must stay `false` for deployed environments unless the public health gate is intentionally redesigned in Cloud in the same coordinated change.
-- Keep `deployment/chart/values.yaml` free of dead admin-auth settings. If the chart no longer consumes an `admin` block, remove it from default values in the same change so redeploy records do not preserve misleading rendered values.
+- This repository owns image builds and `deployment/chart`; a source push or CI run alone is not a deployment.
+- Use the Cloud repository deployment contract v1 from `https://cloud.divclouds.com/repositories/ebbd5457-3253-46e0-b67d-5668ca1e5225/deployments`. Never commit its scoped token.
+- The v1 target is server `velvet-leaf-1` (`75.119.136.143`), namespace `velvet-sql-server-sync`, release `microsoft-sql-server-sync-velvet-sql-server-sync`, chart `deployment/chart`, node `velvet-leaf-1`, domain `sync.velvet-leaf.com`, and TLS secret `sync-velvet-leaf-com-letsencrypt-tls`.
+- Load both the v1 environment contract and chart contract before deploying. Cloud owns target variables and named secret references; this repository must consume them through Helm without copying secret values into source.
+- Build and push immutable `backend` and `frontend` images for the exact pushed commit. Pass those full image references as `runtimeValuesYaml` to `api_start_deployment_v1`.
+- Start exactly one v1 session, then poll `api_get_deployment_session_v1` and the scoped namespace-resources link. Do not use the removed v13 `latest-debug` deployment trigger and do not start duplicate sessions while one is running.
+- Treat Helm lint/template failure, cluster-scoped resources, wrong-node rendering, registry pulls, workload readiness, ingress/DNS/TLS, health, or any nonzero `compile_errors` as deployment failure.
+- After success, verify `https://sync.velvet-leaf.com/admin/health` reports the pushed commit with `ready=true` and `compile_errors=0`, verify the public web app, and repeat the checks after a short stability wait.
+- Preserve `task-status.json`, `task-results.json`, `task-step-results.json`, and a stable text summary for every repository test/build task, with supported trigger metadata.
+- When a change includes Windows client work, complete both the server deployment and Windows client publication/verification before reporting success.
+- Keep the public backend `/admin/health` readable without admin credentials and keep `business/tru.json` aligned with that compile gate.
