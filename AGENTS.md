@@ -41,6 +41,7 @@ Use the launcher when a local stack restart is actually needed.
 
 - This repository owns image builds and `deployment/chart`; a source push or CI run alone is not a deployment.
 - Use the Cloud repository deployment contract v1 from `https://cloud.divclouds.com/repositories/ebbd5457-3253-46e0-b67d-5668ca1e5225/deployments`. Never commit its scoped token.
+- Load the scoped credential only from `CLOUD_DEPLOYMENT_TOKEN` in the process environment, a CI secret, or ignored `.cloud.env`. Do not read credentials from `deploy.md`, `deployment/chart/.env`, committed URLs, or previous chat messages. A `401` requires replacing the external secret with newly created v1 access; existing v1 plaintext cannot be recovered.
 - The v1 target is server `velvet-leaf-1` (`75.119.136.143`), namespace `velvet-sql-server-sync`, release `microsoft-sql-server-sync-velvet-sql-server-sync`, chart `deployment/chart`, node `velvet-leaf-1`, domain `sync.velvet-leaf.com`, and TLS secret `sync-velvet-leaf-com-letsencrypt-tls`.
 - Load both the v1 environment contract and chart contract before deploying. Cloud owns target variables and named secret references; this repository must consume them through Helm without copying secret values into source.
 - Build and push immutable `backend` and `frontend` images for the exact pushed commit. Pass those full image references as `runtimeValuesYaml` to `api_start_deployment_v1`.
