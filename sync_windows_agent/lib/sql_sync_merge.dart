@@ -333,49 +333,125 @@ String stageTableReference(String stageTableName) =>
 List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
   required List<Map<String, dynamic>> rows,
   required List<String> primaryKeyColumns,
+  List<List<String>>? matchColumnSets,
   Map<String, DateTime?>? latestModifiedAtByKey,
 }) {
   if (rows.isEmpty || primaryKeyColumns.isEmpty) {
     return rows;
   }
-  final coalesced = <String, Map<String, dynamic>>{};
+  final identitySets = (matchColumnSets ?? <List<String>>[primaryKeyColumns])
+      .where((columns) => columns.isNotEmpty)
+      .toList(growable: false);
   const modifiedAtKey = '__sync_modified_at_utc';
-  final rowsWithoutCompleteKeys = <Map<String, dynamic>>[];
+  final candidates = <Map<String, dynamic>>[];
+  final candidateIdentities = <List<String>>[];
+
   for (final row in rows) {
-    final keyValues = primaryKeyColumns.map((column) => row[column]).toList();
-    if (keyValues.any((value) => value == null)) {
-      rowsWithoutCompleteKeys.add(row);
-      continue;
+    final identities = <String>[];
+    for (var setIndex = 0; setIndex < identitySets.length; setIndex++) {
+      final values =
+          identitySets[setIndex].map((column) => row[column]).toList();
+      if (values.any((value) => value == null)) {
+        continue;
+      }
+      identities.add('$setIndex:${jsonEncode(values)}');
     }
-    final key = jsonEncode(keyValues);
     final candidateTime = _parseSyncUtcTimestamp(row[modifiedAtKey]);
-    final previousTime = latestModifiedAtByKey?[key];
-    if (latestModifiedAtByKey?.containsKey(key) == true &&
-        previousTime != null &&
-        (candidateTime == null || candidateTime.isBefore(previousTime))) {
+    final isStale = identities.any((identity) {
+      final previousTime = latestModifiedAtByKey?[identity];
+      return previousTime != null &&
+          (candidateTime == null || candidateTime.isBefore(previousTime));
+    });
+    if (isStale) {
       continue;
     }
-    final current = coalesced[key];
-    if (current == null) {
-      coalesced[key] = row;
-      continue;
+    candidates.add(row);
+    candidateIdentities.add(identities);
+  }
+
+  final parents = List<int>.generate(candidates.length, (index) => index);
+  int find(int index) {
+    var root = index;
+    while (parents[root] != root) {
+      root = parents[root];
     }
-    final currentTime = _parseSyncUtcTimestamp(current[modifiedAtKey]);
-    if (candidateTime != null &&
-        (currentTime == null || !candidateTime.isBefore(currentTime))) {
-      coalesced[key] = row;
-    } else if (candidateTime == null && currentTime == null) {
-      coalesced[key] = row;
+    while (parents[index] != index) {
+      final next = parents[index];
+      parents[index] = root;
+      index = next;
+    }
+    return root;
+  }
+
+  void union(int left, int right) {
+    final leftRoot = find(left);
+    final rightRoot = find(right);
+    if (leftRoot != rightRoot) {
+      parents[rightRoot] = leftRoot;
     }
   }
+
+  final ownerByIdentity = <String, int>{};
+  for (var index = 0; index < candidates.length; index++) {
+    for (final identity in candidateIdentities[index]) {
+      final owner = ownerByIdentity[identity];
+      if (owner == null) {
+        ownerByIdentity[identity] = index;
+      } else {
+        union(index, owner);
+      }
+    }
+  }
+
+  final winnerByRoot = <int, int>{};
+  final firstIndexByRoot = <int, int>{};
+  for (var index = 0; index < candidates.length; index++) {
+    final root = find(index);
+    firstIndexByRoot[root] = firstIndexByRoot[root] ?? index;
+    final currentIndex = winnerByRoot[root];
+    if (currentIndex == null ||
+        _isLaterSyncRow(candidates[index], candidates[currentIndex])) {
+      winnerByRoot[root] = index;
+    }
+  }
+
+  final roots = winnerByRoot.keys.toList(growable: false)..sort(
+    (left, right) =>
+        firstIndexByRoot[left]!.compareTo(firstIndexByRoot[right]!),
+  );
+  final winners = roots
+      .map((root) => candidates[winnerByRoot[root]!])
+      .toList(growable: false);
   if (latestModifiedAtByKey != null) {
-    for (final entry in coalesced.entries) {
-      latestModifiedAtByKey[entry.key] = _parseSyncUtcTimestamp(
-        entry.value[modifiedAtKey],
+    for (final root in roots) {
+      final winnerIndex = winnerByRoot[root]!;
+      final winnerTime = _parseSyncUtcTimestamp(
+        candidates[winnerIndex][modifiedAtKey],
       );
+      for (var index = 0; index < candidates.length; index++) {
+        if (find(index) == root) {
+          for (final identity in candidateIdentities[index]) {
+            latestModifiedAtByKey[identity] = winnerTime;
+          }
+        }
+      }
     }
   }
-  return [...coalesced.values, ...rowsWithoutCompleteKeys];
+  return winners;
+}
+
+bool _isLaterSyncRow(
+  Map<String, dynamic> candidate,
+  Map<String, dynamic> current,
+) {
+  final candidateTime = _parseSyncUtcTimestamp(
+    candidate['__sync_modified_at_utc'],
+  );
+  final currentTime = _parseSyncUtcTimestamp(current['__sync_modified_at_utc']);
+  if (candidateTime == null) {
+    return currentTime == null;
+  }
+  return currentTime == null || !candidateTime.isBefore(currentTime);
 }
 
 DateTime? _parseSyncUtcTimestamp(dynamic value) {

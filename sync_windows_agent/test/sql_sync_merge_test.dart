@@ -193,4 +193,74 @@ void main() {
     expect(first.single['Name'], 'newer');
     expect(stale, isEmpty);
   });
+
+  test(
+    'delta rows coalesce different primary keys by alternate unique key',
+    () {
+      final rows = coalesceSqlSyncDeltaRows(
+        rows: [
+          {
+            'Id': 'c1-id',
+            'Tenant': 'tenant-1',
+            'Code': 'shared',
+            'Name': 'old',
+            '__sync_modified_at_utc': '2026-07-15T10:00:00Z',
+          },
+          {
+            'Id': 'c2-id',
+            'Tenant': 'tenant-1',
+            'Code': 'shared',
+            'Name': 'new',
+            '__sync_modified_at_utc': '2026-07-15T10:01:00Z',
+          },
+        ],
+        primaryKeyColumns: const ['Id'],
+        matchColumnSets: const [
+          ['Id'],
+          ['Tenant', 'Code'],
+        ],
+      );
+
+      expect(rows, hasLength(1));
+      expect(rows.single['Id'], 'c2-id');
+      expect(rows.single['Name'], 'new');
+    },
+  );
+
+  test('alternate unique identity protects later pages from stale rows', () {
+    final latestByKey = <String, DateTime?>{};
+    final newest = coalesceSqlSyncDeltaRows(
+      rows: [
+        {
+          'Id': 'c2-id',
+          'Code': 'shared',
+          '__sync_modified_at_utc': '2026-07-15T10:01:00Z',
+        },
+      ],
+      primaryKeyColumns: const ['Id'],
+      matchColumnSets: const [
+        ['Id'],
+        ['Code'],
+      ],
+      latestModifiedAtByKey: latestByKey,
+    );
+    final stale = coalesceSqlSyncDeltaRows(
+      rows: [
+        {
+          'Id': 'c1-id',
+          'Code': 'shared',
+          '__sync_modified_at_utc': '2026-07-15T10:00:00Z',
+        },
+      ],
+      primaryKeyColumns: const ['Id'],
+      matchColumnSets: const [
+        ['Id'],
+        ['Code'],
+      ],
+      latestModifiedAtByKey: latestByKey,
+    );
+
+    expect(newest, hasLength(1));
+    expect(stale, isEmpty);
+  });
 }

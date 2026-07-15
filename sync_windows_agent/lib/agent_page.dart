@@ -3866,10 +3866,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       uniqueIndexColumnSets: uniqueIndexColumnSets,
       columns: syncColumns,
     );
-    // Change Tracking identifies rows by the primary key. Matching a delta
-    // against every alternate unique index can scan the target and can also
-    // reinterpret a legitimate key update as a different row.
-    final deltaMatchColumnSets = <List<String>>[primaryKeyColumns];
+    // A multi-writer delta can contain the same logical row with different
+    // local primary keys. Use every writable unique identity so that the
+    // newest database commit updates the existing row instead of attempting
+    // a duplicate insert.
+    final deltaMatchColumnSets = targetMatchColumnSets;
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     final rowsForApply =
@@ -3879,12 +3880,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   .map((row) => Map<String, dynamic>.from(row))
                   .toList(growable: false),
               primaryKeyColumns: primaryKeyColumns,
+              matchColumnSets: deltaMatchColumnSets,
               latestModifiedAtByKey: latestDeltaModifiedAtByKey,
             )
             : snapshot.rows;
     if (applyDelta && rowsForApply.length != snapshot.rows.length) {
       logStartupEvent(
-        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} duplicate primary-key row(s) for ${job.table}; policy=last-arrival-wins.',
+        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} duplicate unique-identity row(s) for ${job.table}; policy=newest-database-commit-wins.',
       );
     }
     final deleteRows = rowsForApply
