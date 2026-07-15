@@ -4630,6 +4630,7 @@ END
         ),
         context: 'target snapshot merge',
         timeout: _snapshotSqlCmdTimeout,
+        captureOutputFile: true,
       );
       return _insertedRowCountFromSqlOutput(applyResult.stdout.toString());
     } finally {
@@ -4669,12 +4670,14 @@ END
     required String query,
     required String context,
     Duration timeout = _defaultSqlCmdTimeout,
+    bool captureOutputFile = false,
   }) async {
     final processResult = await _runSqlCmd(
       profile: profile,
       database: database,
       query: query,
       timeout: timeout,
+      captureOutputFile: captureOutputFile,
     );
     if (processResult == null) {
       throw Exception(_sqlCmdUnavailableMessage(profile));
@@ -5788,6 +5791,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     String? database,
     required String query,
     Duration timeout = _defaultSqlCmdTimeout,
+    bool captureOutputFile = false,
   }) async {
     _lastSqlCmdLaunchError = null;
     final rawQuery = query.trim();
@@ -5824,14 +5828,17 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     }
 
     final executable = _sqlCmdExecutable();
-    Directory? queryDirectory;
+    Directory? commandDirectory;
+    File? outputFile;
     try {
-      if (useInputFile) {
-        queryDirectory = await Directory.systemTemp.createTemp(
+      if (useInputFile || captureOutputFile) {
+        commandDirectory = await Directory.systemTemp.createTemp(
           'sync_agent_sqlcmd_',
         );
+      }
+      if (useInputFile) {
         final queryFile = File(
-          '${queryDirectory.path}${Platform.pathSeparator}query.sql',
+          '${commandDirectory!.path}${Platform.pathSeparator}query.sql',
         );
         await queryFile.writeAsString(rawQuery, encoding: utf8);
         arguments.addAll(['-i', queryFile.path]);
@@ -5840,6 +5847,12 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             .replaceAll('\r\n', ' ')
             .replaceAll('\n', ' ');
         arguments.addAll(['-Q', normalizedQuery]);
+      }
+      if (captureOutputFile) {
+        outputFile = File(
+          '${commandDirectory!.path}${Platform.pathSeparator}output.txt',
+        );
+        arguments.addAll(['-o', outputFile.path]);
       }
       final process = await Process.start(
         executable,
@@ -5859,6 +5872,22 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           })
           .then((buffer) => buffer.takeBytes());
       int exitCode;
+      Future<String> capturedOutput(List<int> stdoutBytes) async {
+        final outputs = <String>[];
+        final pipedOutput = decodeSqlCmdOutputBytes(stdoutBytes).trim();
+        if (pipedOutput.isNotEmpty) {
+          outputs.add(pipedOutput);
+        }
+        if (outputFile != null && await outputFile.exists()) {
+          final fileOutput =
+              decodeSqlCmdOutputBytes(await outputFile.readAsBytes()).trim();
+          if (fileOutput.isNotEmpty && !outputs.contains(fileOutput)) {
+            outputs.add(fileOutput);
+          }
+        }
+        return outputs.join('\n');
+      }
+
       try {
         exitCode = await process.exitCode.timeout(timeout);
       } on TimeoutException {
@@ -5870,7 +5899,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         return ProcessResult(
           process.pid,
           -1,
-          decodeSqlCmdOutputBytes(stdoutBytes),
+          await capturedOutput(stdoutBytes),
           [
             timeoutText,
             decodeSqlCmdOutputBytes(stderrBytes),
@@ -5882,7 +5911,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       return ProcessResult(
         process.pid,
         exitCode,
-        decodeSqlCmdOutputBytes(stdoutBytes),
+        await capturedOutput(stdoutBytes),
         decodeSqlCmdOutputBytes(stderrBytes),
       );
     } on ProcessException catch (error) {
@@ -5891,9 +5920,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       logStartupEvent(_lastSqlCmdLaunchError!);
       return null;
     } finally {
-      if (queryDirectory != null) {
+      if (commandDirectory != null) {
         try {
-          await queryDirectory.delete(recursive: true);
+          await commandDirectory.delete(recursive: true);
         } catch (_) {
           // Best effort cleanup for a temporary sqlcmd input file.
         }
