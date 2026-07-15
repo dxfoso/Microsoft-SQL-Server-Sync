@@ -4678,6 +4678,8 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: stri
     compressedBytes: session.compressedBytes,
     chunkCount: session.chunkCount,
     encoding: session.encoding,
+    storageId: '',
+    isDelta: false,
     sourceJobId: jobId,
     clientUserId: job.clientUserId,
     ownerUserId: job.ownerUserId

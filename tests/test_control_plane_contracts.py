@@ -464,8 +464,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
+        completion = source.split("function jobs_upload_chunk_complete(", 1)[1].split(
+            "function jobs_download_snapshot_manifest(", 1
+        )[0]
+
         self.assertIn("function jobs_upload_chunk_start(", source)
         self.assertIn("function jobs_upload_chunk_complete(", source)
+        self.assertIn("storageId: ''", completion)
+        self.assertIn("isDelta: false", completion)
         self.assertIn("function jobs_download_snapshot_manifest(", source)
         self.assertIn("function jobs_download_snapshot_chunk(", source)
         self.assertIn("Future<void> _processSnapshotJob(", agent_page)
