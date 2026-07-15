@@ -194,7 +194,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("required this.batchId,", web_models)
         self.assertIn("batchId: json['batchId'] as String? ?? ''", web_models)
         self.assertIn("'batch:$batch|${job.table}'", clients_page)
-        self.assertIn("_metric('Active syncs', '$activeJobs')", clients_page)
+        self.assertIn("_buildClientDetailToolbar(agent)", clients_page)
+        self.assertIn("height: 40", clients_page)
+        self.assertIn("_messageContainsReportedRowCount(message)", clients_page)
+        self.assertIn("'Sync completed.'", clients_page)
 
     def test_control_plane_exposes_snapshot_sync_jobs(self):
         control_plane = read_text("business/control_plane.tru")

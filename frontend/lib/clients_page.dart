@@ -15,6 +15,11 @@ enum _ClientDetailView { logs, tables }
 
 enum _ClientScreen { list, detail, sync, table }
 
+bool _messageContainsReportedRowCount(String message) => RegExp(
+  r'\b\d[\d,]*\s+(?:(?:changed|missing|new)\s+)?rows?\b',
+  caseSensitive: false,
+).hasMatch(message);
+
 class _SyncLogOperation {
   _SyncLogOperation({
     required this.key,
@@ -97,9 +102,15 @@ class _SyncLogOperation {
     }
     final messages = jobs
         .map((job) => job.message.trim())
-        .where((message) => message.isNotEmpty)
+        .where(
+          (message) =>
+              message.isNotEmpty && !_messageContainsReportedRowCount(message),
+        )
         .toList(growable: false);
-    return messages.isEmpty ? 'No message reported.' : messages.join(' / ');
+    if (messages.isNotEmpty) return messages.join(' / ');
+    return status.toLowerCase() == 'completed'
+        ? 'Sync completed.'
+        : 'No additional message.';
   }
 
   int? _reportedRows(AdminJob? job) {
@@ -396,6 +407,9 @@ class _ClientsPageState extends State<ClientsPage> {
     final online = clients.where((client) => client.isOnline).length;
     final agent = _selectedAgent;
     if (_screen != _ClientScreen.list && agent != null) {
+      if (_screen == _ClientScreen.detail) {
+        return _buildClientDetailToolbar(agent);
+      }
       final table = _selectedTableState;
       return Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -437,7 +451,6 @@ class _ClientsPageState extends State<ClientsPage> {
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
-          if (_screen == _ClientScreen.detail) _buildDetailNavigation(),
         ],
       );
     }
@@ -480,6 +493,87 @@ class _ClientsPageState extends State<ClientsPage> {
       ],
     );
   }
+
+  Widget _buildClientDetailToolbar(AdminAgent agent) {
+    final jobs = _jobsFor(agent);
+    final activeSyncs = _activeSyncCount(agent, jobs);
+    final statusColor =
+        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    final machine =
+        agent.machineName.isEmpty ? 'Machine not reported' : agent.machineName;
+    final database =
+        agent.database.isEmpty ? 'Database not reported' : agent.database;
+    return SizedBox(
+      height: 40,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Back to clients',
+              onPressed:
+                  () => setState(() {
+                    _screen = _ClientScreen.list;
+                    _selectedTable = null;
+                    _selectedSyncKey = null;
+                    _replaceRoute();
+                  }),
+              icon: const Icon(Icons.arrow_back_rounded, size: 20),
+            ),
+            const SizedBox(width: 2),
+            Text(
+              agent.clientName,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(width: 8),
+            _statusChip(agent.isOnline ? 'Online' : 'Offline', statusColor),
+            const SizedBox(width: 10),
+            Text(
+              '$machine · $database',
+              style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+            ),
+            const SizedBox(width: 12),
+            _toolbarMetric(
+              Icons.table_view_outlined,
+              '${agent.tables.length} tables',
+            ),
+            _toolbarMetric(
+              Icons.arrow_upward_rounded,
+              '${_changedRowsLabel(jobs, direction: 'upload')} uploaded',
+              color: const Color(0xFF2563EB),
+            ),
+            _toolbarMetric(
+              Icons.arrow_downward_rounded,
+              '${_changedRowsLabel(jobs, direction: 'download')} downloaded',
+              color: const Color(0xFFB54708),
+            ),
+            _toolbarMetric(Icons.sync_rounded, '$activeSyncs active'),
+            const SizedBox(width: 10),
+            _buildDetailNavigation(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _toolbarMetric(IconData icon, String label, {Color? color}) => Padding(
+    padding: const EdgeInsets.only(right: 10),
+    child: Row(
+      children: [
+        Icon(icon, size: 14, color: color ?? const Color(0xFF667085)),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: color ?? const Color(0xFF475467),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildDetailNavigation() {
     return SegmentedButton<_ClientDetailView>(
@@ -843,18 +937,11 @@ class _ClientsPageState extends State<ClientsPage> {
       );
     }
     final jobs = _jobsFor(agent);
-    final activeJobs = _activeSyncCount(agent, jobs);
-    return Column(
-      children: [
-        _panel(child: _buildClientSummary(agent, activeJobs)),
-        const SizedBox(height: 8),
-        _panel(
-          child:
-              _detailView == _ClientDetailView.logs
-                  ? _buildJobLog(jobs)
-                  : _buildDataViewer(agent),
-        ),
-      ],
+    return _panel(
+      child:
+          _detailView == _ClientDetailView.logs
+              ? _buildJobLog(jobs)
+              : _buildDataViewer(agent),
     );
   }
 
@@ -1045,57 +1132,6 @@ class _ClientsPageState extends State<ClientsPage> {
         _buildMessage(
           'The control plane does not store row-level table payloads. Use the Windows client for row-level verification.',
           error: false,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildClientSummary(AdminAgent agent, int activeJobs) {
-    final color =
-        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
-    final jobs = _jobsFor(agent);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.monitor_heart_rounded, color: color, size: 18),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text(
-                '${agent.machineName.isEmpty ? 'Machine not reported' : agent.machineName} · ${agent.database.isEmpty ? 'Database not reported' : agent.database}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            _statusChip(agent.isOnline ? 'Online' : 'Offline', color),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            _metric('Tables', '${agent.tables.length}'),
-            _metric(
-              'Uploaded new',
-              _changedRowsLabel(jobs, direction: 'upload'),
-            ),
-            _metric(
-              'Downloaded new',
-              _changedRowsLabel(jobs, direction: 'download'),
-            ),
-            _metric('Active syncs', '$activeJobs'),
-          ],
-        ),
-        const SizedBox(height: 7),
-        Text(
-          'Heartbeat ${_formatTimestamp(agent.lastHeartbeat)} · SQL ${agent.sqlConnected ? 'connected' : 'not connected'} · v${agent.clientVersion.isEmpty ? 'unknown' : agent.clientVersion}',
-          style: const TextStyle(color: Color(0xFF667085), fontSize: 11),
         ),
       ],
     );
