@@ -24,7 +24,7 @@ Get-Content deployment\chart\.env -Raw |
     Select-String -Pattern 'Namespace:|latest-debug|resources|direct-instructions'
 ```
 
-## Push The Release
+## Prepare The Release
 
 Frontend changes must pass the relevant checks before deployment:
 
@@ -40,12 +40,11 @@ python -m unittest tests.test_sync_contracts.SyncContractsTests.test_web_workspa
 git diff --check
 git add <changed-files>
 git commit -m "<release message>"
-git push origin master
 ```
 
-## Start The Release
+## Deployment Trigger
 
-Push the selected release commit to `master`, or use the configured repository workflow's supported `workflow_dispatch` event with authorized repository access. The direct-instructions, debug, and namespace-resource links are read-only and must never be used as deployment triggers.
+No automatic deployment trigger is currently configured in this repository. Pushing `master` runs CI only and must not be reported as a deployment. Before releasing, configure or obtain access to a deployment mechanism that creates a new Cloud deployment row for the selected commit.
 
 ## Monitor Safely
 
