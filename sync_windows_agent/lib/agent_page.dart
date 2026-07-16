@@ -17,6 +17,7 @@ import 'sql_sync_row_isolation.dart';
 import 'sql_sync_schema.dart';
 import 'sql_cmd_output.dart';
 import 'sync_state.dart';
+import 'sync_rejection_outbox.dart';
 import 'startup_log.dart';
 import 'tray_progress.dart';
 import 'window_settings.dart';
@@ -126,6 +127,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final AgentControlPlaneClient _controlPlaneClient = AgentControlPlaneClient();
+  final SyncRejectionOutbox _rejectionOutbox = SyncRejectionOutbox();
   late SyncClientState _syncState;
   Timer? _connectionCheckTimer;
   Timer? _syncPollTimer;
@@ -3453,6 +3455,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     var streamedTargetRowCount = -1;
     final latestDeltaModifiedAtByKey = <String, DateTime?>{};
     final applyStats = _DeltaApplyStats();
+    final pendingRejectedChanges =
+        isMultiWriter
+            ? await _rejectionOutbox.loadTable(widget.clientName, job.table)
+            : const <SyncRejectedChange>[];
     if (isMultiWriter) {
       // Apply each bounded relay page as it arrives. Keeping the whole
       // multi-writer delta in memory makes a valid change backlog look like a
@@ -3508,18 +3514,84 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               snapshot: snapshotToApply,
               applyStats: applyStats,
             );
-    if (applyStats.rejectedRows.isNotEmpty) {
+    if (!isMultiWriter && applyStats.rejectedRows.isNotEmpty) {
+      final detail = formatSqlSyncRejectedRows(
+        rejected: applyStats.rejectedRows,
+        keyColumns: applyStats.rejectedRowKeyColumns,
+      );
+      throw StateError(
+        'Legacy snapshot apply rejected ${applyStats.rejectedRows.length} change(s). $detail',
+      );
+    }
+    var pendingAfterApply = pendingRejectedChanges;
+    if (isMultiWriter) {
+      final retryablePending = pendingRejectedChanges
+          .where(
+            (change) =>
+                change.kind != SyncRejectionKind.permanentBusinessRule &&
+                !applyStats.seenRowIdentities.contains(change.identity),
+          )
+          .toList(growable: false);
+      final retryStats = _DeltaApplyStats();
+      if (retryablePending.isNotEmpty) {
+        await _applyDownloadedSnapshotToTarget(
+          job: job,
+          snapshot: snapshotToApply.copyWith(
+            rowCount: retryablePending.length,
+            rows: retryablePending
+                .map(
+                  (change) => Map<String, String?>.fromEntries(
+                    change.row.entries.map(
+                      (entry) => MapEntry(entry.key, entry.value?.toString()),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+            isDelta: true,
+          ),
+          refreshLocalState: false,
+          applyStats: retryStats,
+        );
+      }
+      pendingAfterApply = reconcileSyncRejectedChanges(
+        table: job.table,
+        existing: pendingRejectedChanges,
+        supersededIdentities: applyStats.seenRowIdentities,
+        attempted: retryablePending,
+        retryRejections: retryStats.rejectedRows
+            .map(
+              (rejected) => SyncRejectionObservation(
+                row: rejected.row,
+                error: rejected.error,
+              ),
+            )
+            .toList(growable: false),
+        currentRejections: applyStats.rejectedRows
+            .map(
+              (rejected) => SyncRejectionObservation(
+                row: rejected.row,
+                error: rejected.error,
+              ),
+            )
+            .toList(growable: false),
+        currentKeyColumns: applyStats.rejectedRowKeyColumns,
+      );
+      await _rejectionOutbox.saveTable(
+        widget.clientName,
+        job.table,
+        pendingAfterApply,
+      );
+      applyStats.insertedRows += retryStats.insertedRows;
+      applyStats.updatedRows += retryStats.updatedRows;
+      applyStats.deletedRows += retryStats.deletedRows;
+    }
+    if (pendingAfterApply.isNotEmpty) {
       final quarantineDetail = formatSqlSyncRejectedRows(
         rejected: applyStats.rejectedRows,
         keyColumns: applyStats.rejectedRowKeyColumns,
       );
       logStartupEvent(
-        'Quarantined sync changes for ${job.table}: $quarantineDetail',
-      );
-      throw StateError(
-        'Sync apply rejected ${applyStats.rejectedRows.length} '
-        'change${applyStats.rejectedRows.length == 1 ? '' : 's'} for '
-        '${job.table}. The job remains retryable. $quarantineDetail',
+        'Retained ${pendingAfterApply.length} quarantined change(s) for ${job.table}: $quarantineDetail',
       );
     }
     final reconciledTargetRowCount =
@@ -3537,8 +3609,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       job.id,
       status: 'completed',
       progress: 100,
-      message: 'Sync applied successfully to ${_localTableName(job.table)}.',
+      message:
+          pendingAfterApply.isEmpty
+              ? 'Sync applied successfully to ${_localTableName(job.table)}.'
+              : 'Sync applied with ${pendingAfterApply.length} quarantined change(s) retained for targeted retry.',
       rowCount: applyStats.appliedRows,
+      rejectedRowCount: pendingAfterApply.length,
+      rejectionSummary:
+          pendingAfterApply.isEmpty
+              ? null
+              : _syncRejectionSummary(pendingAfterApply),
       snapshotId: snapshotToApply.id,
       snapshotCreatedAt: snapshotToApply.createdAt,
       snapshotBytes: snapshotToApply.snapshotBytes,
@@ -3548,7 +3628,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${applyStats.rejectedRows.length} quarantined.',
+          'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${pendingAfterApply.length} quarantined.',
     );
     if (job.batchId?.trim().isNotEmpty == true) {
       final appliedVersion =
@@ -3565,6 +3645,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         );
       }
     }
+  }
+
+  String _syncRejectionSummary(List<SyncRejectedChange> changes) {
+    final permanent =
+        changes
+            .where(
+              (change) =>
+                  change.kind == SyncRejectionKind.permanentBusinessRule,
+            )
+            .length;
+    final dependency =
+        changes
+            .where((change) => change.kind == SyncRejectionKind.dependency)
+            .length;
+    final transient = changes.length - permanent - dependency;
+    return 'quarantined=${changes.length}; permanent=$permanent; dependency=$dependency; transient=$transient';
   }
 
   Future<void> _ensureNoLocalChangesBeforeRemoteApply(RemoteSyncJob job) async {
@@ -3881,6 +3977,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               latestModifiedAtByKey: latestDeltaModifiedAtByKey,
             )
             : snapshot.rows;
+    stats.seenRowIdentities.addAll(
+      rowsForApply.map(
+        (row) => syncRejectedRowIdentity(
+          Map<String, dynamic>.from(row),
+          primaryKeyColumns,
+        ),
+      ),
+    );
     if (applyDelta && rowsForApply.length != snapshot.rows.length) {
       logStartupEvent(
         'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} duplicate unique-identity row(s) for ${job.table}; policy=newest-database-commit-wins.',
@@ -8748,6 +8852,7 @@ class _DeltaApplyStats {
   int get appliedRows => insertedRows + updatedRows + deletedRows;
   final List<SqlSyncRejectedRow> rejectedRows = <SqlSyncRejectedRow>[];
   final List<String> rejectedRowKeyColumns = <String>[];
+  final Set<String> seenRowIdentities = <String>{};
 }
 
 class _StringQueryResult {

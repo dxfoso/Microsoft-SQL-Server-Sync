@@ -109,6 +109,8 @@ class SyncJob {
   field completedAt: datetime?
   field message: string min=0 max=4000
   field error: string? min=0 max=4000
+  field rejectedRowCount: int? min=0 max=1000000000
+  field rejectionSummary: string? min=0 max=4000
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field batchId: string? min=0 max=128
@@ -1403,7 +1405,7 @@ function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1744,6 +1746,8 @@ function public_job_payload(job: map<json>): map<json> {
     completedAt: job.completedAt,
     message: job.message,
     error: job.error,
+    rejectedRowCount: job.rejectedRowCount,
+    rejectionSummary: job.rejectionSummary,
     batchId: job.batchId
   };
 }
@@ -1773,6 +1777,8 @@ function agent_job_payload(job: map<json>): map<json> {
     completedAt: job.completedAt,
     message: job.message,
     error: job.error,
+    rejectedRowCount: job.rejectedRowCount,
+    rejectionSummary: job.rejectionSummary,
     batchId: job.batchId
   };
 }
@@ -1816,7 +1822,7 @@ function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -4568,7 +4574,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     return raw_json_error(409, 'sync batch changed while uploading; retry this chunk');
   }
   const updatedResult = finalChunk
-    ? jobs_complete(job.id, 'completed', 100, string.concat('Uploaded ', string.from(incomingRowCount), ' changed rows for ', table, '.'), incomingRowCount, null, null, null, token)
+    ? jobs_complete(job.id, 'completed', 100, string.concat('Uploaded ', string.from(incomingRowCount), ' changed rows for ', table, '.'), incomingRowCount, null, null, null, null, null, token)
     : jobs_progress(job.id, 'uploading', 70, string.concat('Uploaded multi-writer chunk for ', table, '.'), incomingRowCount, token);
   const updatedJob = updatedResult.job ?? job;
   // Clients poll their waiting batch download until the barrier is ready.
@@ -5229,7 +5235,7 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, token: string? = null): map<json> {
+function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, rejectedRowCount: int? = null, rejectionSummary: string? = null, token: string? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -5273,6 +5279,8 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     completedAt,
     message,
     error: null,
+    rejectedRowCount,
+    rejectionSummary,
     clientUserId: job.clientUserId,
     ownerUserId: job.ownerUserId,
     updatedAt: completedAt

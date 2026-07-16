@@ -139,10 +139,14 @@ with `RAISERROR`, matching the compatibility-safe pattern already used by the
 staged merge path. Contract coverage requires `RAISERROR` and rejects `THROW`
 in generated delete SQL.
 
-Download jobs also fail before completion when row isolation quarantines any
-change. This prevents the applied-version checkpoint from advancing and keeps
-the server batch retryable instead of silently losing a rejected delete or
-update.
+Rejected multi-writer rows are now copied into an atomic per-client outbox
+before the download job completes or its Change Tracking checkpoint advances.
+Valid rows in the batch complete normally. Missing-dependency and transient
+rows retry individually on later table cycles; permanent posted-entry conflicts
+remain quarantined until a newer source change for the same primary key
+supersedes them. The server job records the rejected count and classification
+summary, and the client log shows that quarantine without marking the whole
+table failed. Legacy non-multi-writer snapshots retain fail-fast behavior.
 
 ### Failed tables retried faster than the configured interval
 

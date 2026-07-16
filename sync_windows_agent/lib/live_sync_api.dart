@@ -749,6 +749,8 @@ class AgentControlPlaneClient {
     String? snapshotId,
     String? snapshotCreatedAt,
     int? snapshotBytes,
+    int? rejectedRowCount,
+    String? rejectionSummary,
   }) async {
     final response = await _invokeFunction('jobs_complete', {
       'jobId': jobId,
@@ -761,6 +763,9 @@ class AgentControlPlaneClient {
       if (snapshotCreatedAt != null && snapshotCreatedAt.trim().isNotEmpty)
         'snapshotCreatedAt': snapshotCreatedAt.trim(),
       if (snapshotBytes != null) 'snapshotBytes': snapshotBytes,
+      if (rejectedRowCount != null) 'rejectedRowCount': rejectedRowCount,
+      if (rejectionSummary != null && rejectionSummary.trim().isNotEmpty)
+        'rejectionSummary': rejectionSummary.trim(),
     }, 'completing job');
     return _parseJobPayload(response, 'job completion');
   }

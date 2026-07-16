@@ -1888,6 +1888,19 @@ class _ClientsPageState extends State<ClientsPage> {
                   fontSize: 12,
                 ),
               ),
+              if (job.rejectedRowCount > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Quarantined: ${job.rejectedRowCount}${job.rejectionSummary?.trim().isNotEmpty == true ? ' (${job.rejectionSummary})' : ''}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFB54708),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ],
           ),
         ),

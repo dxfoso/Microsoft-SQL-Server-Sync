@@ -453,6 +453,8 @@ class AdminJob {
     required this.progress,
     required this.rowCount,
     required this.changedRowCount,
+    this.rejectedRowCount = 0,
+    this.rejectionSummary,
     required this.createdAt,
     required this.updatedAt,
     required this.startedAt,
@@ -476,6 +478,8 @@ class AdminJob {
   final int progress;
   final int rowCount;
   final int? changedRowCount;
+  final int rejectedRowCount;
+  final String? rejectionSummary;
   final String createdAt;
   final String updatedAt;
   final String? startedAt;
@@ -500,6 +504,8 @@ class AdminJob {
       progress: (json['progress'] as num? ?? 0).round(),
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       changedRowCount: (json['changedRowCount'] as num?)?.round(),
+      rejectedRowCount: (json['rejectedRowCount'] as num? ?? 0).round(),
+      rejectionSummary: json['rejectionSummary'] as String?,
       createdAt: json['createdAt'] as String? ?? '',
       updatedAt: json['updatedAt'] as String? ?? '',
       startedAt: json['startedAt'] as String?,

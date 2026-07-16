@@ -403,6 +403,13 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn(terminal_attempt, complete_body)
         self.assertIn(terminal_attempt, fail_body)
 
+        self.assertIn("field rejectedRowCount: int?", source)
+        self.assertIn("field rejectionSummary: string?", source)
+        self.assertIn("rejectedRowCount: job.rejectedRowCount", source)
+        self.assertIn("rejectionSummary: job.rejectionSummary", source)
+        self.assertIn("rejectedRowCount,", complete_body)
+        self.assertIn("rejectionSummary,", complete_body)
+
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
         match = re.search(

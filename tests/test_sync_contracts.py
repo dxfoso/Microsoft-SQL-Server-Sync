@@ -466,8 +466,15 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("progress: 80,", download_body)
         self.assertIn("final targetRowCount =", download_body)
         self.assertIn(": await _applyDownloadedSnapshotToTarget(", download_body)
-        self.assertIn("if (applyStats.rejectedRows.isNotEmpty)", download_body)
-        self.assertIn("The job remains retryable.", download_body)
+        self.assertIn(
+            "if (!isMultiWriter && applyStats.rejectedRows.isNotEmpty)",
+            download_body,
+        )
+        self.assertIn("await _rejectionOutbox.saveTable(", download_body)
+        self.assertIn("rejectedRowCount: pendingAfterApply.length", download_body)
+        self.assertIn("rejectionSummary:", download_body)
+        self.assertIn("'rejectedRowCount': rejectedRowCount", read_text("sync_windows_agent/lib/live_sync_api.dart"))
+        self.assertIn("'rejectionSummary': rejectionSummary.trim()", read_text("sync_windows_agent/lib/live_sync_api.dart"))
         self.assertIn("await _controlPlaneClient.completeJob(", download_body)
         self.assertIn("status: 'completed',", download_body)
         self.assertIn("progress: 100,", download_body)
@@ -476,8 +483,12 @@ class SyncContractsTests(unittest.TestCase):
             download_body.index("await _controlPlaneClient.completeJob("),
         )
         self.assertLess(
-            download_body.index("if (applyStats.rejectedRows.isNotEmpty)"),
+            download_body.index("await _rejectionOutbox.saveTable("),
             download_body.index("await _controlPlaneClient.completeJob("),
+        )
+        self.assertLess(
+            download_body.index("await _rejectionOutbox.saveTable("),
+            download_body.index("changeTrackingVersion: appliedVersion"),
         )
 
     def test_pending_job_failures_are_reported_back_to_control_plane_and_local_history(self):
@@ -1015,7 +1026,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("applySqlSyncRowsWithIsolation", agent_page)
         self.assertIn("insertOnly: false", agent_page)
         self.assertIn("buildTargetDeltaDeleteSql(", agent_page)
-        self.assertIn("Quarantined sync changes", agent_page)
+        self.assertIn("quarantined change(s)", agent_page)
+        self.assertIn("SyncRejectionKind.permanentBusinessRule", agent_page)
+        self.assertIn("!applyStats.seenRowIdentities.contains(change.identity)", agent_page)
         self.assertIn("rowCount: applyStats.appliedRows", agent_page)
         self.assertIn("stats.updatedRows += batch.length - insertedRows", agent_page)
         self.assertIn("stats.deletedRows += await _deleteDeltaRowsFromTarget", agent_page)
