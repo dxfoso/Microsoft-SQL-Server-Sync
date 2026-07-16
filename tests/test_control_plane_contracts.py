@@ -251,6 +251,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         auto_tick_body = auto_tick_match.group("body")
         self.assertIn("const allAgents = list_scheduler_agent_rows();", auto_tick_body)
         self.assertIn("for (const agent of allAgents) {", auto_tick_body)
+        self.assertIn(
+            "const hasManualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId).length > 0;",
+            auto_tick_body,
+        )
+        self.assertIn(
+            "claim_periodic_sync_scheduler_for_owner(ownerUserId, hasManualPendingTables)",
+            auto_tick_body,
+        )
         self.assertIn("const ownerJobs = queue_due_periodic_sync_jobs_for_owner(ownerUserId, allAgents);", auto_tick_body)
 
         owner_match = re.search(
@@ -291,6 +299,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);",
             body,
         )
+        claim_body = source.split(
+            "function claim_periodic_sync_scheduler_for_owner(", 1
+        )[1].split("function manual_sync_pending_tables_for_owner(", 1)[0]
+        self.assertIn("bypassCooldown: bool? = false", claim_body)
+        self.assertIn("if (!bool.from(bypassCooldown) &&", claim_body)
 
         preferred_source_match = re.search(
             r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null, completedJobRows: array<json>\? = null\): string \{(?P<body>.*?)\n\}",

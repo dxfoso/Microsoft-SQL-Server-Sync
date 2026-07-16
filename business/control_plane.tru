@@ -2474,12 +2474,14 @@ function agent_recent_enough_for_periodic_sync(agent: map<json>): bool {
   return ageMinutes != null && ageMinutes <= periodic_sync_recent_agent_window_minutes();
 }
 
-function claim_periodic_sync_scheduler_for_owner(ownerUserId: string? = null): bool {
+function claim_periodic_sync_scheduler_for_owner(ownerUserId: string? = null, bypassCooldown: bool? = false): bool {
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
   const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
   if (existing != null) {
     const elapsedMinutes = safe_date_diff_minutes_since(string.from(existing.lastCheckedAt ?? ''));
-    if (elapsedMinutes != null && elapsedMinutes < periodic_sync_scheduler_cooldown_minutes()) {
+    if (!bool.from(bypassCooldown) &&
+        elapsedMinutes != null &&
+        elapsedMinutes < periodic_sync_scheduler_cooldown_minutes()) {
       return false;
     }
     db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
@@ -3391,7 +3393,8 @@ function auto_sync_tick(token: string? = null): map<json> {
   let createdJobs = [];
   let checkedOwners = [];
   for (const ownerUserId of ownerIds) {
-    if (!claim_periodic_sync_scheduler_for_owner(ownerUserId)) {
+    const hasManualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId).length > 0;
+    if (!claim_periodic_sync_scheduler_for_owner(ownerUserId, hasManualPendingTables)) {
       continue;
     }
     checkedOwners = checkedOwners.concat([ownerUserId]);

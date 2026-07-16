@@ -95,6 +95,12 @@ so one manual operation could take roughly ten minutes longer than necessary.
 scheduler prioritizes the next manual tables without applying the periodic
 interval. Client work remains sequential and bounded.
 
+**Follow-up:** Live verification showed that a scheduler tick while the current
+wave was active could consume the ordinary one-minute owner cooldown. Owners
+with persisted manual tables now bypass that cooldown, so every minute tick can
+queue the next wave as soon as the previous wave is terminal. Normal periodic
+scheduling keeps the cooldown.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,
