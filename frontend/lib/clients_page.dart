@@ -9,15 +9,7 @@ import 'browser_bridge.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
 
-enum _ClientSortField {
-  name,
-  status,
-  database,
-  tables,
-  rows,
-  lastSync,
-  heartbeat,
-}
+enum _ClientSortField { name, status, database, tables, lastSync, heartbeat }
 
 enum _ClientDetailView { logs, tables }
 
@@ -662,9 +654,6 @@ class _ClientsPageState extends State<ClientsPage> {
                           DataColumn(label: Text('Status')),
                           DataColumn(label: Text('Database')),
                           DataColumn(label: Text('Tables')),
-                          DataColumn(label: Text('Changed rows')),
-                          DataColumn(label: Text('Rows uploaded')),
-                          DataColumn(label: Text('Rows downloaded')),
                           DataColumn(label: Text('Last synced')),
                           DataColumn(label: Text('Last heartbeat')),
                           DataColumn(label: Text('Actions')),
@@ -797,10 +786,6 @@ class _ClientsPageState extends State<ClientsPage> {
           child: Text('Table count'),
         ),
         DropdownMenuItem(
-          value: _ClientSortField.rows,
-          child: Text('Row count'),
-        ),
-        DropdownMenuItem(
           value: _ClientSortField.lastSync,
           child: Text('Last synced'),
         ),
@@ -859,10 +844,6 @@ class _ClientsPageState extends State<ClientsPage> {
           );
         case _ClientSortField.tables:
           comparison = left.tables.length.compareTo(right.tables.length);
-        case _ClientSortField.rows:
-          comparison = (_changedRows(_jobsFor(left)) ?? -1).compareTo(
-            _changedRows(_jobsFor(right)) ?? -1,
-          );
         case _ClientSortField.lastSync:
           comparison = _timestamp(
             _latestClientSync(left),
@@ -879,9 +860,8 @@ class _ClientsPageState extends State<ClientsPage> {
 
   DataRow _buildClientDataRow(AdminAgent agent) {
     final selected = agent.clientName == _selectedClientName;
-    final color =
-        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
     final jobs = _jobsFor(agent);
+    final activityStatus = _clientActivityStatus(agent, jobs);
     return DataRow(
       selected: selected,
       cells: [
@@ -896,7 +876,9 @@ class _ClientsPageState extends State<ClientsPage> {
             ),
           ),
         ),
-        DataCell(_statusChip(agent.isOnline ? 'Online' : 'Offline', color)),
+        DataCell(
+          _statusChip(activityStatus, _clientActivityColor(activityStatus)),
+        ),
         DataCell(
           Text(
             agent.database.trim().isEmpty ? 'Not reported' : agent.database,
@@ -904,9 +886,6 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(Text('${agent.tables.length}')),
-        DataCell(Text(_changedRowsLabel(jobs))),
-        DataCell(Text(_changedRowsLabel(jobs, direction: 'upload'))),
-        DataCell(Text(_changedRowsLabel(jobs, direction: 'download'))),
         DataCell(Text(_formatTimestamp(_latestClientSync(agent)))),
         DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
         DataCell(
@@ -925,6 +904,65 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
     );
+  }
+
+  String _clientActivityStatus(AdminAgent agent, List<AdminJob> jobs) {
+    if (!agent.isOnline) return 'Offline';
+    if (agent.clientUpdate.pending) return 'Updating';
+    if (!agent.serverConnected) return 'Server offline';
+    if (!agent.sqlConnected) return 'SQL offline';
+
+    final currentStatuses =
+        jobs
+            .where(
+              (job) => job.isActive || job.status.toLowerCase() == 'waiting',
+            )
+            .map((job) => job.status.toLowerCase())
+            .toSet();
+    for (final phase in const [
+      'applying',
+      'downloading',
+      'uploading',
+      'snapshotting',
+      'running',
+      'waiting',
+      'queued',
+    ]) {
+      if (!currentStatuses.contains(phase)) continue;
+      return switch (phase) {
+        'applying' => 'Applying',
+        'downloading' => 'Downloading',
+        'uploading' || 'snapshotting' => 'Uploading',
+        'running' => 'Syncing',
+        'waiting' => 'Waiting',
+        'queued' => 'Queued',
+        _ => 'Syncing',
+      };
+    }
+    return 'Ready';
+  }
+
+  Color _clientActivityColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'ready':
+        return const Color(0xFF0F766E);
+      case 'uploading':
+      case 'updating':
+      case 'syncing':
+        return const Color(0xFF2563EB);
+      case 'downloading':
+      case 'applying':
+        return const Color(0xFFB54708);
+      case 'waiting':
+      case 'queued':
+        return const Color(0xFF7A5D00);
+      case 'offline':
+      case 'server offline':
+      case 'sql offline':
+        return const Color(0xFFB42318);
+      default:
+        return const Color(0xFF475467);
+    }
   }
 
   Widget _buildClientListItem(AdminAgent agent) {
