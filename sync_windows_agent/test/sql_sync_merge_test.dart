@@ -206,6 +206,7 @@ void main() {
       );
 
       expect(sql, contains('UPDATE target'));
+      expect(sql, contains('WITH CHANGE_TRACKING_CONTEXT (0x53514C53594E43)'));
       expect(sql, isNot(contains('DELETE TOP')));
       expect(sql, isNot(contains('DISABLE TRIGGER')));
       expect(sql, contains('INSERT INTO [db].[dbo].[items]'));
@@ -251,6 +252,7 @@ void main() {
 
     expect(sql, contains('CREATE TABLE #delete_rows'));
     expect(sql, contains('DELETE target'));
+    expect(sql, contains('WITH CHANGE_TRACKING_CONTEXT (0x53514C53594E43)'));
     expect(sql, contains('INNER JOIN #delete_rows AS source'));
     expect(sql, contains('target.[Id] = source.[Id]'));
     expect(sql, contains('__SQL_SYNC_DELETED__='));

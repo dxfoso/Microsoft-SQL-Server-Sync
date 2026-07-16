@@ -2,6 +2,10 @@ import 'dart:convert';
 
 import 'sql_sync_schema.dart';
 
+// "SQLSYNC" encoded as varbinary. Change Tracking preserves this origin on
+// agent-applied writes so they can be excluded from the next outbound delta.
+const sqlSyncChangeTrackingContextHex = '0x53514C53594E43';
+
 String buildTargetSnapshotMergeSql({
   required String database,
   required String schema,
@@ -105,6 +109,7 @@ ${_buildBatchedInsertStatement(database: database, schema: schema, table: table,
           ? '''
 WHILE 1 = 1
 BEGIN
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
   DELETE TOP ($targetMergeApplyBatchSize) target
   FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
   WHERE NOT EXISTS (
@@ -268,6 +273,7 @@ String buildTargetSnapshotStageApplySql({
           ? '''
   WHILE 1 = 1
   BEGIN
+    WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
     DELETE TOP ($targetMergeApplyBatchSize) target
     FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
     WHERE NOT EXISTS (
@@ -382,6 +388,7 @@ BEGIN TRY
     $columnDefinitions
   );
   ${inserts.toString()}
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
   DELETE target
   FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
   INNER JOIN #delete_rows AS source
@@ -591,6 +598,7 @@ String _buildBatchedUpdateStatement({
     endRow: endRow,
   );
   return '''
+WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
 UPDATE target
 SET
     $updateAssignments
@@ -621,6 +629,7 @@ String _buildBatchedInsertStatement({
     endRow: endRow,
   );
   return '''
+WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
 INSERT INTO ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($insertColumnList)
 SELECT $insertValueList
 FROM (

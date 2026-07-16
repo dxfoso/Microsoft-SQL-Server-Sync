@@ -4355,6 +4355,8 @@ SELECT
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
 LEFT JOIN $source AS existing_row ON $join
 $commitJoin
+WHERE ct.SYS_CHANGE_CONTEXT IS NULL
+   OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
 ORDER BY ct.SYS_CHANGE_VERSION;
 ''';
     }
