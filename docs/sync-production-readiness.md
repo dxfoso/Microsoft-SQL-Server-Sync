@@ -107,6 +107,13 @@ tick failed before scheduling. The condition now uses the established nullable
 boolean comparison (`bypassCooldown != true`), and contract coverage rejects
 the invalid conversion call.
 
+**Final-wave regression found during verification:** When fewer than four
+manual tables remained, ordinary periodic candidates could pad the wave and
+repeat a table already processed by the same Sync All operation. While manual
+pending tables exist, scheduler candidate selection is now limited to that
+pending list. Normal periodic selection resumes only after the manual list is
+empty.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,

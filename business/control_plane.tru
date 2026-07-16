@@ -2373,15 +2373,17 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
   let dueTables = manualPendingTables;
-  for (const agent of ownerAgents) {
-    const cache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
-    const agentTables = due_periodic_sync_tables_for_agent_with_policies(
-      agent,
-      ownerPolicies,
-      cache,
-      periodic_sync_scheduler_table_limit()
-    );
-    dueTables = unique_string_values(dueTables.concat(agentTables));
+  if (manualPendingTables.length == 0) {
+    for (const agent of ownerAgents) {
+      const cache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
+      const agentTables = due_periodic_sync_tables_for_agent_with_policies(
+        agent,
+        ownerPolicies,
+        cache,
+        periodic_sync_scheduler_table_limit()
+      );
+      dueTables = unique_string_values(dueTables.concat(agentTables));
+    }
   }
 
   let createdJobs = [];

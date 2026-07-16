@@ -361,6 +361,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             owner_scheduler,
         )
         self.assertIn("let dueTables = manualPendingTables;", owner_scheduler)
+        self.assertIn("if (manualPendingTables.length == 0) {", owner_scheduler)
         self.assertIn("queuedTables = queuedTables.concat([table]);", owner_scheduler)
         self.assertIn(
             "set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);",
