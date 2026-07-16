@@ -328,6 +328,78 @@ END;
 ''';
 }
 
+String buildTargetDeltaDeleteSql({
+  required String database,
+  required String schema,
+  required String table,
+  required List<SqlSyncColumnDefinition> columns,
+  required List<String> primaryKeyColumns,
+  required List<Map<String, dynamic>> rows,
+  int insertBatchSize = 100,
+}) {
+  final definitionsByName = {
+    for (final column in columns) column.name.toLowerCase(): column,
+  };
+  final keyColumns = primaryKeyColumns
+      .map((name) => definitionsByName[name.toLowerCase()])
+      .whereType<SqlSyncColumnDefinition>()
+      .toList(growable: false);
+  if (keyColumns.length != primaryKeyColumns.length) {
+    throw ArgumentError('Every delete key must have a column definition.');
+  }
+  final columnList = keyColumns
+      .map((column) => quoteIdentifier(column.name))
+      .join(', ');
+  final columnDefinitions = keyColumns
+      .map(
+        (column) =>
+            '${quoteIdentifier(column.name)} ${column.sqlCastType} NULL',
+      )
+      .join(',\n    ');
+  final inserts = StringBuffer();
+  for (var offset = 0; offset < rows.length; offset += insertBatchSize) {
+    final tuples = rows
+        .skip(offset)
+        .take(insertBatchSize)
+        .map(
+          (row) =>
+              '(${keyColumns.map((column) => sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
+        )
+        .join(',\n    ');
+    inserts.writeln('''
+INSERT INTO #delete_rows ($columnList)
+VALUES
+    $tuples;
+''');
+  }
+  final joinClause = matchClauseForColumns(primaryKeyColumns, keyColumns);
+  return '''
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+BEGIN TRY
+  BEGIN TRANSACTION;
+  CREATE TABLE #delete_rows (
+    $columnDefinitions
+  );
+  ${inserts.toString()}
+  DELETE target
+  FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
+  INNER JOIN #delete_rows AS source
+    ON $joinClause;
+  DECLARE @SqlSyncDeletedRows INT = @@ROWCOUNT;
+  DROP TABLE #delete_rows;
+  COMMIT TRANSACTION;
+  SELECT N'__SQL_SYNC_DELETED__=' + CONVERT(NVARCHAR(20), @SqlSyncDeletedRows);
+END TRY
+BEGIN CATCH
+  IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+  IF OBJECT_ID(N'tempdb..#delete_rows', N'U') IS NOT NULL
+    DROP TABLE #delete_rows;
+  THROW;
+END CATCH;
+''';
+}
+
 String stageTableReference(String stageTableName) =>
     'tempdb.dbo.${quoteIdentifier(stageTableName)}';
 

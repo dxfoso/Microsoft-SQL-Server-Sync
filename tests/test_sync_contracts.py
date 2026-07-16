@@ -711,7 +711,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("changeTrackingOwner", read_text("sync_windows_agent/lib/sync_state.dart"))
         self.assertIn("changeTrackingOwner != widget.clientName", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertIn(
-            "Added ${applyStats.insertedRows} missing row",
+            "Applied ${applyStats.appliedRows} change",
             read_text("sync_windows_agent/lib/agent_page.dart"),
         )
         self.assertIn("_ensureNoLocalChangesBeforeRemoteApply", read_text("sync_windows_agent/lib/agent_page.dart"))
@@ -982,16 +982,18 @@ class SyncContractsTests(unittest.TestCase):
             query_template.index("COMMIT TRANSACTION;"),
         )
 
-    def test_windows_client_insert_only_sync_quarantines_rejections_and_advances_checkpoint(self):
+    def test_windows_client_delta_sync_reconciles_changes_and_advances_checkpoint(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
         isolation = read_text("sync_windows_agent/lib/sql_sync_row_isolation.dart")
 
         self.assertIn("applySqlSyncRowsWithIsolation", agent_page)
-        self.assertIn("insertOnly: true", agent_page)
-        self.assertIn("Insert-only sync ignored", agent_page)
-        self.assertIn("Quarantined insert-only sync changes", agent_page)
-        self.assertIn("rowCount: applyStats.insertedRows", agent_page)
+        self.assertIn("insertOnly: false", agent_page)
+        self.assertIn("buildTargetDeltaDeleteSql(", agent_page)
+        self.assertIn("Quarantined sync changes", agent_page)
+        self.assertIn("rowCount: applyStats.appliedRows", agent_page)
+        self.assertIn("stats.updatedRows += batch.length - insertedRows", agent_page)
+        self.assertIn("stats.deletedRows += await _deleteDeltaRowsFromTarget", agent_page)
         self.assertIn("changeTrackingVersion: appliedVersion", agent_page)
         self.assertNotIn("Change Tracking checkpoint was not advanced", agent_page)
         self.assertIn("bool insertOnly = false", merge_helper)

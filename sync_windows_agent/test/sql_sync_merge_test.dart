@@ -150,7 +150,7 @@ void main() {
   });
 
   test(
-    'insert-only staged apply never updates or deletes existing target rows',
+    'staged delta apply updates existing rows without deleting absent rows',
     () {
       final sql = buildTargetSnapshotStageApplySql(
         database: 'db',
@@ -200,12 +200,12 @@ void main() {
           ['Id'],
           ['TenantId', 'Code'],
         ],
-        insertOnly: true,
-        deleteMissing: true,
+        insertOnly: false,
+        deleteMissing: false,
         manageTriggers: false,
       );
 
-      expect(sql, isNot(contains('UPDATE target')));
+      expect(sql, contains('UPDATE target'));
       expect(sql, isNot(contains('DELETE TOP')));
       expect(sql, isNot(contains('DISABLE TRIGGER')));
       expect(sql, contains('INSERT INTO [db].[dbo].[items]'));
@@ -216,6 +216,47 @@ void main() {
       expect(sql, contains('__SQL_SYNC_INSERTED__='));
     },
   );
+
+  test('delta delete removes only explicit primary keys', () {
+    final sql = buildTargetDeltaDeleteSql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'items',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Value',
+          sqlType: 'nvarchar',
+          maxLength: 100,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['Id'],
+      rows: const [
+        {'Id': 7},
+        {'Id': 9},
+      ],
+    );
+
+    expect(sql, contains('CREATE TABLE #delete_rows'));
+    expect(sql, contains('DELETE target'));
+    expect(sql, contains('INNER JOIN #delete_rows AS source'));
+    expect(sql, contains('target.[Id] = source.[Id]'));
+    expect(sql, contains('__SQL_SYNC_DELETED__='));
+    expect(sql, isNot(contains('[Value]')));
+    expect(sql, isNot(contains('WHERE NOT EXISTS')));
+  });
 
   test('non insert-only staged apply retains legacy update capability', () {
     final sql = buildTargetSnapshotStageApplySql(
