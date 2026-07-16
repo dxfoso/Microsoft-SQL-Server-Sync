@@ -189,6 +189,7 @@ class PeriodicSyncState {
   field ownerUserId: string min=0 max=64
   field lastCheckedAt: datetime
   field manualPendingTables: array<json>?
+  field scheduledTableAttempts: array<json>?
   field updatedAt: datetime
 }
 
@@ -2373,6 +2374,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   // every online client uploads first, then every client downloads the merge.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
+  const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
   let dueTables = manualPendingTables;
   if (manualPendingTables.length == 0) {
     for (const agent of ownerAgents) {
@@ -2383,7 +2385,15 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         cache,
         periodic_sync_scheduler_table_limit()
       );
-      dueTables = unique_string_values(dueTables.concat(agentTables));
+      for (const table of agentTables) {
+        if (periodic_sync_table_due_after_attempt(
+          scheduledTableAttempts,
+          table,
+          agent.autoSyncIntervalMinutes
+        )) {
+          dueTables = unique_string_values(dueTables.concat([table]));
+        }
+      }
     }
   }
 
@@ -2414,6 +2424,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     }
     const jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
     if (jobs.length > 0) {
+      record_periodic_sync_table_attempt(ownerUserId, table);
       createdJobs = createdJobs.concat(jobs);
       queuedTables = queuedTables.concat([table]);
       queuedTableCount += 1;
@@ -2533,6 +2544,70 @@ function set_manual_sync_pending_tables_for_owner(ownerUserId: string? = null, t
     lastCheckedAt: now_iso(),
     manualPendingTables: pendingTables,
     updatedAt: now_iso()
+  });
+}
+
+function periodic_sync_scheduled_table_attempts_for_owner(ownerUserId: string? = null): array<json> {
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing == null || existing.scheduledTableAttempts == null) {
+    return [];
+  }
+  let attempts = [];
+  for (const attempt of existing.scheduledTableAttempts) {
+    attempts = attempts.concat([attempt]);
+  }
+  return attempts;
+}
+
+function periodic_sync_table_due_after_attempt(attempts: array<json>? = null, table: string = '', intervalMinutes: int? = null): bool {
+  for (const attempt of attempts ?? []) {
+    if (string.from(attempt.table).trim() != table) {
+      continue;
+    }
+    const attemptedAt = string.from(attempt.attemptedAt ?? '').trim();
+    if (attemptedAt.length == 0) {
+      return true;
+    }
+    const elapsedMinutes = safe_date_diff_minutes_since(attemptedAt);
+    if (elapsedMinutes == null) {
+      return true;
+    }
+    return elapsedMinutes >= clamp_auto_sync_interval(intervalMinutes);
+  }
+  return true;
+}
+
+function record_periodic_sync_table_attempt(ownerUserId: string? = null, table: string = ''): void {
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  const normalizedTable = table.trim();
+  if (normalizedTable.length == 0) {
+    return;
+  }
+  const attemptedAt = now_iso();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  let attempts = [];
+  if (existing != null && existing.scheduledTableAttempts != null) {
+    for (const attempt of existing.scheduledTableAttempts) {
+      if (string.from(attempt.table).trim() != normalizedTable) {
+        attempts = attempts.concat([attempt]);
+      }
+    }
+  }
+  attempts = attempts.concat([{ table: normalizedTable, attemptedAt }]);
+  if (existing != null) {
+    db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+      scheduledTableAttempts: attempts,
+      updatedAt: attemptedAt
+    });
+    return;
+  }
+  db.insert(PeriodicSyncState, {
+    ownerUserId: normalizedOwnerUserId,
+    lastCheckedAt: attemptedAt,
+    manualPendingTables: [],
+    scheduledTableAttempts: attempts,
+    updatedAt: attemptedAt
   });
 }
 
@@ -5206,6 +5281,7 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   if (updated != null) {
     nextJob = updated;
   }
+  record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };
 }
 
@@ -5286,6 +5362,7 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   if (updated != null) {
     nextJob = updated;
   }
+  record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };
 }
 

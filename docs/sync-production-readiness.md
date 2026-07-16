@@ -144,6 +144,19 @@ change. This prevents the applied-version checkpoint from advancing and keeps
 the server batch retryable instead of silently losing a rejected delete or
 update.
 
+### Failed tables retried faster than the configured interval
+
+**Finding:** Periodic eligibility used only the client's last successful table
+sync. A target SQL rejection left that timestamp unchanged, so the one-minute
+scheduler tick immediately queued the failed table again even when the web
+setting was 20 minutes.
+
+**Fix:** The server now persists the latest scheduled/terminal attempt per owner
+and table. Periodic work must satisfy the affected client's configured web
+interval from that timestamp, including after failure. Manual Sync All remains
+an explicit override and continues draining its bounded table waves without an
+interval delay.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,

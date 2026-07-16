@@ -366,13 +366,42 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);",
             owner_scheduler,
         )
+        self.assertIn(
+            "const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);",
+            owner_scheduler,
+        )
         self.assertIn("let dueTables = manualPendingTables;", owner_scheduler)
         self.assertIn("if (manualPendingTables.length == 0) {", owner_scheduler)
+        self.assertIn("periodic_sync_table_due_after_attempt(", owner_scheduler)
+        self.assertIn(
+            "record_periodic_sync_table_attempt(ownerUserId, table);",
+            owner_scheduler,
+        )
         self.assertIn("queuedTables = queuedTables.concat([table]);", owner_scheduler)
         self.assertIn(
             "set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);",
             owner_scheduler,
         )
+
+        self.assertIn("field scheduledTableAttempts: array<json>?", source)
+        attempt_due_body = source.split(
+            "function periodic_sync_table_due_after_attempt(", 1
+        )[1].split("function record_periodic_sync_table_attempt(", 1)[0]
+        self.assertIn(
+            "return elapsedMinutes >= clamp_auto_sync_interval(intervalMinutes);",
+            attempt_due_body,
+        )
+        complete_body = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail(", 1
+        )[0]
+        fail_body = source.split("function jobs_fail(", 1)[1].split(
+            "function jobs_cancel_active(", 1
+        )[0]
+        terminal_attempt = (
+            "record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));"
+        )
+        self.assertIn(terminal_attempt, complete_body)
+        self.assertIn(terminal_attempt, fail_body)
 
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
