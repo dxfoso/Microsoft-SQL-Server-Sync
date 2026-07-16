@@ -2479,7 +2479,7 @@ function claim_periodic_sync_scheduler_for_owner(ownerUserId: string? = null, by
   const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
   if (existing != null) {
     const elapsedMinutes = safe_date_diff_minutes_since(string.from(existing.lastCheckedAt ?? ''));
-    if (!bool.from(bypassCooldown) &&
+    if (bypassCooldown != true &&
         elapsedMinutes != null &&
         elapsedMinutes < periodic_sync_scheduler_cooldown_minutes()) {
       return false;

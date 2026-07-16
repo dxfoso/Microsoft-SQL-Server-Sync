@@ -101,6 +101,12 @@ with persisted manual tables now bypass that cooldown, so every minute tick can
 queue the next wave as soon as the previous wave is terminal. Normal periodic
 scheduling keeps the cooldown.
 
+**Runtime regression found during verification:** The first implementation used
+`bool.from(...)`, which compiled but is not a TRU runtime symbol. The production
+tick failed before scheduling. The condition now uses the established nullable
+boolean comparison (`bypassCooldown != true`), and contract coverage rejects
+the invalid conversion call.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,

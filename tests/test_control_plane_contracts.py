@@ -303,7 +303,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function claim_periodic_sync_scheduler_for_owner(", 1
         )[1].split("function manual_sync_pending_tables_for_owner(", 1)[0]
         self.assertIn("bypassCooldown: bool? = false", claim_body)
-        self.assertIn("if (!bool.from(bypassCooldown) &&", claim_body)
+        self.assertIn("if (bypassCooldown != true &&", claim_body)
+        self.assertNotIn("bool.from(", claim_body)
 
         preferred_source_match = re.search(
             r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null, completedJobRows: array<json>\? = null\): string \{(?P<body>.*?)\n\}",

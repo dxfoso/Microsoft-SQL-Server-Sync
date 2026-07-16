@@ -8,4 +8,4 @@
 - Both c1 and c2 are online, current on `1.0.153+157`, SQL-connected, server-connected, and minimized.
 - Live c2-to-c1 delta proof completed on 2026-07-16: c2 uploaded the `pt000` delta and c1 applied one changed row.
 - Live post-deploy Sync All processed all 11 enabled tables in three bounded waves: 44/44 jobs completed, zero failed, and no residual deltas.
-- A follow-up fix prevents an active scheduler tick from consuming the next manual-wave cooldown slot; final deployment and retest are pending.
+- The first cooldown-bypass release exposed an invalid `bool.from` runtime call; the captured cron failure is fixed with a nullable boolean comparison and final deployment/retest are pending.
