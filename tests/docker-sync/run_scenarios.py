@@ -65,7 +65,7 @@ def run(command, *, input_text=None, cwd=ROOT, check=True):
 def sqlcmd(sql, *, database="master", check=True):
     command = [
         SQLCMD, "-C", "-S", "localhost,14333", "-U", "sa", "-P", PASSWORD,
-        "-d", database, "-b", "-r", "1", "-h", "-1", "-W", "-Q", sql,
+        "-d", database, "-b", "-r", "1", "-f", "65001", "-h", "-1", "-W", "-Q", sql,
     ]
     return run(command, check=check)
 
@@ -144,13 +144,13 @@ def generate_sql(database, *, rows=None, deletes=None):
 
 def apply(database, *, rows=None, deletes=None):
     generated = generate_sql(database, rows=rows, deletes=deletes)
-    with tempfile.NamedTemporaryFile("w", suffix=".sql", encoding="utf-8-sig", delete=False) as handle:
+    with tempfile.NamedTemporaryFile("w", suffix=".sql", encoding="utf-8", delete=False) as handle:
         handle.write(generated)
         sql_path = Path(handle.name)
     try:
         result = run([
             SQLCMD, "-C", "-S", "localhost,14333", "-U", "sa", "-P", PASSWORD,
-            "-d", "master", "-b", "-r", "1", "-i", str(sql_path),
+            "-d", "master", "-b", "-r", "1", "-f", "65001", "-i", str(sql_path),
         ])
         return result.stdout
     finally:
@@ -229,6 +229,32 @@ WHERE ct.SYS_CHANGE_CONTEXT = 0x53514C53594E43;
         raise AssertionError("Expected sync-applied rows to retain the Change Tracking context.")
 
 
+def assert_text_value(database, id_, expected):
+    result = sqlcmd(
+        f"""
+SET NOCOUNT ON;
+SELECT CONVERT(varchar(max), CONVERT(varbinary(max), ArabicText), 2)
+FROM dbo.SyncItems
+WHERE Id = {id_};
+""",
+        database=database,
+    )
+    values = [line.strip().upper() for line in result.stdout.splitlines() if line.strip()]
+    expected_hex = expected.encode("utf-16-le").hex().upper()
+    if values != [expected_hex]:
+        raise AssertionError(
+            f"Unicode value mismatch in {database} for Id={id_}: expected {expected_hex}, got {values}"
+        )
+
+
+def expect_apply_failure(database, *, rows=None, deletes=None):
+    try:
+        apply(database, rows=rows, deletes=deletes)
+    except RuntimeError:
+        return
+    raise AssertionError("Expected SQL delta application to fail.")
+
+
 def run_scenarios():
     reset_databases()
 
@@ -237,11 +263,15 @@ def run_scenarios():
         apply(database, rows=[inserted])
     apply(DATABASES[0], rows=[inserted])
     assert_equal(*DATABASES)
+    for database in DATABASES:
+        assert_text_value(database, 2, inserted["ArabicText"])
 
     updated = row(2, "INSERT-2", "Updated on client 2", arabic="تحديث صحيح", quantity=9)
     for database in DATABASES:
         apply(database, rows=[updated])
     assert_equal(*DATABASES)
+    for database in DATABASES:
+        assert_text_value(database, 2, updated["ArabicText"])
 
     # SQL Change Tracking represents a primary-key edit as delete-old plus insert-new.
     key_changed = row(20, "INSERT-2", "Primary key changed", arabic="تغيير المفتاح", quantity=10)
@@ -251,6 +281,8 @@ def run_scenarios():
 
     for database in DATABASES:
         apply(database, deletes=[{"Id": 20}])
+        apply(database, deletes=[{"Id": 999999}])
+        apply(database)
     assert_equal(*DATABASES)
 
     winners = coalesce([
@@ -261,6 +293,32 @@ def run_scenarios():
         raise AssertionError(f"Conflict policy selected the wrong row: {winners}")
     for database in DATABASES:
         apply(database, rows=winners)
+    assert_equal(*DATABASES)
+
+    exact_unicode = "العربية 🌍 漢字"
+    typed_row = row(
+        31,
+        "TYPES",
+        None,
+        arabic=exact_unicode,
+        quantity=None,
+        amount="1234567890123.45",
+        changed_at="2026-07-16T23:59:59.987",
+        payload="0x00FF102030405060708090A0B0C0D0E0F0",
+    )
+    for database in DATABASES:
+        apply(database, rows=[typed_row])
+        assert_text_value(database, 31, exact_unicode)
+    assert_equal(*DATABASES)
+
+    multi_writer_rows = coalesce([
+        {**row(32, "WRITER-C1", "Written by c1"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
+        {**row(33, "WRITER-C2", "Written by c2"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
+    ])
+    if len(multi_writer_rows) != 2:
+        raise AssertionError(f"Independent writer rows were lost: {multi_writer_rows}")
+    for database in DATABASES:
+        apply(database, rows=multi_writer_rows)
     assert_equal(*DATABASES)
 
     # Client 3 is offline for two rounds, then receives the accumulated delta once.
@@ -288,14 +346,30 @@ def run_scenarios():
         apply(database, rows=large_rows[:25])
     assert_equal(*DATABASES)
 
+    before_failure = table_rows(DATABASES[0])
+    expect_apply_failure(
+        DATABASES[0],
+        rows=[row(5000, "REJECTED", "X" * 101)],
+    )
+    if table_rows(DATABASES[0]) != before_failure:
+        raise AssertionError("Rejected delta partially modified the target database.")
+    recovery_row = row(5001, "RECOVERY", "Valid row after rejected delta")
+    apply(DATABASES[0], rows=[recovery_row])
+    for database in DATABASES[1:]:
+        apply(database, rows=[recovery_row])
+    assert_equal(*DATABASES)
+
     assert_context_filtered(DATABASES[0])
     print(json.dumps({
         "ok": True,
         "clients": len(DATABASES),
         "scenarios": [
             "insert", "update", "primary-key-change", "delete",
-            "newest-commit-conflict", "unicode-arabic", "offline-catch-up",
-            "large-1200-row-batch", "idempotent-retry", "change-context",
+            "missing-delete", "empty-delta", "newest-commit-conflict",
+            "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
+            "independent-multi-writer", "offline-catch-up",
+            "large-1200-row-batch", "idempotent-retry",
+            "rejected-row-rollback-and-recovery", "change-context",
         ],
         "finalRowCount": len(table_rows(DATABASES[0])),
     }, ensure_ascii=False))

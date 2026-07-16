@@ -2233,6 +2233,25 @@ function sync_table_state_due_for_interval(tableState: map<json>? = null, interv
   return elapsedMinutes >= interval;
 }
 
+function sync_table_state_due_age_minutes(tableState: map<json>? = null, intervalMinutes: int? = null): int? {
+  const interval = clamp_auto_sync_interval(intervalMinutes);
+  if (tableState == null || tableState.lastSync == null) {
+    return 2147483647;
+  }
+  const lastSync = string.from(tableState.lastSync).trim();
+  if (lastSync.length == 0 || lastSync == '--') {
+    return 2147483647;
+  }
+  const elapsedMinutes = safe_date_diff_minutes_since(lastSync);
+  if (elapsedMinutes == null) {
+    return 2147483647;
+  }
+  if (elapsedMinutes < interval) {
+    return null;
+  }
+  return elapsedMinutes;
+}
+
 function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
   return due_periodic_sync_tables_for_agent_with_policies(agent);
 }
@@ -2247,16 +2266,41 @@ function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, poli
   if (maxCount != null && maxCount > 0) {
     dueTableLimit = maxCount;
   }
-  let dueTables = [];
+  let dueCandidates = [];
   for (const table of enabledTables) {
-    if (sync_table_state_due_for_interval(scheduler_agent_table_state(cachedTables, table), agent.autoSyncIntervalMinutes)) {
-      dueTables = dueTables.concat([table]);
-      if (dueTableLimit > 0 && dueTables.length >= dueTableLimit) {
-        return dueTables;
-      }
+    const ageMinutes = sync_table_state_due_age_minutes(
+      scheduler_agent_table_state(cachedTables, table),
+      agent.autoSyncIntervalMinutes
+    );
+    if (ageMinutes != null) {
+      dueCandidates = dueCandidates.concat([{ table, ageMinutes }]);
     }
   }
-  return unique_string_values(dueTables);
+
+  // Pick the oldest due tables first so a bounded scheduler wave cannot
+  // repeatedly select the first configured tables and starve later ones.
+  let dueTables = [];
+  for (const ignored of dueCandidates) {
+    if (dueTableLimit > 0 && dueTables.length >= dueTableLimit) {
+      break;
+    }
+    let selectedTable = '';
+    let selectedAgeMinutes = -1;
+    for (const candidate of dueCandidates) {
+      const candidateTable = string.from(candidate.table);
+      if (string_array_contains(dueTables, candidateTable)) {
+        continue;
+      }
+      if (candidate.ageMinutes > selectedAgeMinutes) {
+        selectedTable = candidateTable;
+        selectedAgeMinutes = candidate.ageMinutes;
+      }
+    }
+    if (selectedTable.length != 0) {
+      dueTables = dueTables.concat([selectedTable]);
+    }
+  }
+  return dueTables;
 }
 
 function sync_peer_agents_for_agent(agent: map<json>, allAgents: array<json>? = null): array<json> {

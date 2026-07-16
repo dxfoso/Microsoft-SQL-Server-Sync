@@ -310,8 +310,29 @@ class ControlPlaneContractsTests(unittest.TestCase):
         due_body = due_match.group("body")
         self.assertIn("let dueTableLimit = 0;", due_body)
         self.assertIn("if (maxCount != null && maxCount > 0) {", due_body)
+        self.assertIn("sync_table_state_due_age_minutes(", due_body)
+        self.assertIn("let dueCandidates = [];", due_body)
+        self.assertIn("let selectedAgeMinutes = -1;", due_body)
+        self.assertIn("if (candidate.ageMinutes > selectedAgeMinutes) {", due_body)
+        self.assertIn("string_array_contains(dueTables, candidateTable)", due_body)
         self.assertIn("if (dueTableLimit > 0 && dueTables.length >= dueTableLimit) {", due_body)
-        self.assertIn("return dueTables;", due_body)
+        self.assertNotIn(
+            "return dueTables;",
+            due_body.split("for (const table of enabledTables)", 1)[1].split(
+                "for (const ignored of dueCandidates)", 1
+            )[0],
+        )
+
+        age_match = re.search(
+            r"function sync_table_state_due_age_minutes\(tableState: map<json>\? = null, intervalMinutes: int\? = null\): int\? \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(age_match)
+        age_body = age_match.group("body")
+        self.assertIn("return 2147483647;", age_body)
+        self.assertIn("if (elapsedMinutes < interval) {", age_body)
+        self.assertIn("return elapsedMinutes;", age_body)
 
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")

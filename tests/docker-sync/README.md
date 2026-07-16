@@ -17,9 +17,14 @@ Covered scenarios:
 - alternate unique-key matching
 - newest-database-commit conflict selection
 - Arabic and Unicode values
+- exact Arabic, emoji, and CJK UTF-16 storage
+- null, binary, decimal, and datetime fidelity
+- empty deltas and deleting an already-missing row
+- independent changes from multiple writers
 - an offline client catching up from an accumulated delta
 - 1,200-row batched synchronization
 - idempotent retry
+- transaction rollback and recovery after a rejected row
 - Change Tracking origin context that prevents sync echo loops
 
 The harness is destructive only to its Docker volume. It does not connect to
