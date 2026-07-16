@@ -40,12 +40,12 @@ Use the launcher when a local stack restart is actually needed.
 ## Deployment Rule
 
 - This repository owns image builds and `deployment/chart`; a source push or CI run alone is not a deployment.
-- Use the Cloud repository deployment contract v1 from `https://cloud.divclouds.com/repositories/ebbd5457-3253-46e0-b67d-5668ca1e5225/deployments`. Never commit its scoped token.
-- Load the scoped credential only from `CLOUD_DEPLOYMENT_TOKEN` in the process environment, a CI secret, or ignored `.cloud.env`. Do not read credentials from `deploy.md`, `deployment/chart/.env`, committed URLs, or previous chat messages. A `401` requires replacing the external secret with newly created v1 access; existing v1 plaintext cannot be recovered.
-- The v1 target is server `velvet-leaf-1` (`75.119.136.143`), namespace `velvet-sql-server-sync`, release `microsoft-sql-server-sync-velvet-sql-server-sync`, chart `deployment/chart`, node `velvet-leaf-1`, domain `sync.velvet-leaf.com`, and TLS secret `sync-velvet-leaf-com-letsencrypt-tls`.
-- Load both the v1 environment contract and chart contract before deploying. Cloud owns target variables and named secret references; this repository must consume them through Helm without copying secret values into source.
-- Build and push immutable `backend` and `frontend` images for the exact pushed commit. Pass those full image references as `runtimeValuesYaml` to `api_start_deployment_v1`.
-- Start exactly one v1 session, then poll `api_get_deployment_session_v1` and the scoped namespace-resources link. Do not use the removed v13 `latest-debug` deployment trigger and do not start duplicate sessions while one is running.
+- Deploy directly through the configured SSH alias `velvet-leaf-1` (`dxfoso@75.119.136.143`, identity file `C:\Users\adnan\.ssh\velvet-leaf-1`).
+- Do not use Cloud deployment APIs, Cloud deployment tokens, action-server deployment sessions, deployment UI triggers, or old Cloud runbooks.
+- Work only in namespace `velvet-sql-server-sync`. Every remote `kubectl` command must include `-n velvet-sql-server-sync`; never use or modify workloads in another namespace.
+- Build and push immutable `backend` and `frontend` images for the exact pushed commit from the SSH target using `sudo docker`. Never deploy mutable tags such as `latest` or `dev`.
+- Update only `deployment/sql-sync-back` and `deployment/sql-sync-front` to the exact immutable image references, then wait for both rollouts to complete.
+- Preserve the live frontend client-update files when building a new frontend image. The deployed `/client/latest.json`, differential package, updater, and portable ZIP must remain available.
 - Treat Helm lint/template failure, cluster-scoped resources, wrong-node rendering, registry pulls, workload readiness, ingress/DNS/TLS, health, or any nonzero `compile_errors` as deployment failure.
 - After success, verify `https://sync.velvet-leaf.com/admin/health` reports the pushed commit with `ready=true` and `compile_errors=0`, verify the public web app, and repeat the checks after a short stability wait.
 - Preserve `task-status.json`, `task-results.json`, `task-step-results.json`, and a stable text summary for every repository test/build task, with supported trigger metadata.

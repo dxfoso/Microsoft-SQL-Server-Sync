@@ -1,107 +1,56 @@
-# Deployment Runbook v1
+# Direct SSH Deployment
 
-This repository owns its immutable image builds and `deployment/chart`. Cloud
-supplies only the target environment and access scoped to this repository,
-server, and namespace.
+Deploy only through the configured SSH alias:
+
+```sshconfig
+Host velvet-leaf-1
+  HostName 75.119.136.143
+  User dxfoso
+  IdentityFile C:\Users\adnan\.ssh\velvet-leaf-1
+```
 
 ## Target
 
-- Repository ID: `ebbd5457-3253-46e0-b67d-5668ca1e5225`
-- Server ID: `5d40f9d2-c3d5-4bc3-88d8-1de2d9f7a002`
 - Namespace: `velvet-sql-server-sync`
-- Release: `microsoft-sql-server-sync-velvet-sql-server-sync`
-- Chart: `deployment/chart`
+- Backend deployment: `sql-sync-back`
+- Frontend deployment: `sql-sync-front`
 - Node: `velvet-leaf-1`
-- Domain: `sync.velvet-leaf.com`
+- Public URL: `https://sync.velvet-leaf.com`
+- Health URL: `https://sync.velvet-leaf.com/admin/health`
+- Registry: `registry.cloud.divclouds.com/microsoft-sql-server-sync`
 
-## Authorization
+## Release
 
-Load the one-time-issued v1 credential from `CLOUD_DEPLOYMENT_TOKEN`. Store it
-only in a process environment, CI secret, or ignored `.cloud.env`; never put it
-in this runbook, `AGENTS.md`, chart values, a URL committed to Git, or task
-artifacts.
+1. Push the release commit and record its full SHA.
+2. Run repository tests and chart validation.
+3. Stage the exact commit source on `velvet-leaf-1`.
+4. Preserve the live client-update files in the frontend build context.
+5. Build and push immutable images using `sudo docker`:
 
-If the variable is missing or receives `401`, create replacement deployment
-access on the Cloud deployment page and replace the external secret. Existing
-v1 token plaintext cannot be recovered because Cloud stores only its hash.
-
-```powershell
-if ([string]::IsNullOrWhiteSpace($env:CLOUD_DEPLOYMENT_TOKEN)) {
-  throw 'CLOUD_DEPLOYMENT_TOKEN is required'
-}
+```text
+registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:<commit>
+registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:<commit>
 ```
 
-## Contracts
+6. Update only the scoped workloads:
 
 ```powershell
-$repositoryId = 'ebbd5457-3253-46e0-b67d-5668ca1e5225'
-$serverId = '5d40f9d2-c3d5-4bc3-88d8-1de2d9f7a002'
-$namespace = 'velvet-sql-server-sync'
-$base = 'https://cloud.divclouds.com'
-$token = [uri]::EscapeDataString($env:CLOUD_DEPLOYMENT_TOKEN)
-
-$environment = Invoke-RestMethod -Method Get -Uri (
-  "$base/call/repositories/$repositoryId/deployment-v1/environment" +
-  "?namespaceName=$namespace&authToken=$token"
-)
-$chart = Invoke-RestMethod -Method Get -Uri (
-  "$base/call/repositories/$repositoryId/deployment-v1/chart-contract" +
-  "?namespaceName=$namespace&authToken=$token"
-)
+ssh velvet-leaf-1 "kubectl set image deployment/sql-sync-back backend=<backend-image> -n velvet-sql-server-sync"
+ssh velvet-leaf-1 "kubectl set image deployment/sql-sync-front frontend=<frontend-image> -n velvet-sql-server-sync"
+ssh velvet-leaf-1 "kubectl rollout status deployment/sql-sync-back -n velvet-sql-server-sync --timeout=10m"
+ssh velvet-leaf-1 "kubectl rollout status deployment/sql-sync-front -n velvet-sql-server-sync --timeout=10m"
 ```
 
-Build and push immutable backend and frontend images for the exact pushed
-commit. Pass their complete references as `runtimeValuesYaml`.
+## Verification
 
-## Start and monitor
+Require all of the following before reporting success:
 
-```powershell
-$commit = (git rev-parse HEAD).Trim()
-$runtimeValuesYaml = @"
-backend:
-  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:$commit
-frontend:
-  image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:$commit
-"@
+- Both deployments and pods are ready on `velvet-leaf-1`.
+- Both workloads use the exact immutable release commit.
+- Registry pulls and rollouts have no errors.
+- `/`, `/clients`, and `/clients/c1` return HTTP 200 without 5xx responses.
+- `/admin/health` reports the exact release commit, `ready=true`, and `compile_errors=0`.
+- `/client/latest.json` and the current update artifacts remain readable.
+- Repeat public health, page, workload, and restart-count checks after at least one minute.
 
-$startBody = @{
-  name = 'api_start_deployment_v1'
-  args = @{
-    repositoryId = $repositoryId
-    namespaceName = $namespace
-    commitHash = $commit
-    runtimeValuesYaml = $runtimeValuesYaml
-    authToken = $env:CLOUD_DEPLOYMENT_TOKEN
-  }
-} | ConvertTo-Json -Depth 6
-$session = Invoke-RestMethod -Method Post -Uri "$base/call" `
-  -ContentType 'application/json' -Body $startBody
-
-do {
-  Start-Sleep -Seconds 60
-  $pollBody = @{
-    name = 'api_get_deployment_session_v1'
-    args = @{
-      repositoryId = $repositoryId
-      namespaceName = $namespace
-      sessionId = $session.id
-      authToken = $env:CLOUD_DEPLOYMENT_TOKEN
-    }
-  } | ConvertTo-Json -Depth 5
-  $session = Invoke-RestMethod -Method Post -Uri "$base/call" `
-    -ContentType 'application/json' -Body $pollBody
-} while ($session.status -eq 'running')
-
-if ($session.status -ne 'success') {
-  throw "Deployment failed: $($session.errorMessage)"
-}
-```
-
-Verify the scoped namespace-resources endpoint, exact workload images and node,
-`https://sync.velvet-leaf.com/`, and
-`https://sync.velvet-leaf.com/admin/health`. Success requires `ready=true`,
-`compile_errors=0`, and a matching image commit. Repeat the public checks after
-a short stability wait.
-
-Do not use `direct-instructions`, `latest-redeploy`, `latest-debug`, or any
-token copied from old repository files.
+Do not use Cloud deployment APIs, Cloud deployment tokens, action-server deployment sessions, deployment UI triggers, or cross-namespace Kubernetes commands.
