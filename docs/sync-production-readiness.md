@@ -114,6 +114,12 @@ pending tables exist, scheduler candidate selection is now limited to that
 pending list. Normal periodic selection resumes only after the manual list is
 empty.
 
+**Final live evidence (2026-07-16):** A clean Sync All on online c1 and c2
+created exactly 44 jobs for 11 enabled tables. Every table had one upload and
+one download job per client, the bounded wave sizes were `4/4/3`, all 44 jobs
+completed, no table repeated, no job failed, and no residual changed rows
+remained.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,
