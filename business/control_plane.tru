@@ -188,6 +188,7 @@ class DownloadSession {
 class PeriodicSyncState {
   field ownerUserId: string min=0 max=64
   field lastCheckedAt: datetime
+  field manualPendingTables: array<json>?
   field updatedAt: datetime
 }
 
@@ -2370,7 +2371,8 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   // Periodic sync uses the same multi-writer barrier as manual Sync All:
   // every online client uploads first, then every client downloads the merge.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
-  let dueTables = [];
+  const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
+  let dueTables = manualPendingTables;
   for (const agent of ownerAgents) {
     const cache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
     const agentTables = due_periodic_sync_tables_for_agent_with_policies(
@@ -2383,6 +2385,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   }
 
   let createdJobs = [];
+  let queuedTables = [];
   let queuedTableCount = 0;
   for (const table of dueTables) {
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
@@ -2409,8 +2412,32 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     const jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
     if (jobs.length > 0) {
       createdJobs = createdJobs.concat(jobs);
+      queuedTables = queuedTables.concat([table]);
       queuedTableCount += 1;
     }
+  }
+  if (manualPendingTables.length > 0) {
+    let remainingManualTables = [];
+    for (const table of manualPendingTables) {
+      if (string_array_contains(queuedTables, table)) {
+        continue;
+      }
+      let stillEnabled = false;
+      for (const agent of ownerAgents) {
+        const enabledTables = unique_string_values(
+          enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+            enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+          )
+        );
+        if (string_array_contains(enabledTables, table)) {
+          stillEnabled = true;
+        }
+      }
+      if (stillEnabled) {
+        remainingManualTables = remainingManualTables.concat([table]);
+      }
+    }
+    set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);
   }
   return createdJobs;
 }
@@ -2467,6 +2494,41 @@ function claim_periodic_sync_scheduler_for_owner(ownerUserId: string? = null): b
     updatedAt: now_iso()
   });
   return true;
+}
+
+function manual_sync_pending_tables_for_owner(ownerUserId: string? = null): array<string> {
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing == null || existing.manualPendingTables == null) {
+    return [];
+  }
+  let tables = [];
+  for (const value of existing.manualPendingTables) {
+    const table = string.from(value).trim();
+    if (table.length != 0) {
+      tables = tables.concat([table]);
+    }
+  }
+  return unique_string_values(tables);
+}
+
+function set_manual_sync_pending_tables_for_owner(ownerUserId: string? = null, tables: array<string>? = null): void {
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  const pendingTables = unique_string_values(tables ?? []);
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing != null) {
+    db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+      manualPendingTables: pendingTables,
+      updatedAt: now_iso()
+    });
+    return;
+  }
+  db.insert(PeriodicSyncState, {
+    ownerUserId: normalizedOwnerUserId,
+    lastCheckedAt: now_iso(),
+    manualPendingTables: pendingTables,
+    updatedAt: now_iso()
+  });
 }
 
 function list_completed_scheduler_job_rows(ownerUserId: string? = null): array<json> {
@@ -4053,6 +4115,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       );
     }
     enabledTables = unique_string_values(enabledTables);
+    let ownerDeferredTables = [];
     const activeTableCaches = onlineAgents.map((agent) => ({
       clientName: agent.clientName,
       tables: active_job_tables_for_client(string.from(agent.clientName))
@@ -4064,9 +4127,11 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       }
     }
     if (ownerHasActiveJobs) {
+      ownerDeferredTables = enabledTables;
       deferredTables = deferredTables.concat(
         enabledTables.map((table) => string.concat(ownerUserId, '::', table))
       );
+      set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);
       continue;
     }
     // Keep a manual all-sync bounded while allowing the automatic scheduler
@@ -4074,6 +4139,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     let queuedTablesForOwner = 0;
     for (const table of enabledTables) {
       if (queuedTablesForOwner >= periodic_sync_scheduler_table_limit()) {
+        ownerDeferredTables = ownerDeferredTables.concat([table]);
         deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
         continue;
       }
@@ -4111,6 +4177,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         queuedTablesForOwner += 1;
       }
     }
+    set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);
   }
   return {
     ok: true,
@@ -4123,7 +4190,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     skippedSourceResolutionTables: [],
     deferredTables: unique_string_values(deferredTables),
     message: deferredTables.length > 0
-      ? 'Sync started for the first eligible table batch; remaining tables are queued for the automatic scheduler.'
+      ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
       : 'Sync queued for all eligible tables.'
   };
 }

@@ -286,6 +286,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (cache.tables.length > 0)", body)
         self.assertIn("if (ownerHasActiveJobs) {", body)
         self.assertIn("deferredTables = deferredTables.concat(", body)
+        self.assertIn("let ownerDeferredTables = [];", body)
+        self.assertIn(
+            "set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);",
+            body,
+        )
 
         preferred_source_match = re.search(
             r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null, completedJobRows: array<json>\? = null\): string \{(?P<body>.*?)\n\}",
@@ -333,6 +338,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("return 2147483647;", age_body)
         self.assertIn("if (elapsedMinutes < interval) {", age_body)
         self.assertIn("return elapsedMinutes;", age_body)
+
+        owner_scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        self.assertIn(
+            "const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);",
+            owner_scheduler,
+        )
+        self.assertIn("let dueTables = manualPendingTables;", owner_scheduler)
+        self.assertIn("queuedTables = queuedTables.concat([table]);", owner_scheduler)
+        self.assertIn(
+            "set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);",
+            owner_scheduler,
+        )
 
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
@@ -637,7 +656,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (string_array_contains(agentTables, table))", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("let queuedTablesForOwner = 0;", source)
-        self.assertIn("remaining tables are queued for the automatic scheduler", source)
+        self.assertIn(
+            "remaining manual tables will drain in bounded scheduler waves",
+            source,
+        )
         self.assertIn("Periodic sync uses the same multi-writer barrier as manual Sync All", source)
         self.assertIn("every online client uploads first, then every client downloads the merge", source)
         self.assertIn("skippedOfflineClients", source)

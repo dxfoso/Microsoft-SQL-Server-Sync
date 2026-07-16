@@ -1053,6 +1053,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function claim_periodic_sync_scheduler_for_owner", control_plane)
         self.assertIn("function auto_sync_tick", control_plane)
         self.assertIn("class PeriodicSyncState", control_plane)
+        self.assertIn("field manualPendingTables: array<json>?", control_plane)
+        self.assertIn("function manual_sync_pending_tables_for_owner(", control_plane)
+        self.assertIn("function set_manual_sync_pending_tables_for_owner(", control_plane)
         self.assertNotIn("queue_due_periodic_sync_jobs_for_owner", heartbeat_body)
         self.assertIn("const allAgents = list_scheduler_agent_rows();", control_plane)
         self.assertIn(

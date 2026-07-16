@@ -2482,6 +2482,9 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         state = {
             "jobs": [
                 {"id": "1", "clientName": "c1", "table": "db::a", "direction": "upload", "status": "running", "progress": 40, "message": "Working", "error": None},
+                {"id": "1a", "clientName": "c1", "table": "db::a", "direction": "download", "status": "waiting", "progress": 0, "message": "Waiting", "error": None},
+                {"id": "1b", "clientName": "c1", "table": "db::a", "direction": "upload", "status": "snapshotting", "progress": 20, "message": "Reading", "error": None},
+                {"id": "1c", "clientName": "c1", "table": "db::a", "direction": "download", "status": "applying", "progress": 80, "message": "Applying", "error": None},
                 {"id": "2", "clientName": "c2", "table": "db::b", "direction": "download", "status": "failed", "progress": 10, "message": "Failed", "error": "boom"},
                 {"id": "3", "clientName": "c9", "table": "db::c", "direction": "download", "status": "completed", "progress": 100, "message": "Done", "error": None},
             ]
@@ -2489,12 +2492,12 @@ class LiveVerifierScriptsTests(unittest.TestCase):
 
         summary = verifier.summarize_jobs_for_clients(state, ["c1", "c2"])
 
-        self.assertEqual(summary["visibleCount"], 2)
-        self.assertEqual(len(summary["active"]), 1)
+        self.assertEqual(summary["visibleCount"], 5)
+        self.assertEqual(len(summary["active"]), 4)
         self.assertEqual(summary["active"][0]["id"], "1")
         self.assertEqual(len(summary["failed"]), 1)
         self.assertEqual(summary["failed"][0]["id"], "2")
-        self.assertEqual(len(summary["visible"]), 2)
+        self.assertEqual(len(summary["visible"]), 5)
 
     def test_sync_state_summarize_jobs_keeps_full_visible_history_for_unresolved_checks(self):
         verifier = load_script_module(

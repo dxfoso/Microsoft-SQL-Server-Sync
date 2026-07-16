@@ -191,7 +191,15 @@ def summarize_jobs_for_clients(state: dict, client_names: list[str]) -> dict:
             "updatedAt": str(job.get("updatedAt") or "").strip(),
         }
         visible.append(summary)
-        if status in ("queued", "running", "uploading", "downloading"):
+        if status in (
+            "queued",
+            "waiting",
+            "running",
+            "snapshotting",
+            "uploading",
+            "downloading",
+            "applying",
+        ):
             active.append(summary)
         if status in ("failed", "error"):
             failed.append(summary)

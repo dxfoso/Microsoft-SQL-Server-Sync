@@ -83,6 +83,27 @@ parse the BOM as an unexpected character.
 **Fix:** Generated SQL files are now BOM-free UTF-8 while `sqlcmd` explicitly
 uses code page 65001.
 
+### Manual Sync All deferred-table delay
+
+**Finding:** Manual Sync All bounded the first wave correctly, but deferred
+tables were handed back to the periodic scheduler without preserving the manual
+request. Recently synced tables then waited for the normal auto-sync interval,
+so one manual operation could take roughly ten minutes longer than necessary.
+
+**Fix:** Deferred manual table names are persisted per owner in
+`PeriodicSyncState`. After each bounded upload/download wave finishes, the
+scheduler prioritizes the next manual tables without applying the periodic
+interval. Client work remains sequential and bounded.
+
+### Live verifier missed active apply phases
+
+**Finding:** `verify_live_sync_state.py` did not classify `waiting`,
+`snapshotting`, or `applying` jobs as active, allowing an incomplete operation
+to appear terminal.
+
+**Fix:** The verifier now uses the complete production active-status set and
+has regression coverage for all three phases.
+
 ### Previously resolved sync defects
 
 - Existing rows are reconciled by primary or alternate unique identity instead
