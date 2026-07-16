@@ -256,6 +256,8 @@ void main() {
     expect(sql, contains('INNER JOIN #delete_rows AS source'));
     expect(sql, contains('target.[Id] = source.[Id]'));
     expect(sql, contains('__SQL_SYNC_DELETED__='));
+    expect(sql, contains('RAISERROR(@SqlSyncDeleteErrorMessage, 16, 1)'));
+    expect(sql, isNot(contains('THROW;')));
     expect(sql, isNot(contains('[Value]')));
     expect(sql, isNot(contains('WHERE NOT EXISTS')));
   });

@@ -127,6 +127,18 @@ normalization now treats stale `snapshotting` and `applying` labels like the
 other active phases when no matching active job exists, returning `Completed`
 without changing job history.
 
+### SQL Server compatibility blocked explicit deletes
+
+**Finding:** Live c1 deletion tombstones reached c2, but every generated delete
+statement was quarantined because the target SQL Server rejected `THROW` with
+`Incorrect syntax near 'THROW'`. Sync jobs still completed because row-level
+isolation quarantined the failed deletes.
+
+**Fix:** Explicit delta-delete SQL now captures `ERROR_MESSAGE()` and rethrows
+with `RAISERROR`, matching the compatibility-safe pattern already used by the
+staged merge path. Contract coverage requires `RAISERROR` and rejects `THROW`
+in generated delete SQL.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,

@@ -399,10 +399,11 @@ BEGIN TRY
   SELECT N'__SQL_SYNC_DELETED__=' + CONVERT(NVARCHAR(20), @SqlSyncDeletedRows);
 END TRY
 BEGIN CATCH
+  DECLARE @SqlSyncDeleteErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
   IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
   IF OBJECT_ID(N'tempdb..#delete_rows', N'U') IS NOT NULL
     DROP TABLE #delete_rows;
-  THROW;
+  RAISERROR(@SqlSyncDeleteErrorMessage, 16, 1);
 END CATCH;
 ''';
 }

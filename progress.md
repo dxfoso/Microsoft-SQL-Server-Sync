@@ -10,3 +10,5 @@
 - Live post-deploy Sync All processed all 11 enabled tables in three bounded waves: 44/44 jobs completed, zero failed, and no residual deltas.
 - Final clean Sync All passed: 44/44 jobs completed for 11 tables, exactly four jobs per table, bounded waves `4/4/3`, zero failures, no repeated table, and no residual changed rows.
 - Post-sync stale active-phase table labels are normalized to `Completed`; the live verifier now passes with 22/22 enabled client-table states completed and no active or unresolved failed jobs.
+- Live deletion diagnosis found c1 tombstones were uploaded but quarantined on c2 because its SQL Server rejects `THROW`; client `1.0.154+158` replaces it with compatible `RAISERROR`. Publication and live deletion retest are pending.
+- Full verification local stages passed (250 Python contracts and 104 Flutter tests); its pre-deploy live stage used stale expected commit/version values and was not a valid current-release check.
