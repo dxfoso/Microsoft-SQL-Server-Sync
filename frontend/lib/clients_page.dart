@@ -9,7 +9,15 @@ import 'browser_bridge.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
 
-enum _ClientSortField { name, status, database, tables, rows, heartbeat }
+enum _ClientSortField {
+  name,
+  status,
+  database,
+  tables,
+  rows,
+  lastSync,
+  heartbeat,
+}
 
 enum _ClientDetailView { logs, tables }
 
@@ -182,10 +190,12 @@ class _SyncLogBatch {
 class ClientsPage extends StatefulWidget {
   const ClientsPage({
     super.key,
+    required this.authenticatedUser,
     required this.authToken,
     required this.onLogout,
   });
 
+  final AuthenticatedUser authenticatedUser;
   final String authToken;
   final VoidCallback onLogout;
 
@@ -205,6 +215,10 @@ class _ClientsPageState extends State<ClientsPage> {
   String? _error;
   bool _loading = true;
   bool _refreshing = false;
+  bool _bulkSyncBusy = false;
+  bool _bulkMinimizeBusy = false;
+  bool _bulkUpdateBusy = false;
+  bool _bulkLogsBusy = false;
   String _filter = '';
   String _logFilter = '';
   String _logDirection = 'all';
@@ -617,6 +631,10 @@ class _ClientsPageState extends State<ClientsPage> {
             ],
           ),
           const SizedBox(height: 10),
+          if (widget.authenticatedUser.canManageUsers) ...[
+            _buildBulkActions(),
+            const SizedBox(height: 10),
+          ],
           _buildClientFilters(),
           const SizedBox(height: 10),
           if (clients.isEmpty)
@@ -647,6 +665,7 @@ class _ClientsPageState extends State<ClientsPage> {
                           DataColumn(label: Text('Changed rows')),
                           DataColumn(label: Text('Rows uploaded')),
                           DataColumn(label: Text('Rows downloaded')),
+                          DataColumn(label: Text('Last synced')),
                           DataColumn(label: Text('Last heartbeat')),
                           DataColumn(label: Text('Actions')),
                         ],
@@ -698,6 +717,65 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
+  Widget _buildBulkActions() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        FilledButton.icon(
+          onPressed:
+              _bulkSyncBusy
+                  ? null
+                  : () => unawaited(_triggerSyncAllEnabledNow()),
+          icon: _actionIcon(busy: _bulkSyncBusy, icon: Icons.sync_rounded),
+          label: const Text('Sync All'),
+        ),
+        FilledButton.tonalIcon(
+          onPressed:
+              _bulkMinimizeBusy
+                  ? null
+                  : () => unawaited(_requestAllAgentWindowMinimize()),
+          icon: _actionIcon(
+            busy: _bulkMinimizeBusy,
+            icon: Icons.minimize_rounded,
+          ),
+          label: const Text('Minimize All'),
+        ),
+        FilledButton.tonalIcon(
+          onPressed:
+              _bulkUpdateBusy
+                  ? null
+                  : () => unawaited(_requestAllAgentClientUpdates()),
+          icon: _actionIcon(
+            busy: _bulkUpdateBusy,
+            icon: Icons.system_update_alt_rounded,
+          ),
+          label: const Text('Update All'),
+        ),
+        FilledButton.tonalIcon(
+          onPressed:
+              _bulkLogsBusy
+                  ? null
+                  : () => unawaited(_requestAllAgentDiagnostics()),
+          icon: _actionIcon(
+            busy: _bulkLogsBusy,
+            icon: Icons.receipt_long_rounded,
+          ),
+          label: const Text('Request All Logs'),
+        ),
+      ],
+    );
+  }
+
+  Widget _actionIcon({required bool busy, required IconData icon}) {
+    if (!busy) return Icon(icon, size: 17);
+    return const SizedBox(
+      width: 16,
+      height: 16,
+      child: CircularProgressIndicator(strokeWidth: 2),
+    );
+  }
+
   Widget _buildSortMenu() {
     return DropdownButtonFormField<_ClientSortField>(
       initialValue: _sortField,
@@ -721,6 +799,10 @@ class _ClientsPageState extends State<ClientsPage> {
         DropdownMenuItem(
           value: _ClientSortField.rows,
           child: Text('Row count'),
+        ),
+        DropdownMenuItem(
+          value: _ClientSortField.lastSync,
+          child: Text('Last synced'),
         ),
         DropdownMenuItem(
           value: _ClientSortField.heartbeat,
@@ -781,6 +863,10 @@ class _ClientsPageState extends State<ClientsPage> {
           comparison = (_changedRows(_jobsFor(left)) ?? -1).compareTo(
             _changedRows(_jobsFor(right)) ?? -1,
           );
+        case _ClientSortField.lastSync:
+          comparison = _timestamp(
+            _latestClientSync(left),
+          ).compareTo(_timestamp(_latestClientSync(right)));
         case _ClientSortField.heartbeat:
           comparison = _timestamp(
             left.lastHeartbeat,
@@ -821,6 +907,7 @@ class _ClientsPageState extends State<ClientsPage> {
         DataCell(Text(_changedRowsLabel(jobs))),
         DataCell(Text(_changedRowsLabel(jobs, direction: 'upload'))),
         DataCell(Text(_changedRowsLabel(jobs, direction: 'download'))),
+        DataCell(Text(_formatTimestamp(_latestClientSync(agent)))),
         DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
         DataCell(
           TextButton.icon(
@@ -1900,6 +1987,124 @@ class _ClientsPageState extends State<ClientsPage> {
 
   DateTime _timestamp(String value) =>
       DateTime.tryParse(value) ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+  String _latestClientSync(AdminAgent agent) {
+    var latest = '';
+    var latestTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
+    for (final table in agent.tables) {
+      final value = table.lastSync.trim();
+      final timestamp = _timestamp(value);
+      if (value.isNotEmpty && timestamp.isAfter(latestTimestamp)) {
+        latest = value;
+        latestTimestamp = timestamp;
+      }
+    }
+    return latest;
+  }
+
+  Future<void> _triggerSyncAllEnabledNow() async {
+    if (_bulkSyncBusy) return;
+    setState(() => _bulkSyncBusy = true);
+    try {
+      final result = await _api.triggerSyncAllEnabledNow();
+      if (!mounted) return;
+      final details = <String>[
+        'Queued ${result.queuedJobCount} jobs across ${result.queuedClientCount} clients.',
+      ];
+      if (result.skippedOfflineClients.isNotEmpty) {
+        details.add('Offline: ${result.skippedOfflineClients.join(', ')}.');
+      }
+      if (result.skippedBusyTables.isNotEmpty) {
+        details.add('Busy tables skipped: ${result.skippedBusyTables.length}.');
+      }
+      _showActionMessage(details.join(' '));
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) setState(() => _bulkSyncBusy = false);
+    }
+  }
+
+  Future<void> _requestAllAgentWindowMinimize() async {
+    if (_bulkMinimizeBusy) return;
+    setState(() => _bulkMinimizeBusy = true);
+    try {
+      final result = await _api.requestAllAgentWindowActions();
+      if (!mounted) return;
+      _showActionMessage(
+        'Minimize requested for ${result.requestedClientCount} online client(s).',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) setState(() => _bulkMinimizeBusy = false);
+    }
+  }
+
+  Future<void> _requestAllAgentClientUpdates() async {
+    if (_bulkUpdateBusy) return;
+    setState(() => _bulkUpdateBusy = true);
+    try {
+      final result = await _api.requestAllAgentClientUpdates();
+      if (!mounted) return;
+      _showActionMessage(
+        'Update requested for ${result.requestedClientCount} online client(s).',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) setState(() => _bulkUpdateBusy = false);
+    }
+  }
+
+  Future<void> _requestAllAgentDiagnostics() async {
+    if (_bulkLogsBusy) return;
+    setState(() => _bulkLogsBusy = true);
+    try {
+      final clientNames = (_state?.agents ?? const <AdminAgent>[])
+          .where((agent) => agent.isOnline)
+          .map((agent) => agent.clientName.trim())
+          .where((name) => name.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      var requestedCount = 0;
+      var requestId = '';
+      for (var index = 0; index < clientNames.length; index += 5) {
+        final result = await _api.requestAgentDiagnosticsBatch(
+          clientNames: clientNames.skip(index).take(5).toList(growable: false),
+          requestId: requestId,
+        );
+        if (requestId.isEmpty) requestId = result.requestId;
+        requestedCount += result.requestedClientCount;
+      }
+      if (!mounted) return;
+      _showActionMessage(
+        requestedCount == 0
+            ? 'No online clients were available for log collection.'
+            : 'Requested logs from $requestedCount online client(s).',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) setState(() => _bulkLogsBusy = false);
+    }
+  }
+
+  void _showActionMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showActionError(Object error) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
+  }
 
   int _rowCount(AdminAgent agent) =>
       agent.tables.fold<int>(0, (sum, table) => sum + table.rowCount);

@@ -105,6 +105,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   List<String> _bulkDiagnosticsCompletedClientNames = const <String>[];
   List<String> _bulkDiagnosticsPendingClientNames = const <String>[];
   bool _bulkDiagnosticsWaitingForUploads = false;
+  bool get _showBulkActionsInLegacyDashboard => false;
   @override
   void initState() {
     super.initState();
@@ -7208,7 +7209,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         label: const Text('Reset Server Data'),
                       ),
             ),
-          if (widget.authenticatedUser.canManageUsers)
+          if (_showBulkActionsInLegacyDashboard &&
+              widget.authenticatedUser.canManageUsers)
             Padding(
               padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
               child:
@@ -7250,7 +7252,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         label: const Text('Minimize All Clients'),
                       ),
             ),
-          if (widget.authenticatedUser.canManageUsers)
+          if (_showBulkActionsInLegacyDashboard &&
+              widget.authenticatedUser.canManageUsers)
             Padding(
               padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
               child:
@@ -7296,7 +7299,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         label: const Text('Update All Clients'),
                       ),
             ),
-          if (widget.authenticatedUser.canManageUsers)
+          if (_showBulkActionsInLegacyDashboard &&
+              widget.authenticatedUser.canManageUsers)
             Padding(
               padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
               child:
@@ -7340,7 +7344,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         label: const Text('Request All Logs'),
                       ),
             ),
-          if (widget.authenticatedUser.canManageUsers)
+          if (_showBulkActionsInLegacyDashboard &&
+              widget.authenticatedUser.canManageUsers)
             Padding(
               padding: EdgeInsets.only(right: compactAppBar ? 6 : 8),
               child:

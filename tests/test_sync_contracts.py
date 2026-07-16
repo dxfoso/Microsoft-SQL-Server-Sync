@@ -158,6 +158,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_web_workspace_has_dashboard_and_client_log_navigation(self):
         app = read_text("frontend/lib/app.dart")
         clients_page = read_text("frontend/lib/clients_page.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
         web_models = read_text("frontend/lib/models.dart")
 
         self.assertIn("class _AdminWorkspace extends StatefulWidget", app)
@@ -198,6 +199,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("height: 40", clients_page)
         self.assertIn("_messageContainsReportedRowCount(message)", clients_page)
         self.assertIn("'Sync completed.'", clients_page)
+        self.assertIn("required this.authenticatedUser,", clients_page)
+        self.assertIn("widget.authenticatedUser.canManageUsers", clients_page)
+        self.assertIn("label: const Text('Sync All')", clients_page)
+        self.assertIn("label: const Text('Minimize All')", clients_page)
+        self.assertIn("label: const Text('Update All')", clients_page)
+        self.assertIn("label: const Text('Request All Logs')", clients_page)
+        self.assertIn("DataColumn(label: Text('Last synced'))", clients_page)
+        self.assertIn("_ClientSortField.lastSync", clients_page)
+        self.assertIn("_latestClientSync(agent)", clients_page)
+        self.assertIn("_showBulkActionsInLegacyDashboard => false", dashboard)
 
     def test_control_plane_exposes_snapshot_sync_jobs(self):
         control_plane = read_text("business/control_plane.tru")

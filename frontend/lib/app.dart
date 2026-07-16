@@ -479,6 +479,7 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
     if (_selectedIndex == 1) {
       return ClientsPage(
         key: ValueKey('clients:${Uri.base.path}'),
+        authenticatedUser: widget.authenticatedUser,
         authToken: widget.authToken,
         onLogout: widget.onLogout,
       );
