@@ -280,6 +280,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("return [];", owner_body)
         self.assertIn("const agentTables = due_periodic_sync_tables_for_agent_with_policies(", owner_body)
 
+        normalize_body = source.split(
+            "function normalize_agent_table_payload_state(", 1
+        )[1].split("function normalize_agent_tables_payload(", 1)[0]
+        self.assertIn("status == 'snapshotting'", normalize_body)
+        self.assertIn("status == 'applying'", normalize_body)
+
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
         body = source.split("function jobs_create_all_enabled(", 1)[1].split(

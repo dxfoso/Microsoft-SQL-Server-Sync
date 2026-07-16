@@ -9,3 +9,4 @@
 - Live c2-to-c1 delta proof completed on 2026-07-16: c2 uploaded the `pt000` delta and c1 applied one changed row.
 - Live post-deploy Sync All processed all 11 enabled tables in three bounded waves: 44/44 jobs completed, zero failed, and no residual deltas.
 - Final clean Sync All passed: 44/44 jobs completed for 11 tables, exactly four jobs per table, bounded waves `4/4/3`, zero failures, no repeated table, and no residual changed rows.
+- Post-sync stale `Applying` table labels are normalized to `Completed` when no matching active job exists; final verifier deployment is pending.

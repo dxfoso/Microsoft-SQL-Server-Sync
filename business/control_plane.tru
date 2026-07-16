@@ -2114,7 +2114,8 @@ function normalize_agent_table_payload_state(agent: map<json>, tableState: map<j
 
   const status = string.from(tableState.status ?? '').trim().toLowerCase();
   if (tableState.enabled == true
-    && (status == 'queued' || status == 'waiting' || status == 'running' || status == 'uploading' || status == 'downloading')) {
+    && (status == 'queued' || status == 'waiting' || status == 'running' || status == 'snapshotting'
+      || status == 'uploading' || status == 'downloading' || status == 'applying')) {
     return {
       table: tableState.table,
       enabled: tableState.enabled,

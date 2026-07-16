@@ -120,6 +120,13 @@ one download job per client, the bounded wave sizes were `4/4/3`, all 44 jobs
 completed, no table repeated, no job failed, and no residual changed rows
 remained.
 
+**Stale terminal display state:** Post-sync verification found table heartbeat
+records still labeled `Applying` even though their jobs were completed and
+their message said they were waiting for the next sync. Server-side table
+normalization now treats stale `snapshotting` and `applying` labels like the
+other active phases when no matching active job exists, returning `Completed`
+without changing job history.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,
