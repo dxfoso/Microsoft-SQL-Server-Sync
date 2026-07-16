@@ -17,5 +17,6 @@ business/logs/
 .codex-run/
 __pycache__/
 *.py[cod]
+*.bak
 .cloud.env
 deployment/chart/.env

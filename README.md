@@ -37,3 +37,15 @@ scripts/             build, publish, and deploy scripts
 
 The live system uses the project-owned TRU control plane plus the Windows client snapshot relay flow.
 Old sync-engine compatibility paths and obsolete bootstrap code have been removed from this repo.
+
+## Docker Sync Tests
+
+Run the standardized three-client SQL Server scenario suite before publishing a
+Windows client:
+
+```powershell
+.\tests\docker-sync\run.ps1
+```
+
+See `tests/docker-sync/README.md` for covered scenarios and the optional,
+copy-only database export workflow.
