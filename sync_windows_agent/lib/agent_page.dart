@@ -3516,6 +3516,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       logStartupEvent(
         'Quarantined sync changes for ${job.table}: $quarantineDetail',
       );
+      throw StateError(
+        'Sync apply rejected ${applyStats.rejectedRows.length} '
+        'change${applyStats.rejectedRows.length == 1 ? '' : 's'} for '
+        '${job.table}. The job remains retryable. $quarantineDetail',
+      );
     }
     final reconciledTargetRowCount =
         isMultiWriter

@@ -458,11 +458,17 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("progress: 80,", download_body)
         self.assertIn("final targetRowCount =", download_body)
         self.assertIn(": await _applyDownloadedSnapshotToTarget(", download_body)
+        self.assertIn("if (applyStats.rejectedRows.isNotEmpty)", download_body)
+        self.assertIn("The job remains retryable.", download_body)
         self.assertIn("await _controlPlaneClient.completeJob(", download_body)
         self.assertIn("status: 'completed',", download_body)
         self.assertIn("progress: 100,", download_body)
         self.assertLess(
             download_body.index("final targetRowCount ="),
+            download_body.index("await _controlPlaneClient.completeJob("),
+        )
+        self.assertLess(
+            download_body.index("if (applyStats.rejectedRows.isNotEmpty)"),
             download_body.index("await _controlPlaneClient.completeJob("),
         )
 

@@ -139,6 +139,11 @@ with `RAISERROR`, matching the compatibility-safe pattern already used by the
 staged merge path. Contract coverage requires `RAISERROR` and rejects `THROW`
 in generated delete SQL.
 
+Download jobs also fail before completion when row isolation quarantines any
+change. This prevents the applied-version checkpoint from advancing and keeps
+the server batch retryable instead of silently losing a rejected delete or
+update.
+
 ### Live verifier missed active apply phases
 
 **Finding:** `verify_live_sync_state.py` did not classify `waiting`,
