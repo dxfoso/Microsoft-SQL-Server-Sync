@@ -94,8 +94,12 @@ uses code page 65001.
 
 ## Remaining Limitations
 
-- Client `c1` is currently offline. Offline catch-up is proven locally, but a
-  live two-client proof requires `c1` to be running and heartbeating.
+- Clients `c1` and `c2` were offline during the final live verification.
+  Offline catch-up is proven locally, but a live two-client proof requires both
+  clients to be running and heartbeating. At verification time, c1's heartbeat
+  was about 327 minutes old and c2's was about 52 minutes old; both still
+  reported client version `1.0.153+157` and SQL connectivity in their saved
+  server state.
 - The Docker suite uses synthetic production-shaped data. A copy of `c2`
   `AmnDb028` has not been imported because the client has no remote backup
   channel and database backups may contain sensitive data. On the c2 machine,
@@ -129,3 +133,22 @@ Before each sync-logic release:
 6. When Windows client code changed, publish the versioned update and verify
    the live manifest, portable startup log, and eligible live-client update.
 
+## Deployment Verification
+
+Server release `3ff8fad06c7a36e86672300946b31c424b06954f` was deployed through
+the scoped direct-SSH workflow on 2026-07-16.
+
+- Backend and frontend deployments reached `1/1` ready on `velvet-leaf-1`.
+- Both workloads use immutable images tagged with the full release commit.
+- New backend and frontend pods had zero restarts after the stability wait.
+- `/`, `/clients`, and `/clients/c1` returned HTTP 200.
+- `/admin/health` reported the exact commit, `ready=true`,
+  `compile_errors=0`, `fail=0`, and `timeout=0`.
+- Three live scheduler stress calls completed without transport or function
+  errors; observed elapsed time was 65.6-90.9 ms.
+- The client update endpoint remained on `1.0.153+157`; its ZIP SHA-256 stayed
+  `f8131c7afa9df4d64fe7ed37b31627ea472909d255e01aa9da80bf3d3d44d80e`
+  with size `13,603,512` bytes.
+- The full live-client gate remained incomplete only because both configured
+  clients were offline; no visible online clients were available for a live
+  database-to-database synchronization.
