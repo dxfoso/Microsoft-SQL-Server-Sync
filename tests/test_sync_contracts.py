@@ -434,6 +434,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
 
+    def test_job_changed_rows_never_replace_physical_table_row_count(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        apply_state_body = agent_page.split(
+            "void _applyRemoteJobState(", 1
+        )[1].split("void _updateTraySyncIndicator()", 1)[0]
+
+        self.assertIn("rowCount: current.rowCount", apply_state_body)
+        self.assertNotIn("shouldApplyLocalRowCount", apply_state_body)
+        self.assertNotIn("rowCount: job.rowCount,\n      message:", apply_state_body)
+
     def test_fingerprint_mismatch_forces_non_destructive_full_multi_writer_upload(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         snapshot_body = agent_page.split(

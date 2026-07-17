@@ -1365,16 +1365,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final timestamp = job.completedAt ?? job.updatedAt;
     final nextStatus = _displayStatus(job.status);
     final nextMessage = overrideMessage ?? job.error ?? job.message;
-    final shouldApplyLocalRowCount =
-        success && job.status.trim().toLowerCase() == 'completed';
-    final nextRowCount =
-        shouldApplyLocalRowCount ? job.rowCount : current.rowCount;
     final nextState = current.copyWith(
       enabled: current.enabled,
       status: nextStatus,
       lastSync: timestamp.trim().isEmpty ? current.lastSync : timestamp,
       progress: job.progress,
-      rowCount: nextRowCount,
+      // Job rowCount is the changed-row count, not the physical table total.
+      rowCount: current.rowCount,
       message: nextMessage,
       history:
           appendHistory
