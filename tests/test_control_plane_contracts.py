@@ -410,6 +410,24 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("rejectedRowCount,", complete_body)
         self.assertIn("rejectionSummary,", complete_body)
 
+        terminal_guard = (
+            "if (sync_job_status_is_terminal(string.from(job.status))) {"
+        )
+        self.assertIn("function sync_job_status_is_terminal(", source)
+        self.assertIn("normalizedStatus == 'completed'", source)
+        self.assertIn("normalizedStatus == 'failed'", source)
+        self.assertIn("normalizedStatus == 'cancelled'", source)
+        start_body = source.split("function jobs_start(", 1)[1].split(
+            "function jobs_progress(", 1
+        )[0]
+        progress_body = source.split("function jobs_progress(", 1)[1].split(
+            "function jobs_complete(", 1
+        )[0]
+        self.assertIn(terminal_guard, start_body)
+        self.assertIn(terminal_guard, progress_body)
+        self.assertIn(terminal_guard, complete_body)
+        self.assertIn(terminal_guard, fail_body)
+
     def test_window_action_request_all_only_targets_online_agents(self):
         source = read_text("business/control_plane.tru")
         match = re.search(

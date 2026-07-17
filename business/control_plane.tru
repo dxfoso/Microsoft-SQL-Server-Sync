@@ -5178,6 +5178,11 @@ function jobs_create(clientName: string, tables: array<string>, sourceClientName
   return raw_json_success({ jobs: createdJobs.map((job) => public_job_payload(job)) }, 201);
 }
 
+function sync_job_status_is_terminal(status: string): bool {
+  const normalizedStatus = status.trim().toLowerCase();
+  return normalizedStatus == 'completed' || normalizedStatus == 'failed' || normalizedStatus == 'cancelled';
+}
+
 function jobs_start(jobId: string, status: string = 'running', progress: int? = null, message: string = 'Started sync.', token: string? = null): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
@@ -5186,6 +5191,9 @@ function jobs_start(jobId: string, status: string = 'running', progress: int? = 
   }
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_start', token, current, job);
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return { job: public_job_payload(job) };
   }
 
   let nextProgress = 5;
@@ -5234,6 +5242,9 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_progress', token, current, job);
   }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return { job: public_job_payload(job) };
+  }
 
   const updated = db.update(SyncJob, { id: jobId }, {
     clientName: job.clientName,
@@ -5275,6 +5286,9 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   }
   if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return { job: public_job_payload(job) };
   }
 
   const completedAt = now_iso();
@@ -5333,6 +5347,9 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   }
   if (!can_access_job(current_user_record(token), job)) {
     return raw_json_error(403, 'permission denied');
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return { job: public_job_payload(job) };
   }
   let nextProgress = job.progress;
   if (progress != null) {
