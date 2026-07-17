@@ -3339,6 +3339,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       message: 'Creating a compressed snapshot for ${job.table}.',
     );
     _applyRemoteJobState(activeJob);
+    if (!activeJob.isActive) {
+      logStartupEvent(
+        'Skipping remote job ${job.id} because the control plane returned terminal status ${activeJob.status}.',
+      );
+      return;
+    }
 
     final snapshot = await _createRelaySnapshotForJob(job);
 

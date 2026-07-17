@@ -742,6 +742,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", source)
         self.assertIn("if (string_array_contains(agentTables, table))", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
+        self.assertIn("return raw_json_error(410, 'sync job is no longer active');", source)
         stale_guard = source.split(
             "function multi_writer_batch_stale(batch: map<json>): bool", 1
         )[1].split("function ", 1)[0]

@@ -22,6 +22,8 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("Future<void> _processSnapshotJob(", agent_page)
         self.assertIn("Future<void> _processSnapshotRelayUploadJob(", agent_page)
+        self.assertIn("if (!activeJob.isActive) {", agent_page)
+        self.assertIn("because the control plane returned terminal status", agent_page)
         self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
         self.assertIn(
             "throw Exception('Unsupported sync job direction: ${job.direction}')",

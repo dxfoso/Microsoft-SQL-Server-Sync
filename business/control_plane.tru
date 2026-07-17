@@ -4473,6 +4473,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (string.from(job.direction).trim() != 'upload' || string.from(job.batchId).trim() != batchId.trim()) {
     return raw_json_error(409, 'job is not a multi-writer upload');
   }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
+  }
   const batch = find_sync_batch(batchId);
   if (batch == null || string.from(batch.table).trim() != table.trim()) {
     return raw_json_error(404, 'sync batch not found');
