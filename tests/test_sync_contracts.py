@@ -576,6 +576,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("if (_processingPendingJobsBusy) {", pending_jobs_body)
         self.assertIn("_processingPendingJobsBusy = true;", pending_jobs_body)
         self.assertIn("_processingPendingJobsBusy = false;", pending_jobs_body)
+        self.assertIn("Could not prepare pending sync jobs", pending_jobs_body)
+        self.assertLess(
+            pending_jobs_body.index("try {"),
+            pending_jobs_body.index("_sortPendingJobsByDependencies(pendingJobs)"),
+        )
         self.assertIn("_processingJobIds.add(job.id);", pending_jobs_body)
         self.assertIn("} finally {", pending_jobs_body)
         self.assertIn("_processingJobIds.remove(job.id);", pending_jobs_body)
@@ -601,6 +606,9 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("if (jobs.length < 2) {", sort_body)
         self.assertIn("leftBatchUpload", sort_body)
+        self.assertIn("final pendingTables = jobs.map((job) => job.table.trim()).toSet();", sort_body)
+        self.assertIn("!pendingTables.contains(table)", sort_body)
+        self.assertIn("!pendingTables.contains(relatedTable)", sort_body)
         self.assertIn("dependencyGraph.putIfAbsent(table, () => <String>{}).add(relatedTable);", sort_body)
         self.assertIn("final leftDepth = _tableDependencyDepth(", sort_body)
         self.assertIn("final rightDepth = _tableDependencyDepth(", sort_body)

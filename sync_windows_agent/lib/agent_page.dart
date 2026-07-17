@@ -3153,13 +3153,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
     _processingPendingJobsBusy = true;
-    final pendingJobs = _activeJobs
-        .where((job) => job.isActive)
-        .toList(growable: false);
-    final orderedPendingJobs = _sortPendingJobsByDependencies(pendingJobs);
-
     _updateTraySyncIndicator();
     try {
+      final pendingJobs = _activeJobs
+          .where((job) => job.isActive)
+          .toList(growable: false);
+      final orderedPendingJobs = _sortPendingJobsByDependencies(pendingJobs);
       for (final job in orderedPendingJobs) {
         if (_processingJobIds.contains(job.id)) {
           continue;
@@ -3223,6 +3222,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           _updateTraySyncIndicator();
         }
       }
+    } catch (error, stackTrace) {
+      logStartupEvent('Could not prepare pending sync jobs: $error');
+      logStartupEvent(stackTrace.toString());
     } finally {
       _updateTraySyncIndicator();
       _processingPendingJobsBusy = false;
@@ -3234,11 +3236,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return jobs;
     }
 
+    final pendingTables = jobs.map((job) => job.table.trim()).toSet();
     final dependencyGraph = <String, Set<String>>{};
     for (final dependency in _remoteTableDependencies) {
       final table = dependency.table.trim();
       final relatedTable = dependency.relatedTable.trim();
-      if (table.isEmpty || relatedTable.isEmpty || table == relatedTable) {
+      if (table.isEmpty ||
+          relatedTable.isEmpty ||
+          table == relatedTable ||
+          !pendingTables.contains(table) ||
+          !pendingTables.contains(relatedTable)) {
         continue;
       }
       dependencyGraph.putIfAbsent(table, () => <String>{}).add(relatedTable);
