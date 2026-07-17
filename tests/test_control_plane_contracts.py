@@ -11,6 +11,18 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
+    def test_public_jobs_expose_authoritative_changed_row_count(self):
+        source = read_text("business/control_plane.tru")
+        public_payload = source.split("function public_job_payload(", 1)[1].split(
+            "function agent_job_payload(", 1
+        )[0]
+        agent_payload = source.split("function agent_job_payload(", 1)[1].split(
+            "function live_state_agent_limit(", 1
+        )[0]
+
+        self.assertIn("changedRowCount: job.rowCount", public_payload)
+        self.assertIn("changedRowCount: job.rowCount", agent_payload)
+
     def test_live_state_uses_bounded_payload_helpers(self):
         source = read_text("business/control_plane.tru")
         live_state_match = re.search(

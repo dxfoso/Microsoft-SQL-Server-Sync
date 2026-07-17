@@ -172,6 +172,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Sync log", clients_page)
         self.assertIn("Changed rows", clients_page)
         self.assertIn("changedRowCount", clients_page)
+        self.assertNotIn("changedRowsOverride", clients_page)
         self.assertIn("Not reported", clients_page)
         self.assertIn("Filter clients", clients_page)
         self.assertIn("_ClientSortField", clients_page)
@@ -194,6 +195,14 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Filter log", clients_page)
         self.assertIn("Downloaded new", clients_page)
         self.assertIn("Uploaded new", clients_page)
+        self.assertIn("Sync / updated", clients_page)
+        sync_log = clients_page.split("Widget _buildJobLog(", 1)[1].split(
+            "DataRow _buildSyncDataRow(", 1
+        )[0]
+        self.assertLess(
+            sync_log.index("DataColumn(label: Text('Changed rows'))"),
+            sync_log.index("DataColumn(label: Text('Status'))"),
+        )
         self.assertIn("_buildLogDataRow", clients_page)
         self.assertIn("_ClientScreen", clients_page)
         self.assertIn("Sync logs", clients_page)

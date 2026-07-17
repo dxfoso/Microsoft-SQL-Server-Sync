@@ -36,7 +36,6 @@ class _SyncLogOperation {
   final String key;
   final List<AdminJob> jobs;
   final String clientName;
-  int? changedRowsOverride;
 
   AdminJob? get upload => _jobFor('upload');
   AdminJob? get download => _jobFor('download');
@@ -121,7 +120,6 @@ class _SyncLogOperation {
 
   int? _reportedRows(AdminJob? job) {
     if (job == null) return null;
-    if (changedRowsOverride != null) return changedRowsOverride;
     return job.changedRowCount ?? job.rowCount;
   }
 
@@ -1782,14 +1780,13 @@ class _ClientsPageState extends State<ClientsPage> {
             child: DataTable(
               columnSpacing: 20,
               columns: const [
-                DataColumn(label: Text('Updated')),
-                DataColumn(label: Text('Operation')),
-                DataColumn(label: Text('Tables')),
-                DataColumn(label: Text('Status')),
-                DataColumn(label: Text('Progress')),
+                DataColumn(label: Text('Sync / updated')),
                 DataColumn(label: Text('Changed rows')),
                 DataColumn(label: Text('Uploaded new')),
                 DataColumn(label: Text('Downloaded new')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Tables')),
+                DataColumn(label: Text('Progress')),
                 DataColumn(label: Text('Message')),
               ],
               rows: visibleBatches
@@ -1814,9 +1811,6 @@ class _ClientsPageState extends State<ClientsPage> {
       },
       cells: [
         DataCell(
-          Text(_formatTimestamp(batch.representative.representative.updatedAt)),
-        ),
-        DataCell(
           Row(
             children: [
               Icon(
@@ -1825,15 +1819,15 @@ class _ClientsPageState extends State<ClientsPage> {
                 color: Colors.blueGrey.shade700,
               ),
               const SizedBox(width: 5),
-              const Text('Sync', style: TextStyle(fontWeight: FontWeight.w800)),
-              const SizedBox(width: 5),
+              Text(
+                _formatTimestamp(batch.representative.representative.updatedAt),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 3),
               const Icon(Icons.chevron_right_rounded, size: 17),
             ],
           ),
         ),
-        DataCell(Text('${batch.operations.length}')),
-        DataCell(_statusChip(batch.status, _statusColor(batch.status))),
-        DataCell(Text('${batch.progress}%')),
         DataCell(
           Text(
             batch.changedRows == null
@@ -1861,6 +1855,9 @@ class _ClientsPageState extends State<ClientsPage> {
             style: TextStyle(color: downloadColor, fontWeight: FontWeight.w800),
           ),
         ),
+        DataCell(_statusChip(batch.status, _statusColor(batch.status))),
+        DataCell(Text('${batch.operations.length}')),
+        DataCell(Text('${batch.progress}%')),
         DataCell(
           SizedBox(
             width: 260,
@@ -1971,33 +1968,6 @@ class _ClientsPageState extends State<ClientsPage> {
         right.representative.updatedAt,
       ).compareTo(_timestamp(left.representative.updatedAt)),
     );
-    for (var index = 0; index < operations.length; index++) {
-      final current = operations[index];
-      final currentRows = current.representative.rowCount;
-      if (currentRows <= 0) {
-        current.changedRowsOverride = 0;
-        continue;
-      }
-      final previous = operations
-          .skip(index + 1)
-          .firstWhere(
-            (candidate) =>
-                candidate.representative.table ==
-                    current.representative.table &&
-                candidate.representative.rowCount > 0,
-            orElse:
-                () => _SyncLogOperation(
-                  key: '',
-                  jobs: const [],
-                  clientName: clientName,
-                ),
-          );
-      if (previous.jobs.isNotEmpty &&
-          currentRows >= previous.representative.rowCount) {
-        current.changedRowsOverride =
-            currentRows - previous.representative.rowCount;
-      }
-    }
     return operations;
   }
 
