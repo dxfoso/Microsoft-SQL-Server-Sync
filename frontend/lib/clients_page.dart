@@ -52,6 +52,8 @@ class _SyncLogOperation {
   int? get uploadedRows => _localRows(upload);
   int? get downloadedRows => _localRows(download);
   int? get changedRows => downloadedRows ?? uploadedRows;
+  bool get isReconciliation =>
+      jobs.any((job) => job.sourceClientName == 'server-anti-entropy');
 
   String get status {
     final failed = jobs.any(
@@ -155,6 +157,8 @@ class _SyncLogBatch {
   int? get changedRows => _sum((operation) => operation.changedRows);
   int? get uploadedRows => _sum((operation) => operation.uploadedRows);
   int? get downloadedRows => _sum((operation) => operation.downloadedRows);
+  bool get isReconciliation =>
+      operations.any((operation) => operation.isReconciliation);
 
   String get status {
     final failed = operations.any((operation) => operation.status == 'Failed');
@@ -1830,7 +1834,9 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(
           Text(
-            batch.changedRows == null
+            batch.isReconciliation
+                ? 'Reconciliation'
+                : batch.changedRows == null
                 ? 'Not reported'
                 : '+${_number(batch.changedRows!)}',
             style: const TextStyle(
@@ -1841,7 +1847,9 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(
           Text(
-            batch.uploadedRows == null
+            batch.isReconciliation
+                ? 'Snapshot'
+                : batch.uploadedRows == null
                 ? 'Not reported'
                 : '+${_number(batch.uploadedRows!)}',
             style: TextStyle(color: uploadColor, fontWeight: FontWeight.w800),
@@ -1849,7 +1857,9 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(
           Text(
-            batch.downloadedRows == null
+            batch.isReconciliation
+                ? 'Snapshot'
+                : batch.downloadedRows == null
                 ? 'Not reported'
                 : '+${_number(batch.downloadedRows!)}',
             style: TextStyle(color: downloadColor, fontWeight: FontWeight.w800),
@@ -1902,12 +1912,14 @@ class _ClientsPageState extends State<ClientsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Sync detail · ${_formatTimestamp(batch.representative.representative.updatedAt)}',
+            'Sync detail - ${_formatTimestamp(batch.representative.representative.updatedAt)}',
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 4),
           Text(
-            '${batch.operations.length} tables · totals show only changed rows',
+            batch.isReconciliation
+                ? '${batch.operations.length} tables - full reconciliation snapshot'
+                : '${batch.operations.length} tables - totals show only changed rows',
             style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
           ),
           const SizedBox(height: 12),
@@ -2029,34 +2041,18 @@ class _ClientsPageState extends State<ClientsPage> {
 
   DataRow _buildLogDataRow(_SyncLogOperation operation) {
     final changed = operation.changedRows;
-    final uploadColor = const Color(0xFF2563EB);
-    final downloadColor = const Color(0xFFB54708);
     return DataRow(
       cells: [
-        DataCell(Text(_formatTimestamp(operation.representative.updatedAt))),
-        DataCell(
-          Row(
-            children: [
-              if (operation.upload != null)
-                Icon(Icons.arrow_upward_rounded, size: 16, color: uploadColor),
-              if (operation.download != null)
-                Icon(
-                  Icons.arrow_downward_rounded,
-                  size: 16,
-                  color: downloadColor,
-                ),
-              const SizedBox(width: 5),
-              const Text('Sync', style: TextStyle(fontWeight: FontWeight.w800)),
-            ],
-          ),
-        ),
         DataCell(Text(_displayTable(operation.representative.table))),
         DataCell(_statusChip(operation.phase, _phaseColor(operation.phase))),
         DataCell(_statusChip(operation.status, _statusColor(operation.status))),
-        DataCell(Text('${operation.progress}%')),
         DataCell(
           Text(
-            changed == null ? 'Not reported' : '+${_number(changed)}',
+            operation.isReconciliation
+                ? 'Reconciliation'
+                : changed == null
+                ? 'Not reported'
+                : '+${_number(changed)}',
             style: const TextStyle(
               color: Color(0xFFB54708),
               fontWeight: FontWeight.w800,
@@ -2065,7 +2061,9 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(
           Text(
-            operation.uploadedRows == null
+            operation.isReconciliation
+                ? 'Snapshot'
+                : operation.uploadedRows == null
                 ? 'Not reported'
                 : '+${_number(operation.uploadedRows!)}',
             style: const TextStyle(
@@ -2076,7 +2074,9 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(
           Text(
-            operation.downloadedRows == null
+            operation.isReconciliation
+                ? 'Snapshot'
+                : operation.downloadedRows == null
                 ? 'Not reported'
                 : '+${_number(operation.downloadedRows!)}',
             style: const TextStyle(
