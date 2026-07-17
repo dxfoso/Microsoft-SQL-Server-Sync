@@ -4645,7 +4645,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     // Full anti-entropy snapshots can contain the same key on many clients.
     // Stable source ordering makes every target resolve those rows identically.
     orderBy: [
-      { field: 'clientUserId', dir: 'asc' },
+      { field: 'subscriberClientName', dir: 'asc' },
       { field: 'createdAt', dir: 'asc' },
       { field: 'id', dir: 'asc' }
     ],

@@ -683,7 +683,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function jobs_multi_writer_download(", source)
         self.assertIn("cursor: string? = null", source)
         self.assertIn("db.page(SnapshotRecord", source)
-        self.assertIn("{ field: 'clientUserId', dir: 'asc' }", source)
+        self.assertIn("{ field: 'subscriberClientName', dir: 'asc' }", source)
         self.assertIn("nextCursor", source)
         download_body = source[source.index("function jobs_multi_writer_download("):source.index("function jobs_upload_chunk(")]
         self.assertNotIn("limit: 1000", download_body)
@@ -734,7 +734,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "const forceFullSnapshot = multi_writer_agents_have_fingerprint_mismatch(table, agents);",
             source,
         )
-        self.assertIn("{ field: 'clientUserId', dir: 'asc' }", source)
+        self.assertIn("{ field: 'subscriberClientName', dir: 'asc' }", source)
 
     def test_multi_writer_heartbeat_exposes_upload_and_download_for_same_table(self):
         source = read_text("business/control_plane.tru")
