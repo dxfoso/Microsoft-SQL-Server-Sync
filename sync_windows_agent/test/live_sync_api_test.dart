@@ -152,6 +152,53 @@ void main() {
     },
   );
 
+  test('multi-writer upload uses the snapshot transfer timeout', () async {
+    final client = AgentControlPlaneClient(
+      client: _DelayedClient(
+        delay: const Duration(milliseconds: 100),
+        responseForName: (name) {
+          expect(name, 'jobs_multi_writer_upload');
+          return {
+            'job': {
+              'id': 'job-mw-timeout',
+              'clientName': 'c1',
+              'sourceClientName': 'c1',
+              'subscriberClientName': 'c2',
+              'table': 'db::mt000',
+              'direction': 'upload',
+              'status': 'completed',
+              'progress': 100,
+              'rowCount': 1,
+              'createdAt': '2026-07-17T00:00:00Z',
+              'updatedAt': '2026-07-17T00:00:01Z',
+            },
+          };
+        },
+      ),
+      baseUrl: 'https://example.com/call',
+      controlPlaneRequestTimeout: const Duration(milliseconds: 50),
+      snapshotTransferRequestTimeout: const Duration(milliseconds: 200),
+      snapshotTransferMaxAttempts: 1,
+    );
+
+    final job = await client.uploadMultiWriterDelta(
+      'job-mw-timeout',
+      batchId: 'batch-1',
+      clientName: 'c1',
+      table: 'db::mt000',
+      columns: const ['Id'],
+      keyColumns: const ['Id'],
+      rows: const [
+        {'Id': '1'},
+      ],
+      chunkId: 'chunk-0',
+      finalChunk: true,
+    );
+
+    expect(job.id, 'job-mw-timeout');
+    expect(job.status, 'completed');
+  });
+
   test(
     'heartbeat parses pending window actions and acknowledges them through the dedicated call',
     () async {

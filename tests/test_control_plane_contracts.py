@@ -742,6 +742,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", source)
         self.assertIn("if (string_array_contains(agentTables, table))", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
+        stale_guard = source.split(
+            "function multi_writer_batch_stale(batch: map<json>): bool", 1
+        )[1].split("function ", 1)[0]
+        self.assertIn("batch.updatedAt", stale_guard)
+        self.assertNotIn("batch.createdAt", stale_guard)
         self.assertIn("let queuedTablesForOwner = 0;", source)
         self.assertIn(
             "remaining manual tables will drain in bounded scheduler waves",

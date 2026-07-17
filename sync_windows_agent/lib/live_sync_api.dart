@@ -368,7 +368,12 @@ class AgentControlPlaneClient {
       attempt += 1
     ) {
       try {
-        return await _invokeFunction(functionName, args, phase);
+        return await _invokeFunction(
+          functionName,
+          args,
+          phase,
+          timeout: _snapshotTransferRequestTimeout,
+        );
       } catch (error) {
         lastError = error;
         final statusCode =

@@ -3182,7 +3182,9 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
 }
 
 function multi_writer_batch_stale(batch: map<json>): bool {
-  const ageMinutes = safe_date_diff_minutes_since(string.from(batch.createdAt));
+  // Large tables can take longer than 30 minutes on slow client links. Expire
+  // only batches that have made no upload progress during that period.
+  const ageMinutes = safe_date_diff_minutes_since(string.from(batch.updatedAt));
   return ageMinutes != null && ageMinutes >= 30;
 }
 
