@@ -3757,6 +3757,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     final rowCount = rowCountResult.value;
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
+    final forceFullSnapshot =
+        job.batchId?.trim().isNotEmpty == true &&
+        job.sourceClientName == 'server-anti-entropy';
     final tracking = await _queryChangeTrackingState(
       profile: sourceProfile,
       database: database,
@@ -3764,6 +3767,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       table: tableParts.table,
     );
     final canUseDelta =
+        !forceFullSnapshot &&
         tracking != null &&
         previousVersion != null &&
         _syncState.tables[job.table]?.changeTrackingOwner ==
@@ -3784,7 +3788,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       rows.addAll(deltaRows);
       isDelta = true;
-    } else if (job.batchId?.trim().isNotEmpty == true) {
+    } else if (job.batchId?.trim().isNotEmpty == true && !forceFullSnapshot) {
       // A multi-writer relay carries only changes. Never turn a missing or
       // expired tracking baseline into a destructive full-table upload.
       isDelta = true;

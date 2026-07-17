@@ -434,6 +434,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
 
+    def test_fingerprint_mismatch_forces_non_destructive_full_multi_writer_upload(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        snapshot_body = agent_page.split(
+            "Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1
+        )[1].split("List<Map<String, String?>> _snapshotRows(", 1)[0]
+
+        self.assertIn("job.sourceClientName == 'server-anti-entropy'", snapshot_body)
+        self.assertIn("!forceFullSnapshot &&", snapshot_body)
+        self.assertIn(
+            "job.batchId?.trim().isNotEmpty == true && !forceFullSnapshot",
+            snapshot_body,
+        )
+        self.assertIn("const batchSize = 200;", snapshot_body)
+
     def test_snapshot_upload_job_advances_through_start_progress_and_chunk_upload_only(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         upload_body = agent_page.split(

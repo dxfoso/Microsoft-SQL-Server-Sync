@@ -3061,7 +3061,25 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string): array<json> {
+function multi_writer_agents_have_fingerprint_mismatch(table: string, agents: array<json>): bool {
+  let fingerprints = [];
+  for (const agent of agents) {
+    const state = agent_sync_table_state(agent, table);
+    if (state == null || state.rowCount == null) {
+      continue;
+    }
+    const checksum = string.from(state.tableChecksum ?? '').trim();
+    if (checksum.length == 0) {
+      continue;
+    }
+    fingerprints = unique_string_values(fingerprints.concat([
+      string.concat(string.from(state.rowCount), '::', checksum)
+    ]));
+  }
+  return fingerprints.length > 1;
+}
+
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, forceFullSnapshot: bool = false): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
@@ -3069,7 +3087,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     rows = rows.concat([{
       id: uuid.v4(),
       clientName,
-      sourceClientName: '',
+      sourceClientName: forceFullSnapshot ? 'server-anti-entropy' : '',
       subscriberClientName: '',
       table,
       direction: 'upload',
@@ -3088,7 +3106,9 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       updatedAt: createdAt,
       startedAt: null,
       completedAt: null,
-      message: string.concat('Queued multi-writer upload for ', table, '.'),
+      message: forceFullSnapshot
+        ? string.concat('Queued anti-entropy full upload for ', table, '.')
+        : string.concat('Queued multi-writer upload for ', table, '.'),
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId,
@@ -3130,6 +3150,7 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     return [];
   }
   const batchId = uuid.v4();
+  const forceFullSnapshot = multi_writer_agents_have_fingerprint_mismatch(table, agents);
   const clientNames = agents.map((agent) => string.from(agent.clientName));
   const createdAt = now_iso();
   db.insert(SyncBatch, {
@@ -3149,7 +3170,13 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     createdAt,
     updatedAt: createdAt
   });
-  return db.insertMany(SyncJob, multi_writer_job_rows(batchId, table, agents, ownerUserId));
+  return db.insertMany(SyncJob, multi_writer_job_rows(
+    batchId,
+    table,
+    agents,
+    ownerUserId,
+    forceFullSnapshot
+  ));
 }
 
 function multi_writer_batch_stale(batch: map<json>): bool {
@@ -4615,7 +4642,13 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   }
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
-    orderBy: [{ field: 'createdAt', dir: 'asc' }, { field: 'id', dir: 'asc' }],
+    // Full anti-entropy snapshots can contain the same key on many clients.
+    // Stable source ordering makes every target resolve those rows identically.
+    orderBy: [
+      { field: 'clientUserId', dir: 'asc' },
+      { field: 'createdAt', dir: 'asc' },
+      { field: 'id', dir: 'asc' }
+    ],
     fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'snapshotBytes', 'storageId', 'isDelta', 'createdAt'],
     limit: 1,
     cursor
