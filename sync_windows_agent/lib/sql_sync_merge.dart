@@ -342,6 +342,7 @@ String buildTargetDeltaDeleteSql({
   required List<String> primaryKeyColumns,
   required List<Map<String, dynamic>> rows,
   int insertBatchSize = 100,
+  bool manageTriggers = true,
 }) {
   final definitionsByName = {
     for (final column in columns) column.name.toLowerCase(): column,
@@ -379,11 +380,27 @@ VALUES
 ''');
   }
   final joinClause = matchClauseForColumns(primaryKeyColumns, keyColumns);
+  final triggerTarget =
+      '${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}';
+  final triggerDisableStatement =
+      manageTriggers ? 'ALTER TABLE $triggerTarget DISABLE TRIGGER ALL;' : '';
+  final triggerEnableStatement =
+      manageTriggers ? 'ALTER TABLE $triggerTarget ENABLE TRIGGER ALL;' : '';
+  final triggerRestoreBlock =
+      manageTriggers
+          ? '''
+  BEGIN TRY
+    $triggerEnableStatement
+  END TRY
+  BEGIN CATCH
+  END CATCH;'''
+          : '';
   return '''
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 BEGIN TRY
   BEGIN TRANSACTION;
+  $triggerDisableStatement
   CREATE TABLE #delete_rows (
     $columnDefinitions
   );
@@ -395,12 +412,14 @@ BEGIN TRY
     ON $joinClause;
   DECLARE @SqlSyncDeletedRows INT = @@ROWCOUNT;
   DROP TABLE #delete_rows;
+  $triggerEnableStatement
   COMMIT TRANSACTION;
   SELECT N'__SQL_SYNC_DELETED__=' + CONVERT(NVARCHAR(20), @SqlSyncDeletedRows);
 END TRY
 BEGIN CATCH
   DECLARE @SqlSyncDeleteErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
   IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+  $triggerRestoreBlock
   IF OBJECT_ID(N'tempdb..#delete_rows', N'U') IS NOT NULL
     DROP TABLE #delete_rows;
   RAISERROR(@SqlSyncDeleteErrorMessage, 16, 1);

@@ -3528,7 +3528,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final retryablePending = pendingRejectedChanges
           .where(
             (change) =>
-                change.kind != SyncRejectionKind.permanentBusinessRule &&
+                shouldRetrySyncRejectedChange(change) &&
                 !applyStats.seenRowIdentities.contains(change.identity),
           )
           .toList(growable: false);
@@ -4682,7 +4682,7 @@ END
       matchColumnSets: matchColumnSets,
       rows: rows,
       deleteMissing: false,
-      manageTriggers: false,
+      manageTriggers: true,
       insertOnly: false,
     );
   }

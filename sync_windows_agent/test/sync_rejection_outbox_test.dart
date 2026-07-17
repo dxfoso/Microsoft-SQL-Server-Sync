@@ -101,6 +101,29 @@ void main() {
 
     expect(loaded, hasLength(1));
     expect(loaded.single.row['GUID'], 'pending');
+    expect(loaded.single.applyPolicyVersion, 1);
+    expect(shouldRetrySyncRejectedChange(loaded.single), isTrue);
+  });
+
+  test('retries a permanent conflict once when the apply policy changes', () {
+    final legacy = SyncRejectedChange.fromJson({
+      'table': 'db::en000',
+      'keyColumns': ['GUID'],
+      'row': {'GUID': 'posted'},
+      'error': "AmnE0271: Can't touch posted entry(ies)",
+      'kind': 'permanentBusinessRule',
+      'firstRejectedAt': '2026-07-17T00:00:00Z',
+      'lastRejectedAt': '2026-07-17T00:00:00Z',
+      'attemptCount': 2,
+    });
+    final retried = legacy.retried(
+      nextRow: legacy.row,
+      nextError: legacy.error,
+    );
+
+    expect(shouldRetrySyncRejectedChange(legacy), isTrue);
+    expect(retried.applyPolicyVersion, syncRejectionApplyPolicyVersion);
+    expect(shouldRetrySyncRejectedChange(retried), isFalse);
   });
 
   test('retains permanent conflicts until a newer row supersedes them', () {

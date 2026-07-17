@@ -114,6 +114,23 @@ VALUES
 """,
             database=database,
         )
+        sqlcmd(
+            """
+CREATE TRIGGER dbo.TR_SyncItems_Protect
+ON dbo.SyncItems
+AFTER UPDATE, DELETE
+AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM inserted) OR EXISTS (SELECT 1 FROM deleted)
+  BEGIN
+    RAISERROR('Business trigger rejected direct modification.', 16, 1);
+    ROLLBACK TRANSACTION;
+  END;
+END;
+""",
+            database=database,
+        )
 
 
 def generate_sql(database, *, rows=None, deletes=None):
@@ -255,8 +272,32 @@ def expect_apply_failure(database, *, rows=None, deletes=None):
     raise AssertionError("Expected SQL delta application to fail.")
 
 
+def assert_business_trigger_enabled(database):
+    state = sqlcmd(
+        """
+SET NOCOUNT ON;
+SELECT is_disabled
+FROM sys.triggers
+WHERE object_id = OBJECT_ID(N'dbo.TR_SyncItems_Protect');
+""",
+        database=database,
+    )
+    values = [line.strip() for line in state.stdout.splitlines() if line.strip() in ("0", "1")]
+    if values != ["0"]:
+        raise AssertionError(f"Business trigger is not enabled in {database}: {values}")
+    direct_update = sqlcmd(
+        "UPDATE dbo.SyncItems SET Name = Name WHERE Id = 1;",
+        database=database,
+        check=False,
+    )
+    if direct_update.returncode == 0:
+        raise AssertionError(f"Business trigger did not reject ordinary DML in {database}.")
+
+
 def run_scenarios():
     reset_databases()
+    for database in DATABASES:
+        assert_business_trigger_enabled(database)
 
     inserted = row(2, "INSERT-2", "Inserted on client 1", arabic="إضافة جديدة")
     for database in DATABASES[1:]:
@@ -351,6 +392,7 @@ def run_scenarios():
         DATABASES[0],
         rows=[row(5000, "REJECTED", "X" * 101)],
     )
+    assert_business_trigger_enabled(DATABASES[0])
     if table_rows(DATABASES[0]) != before_failure:
         raise AssertionError("Rejected delta partially modified the target database.")
     recovery_row = row(5001, "RECOVERY", "Valid row after rejected delta")
@@ -370,6 +412,7 @@ def run_scenarios():
             "independent-multi-writer", "offline-catch-up",
             "large-1200-row-batch", "idempotent-retry",
             "rejected-row-rollback-and-recovery", "change-context",
+            "business-trigger-bypass-and-restore",
         ],
         "finalRowCount": len(table_rows(DATABASES[0])),
     }, ensure_ascii=False))

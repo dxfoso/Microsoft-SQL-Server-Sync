@@ -256,6 +256,11 @@ void main() {
     expect(sql, contains('INNER JOIN #delete_rows AS source'));
     expect(sql, contains('target.[Id] = source.[Id]'));
     expect(sql, contains('__SQL_SYNC_DELETED__='));
+    expect(
+      sql,
+      contains('ALTER TABLE [db].[dbo].[items] DISABLE TRIGGER ALL;'),
+    );
+    expect(sql, contains('ALTER TABLE [db].[dbo].[items] ENABLE TRIGGER ALL;'));
     expect(sql, contains('RAISERROR(@SqlSyncDeleteErrorMessage, 16, 1)'));
     expect(sql, isNot(contains('THROW;')));
     expect(sql, isNot(contains('[Value]')));

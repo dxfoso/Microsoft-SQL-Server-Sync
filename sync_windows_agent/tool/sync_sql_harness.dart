@@ -91,7 +91,7 @@ void main(List<String> arguments) {
             .map((value) => _strings(value))
             .toList(growable: false),
         deleteMissing: false,
-        manageTriggers: false,
+        manageTriggers: true,
         insertOnly: false,
       ),
     );

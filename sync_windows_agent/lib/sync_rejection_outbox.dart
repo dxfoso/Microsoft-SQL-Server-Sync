@@ -3,6 +3,8 @@ import 'dart:io';
 
 enum SyncRejectionKind { dependency, permanentBusinessRule, transient }
 
+const syncRejectionApplyPolicyVersion = 2;
+
 class SyncRejectionObservation {
   const SyncRejectionObservation({required this.row, required this.error});
 
@@ -20,6 +22,7 @@ class SyncRejectedChange {
     required this.firstRejectedAt,
     required this.lastRejectedAt,
     required this.attemptCount,
+    this.applyPolicyVersion = syncRejectionApplyPolicyVersion,
   });
 
   final String table;
@@ -30,6 +33,7 @@ class SyncRejectedChange {
   final String firstRejectedAt;
   final String lastRejectedAt;
   final int attemptCount;
+  final int applyPolicyVersion;
 
   String get identity => syncRejectedRowIdentity(row, keyColumns);
 
@@ -50,6 +54,7 @@ class SyncRejectedChange {
       lastRejectedAt: json['lastRejectedAt']?.toString() ?? '',
       attemptCount:
           (json['attemptCount'] as num? ?? 1).round().clamp(1, 1 << 30).toInt(),
+      applyPolicyVersion: (json['applyPolicyVersion'] as num? ?? 1).round(),
     );
   }
 
@@ -62,6 +67,7 @@ class SyncRejectedChange {
     'firstRejectedAt': firstRejectedAt,
     'lastRejectedAt': lastRejectedAt,
     'attemptCount': attemptCount,
+    'applyPolicyVersion': applyPolicyVersion,
   };
 
   SyncRejectedChange retried({
@@ -78,8 +84,14 @@ class SyncRejectedChange {
       firstRejectedAt: firstRejectedAt.isEmpty ? now : firstRejectedAt,
       lastRejectedAt: now,
       attemptCount: attemptCount + 1,
+      applyPolicyVersion: syncRejectionApplyPolicyVersion,
     );
   }
+}
+
+bool shouldRetrySyncRejectedChange(SyncRejectedChange change) {
+  return change.kind != SyncRejectionKind.permanentBusinessRule ||
+      change.applyPolicyVersion < syncRejectionApplyPolicyVersion;
 }
 
 SyncRejectionKind classifySyncRejection(String error) {
@@ -159,6 +171,7 @@ List<SyncRejectedChange> reconcileSyncRejectedChanges({
           firstRejectedAt: now,
           lastRejectedAt: now,
           attemptCount: 1,
+          applyPolicyVersion: syncRejectionApplyPolicyVersion,
         );
   }
   return nextByIdentity.values.toList(growable: false);

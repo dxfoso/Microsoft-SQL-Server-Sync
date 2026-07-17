@@ -1026,6 +1026,12 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("applySqlSyncRowsWithIsolation", agent_page)
         self.assertIn("insertOnly: false", agent_page)
         self.assertIn("buildTargetDeltaDeleteSql(", agent_page)
+        self.assertIn("manageTriggers: true", agent_page)
+        delta_delete_body = merge_helper.split(
+            "String buildTargetDeltaDeleteSql(", 1
+        )[1].split("String stageTableReference", 1)[0]
+        self.assertIn("DISABLE TRIGGER ALL", delta_delete_body)
+        self.assertIn("ENABLE TRIGGER ALL", delta_delete_body)
         self.assertIn("quarantined change(s)", agent_page)
         self.assertIn("SyncRejectionKind.permanentBusinessRule", agent_page)
         self.assertIn("!applyStats.seenRowIdentities.contains(change.identity)", agent_page)
