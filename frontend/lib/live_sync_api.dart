@@ -240,11 +240,10 @@ class LiveSyncApiClient {
     required List<String> clientNames,
     String requestId = '',
   }) async {
-    final normalizedClientNames =
-        clientNames
-            .map((item) => item.trim())
-            .where((item) => item.isNotEmpty)
-            .toList(growable: false);
+    final normalizedClientNames = clientNames
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
     final decoded = await _invokeFunction('agent_diagnostics_request_batch', {
       'clientNames': normalizedClientNames,
       if (requestId.trim().isNotEmpty) 'requestId': requestId.trim(),
@@ -359,14 +358,20 @@ class LiveSyncApiClient {
     });
   }
 
-  Future<void> updateAllAgentSyncSettings({
+  Future<int> updateAllAgentSyncSettings({
     required int historyLimit,
     required int autoSyncIntervalMinutes,
   }) async {
-    await _invokeFunction('agent_sync_settings_post_all', {
+    final decoded = await _invokeFunction('agent_sync_settings_post_all', {
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
     });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected sync settings update payload.',
+      );
+    }
+    return (decoded['updatedCount'] as num? ?? 0).round();
   }
 
   Future<void> updateTableSyncPolicy({

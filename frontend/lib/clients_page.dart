@@ -15,6 +15,12 @@ enum _ClientDetailView { logs, tables }
 
 enum _ClientScreen { list, detail, sync, table }
 
+enum _ClientAccountAction { syncSettings, signOut }
+
+const int _minAutoSyncIntervalMinutes = 1;
+const int _maxAutoSyncIntervalMinutes = 1440;
+const int _maxAgentHistoryLimit = 100;
+
 bool _messageContainsReportedRowCount(String message) => RegExp(
   r'\b\d[\d,]*\s+(?:(?:changed|missing|new)\s+)?rows?\b',
   caseSensitive: false,
@@ -414,7 +420,13 @@ class _ClientsPageState extends State<ClientsPage> {
     final agent = _selectedAgent;
     if (_screen != _ClientScreen.list && agent != null) {
       if (_screen == _ClientScreen.detail) {
-        return _buildClientDetailToolbar(agent);
+        return Row(
+          children: [
+            Expanded(child: _buildClientDetailToolbar(agent)),
+            const SizedBox(width: 8),
+            _buildAccountMenu(compact: true),
+          ],
+        );
       }
       final table = _selectedTableState;
       return Row(
@@ -457,6 +469,8 @@ class _ClientsPageState extends State<ClientsPage> {
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
+          const SizedBox(width: 8),
+          _buildAccountMenu(compact: true),
         ],
       );
     }
@@ -484,20 +498,307 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         const SizedBox(width: 12),
-        OutlinedButton.icon(
-          onPressed: _refreshing ? null : () => _refresh(),
-          icon:
-              _refreshing
-                  ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                  : const Icon(Icons.refresh_rounded, size: 17),
-          label: const Text('Refresh clients'),
+        Wrap(
+          spacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (MediaQuery.sizeOf(context).width < 620)
+              IconButton.outlined(
+                tooltip: 'Refresh clients',
+                onPressed: _refreshing ? null : () => _refresh(),
+                icon:
+                    _refreshing
+                        ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                        : const Icon(Icons.refresh_rounded, size: 17),
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: _refreshing ? null : () => _refresh(),
+                icon:
+                    _refreshing
+                        ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                        : const Icon(Icons.refresh_rounded, size: 17),
+                label: const Text('Refresh clients'),
+              ),
+            _buildAccountMenu(compact: MediaQuery.sizeOf(context).width < 720),
+          ],
         ),
       ],
     );
+  }
+
+  Widget _buildAccountMenu({required bool compact}) {
+    final displayName =
+        widget.authenticatedUser.name.trim().isEmpty
+            ? widget.authenticatedUser.username
+            : widget.authenticatedUser.name;
+    return PopupMenuButton<_ClientAccountAction>(
+      tooltip: 'Account and sync settings',
+      position: PopupMenuPosition.under,
+      onSelected: (action) {
+        switch (action) {
+          case _ClientAccountAction.syncSettings:
+            unawaited(_openSyncSettingsDialog());
+            break;
+          case _ClientAccountAction.signOut:
+            widget.onLogout();
+            break;
+        }
+      },
+      itemBuilder:
+          (context) => const [
+            PopupMenuItem(
+              value: _ClientAccountAction.syncSettings,
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.schedule_rounded),
+                title: Text('Sync settings'),
+                subtitle: Text('Interval and client history'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _ClientAccountAction.signOut,
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.logout_rounded),
+                title: Text('Sign out'),
+              ),
+            ),
+          ],
+      child: Container(
+        height: 38,
+        padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFDDE3EA)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircleAvatar(
+              radius: 11,
+              backgroundColor: Color(0xFFE6F4F1),
+              child: Icon(
+                Icons.person_outline_rounded,
+                size: 14,
+                color: Color(0xFF0F766E),
+              ),
+            ),
+            if (!compact) ...[
+              const SizedBox(width: 7),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 130),
+                child: Text(
+                  displayName,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(width: 2),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: Color(0xFF667085),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openSyncSettingsDialog() async {
+    final agents = List<AdminAgent>.from(_state?.agents ?? const <AdminAgent>[])
+      ..sort((left, right) => left.clientName.compareTo(right.clientName));
+    final firstAgent = agents.firstOrNull;
+    final intervalController = TextEditingController(
+      text: (firstAgent?.autoSyncIntervalMinutes ?? 15).toString(),
+    );
+    final historyController = TextEditingController(
+      text: (firstAgent?.historyLimit ?? 5).toString(),
+    );
+    final intervalValues =
+        agents.map((agent) => agent.autoSyncIntervalMinutes).toSet();
+    var saving = false;
+    String? intervalError;
+    String? historyError;
+    String? saveError;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: const Text('Sync settings'),
+                  content: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          agents.isEmpty
+                              ? 'No clients are currently available.'
+                              : 'Applies to all ${agents.length} visible clients. The server scheduler uses the new interval on its next one-minute tick.',
+                          style: const TextStyle(
+                            color: Color(0xFF475467),
+                            height: 1.4,
+                          ),
+                        ),
+                        if (intervalValues.length > 1) ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Clients currently have mixed interval values. Saving will make them consistent.',
+                            style: TextStyle(
+                              color: Color(0xFFB54708),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: intervalController,
+                          autofocus: true,
+                          enabled: agents.isNotEmpty && !saving,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Sync interval (minutes)',
+                            helperText: 'Allowed range: 1 to 1440 minutes',
+                            errorText: intervalError,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: historyController,
+                          enabled: agents.isNotEmpty && !saving,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Client history items',
+                            helperText: 'Allowed range: 1 to 100 items',
+                            errorText: historyError,
+                          ),
+                        ),
+                        if (saveError != null) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            saveError!,
+                            style: const TextStyle(
+                              color: Color(0xFFB42318),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed:
+                          saving ? null : () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed:
+                          agents.isEmpty || saving
+                              ? null
+                              : () async {
+                                final interval = int.tryParse(
+                                  intervalController.text.trim(),
+                                );
+                                final history = int.tryParse(
+                                  historyController.text.trim(),
+                                );
+                                final validInterval =
+                                    interval != null &&
+                                    interval >= _minAutoSyncIntervalMinutes &&
+                                    interval <= _maxAutoSyncIntervalMinutes;
+                                final validHistory =
+                                    history != null &&
+                                    history >= 1 &&
+                                    history <= _maxAgentHistoryLimit;
+                                if (!validInterval || !validHistory) {
+                                  setDialogState(() {
+                                    intervalError =
+                                        validInterval
+                                            ? null
+                                            : 'Enter a value from 1 to 1440.';
+                                    historyError =
+                                        validHistory
+                                            ? null
+                                            : 'Enter a value from 1 to 100.';
+                                    saveError = null;
+                                  });
+                                  return;
+                                }
+                                setDialogState(() {
+                                  saving = true;
+                                  intervalError = null;
+                                  historyError = null;
+                                  saveError = null;
+                                });
+                                try {
+                                  final updatedCount = await _api
+                                      .updateAllAgentSyncSettings(
+                                        historyLimit: history,
+                                        autoSyncIntervalMinutes: interval,
+                                      );
+                                  if (!mounted || !context.mounted) return;
+                                  Navigator.of(context).pop();
+                                  await _refresh(silent: true);
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(
+                                    this.context,
+                                  ).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Saved a $interval-minute interval for $updatedCount clients. It applies on the next scheduler tick.',
+                                      ),
+                                    ),
+                                  );
+                                } catch (error) {
+                                  if (!context.mounted) return;
+                                  setDialogState(() {
+                                    saving = false;
+                                    saveError = error.toString();
+                                  });
+                                }
+                              },
+                      child:
+                          saving
+                              ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Text('Save for all clients'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+
+    intervalController.dispose();
+    historyController.dispose();
   }
 
   Widget _buildClientDetailToolbar(AdminAgent agent) {
