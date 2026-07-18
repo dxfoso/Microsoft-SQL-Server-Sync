@@ -2619,6 +2619,46 @@ function record_periodic_sync_table_attempt(ownerUserId: string? = null, table: 
   });
 }
 
+function automatic_sync_is_paused(): bool {
+  const control = db.selectOne(PeriodicSyncState, { ownerUserId: '__automatic_sync_control__' });
+  if (control == null || control.manualPendingTables == null) {
+    return false;
+  }
+  return control.manualPendingTables.length > 0;
+}
+
+function automatic_sync_control_set(paused: bool, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const ownerUserId = '__automatic_sync_control__';
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId });
+  let pauseMarker = [];
+  if (paused) {
+    pauseMarker = [{ paused: true }];
+  }
+  if (existing == null) {
+    db.insert(PeriodicSyncState, {
+      ownerUserId,
+      lastCheckedAt: now_iso(),
+      manualPendingTables: pauseMarker,
+      scheduledTableAttempts: [],
+      updatedAt: now_iso()
+    });
+  } else {
+    db.update(PeriodicSyncState, { ownerUserId }, {
+      manualPendingTables: pauseMarker,
+      updatedAt: now_iso()
+    });
+  }
+  return { ok: true, automaticSyncPaused: paused };
+}
+
 function list_completed_scheduler_job_rows(ownerUserId: string? = null): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: {
@@ -3348,6 +3388,7 @@ function live_state(token: string? = null): map<json> {
   );
   return {
     generatedAt: now_iso(),
+    automaticSyncPaused: automatic_sync_is_paused(),
     agents: agentPage.items,
     jobs: jobPage.items,
     limits: {
@@ -3483,6 +3524,16 @@ function auto_sync_tick(token: string? = null): map<json> {
   }
   if (is_client_user(current)) {
     return raw_json_error(403, 'permission denied');
+  }
+
+  if (automatic_sync_is_paused()) {
+    return {
+      ok: true,
+      automaticSyncPaused: true,
+      checkedOwnerCount: 0,
+      createdJobCount: 0,
+      jobs: []
+    };
   }
 
   const allAgents = list_scheduler_agent_rows();
@@ -4360,7 +4411,13 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
     return raw_json_error(403, 'permission denied');
   }
 
+  const downloadSessionDeletedCount = db.deleteMany(DownloadSession, { jobId: { gte: '' } });
+  const uploadSessionDeletedCount = db.deleteMany(UploadSession, { jobId: { gte: '' } });
+  const snapshotDeletedCount = db.deleteMany(SnapshotRecord, { id: { gte: '' } });
+  const batchDeletedCount = db.deleteMany(SyncBatch, { id: { gte: '' } });
   const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });
+  const schedulerStateDeletedCount = db.deleteMany(PeriodicSyncState, { ownerUserId: { gte: '' } });
+  const deletedRecordCount = downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
   let agentResetCount = 0;
   if (resetAgents) {
     agentResetCount = reset_all_agent_saved_state();
@@ -4368,8 +4425,14 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
 
   return {
     ok: true,
+    deletedRecordCount,
     jobDeletedCount,
-    agentResetCount
+    agentResetCount,
+    downloadSessionDeletedCount,
+    uploadSessionDeletedCount,
+    snapshotDeletedCount,
+    batchDeletedCount,
+    schedulerStateDeletedCount
   };
 }
 

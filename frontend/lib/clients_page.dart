@@ -219,6 +219,8 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _bulkMinimizeBusy = false;
   bool _bulkUpdateBusy = false;
   bool _bulkLogsBusy = false;
+  bool _automaticSyncBusy = false;
+  bool _serverResetBusy = false;
   String _filter = '';
   String _logFilter = '';
   String _logDirection = 'all';
@@ -1010,6 +1012,7 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildBulkActions() {
+    final automaticSyncPaused = _state?.automaticSyncPaused ?? false;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -1055,6 +1058,43 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           label: const Text('Request All Logs'),
         ),
+        if (widget.authenticatedUser.isAdmin)
+          OutlinedButton.icon(
+            onPressed:
+                _automaticSyncBusy
+                    ? null
+                    : () => unawaited(
+                      _setAutomaticSyncPaused(!automaticSyncPaused),
+                    ),
+            icon: _actionIcon(
+              busy: _automaticSyncBusy,
+              icon:
+                  automaticSyncPaused
+                      ? Icons.play_arrow_rounded
+                      : Icons.pause_rounded,
+            ),
+            label: Text(
+              automaticSyncPaused
+                  ? 'Resume Automatic Sync'
+                  : 'Pause Automatic Sync',
+            ),
+          ),
+        if (widget.authenticatedUser.isAdmin)
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFB42318),
+              side: const BorderSide(color: Color(0xFFFDA29B)),
+            ),
+            onPressed:
+                _serverResetBusy
+                    ? null
+                    : () => unawaited(_confirmAndDeleteServerData()),
+            icon: _actionIcon(
+              busy: _serverResetBusy,
+              icon: Icons.delete_forever_outlined,
+            ),
+            label: const Text('Delete Server Data'),
+          ),
       ],
     );
   }
@@ -2345,6 +2385,71 @@ class _ClientsPageState extends State<ClientsPage> {
       if (mounted) _showActionError(error);
     } finally {
       if (mounted) setState(() => _bulkSyncBusy = false);
+    }
+  }
+
+  Future<void> _setAutomaticSyncPaused(bool paused) async {
+    if (_automaticSyncBusy) return;
+    setState(() => _automaticSyncBusy = true);
+    try {
+      final confirmedPaused = await _api.setAutomaticSyncPaused(paused: paused);
+      if (!mounted) return;
+      _showActionMessage(
+        confirmedPaused
+            ? 'Automatic sync paused. Manual sync remains available.'
+            : 'Automatic sync resumed.',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) setState(() => _automaticSyncBusy = false);
+    }
+  }
+
+  Future<void> _confirmAndDeleteServerData() async {
+    if (_serverResetBusy || !widget.authenticatedUser.isAdmin) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Delete all saved server sync data?'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: const Text(
+                'This permanently deletes saved sync jobs and cached client state from the server. Client machines keep their local SQL data. The next sync starts from the beginning. Continue?',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('No'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFB42318),
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Yes, Delete Data'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _serverResetBusy = true);
+    try {
+      final result = await _api.resetServerSavedData();
+      if (!mounted) return;
+      _showActionMessage(
+        'Server sync data deleted. Removed ${result.deletedRecordCount} saved records and reset ${result.agentResetCount} clients.',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) setState(() => _serverResetBusy = false);
     }
   }
 

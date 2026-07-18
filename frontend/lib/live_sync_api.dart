@@ -224,6 +224,18 @@ class LiveSyncApiClient {
     return AdminBulkSyncResult.fromJson(Map<String, dynamic>.from(decoded));
   }
 
+  Future<bool> setAutomaticSyncPaused({required bool paused}) async {
+    final decoded = await _invokeFunction('automatic_sync_control_set', {
+      'paused': paused,
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected automatic sync control payload.',
+      );
+    }
+    return decoded['automaticSyncPaused'] as bool? ?? paused;
+  }
+
   Future<AdminBulkDiagnosticsRequestResult> requestAllAgentDiagnostics() async {
     final decoded = await _invokeFunction('agent_diagnostics_request_all', {});
     if (decoded is! Map) {

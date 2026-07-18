@@ -262,6 +262,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(auto_tick_match)
         auto_tick_body = auto_tick_match.group("body")
         self.assertIn("const allAgents = list_scheduler_agent_rows();", auto_tick_body)
+        self.assertIn("if (automatic_sync_is_paused()) {", auto_tick_body)
         self.assertIn("for (const agent of allAgents) {", auto_tick_body)
         self.assertIn(
             "const hasManualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId).length > 0;",
@@ -297,6 +298,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("function normalize_agent_tables_payload(", 1)[0]
         self.assertIn("status == 'snapshotting'", normalize_body)
         self.assertIn("status == 'applying'", normalize_body)
+
+    def test_automatic_sync_pause_is_admin_controlled_and_persistent(self):
+        source = read_text("business/control_plane.tru")
+        self.assertIn("function automatic_sync_is_paused(): bool", source)
+        self.assertIn("function automatic_sync_control_set(paused: bool", source)
+        control_body = source.split("function automatic_sync_control_set(", 1)[1].split(
+            "function ", 1
+        )[0]
+        self.assertIn("if (!is_admin_user(current))", control_body)
+        self.assertIn("ownerUserId = '__automatic_sync_control__'", control_body)
+        self.assertIn("automaticSyncPaused: paused", control_body)
 
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
@@ -666,6 +678,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         server_reset_body = server_reset_match.group("body")
 
         self.assertIn("const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });", server_reset_body)
+        self.assertIn("db.deleteMany(DownloadSession", server_reset_body)
+        self.assertIn("db.deleteMany(UploadSession", server_reset_body)
+        self.assertIn("db.deleteMany(SnapshotRecord", server_reset_body)
+        self.assertIn("db.deleteMany(SyncBatch", server_reset_body)
+        self.assertIn("db.deleteMany(PeriodicSyncState", server_reset_body)
+        self.assertIn("deletedRecordCount,", server_reset_body)
         self.assertIn("agentResetCount = reset_all_agent_saved_state();", server_reset_body)
         self.assertIn("jobDeletedCount,", server_reset_body)
         self.assertIn("agentResetCount", server_reset_body)

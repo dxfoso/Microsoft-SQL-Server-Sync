@@ -2459,7 +2459,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Server sync state cleared. Deleted ${result.jobDeletedCount} records and reset ${result.agentResetCount} agents.',
+            'Server sync state cleared. Deleted ${result.deletedRecordCount} saved records and reset ${result.agentResetCount} agents.',
           ),
         ),
       );
