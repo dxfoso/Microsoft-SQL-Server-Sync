@@ -306,9 +306,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         control_body = source.split("function automatic_sync_control_set(", 1)[1].split(
             "function ", 1
         )[0]
-        self.assertIn("if (!is_admin_user(current))", control_body)
+        self.assertIn("if (!is_admin_user(current) && !is_owner_user(current))", control_body)
+        self.assertIn("set_owner_automatic_sync_paused(current.id, paused)", control_body)
         self.assertIn("controlOwnerUserId = '__automatic_sync_control__'", control_body)
         self.assertIn("automaticSyncPaused: paused", control_body)
+        self.assertIn("function automatic_sync_is_paused_for_owner", source)
+        self.assertIn("if (automatic_sync_is_paused_for_owner(ownerUserId))", source)
 
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
@@ -687,6 +690,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("agentResetCount = reset_all_agent_saved_state();", server_reset_body)
         self.assertIn("jobDeletedCount,", server_reset_body)
         self.assertIn("agentResetCount", server_reset_body)
+        self.assertIn("if (!is_admin_user(current) && !is_owner_user(current))", server_reset_body)
 
     def test_active_job_statuses_include_snapshot_transfer_and_apply_states(self):
         source = read_text("business/control_plane.tru")

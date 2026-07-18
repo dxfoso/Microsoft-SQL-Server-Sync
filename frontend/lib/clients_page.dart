@@ -1058,7 +1058,7 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           label: const Text('Request All Logs'),
         ),
-        if (widget.authenticatedUser.isAdmin)
+        if (widget.authenticatedUser.canManageUsers)
           OutlinedButton.icon(
             onPressed:
                 _automaticSyncBusy
@@ -1079,7 +1079,7 @@ class _ClientsPageState extends State<ClientsPage> {
                   : 'Pause Automatic Sync',
             ),
           ),
-        if (widget.authenticatedUser.isAdmin)
+        if (widget.authenticatedUser.canManageUsers)
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFFB42318),
@@ -2408,7 +2408,7 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Future<void> _confirmAndDeleteServerData() async {
-    if (_serverResetBusy || !widget.authenticatedUser.isAdmin) return;
+    if (_serverResetBusy || !widget.authenticatedUser.canManageUsers) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder:

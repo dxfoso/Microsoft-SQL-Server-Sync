@@ -2529,7 +2529,7 @@ function manual_sync_pending_tables_for_owner(ownerUserId: string? = null): arra
   let tables = [];
   for (const value of existing.manualPendingTables) {
     const table = string.from(value).trim();
-    if (table.length != 0) {
+    if (table.length != 0 && table != '__automatic_sync_paused__') {
       tables = tables.concat([table]);
     }
   }
@@ -2632,13 +2632,76 @@ function automatic_sync_is_paused(): bool {
   return false;
 }
 
+function automatic_sync_is_paused_for_owner(ownerUserId: string): bool {
+  const control = db.selectOne(PeriodicSyncState, { ownerUserId: ownerUserId.trim() });
+  if (control == null) {
+    return false;
+  }
+  for (const marker of control.manualPendingTables ?? []) {
+    if (string.from(marker).trim() == '__automatic_sync_paused__') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function automatic_sync_is_paused_for_user(current: map<json>): bool {
+  if (automatic_sync_is_paused()) {
+    return true;
+  }
+  if (is_owner_user(current)) {
+    return automatic_sync_is_paused_for_owner(current.id);
+  }
+  return false;
+}
+
+function set_owner_automatic_sync_paused(ownerUserId: string, paused: bool): void {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  let pendingTables = [];
+  if (existing != null) {
+    for (const table of existing.manualPendingTables ?? []) {
+      const normalizedTable = string.from(table).trim();
+      if (normalizedTable.length != 0 && normalizedTable != '__automatic_sync_paused__') {
+        pendingTables = pendingTables.concat([normalizedTable]);
+      }
+    }
+  }
+  if (paused) {
+    pendingTables = pendingTables.concat(['__automatic_sync_paused__']);
+  }
+  if (existing == null) {
+    db.insert(PeriodicSyncState, {
+      ownerUserId: normalizedOwnerUserId,
+      lastCheckedAt: now_iso(),
+      manualPendingTables: pendingTables,
+      scheduledTableAttempts: [],
+      updatedAt: now_iso()
+    });
+    return;
+  }
+  db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+    manualPendingTables: pendingTables,
+    updatedAt: now_iso()
+  });
+}
+
 function automatic_sync_control_set(paused: bool, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  if (!is_admin_user(current)) {
+  if (!is_admin_user(current) && !is_owner_user(current)) {
     return raw_json_error(403, 'permission denied');
+  }
+
+  if (is_owner_user(current)) {
+    set_owner_automatic_sync_paused(current.id, paused);
+    return {
+      ok: true,
+      automaticSyncPaused: paused,
+      scope: 'owner'
+    };
   }
 
   const controlOwnerUserId = '__automatic_sync_control__';
@@ -2672,7 +2735,7 @@ function automatic_sync_control_set(paused: bool, token: string? = null): map<js
       updatedAt: now_iso()
     });
   }
-  return { ok: true, automaticSyncPaused: paused };
+  return { ok: true, automaticSyncPaused: paused, scope: 'global' };
 }
 
 function list_completed_scheduler_job_rows(ownerUserId: string? = null): array<json> {
@@ -3404,7 +3467,7 @@ function live_state(token: string? = null): map<json> {
   );
   return {
     generatedAt: now_iso(),
-    automaticSyncPaused: automatic_sync_is_paused(),
+    automaticSyncPaused: automatic_sync_is_paused_for_user(current),
     agents: agentPage.items,
     jobs: jobPage.items,
     limits: {
@@ -3575,6 +3638,9 @@ function auto_sync_tick(token: string? = null): map<json> {
   let createdJobs = [];
   let checkedOwners = [];
   for (const ownerUserId of ownerIds) {
+    if (automatic_sync_is_paused_for_owner(ownerUserId)) {
+      continue;
+    }
     const hasManualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId).length > 0;
     if (!claim_periodic_sync_scheduler_for_owner(ownerUserId, hasManualPendingTables)) {
       continue;
@@ -4423,7 +4489,7 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  if (!is_admin_user(current)) {
+  if (!is_admin_user(current) && !is_owner_user(current)) {
     return raw_json_error(403, 'permission denied');
   }
 
