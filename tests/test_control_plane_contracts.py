@@ -307,7 +307,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function ", 1
         )[0]
         self.assertIn("if (!is_admin_user(current))", control_body)
-        self.assertIn("ownerUserId = '__automatic_sync_control__'", control_body)
+        self.assertIn("controlOwnerUserId = '__automatic_sync_control__'", control_body)
         self.assertIn("automaticSyncPaused: paused", control_body)
 
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):

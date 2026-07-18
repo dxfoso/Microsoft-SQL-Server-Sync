@@ -2621,10 +2621,15 @@ function record_periodic_sync_table_attempt(ownerUserId: string? = null, table: 
 
 function automatic_sync_is_paused(): bool {
   const control = db.selectOne(PeriodicSyncState, { ownerUserId: '__automatic_sync_control__' });
-  if (control == null || control.manualPendingTables == null) {
+  if (control == null) {
     return false;
   }
-  return control.manualPendingTables.length > 0;
+  for (const marker of control.manualPendingTables ?? []) {
+    if (string.from(marker).trim() == 'paused') {
+      return true;
+    }
+  }
+  return false;
 }
 
 function automatic_sync_control_set(paused: bool, token: string? = null): map<json> {
@@ -2636,23 +2641,34 @@ function automatic_sync_control_set(paused: bool, token: string? = null): map<js
     return raw_json_error(403, 'permission denied');
   }
 
-  const ownerUserId = '__automatic_sync_control__';
-  const existing = db.selectOne(PeriodicSyncState, { ownerUserId });
-  let pauseMarker = [];
-  if (paused) {
-    pauseMarker = [{ paused: true }];
-  }
+  const controlOwnerUserId = '__automatic_sync_control__';
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: controlOwnerUserId });
   if (existing == null) {
-    db.insert(PeriodicSyncState, {
-      ownerUserId,
-      lastCheckedAt: now_iso(),
-      manualPendingTables: pauseMarker,
-      scheduledTableAttempts: [],
+    if (paused) {
+      db.insert(PeriodicSyncState, {
+        ownerUserId: controlOwnerUserId,
+        lastCheckedAt: now_iso(),
+        manualPendingTables: ['paused'],
+        scheduledTableAttempts: [],
+        updatedAt: now_iso()
+      });
+    } else {
+      db.insert(PeriodicSyncState, {
+        ownerUserId: controlOwnerUserId,
+        lastCheckedAt: now_iso(),
+        manualPendingTables: [],
+        scheduledTableAttempts: [],
+        updatedAt: now_iso()
+      });
+    }
+  } else if (paused) {
+    db.update(PeriodicSyncState, { ownerUserId: controlOwnerUserId }, {
+      manualPendingTables: ['paused'],
       updatedAt: now_iso()
     });
   } else {
-    db.update(PeriodicSyncState, { ownerUserId }, {
-      manualPendingTables: pauseMarker,
+    db.update(PeriodicSyncState, { ownerUserId: controlOwnerUserId }, {
+      manualPendingTables: [],
       updatedAt: now_iso()
     });
   }
