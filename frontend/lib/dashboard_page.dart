@@ -2390,7 +2390,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'This deletes saved sync job state and cached client diagnostics on the server only. Client machines keep their local data, and the next sync starts from the beginning.',
+                        'This immediately cancels active sync operations, then permanently deletes all saved sync jobs, transfer data, and cached client diagnostics on the server. Client machines keep their local SQL data.',
                         style: Theme.of(
                           context,
                         ).textTheme.bodyMedium?.copyWith(height: 1.45),
@@ -2459,7 +2459,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Server sync state cleared. Deleted ${result.deletedRecordCount} saved records and reset ${result.agentResetCount} agents.',
+            'Cancelled ${result.cancelledJobCount} active sync operation(s), deleted ${result.deletedRecordCount} saved records, and reset ${result.agentResetCount} agents.',
           ),
         ),
       );

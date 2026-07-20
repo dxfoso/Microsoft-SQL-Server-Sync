@@ -387,17 +387,20 @@ class AdminBulkWindowActionRequestResult {
 
 class AdminServerResetResult {
   const AdminServerResetResult({
+    required this.cancelledJobCount,
     required this.deletedRecordCount,
     required this.jobDeletedCount,
     required this.agentResetCount,
   });
 
+  final int cancelledJobCount;
   final int deletedRecordCount;
   final int jobDeletedCount;
   final int agentResetCount;
 
   factory AdminServerResetResult.fromJson(Map<String, dynamic> json) {
     return AdminServerResetResult(
+      cancelledJobCount: (json['cancelledJobCount'] as num? ?? 0).round(),
       deletedRecordCount: (json['deletedRecordCount'] as num? ?? 0).round(),
       jobDeletedCount: (json['jobDeletedCount'] as num? ?? 0).round(),
       agentResetCount: (json['agentResetCount'] as num? ?? 0).round(),

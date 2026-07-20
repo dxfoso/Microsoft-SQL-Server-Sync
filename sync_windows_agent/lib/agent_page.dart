@@ -157,6 +157,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
+  final Set<String> _cancelledProcessingJobIds = <String>{};
   bool _processingPendingJobsBusy = false;
   String? _lastSqlCmdLaunchError;
   ClientUpdateInfo? _clientUpdateInfo;
@@ -285,6 +286,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (!mounted) {
         return;
       }
+
       setState(() {
         _clientUpdateInfo = updateInfo;
         _checkingClientUpdate = false;
@@ -2488,6 +2490,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return;
       }
 
+      final remoteActiveJobIds =
+          heartbeat.jobs
+              .where((job) => job.isActive)
+              .map((job) => job.id)
+              .toSet();
+      final cancelledJobIds = _processingJobIds
+          .where((jobId) => !remoteActiveJobIds.contains(jobId))
+          .toList(growable: false);
+      if (cancelledJobIds.isNotEmpty) {
+        _cancelledProcessingJobIds.addAll(cancelledJobIds);
+        logStartupEvent(
+          'Stopping ${cancelledJobIds.length} in-flight sync job(s) because the control plane no longer reports them active.',
+        );
+      }
+
       setState(() {
         _serverConnected = true;
         _checkingServerConnection = false;
@@ -3167,6 +3184,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _updateTraySyncIndicator();
         try {
           await _processSnapshotJob(job);
+        } on _SyncJobCancelled catch (error) {
+          logStartupEvent(error.toString());
         } catch (error, stackTrace) {
           final errorMessage = error.toString();
           if (_isRetryableSyncJobError(error)) {
@@ -3219,6 +3238,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           }
         } finally {
           _processingJobIds.remove(job.id);
+          _cancelledProcessingJobIds.remove(job.id);
           _updateTraySyncIndicator();
         }
       }
@@ -3228,6 +3248,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     } finally {
       _updateTraySyncIndicator();
       _processingPendingJobsBusy = false;
+    }
+  }
+
+  void _checkSyncJobNotCancelled(String jobId) {
+    if (_cancelledProcessingJobIds.contains(jobId)) {
+      throw _SyncJobCancelled(jobId);
     }
   }
 
@@ -3320,6 +3346,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _processSnapshotJob(RemoteSyncJob job) async {
+    _checkSyncJobNotCancelled(job.id);
     if (job.direction == 'upload') {
       await _processSnapshotRelayUploadJob(job);
       return;
@@ -3332,6 +3359,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {
+    _checkSyncJobNotCancelled(job.id);
     var activeJob = await _controlPlaneClient.startJob(
       job.id,
       status: 'snapshotting',
@@ -3347,6 +3375,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final snapshot = await _createRelaySnapshotForJob(job);
+    _checkSyncJobNotCancelled(job.id);
 
     activeJob = await _controlPlaneClient.updateJobProgress(
       job.id,
@@ -3356,6 +3385,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rowCount: snapshot.rowCount,
     );
     _applyRemoteJobState(activeJob);
+    if (!activeJob.isActive) {
+      throw _SyncJobCancelled(job.id);
+    }
 
     if (job.batchId?.trim().isNotEmpty == true) {
       // Bound serialized payload size; SQL rows can contain large text.
@@ -3365,6 +3397,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
       RemoteSyncJob? uploadedJob;
       if (rows.isEmpty) {
+        _checkSyncJobNotCancelled(job.id);
         uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
           job.id,
           batchId: job.batchId!,
@@ -3378,8 +3411,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           changeTrackingVersion: snapshot.changeTrackingVersion,
           payloadIsDelta: snapshot.isDelta,
         );
+        _checkSyncJobNotCancelled(job.id);
       } else {
         for (var offset = 0; offset < rows.length;) {
+          _checkSyncJobNotCancelled(job.id);
           var end = math.min(offset + 500, rows.length);
           while (end > offset + 1 &&
               utf8.encode(jsonEncode(rows.sublist(offset, end))).length >
@@ -3404,6 +3439,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             payloadBase64: payloadBase64,
             payloadIsDelta: snapshot.isDelta,
           );
+          _checkSyncJobNotCancelled(job.id);
           offset = end;
         }
       }
@@ -3425,6 +3461,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       snapshotCreatedAt: snapshot.createdAt,
       snapshotBytes: snapshot.snapshotBytes,
       snapshotJson: snapshot.snapshotJson,
+      checkCancelled: () => _checkSyncJobNotCancelled(job.id),
     );
 
     _applyRemoteJobState(
@@ -3453,6 +3490,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {
+    _checkSyncJobNotCancelled(job.id);
     var activeJob = await _controlPlaneClient.startJob(
       job.id,
       status: 'downloading',
@@ -3460,6 +3498,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       message: 'Downloading compressed snapshot for ${job.table}.',
     );
     _applyRemoteJobState(activeJob);
+    if (!activeJob.isActive) {
+      throw _SyncJobCancelled(job.id);
+    }
 
     final isMultiWriter = job.batchId?.trim().isNotEmpty == true;
     var streamedTargetRowCount = -1;
@@ -3481,6 +3522,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         rowCount: 0,
       );
       _applyRemoteJobState(activeJob);
+      if (!activeJob.isActive) {
+        throw _SyncJobCancelled(job.id);
+      }
     }
 
     // Legacy path remains `final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);`.
@@ -3489,7 +3533,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             ? await _controlPlaneClient.downloadMultiWriterDelta(
               job.id,
               batchId: job.batchId!,
+              checkCancelled: () => _checkSyncJobNotCancelled(job.id),
               onChunk: (snapshot) async {
+                _checkSyncJobNotCancelled(job.id);
                 streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
                   job: job,
                   snapshot: snapshot,
@@ -3497,9 +3543,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
                   applyStats: applyStats,
                 );
+                _checkSyncJobNotCancelled(job.id);
               },
             )
-            : await _controlPlaneClient.downloadSnapshot(job.id);
+            : await _controlPlaneClient.downloadSnapshot(
+              job.id,
+              checkCancelled: () => _checkSyncJobNotCancelled(job.id),
+            );
+
+    _checkSyncJobNotCancelled(job.id);
 
     if (!isMultiWriter) {
       activeJob = await _controlPlaneClient.updateJobProgress(
@@ -3511,6 +3563,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         rowCount: snapshotToApply.rowCount,
       );
       _applyRemoteJobState(activeJob);
+      if (!activeJob.isActive) {
+        throw _SyncJobCancelled(job.id);
+      }
     }
 
     if (job.batchId?.trim().isNotEmpty != true) {
@@ -3524,6 +3579,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               snapshot: snapshotToApply,
               applyStats: applyStats,
             );
+    _checkSyncJobNotCancelled(job.id);
     if (!isMultiWriter && applyStats.rejectedRows.isNotEmpty) {
       final detail = formatSqlSyncRejectedRows(
         rejected: applyStats.rejectedRows,
@@ -4023,6 +4079,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         await applySqlSyncRowsWithIsolation(
           rows: deleteRows.cast<Map<String, dynamic>>(),
           applyBatch: (batch) async {
+            _checkSyncJobNotCancelled(job.id);
             stats.deletedRows += await _deleteDeltaRowsFromTarget(
               profile: targetProfile,
               database: targetDatabase,
@@ -4032,6 +4089,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               primaryKeyColumns: primaryKeyColumns,
               rows: batch,
             );
+            _checkSyncJobNotCancelled(job.id);
           },
           shouldIsolateError: _isIsolatableTargetSqlError,
         ),
@@ -4049,6 +4107,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         await applySqlSyncRowsWithIsolation(
           rows: rows,
           applyBatch: (batch) async {
+            _checkSyncJobNotCancelled(job.id);
             final insertedRows = await _applyDeltaRowsToTarget(
               profile: targetProfile,
               database: targetDatabase,
@@ -4061,6 +4120,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             );
             stats.insertedRows += insertedRows;
             stats.updatedRows += batch.length - insertedRows;
+            _checkSyncJobNotCancelled(job.id);
           },
           shouldIsolateError: _isIsolatableTargetSqlError,
         ),
@@ -8925,6 +8985,16 @@ class _InfoLine extends StatelessWidget {
 }
 
 enum _SyncTableSortField { name, lastSync, rows }
+
+class _SyncJobCancelled implements Exception {
+  const _SyncJobCancelled(this.jobId);
+
+  final String jobId;
+
+  @override
+  String toString() =>
+      'Stopped sync job $jobId because the server cancelled or deleted it.';
+}
 
 class _TableRowsResult {
   const _TableRowsResult({

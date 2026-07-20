@@ -4484,6 +4484,32 @@ function reset_all_agent_saved_state(): int {
   });
 }
 
+function delete_all_snapshot_storage(cursor: string? = null): int {
+  const storedSnapshotPage = db.page(SnapshotRecord, {
+    where: { id: { gte: '' } },
+    orderBy: [
+      { field: 'createdAt', dir: 'asc' },
+      { field: 'id', dir: 'asc' }
+    ],
+    fields: ['storageId'],
+    limit: 1000,
+    cursor
+  });
+  let deletedStorageObjectCount = 0;
+  for (const storedSnapshot of storedSnapshotPage.rows) {
+    const storageId = string.from(storedSnapshot.storageId ?? '').trim();
+    if (storageId.length != 0) {
+      storage.delete(storageId);
+      deletedStorageObjectCount += 1;
+    }
+  }
+  const nextCursor = string.from(storedSnapshotPage.nextCursor ?? '').trim();
+  if (nextCursor.length != 0) {
+    deletedStorageObjectCount += delete_all_snapshot_storage(nextCursor);
+  }
+  return deletedStorageObjectCount;
+}
+
 function server_saved_data_reset(resetAgents: bool = true, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -4492,6 +4518,14 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
   if (!is_admin_user(current) && !is_owner_user(current)) {
     return raw_json_error(403, 'permission denied');
   }
+
+  // Cancel first so every in-flight endpoint observes a terminal job before
+  // its relay/session rows are removed. This closes the race where a client
+  // could append another chunk while the reset was deleting saved state.
+  const cancellation = jobs_cancel_active(null, 'Cancelled because all server sync data was deleted.', token);
+  const cancelledJobCount = int.from(cancellation.cancelledJobCount ?? 0);
+
+  const deletedStorageObjectCount = delete_all_snapshot_storage();
 
   const downloadSessionDeletedCount = db.deleteMany(DownloadSession, { jobId: { gte: '' } });
   const uploadSessionDeletedCount = db.deleteMany(UploadSession, { jobId: { gte: '' } });
@@ -4507,7 +4541,9 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
 
   return {
     ok: true,
+    cancelledJobCount,
     deletedRecordCount,
+    deletedStorageObjectCount,
     jobDeletedCount,
     agentResetCount,
     downloadSessionDeletedCount,
@@ -4525,6 +4561,9 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   }
   if (!can_access_job(current_user_record(token), job)) {
     return deny_job_access('jobs_upload_chunk_start', token, current_user_record(token), job);
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
   }
   if (chunkCount < 1 || chunkCount > max_chunk_count()) {
     return raw_json_error(400, 'invalid chunk count');
@@ -4614,6 +4653,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   }
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_multi_writer_upload', token, current, job);
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
   }
   if (string.from(job.direction).trim() != 'upload' || string.from(job.batchId).trim() != batchId.trim()) {
     return raw_json_error(409, 'job is not a multi-writer upload');
@@ -4782,6 +4824,9 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_multi_writer_download', token, current, job);
   }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
+  }
   const batch = find_sync_batch(batchId);
   if (batch == null || string.from(job.batchId).trim() != batchId.trim()) {
     return raw_json_error(404, 'sync batch not found');
@@ -4894,6 +4939,9 @@ function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chu
   }
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_upload_chunk', token, current, job);
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
   }
   const session = find_upload_session_for_job(jobId, uploadId);
   log.info('snapshot upload chunk checkpoint', {
@@ -5018,6 +5066,9 @@ function jobs_upload_chunk_complete(jobId: string, uploadId: string, token: stri
   }
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_upload_chunk_complete', token, current, job);
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
   }
   const session = find_upload_session_by_upload_id(uploadId);
   if (session == null || session.jobId != jobId) {
@@ -5166,6 +5217,9 @@ function jobs_download_snapshot_manifest(jobId: string, token: string? = null): 
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_download_snapshot_manifest', token, current, job);
   }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
+  }
   const snapshot = latest_download_snapshot_for_job(job);
   if (snapshot == null) {
     return raw_json_error(404, 'snapshot not found');
@@ -5223,6 +5277,9 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
   }
   if (!can_access_job(current, job)) {
     return deny_job_access('jobs_download_snapshot_chunk', token, current, job);
+  }
+  if (sync_job_status_is_terminal(string.from(job.status))) {
+    return raw_json_error(410, 'sync job is no longer active');
   }
   if (chunkIndex == null) {
     return raw_json_error(400, 'chunkIndex is required');

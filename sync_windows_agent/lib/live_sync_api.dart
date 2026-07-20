@@ -31,6 +31,7 @@ const List<Duration> _defaultSnapshotTransferRetryDelays = <Duration>[
 
 typedef TransferProgressCallback =
     void Function(TransferProgressSnapshot progress);
+typedef SyncCancellationCheck = void Function();
 
 class TransferProgressSnapshot {
   const TransferProgressSnapshot({
@@ -792,7 +793,9 @@ class AgentControlPlaneClient {
     required int snapshotBytes,
     required String snapshotJson,
     TransferProgressCallback? onProgress,
+    SyncCancellationCheck? checkCancelled,
   }) async {
+    checkCancelled?.call();
     final payloadBytes = Uint8List.fromList(utf8.encode(snapshotJson));
     final compressedBytes = Uint8List.fromList(gzip.encode(payloadBytes));
     final chunkCount =
@@ -827,6 +830,7 @@ class AgentControlPlaneClient {
       ),
       'starting snapshot upload',
     );
+    checkCancelled?.call();
 
     if (startResponse.statusCode != 200) {
       throw _exceptionFromResponse(startResponse);
@@ -850,6 +854,7 @@ class AgentControlPlaneClient {
     var bytesTransferred = 0;
 
     for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      checkCancelled?.call();
       if (receivedIndexes.contains(chunkIndex)) {
         final skippedStart = chunkIndex * _snapshotTransferChunkSizeBytes;
         final skippedEnd = skippedStart + _snapshotTransferChunkSizeBytes;
@@ -887,6 +892,7 @@ class AgentControlPlaneClient {
         ),
         'uploading snapshot chunk ${chunkIndex + 1} of $chunkCount',
       );
+      checkCancelled?.call();
 
       if (chunkResponse.statusCode != 200) {
         throw _exceptionFromResponse(chunkResponse);
@@ -920,6 +926,7 @@ class AgentControlPlaneClient {
       ),
       'finalizing snapshot upload',
     );
+    checkCancelled?.call();
     if (response.statusCode != 200) {
       throw _exceptionFromResponse(response);
     }
@@ -961,12 +968,17 @@ class AgentControlPlaneClient {
     );
   }
 
-  Future<RemoteSnapshot> downloadSnapshot(String jobId) async {
+  Future<RemoteSnapshot> downloadSnapshot(
+    String jobId, {
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    checkCancelled?.call();
     final manifest = await _invokeFunctionWithRetry(
       'jobs_download_snapshot_manifest',
       {'jobId': jobId},
       'starting snapshot download',
     );
+    checkCancelled?.call();
     if (manifest is! Map || manifest['manifest'] is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected chunked download manifest payload.',
@@ -995,11 +1007,13 @@ class AgentControlPlaneClient {
 
     final buffer = BytesBuilder(copy: false);
     for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      checkCancelled?.call();
       final chunkDecoded = await _invokeFunctionWithRetry(
         'jobs_download_snapshot_chunk',
         {'jobId': jobId, 'chunkIndex': chunkIndex},
         'downloading snapshot chunk ${chunkIndex + 1} of $chunkCount',
       );
+      checkCancelled?.call();
       if (chunkDecoded is! Map || chunkDecoded['chunkData'] is! String) {
         throw const AgentControlPlaneException(
           'Unexpected snapshot chunk payload.',
@@ -1096,6 +1110,7 @@ class AgentControlPlaneClient {
     String jobId, {
     required String batchId,
     Future<void> Function(RemoteSnapshot snapshot)? onChunk,
+    SyncCancellationCheck? checkCancelled,
   }) async {
     String? cursor;
     RemoteSnapshot? firstSnapshot;
@@ -1103,12 +1118,14 @@ class AgentControlPlaneClient {
     var mergedRowCount = 0;
     var totalSnapshotBytes = 0;
     while (true) {
+      checkCancelled?.call();
       final decoded =
           await _invokeFunctionWithRetry('jobs_multi_writer_download', {
             'jobId': jobId,
             'batchId': batchId,
             if (cursor != null && cursor!.isNotEmpty) 'cursor': cursor,
           }, 'downloading merged multi-writer delta');
+      checkCancelled?.call();
       if (decoded is! Map || decoded['snapshot'] is! Map) {
         throw const AgentControlPlaneException(
           'Unexpected merged multi-writer download payload.',

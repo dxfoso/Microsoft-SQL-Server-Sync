@@ -680,6 +680,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(server_reset_match)
         server_reset_body = server_reset_match.group("body")
 
+        self.assertIn("jobs_cancel_active(null, 'Cancelled because all server sync data was deleted.', token)", server_reset_body)
+        self.assertIn("cancelledJobCount", server_reset_body)
+        self.assertIn("delete_all_snapshot_storage()", server_reset_body)
+        self.assertIn("deletedStorageObjectCount", server_reset_body)
+        storage_cleanup = source.split("function delete_all_snapshot_storage(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("db.page(SnapshotRecord", storage_cleanup)
+        self.assertIn("limit: 1000", storage_cleanup)
+        self.assertIn("storage.delete(storageId);", storage_cleanup)
+        self.assertIn("delete_all_snapshot_storage(nextCursor)", storage_cleanup)
         self.assertIn("const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });", server_reset_body)
         self.assertIn("db.deleteMany(DownloadSession", server_reset_body)
         self.assertIn("db.deleteMany(UploadSession", server_reset_body)
@@ -708,6 +717,41 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("normalized == 'uploading'", body)
         self.assertIn("normalized == 'downloading'", body)
         self.assertIn("normalized == 'applying'", body)
+
+    def test_server_reset_cancellation_is_enforced_by_server_and_windows_client(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        agent_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+
+        guarded_endpoints = (
+            "jobs_upload_chunk_start",
+            "jobs_multi_writer_upload",
+            "jobs_multi_writer_download",
+            "jobs_upload_chunk",
+            "jobs_upload_chunk_complete",
+            "jobs_download_snapshot_manifest",
+            "jobs_download_snapshot_chunk",
+        )
+        for index, endpoint in enumerate(guarded_endpoints):
+            start = source.index(f"function {endpoint}(")
+            next_starts = [
+                source.find("\nfunction ", start + 1),
+                len(source),
+            ]
+            end = min(value for value in next_starts if value != -1)
+            body = source[start:end]
+            self.assertIn(
+                "sync_job_status_is_terminal(string.from(job.status))",
+                body,
+                msg=f"{endpoint} must reject cancelled jobs ({index})",
+            )
+            self.assertIn("raw_json_error(410, 'sync job is no longer active')", body)
+
+        self.assertIn("final Set<String> _cancelledProcessingJobIds", agent_page)
+        self.assertIn("_checkSyncJobNotCancelled(job.id)", agent_page)
+        self.assertIn("on _SyncJobCancelled catch", agent_page)
+        self.assertIn("SyncCancellationCheck? checkCancelled", agent_api)
+        self.assertIn("checkCancelled?.call();", agent_api)
 
     def test_control_plane_no_longer_advertises_old_sync_engine(self):
         source = read_text("business/control_plane.tru")

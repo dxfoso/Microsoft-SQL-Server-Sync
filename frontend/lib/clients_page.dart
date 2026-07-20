@@ -2417,7 +2417,7 @@ class _ClientsPageState extends State<ClientsPage> {
             content: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 460),
               child: const Text(
-                'This permanently deletes saved sync jobs and cached client state from the server. Client machines keep their local SQL data. The next sync starts from the beginning. Continue?',
+                'This immediately cancels active sync operations, then permanently deletes all saved sync jobs, transfer data, and cached client state from the server. Client machines keep their local SQL data. Continue?',
               ),
             ),
             actions: [
@@ -2443,7 +2443,7 @@ class _ClientsPageState extends State<ClientsPage> {
       final result = await _api.resetServerSavedData();
       if (!mounted) return;
       _showActionMessage(
-        'Server sync data deleted. Removed ${result.deletedRecordCount} saved records and reset ${result.agentResetCount} clients.',
+        'Cancelled ${result.cancelledJobCount} active sync operation(s), removed ${result.deletedRecordCount} saved records, and reset ${result.agentResetCount} clients.',
       );
       await _refresh(silent: true);
     } catch (error) {
