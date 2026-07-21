@@ -4596,6 +4596,9 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   const syncBatchBatch = delete_sync_batch_batch();
   const syncJobBatch = delete_sync_job_batch();
   const schedulerStateBatch = delete_periodic_sync_state_batch();
+  // Preserve a pause marker after deleting scheduler state so automatic ticks
+  // cannot recreate jobs while the reset is draining or after it completes.
+  const automaticSyncControl = automatic_sync_control_set(true, token);
   const downloadSessionDeletedCount = int.from(downloadSessionBatch.deletedCount ?? 0);
   const uploadSessionDeletedCount = int.from(uploadSessionBatch.deletedCount ?? 0);
   const batchDeletedCount = int.from(syncBatchBatch.deletedCount ?? 0);
@@ -4619,6 +4622,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     snapshotDeletedCount,
     batchDeletedCount,
     schedulerStateDeletedCount,
+    automaticSyncPaused: automaticSyncControl.automaticSyncPaused == true,
     hasMore: snapshotBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true
   };
 }

@@ -700,6 +700,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("db.deleteMany(SnapshotRecord", server_reset_body)
         self.assertIn("delete_sync_batch_batch()", server_reset_body)
         self.assertIn("delete_periodic_sync_state_batch()", server_reset_body)
+        self.assertIn("const automaticSyncControl = automatic_sync_control_set(true, token);", server_reset_body)
+        self.assertIn("automaticSyncPaused: automaticSyncControl.automaticSyncPaused == true", server_reset_body)
+        self.assertLess(
+            server_reset_body.index("delete_periodic_sync_state_batch()"),
+            server_reset_body.index("automatic_sync_control_set(true, token)"),
+        )
         for helper_name in (
             "delete_download_session_batch",
             "delete_upload_session_batch",
