@@ -688,6 +688,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         storage_cleanup = source.split("function delete_snapshot_storage_batch(", 1)[1].split("\nfunction ", 1)[0]
         self.assertIn("db.selectMany(SnapshotRecord", storage_cleanup)
         self.assertIn("limit: 25", storage_cleanup)
+        self.assertIn("hasMore: storedSnapshots.length == 25", storage_cleanup)
         self.assertIn("storage.delete(storageId);", storage_cleanup)
         self.assertIn("snapshotIds = snapshotIds.concat([storedSnapshot.id])", storage_cleanup)
         self.assertIn("db.deleteMany(SnapshotRecord, { id: { in: snapshotIds } })", storage_cleanup)
@@ -708,6 +709,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         ):
             helper_body = source.split(f"function {helper_name}(", 1)[1].split("\nfunction ", 1)[0]
             self.assertIn("limit: 50", helper_body)
+            self.assertIn("hasMore: rows.length == 50", helper_body)
         self.assertIn("deletedRecordCount,", server_reset_body)
         self.assertIn("agentResetCount = reset_all_agent_saved_state();", server_reset_body)
         self.assertIn("jobDeletedCount,", server_reset_body)

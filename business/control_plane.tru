@@ -4508,7 +4508,7 @@ function delete_snapshot_storage_batch(): map<json> {
   return {
     deletedStorageObjectCount,
     snapshotDeletedCount,
-    hasMore: storedSnapshots.length == 50
+    hasMore: storedSnapshots.length == 25
   };
 }
 
@@ -4520,7 +4520,7 @@ function delete_download_session_batch(): map<json> {
   for (const row of rows) { ids = ids.concat([row.id]); }
   let deletedCount = 0;
   if (ids.length != 0) { deletedCount = db.deleteMany(DownloadSession, { id: { in: ids } }); }
-  return { deletedCount, hasMore: rows.length == 200 };
+  return { deletedCount, hasMore: rows.length == 50 };
 }
 
 function delete_upload_session_batch(): map<json> {
@@ -4531,7 +4531,7 @@ function delete_upload_session_batch(): map<json> {
   for (const row of rows) { ids = ids.concat([row.id]); }
   let deletedCount = 0;
   if (ids.length != 0) { deletedCount = db.deleteMany(UploadSession, { id: { in: ids } }); }
-  return { deletedCount, hasMore: rows.length == 200 };
+  return { deletedCount, hasMore: rows.length == 50 };
 }
 
 function delete_sync_batch_batch(): map<json> {
@@ -4542,7 +4542,7 @@ function delete_sync_batch_batch(): map<json> {
   for (const row of rows) { ids = ids.concat([row.id]); }
   let deletedCount = 0;
   if (ids.length != 0) { deletedCount = db.deleteMany(SyncBatch, { id: { in: ids } }); }
-  return { deletedCount, hasMore: rows.length == 200 };
+  return { deletedCount, hasMore: rows.length == 50 };
 }
 
 function delete_sync_job_batch(): map<json> {
@@ -4553,7 +4553,7 @@ function delete_sync_job_batch(): map<json> {
   for (const row of rows) { ids = ids.concat([row.id]); }
   let deletedCount = 0;
   if (ids.length != 0) { deletedCount = db.deleteMany(SyncJob, { id: { in: ids } }); }
-  return { deletedCount, hasMore: rows.length == 200 };
+  return { deletedCount, hasMore: rows.length == 50 };
 }
 
 function delete_periodic_sync_state_batch(): map<json> {
@@ -4564,7 +4564,7 @@ function delete_periodic_sync_state_batch(): map<json> {
   for (const row of rows) { ownerUserIds = ownerUserIds.concat([row.ownerUserId]); }
   let deletedCount = 0;
   if (ownerUserIds.length != 0) { deletedCount = db.deleteMany(PeriodicSyncState, { ownerUserId: { in: ownerUserIds } }); }
-  return { deletedCount, hasMore: rows.length == 200 };
+  return { deletedCount, hasMore: rows.length == 50 };
 }
 
 function server_saved_data_reset(resetAgents: bool = true, continueReset: bool = false, token: string? = null): map<json> {
