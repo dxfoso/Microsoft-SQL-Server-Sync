@@ -79,6 +79,8 @@ void main() {
         'deletedRecordCount': 56,
         'jobDeletedCount': 4,
         'agentResetCount': 2,
+        'cleanupStatus': 'cleaning',
+        'automaticSyncPaused': true,
         'hasMore': true,
       },
       {
@@ -86,6 +88,8 @@ void main() {
         'deletedRecordCount': 50,
         'jobDeletedCount': 0,
         'agentResetCount': 0,
+        'cleanupStatus': 'cleaning',
+        'automaticSyncPaused': true,
         'hasMore': true,
       },
       {
@@ -93,6 +97,8 @@ void main() {
         'deletedRecordCount': 7,
         'jobDeletedCount': 0,
         'agentResetCount': 0,
+        'cleanupStatus': 'cleaned',
+        'automaticSyncPaused': true,
         'hasMore': false,
       },
     ];
@@ -131,6 +137,9 @@ void main() {
     expect(result.deletedRecordCount, 113);
     expect(result.jobDeletedCount, 4);
     expect(result.agentResetCount, 2);
+    expect(result.cleanupStatus, 'cleaned');
+    expect(result.cleaned, isTrue);
+    expect(result.automaticSyncPaused, isTrue);
     api.dispose();
   });
 
@@ -166,6 +175,8 @@ void main() {
                 'deletedRecordCount': 3,
                 'jobDeletedCount': 2,
                 'agentResetCount': 1,
+                'cleanupStatus': 'cleaned',
+                'automaticSyncPaused': true,
                 'hasMore': false,
               },
             }),

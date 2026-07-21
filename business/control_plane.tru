@@ -4448,11 +4448,9 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
 
 function reset_all_agent_saved_state(): int {
   return db.updateMany(Agent, { clientName: { gte: '' } }, {
-    isOnline: false,
-    serverConnected: false,
-    sqlConnected: false,
-    clientVersion: '',
-    lastHeartbeat: '',
+    // Connectivity is live operational truth, not saved sync data. Preserve
+    // the most recent heartbeat and connection flags so a healthy client does
+    // not appear offline while durable sync state is being deleted.
     selectedTable: null,
     tables: [],
     tableRelationships: [],
@@ -4610,8 +4608,11 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     agentResetCount = reset_all_agent_saved_state();
   }
 
+  const hasMore = snapshotBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true;
+
   return {
     ok: true,
+    cleanupStatus: hasMore ? 'cleaning' : 'cleaned',
     cancelledJobCount,
     deletedRecordCount,
     deletedStorageObjectCount,
@@ -4623,7 +4624,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     batchDeletedCount,
     schedulerStateDeletedCount,
     automaticSyncPaused: automaticSyncControl.automaticSyncPaused == true,
-    hasMore: snapshotBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true
+    hasMore
   };
 }
 

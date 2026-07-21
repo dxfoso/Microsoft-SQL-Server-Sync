@@ -309,6 +309,7 @@ class LiveSyncApiClient {
     var deletedRecordCount = 0;
     var jobDeletedCount = 0;
     var agentResetCount = 0;
+    var automaticSyncPaused = false;
 
     // Drain bounded, durable server batches instead of holding one recursive
     // request open until every storage object has been removed.
@@ -335,12 +336,15 @@ class LiveSyncApiClient {
       deletedRecordCount += (result['deletedRecordCount'] as num? ?? 0).round();
       jobDeletedCount += (result['jobDeletedCount'] as num? ?? 0).round();
       agentResetCount += (result['agentResetCount'] as num? ?? 0).round();
+      automaticSyncPaused = result['automaticSyncPaused'] == true;
       if (result['hasMore'] != true) {
         return AdminServerResetResult(
           cancelledJobCount: cancelledJobCount,
           deletedRecordCount: deletedRecordCount,
           jobDeletedCount: jobDeletedCount,
           agentResetCount: agentResetCount,
+          cleanupStatus: result['cleanupStatus'] as String? ?? 'cleaned',
+          automaticSyncPaused: automaticSyncPaused,
         );
       }
       continueReset = true;

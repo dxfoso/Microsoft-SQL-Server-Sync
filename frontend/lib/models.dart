@@ -391,12 +391,18 @@ class AdminServerResetResult {
     required this.deletedRecordCount,
     required this.jobDeletedCount,
     required this.agentResetCount,
+    required this.cleanupStatus,
+    required this.automaticSyncPaused,
   });
 
   final int cancelledJobCount;
   final int deletedRecordCount;
   final int jobDeletedCount;
   final int agentResetCount;
+  final String cleanupStatus;
+  final bool automaticSyncPaused;
+
+  bool get cleaned => cleanupStatus == 'cleaned';
 
   factory AdminServerResetResult.fromJson(Map<String, dynamic> json) {
     return AdminServerResetResult(
@@ -404,6 +410,8 @@ class AdminServerResetResult {
       deletedRecordCount: (json['deletedRecordCount'] as num? ?? 0).round(),
       jobDeletedCount: (json['jobDeletedCount'] as num? ?? 0).round(),
       agentResetCount: (json['agentResetCount'] as num? ?? 0).round(),
+      cleanupStatus: json['cleanupStatus'] as String? ?? 'cleaned',
+      automaticSyncPaused: json['automaticSyncPaused'] as bool? ?? true,
     );
   }
 }

@@ -648,11 +648,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         reset_body = reset_match.group("body")
 
         self.assertIn("return db.updateMany(Agent, { clientName: { gte: '' } }, {", reset_body)
-        self.assertIn("isOnline: false,", reset_body)
-        self.assertIn("serverConnected: false,", reset_body)
-        self.assertIn("sqlConnected: false,", reset_body)
-        self.assertIn("clientVersion: '',", reset_body)
-        self.assertIn("lastHeartbeat: '',", reset_body)
+        self.assertNotIn("isOnline: false,", reset_body)
+        self.assertNotIn("serverConnected: false,", reset_body)
+        self.assertNotIn("sqlConnected: false,", reset_body)
+        self.assertNotIn("clientVersion: '',", reset_body)
+        self.assertNotIn("lastHeartbeat: '',", reset_body)
         self.assertIn("selectedTable: null,", reset_body)
         self.assertIn("tables: [],", reset_body)
         self.assertIn("tableRelationships: [],", reset_body)
@@ -684,7 +684,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("cancelledJobCount", server_reset_body)
         self.assertIn("delete_snapshot_storage_batch()", server_reset_body)
         self.assertIn("deletedStorageObjectCount", server_reset_body)
-        self.assertIn("hasMore: snapshotBatch.hasMore == true", server_reset_body)
+        self.assertIn("const hasMore = snapshotBatch.hasMore == true", server_reset_body)
         storage_cleanup = source.split("function delete_snapshot_storage_batch(", 1)[1].split("\nfunction ", 1)[0]
         self.assertIn("db.selectMany(SnapshotRecord", storage_cleanup)
         self.assertIn("limit: 25", storage_cleanup)
@@ -702,6 +702,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("delete_periodic_sync_state_batch()", server_reset_body)
         self.assertIn("const automaticSyncControl = automatic_sync_control_set(true, token);", server_reset_body)
         self.assertIn("automaticSyncPaused: automaticSyncControl.automaticSyncPaused == true", server_reset_body)
+        self.assertIn("cleanupStatus: hasMore ? 'cleaning' : 'cleaned'", server_reset_body)
         self.assertLess(
             server_reset_body.index("delete_periodic_sync_state_batch()"),
             server_reset_body.index("automatic_sync_control_set(true, token)"),

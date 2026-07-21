@@ -221,6 +221,7 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _bulkLogsBusy = false;
   bool _automaticSyncBusy = false;
   bool _serverResetBusy = false;
+  AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
   String _logFilter = '';
   String _logDirection = 'all';
@@ -1093,7 +1094,53 @@ class _ClientsPageState extends State<ClientsPage> {
               busy: _serverResetBusy,
               icon: Icons.delete_forever_outlined,
             ),
-            label: const Text('Delete Server Data'),
+            label: Text(
+              _serverResetBusy ? 'Cleaning Server Data…' : 'Delete Server Data',
+            ),
+          ),
+        if (_serverResetBusy || _lastServerResetResult?.cleaned == true)
+          Semantics(
+            liveRegion: true,
+            label:
+                _serverResetBusy
+                    ? 'Server data cleanup is in progress'
+                    : 'Server data cleanup completed; automatic sync is paused',
+            child: Chip(
+              avatar: Icon(
+                _serverResetBusy
+                    ? Icons.hourglass_top_rounded
+                    : Icons.check_circle_outline_rounded,
+                size: 17,
+                color:
+                    _serverResetBusy
+                        ? const Color(0xFF175CD3)
+                        : const Color(0xFF067647),
+              ),
+              label: Text(
+                _serverResetBusy
+                    ? 'Cleaning…'
+                    : _lastServerResetResult!.automaticSyncPaused
+                    ? 'Cleaned · Automatic sync paused'
+                    : 'Cleaned',
+              ),
+              labelStyle: TextStyle(
+                color:
+                    _serverResetBusy
+                        ? const Color(0xFF175CD3)
+                        : const Color(0xFF067647),
+                fontWeight: FontWeight.w700,
+              ),
+              backgroundColor:
+                  _serverResetBusy
+                      ? const Color(0xFFEFF8FF)
+                      : const Color(0xFFECFDF3),
+              side: BorderSide(
+                color:
+                    _serverResetBusy
+                        ? const Color(0xFFB2DDFF)
+                        : const Color(0xFFABEFC6),
+              ),
+            ),
           ),
       ],
     );
@@ -2438,12 +2485,16 @@ class _ClientsPageState extends State<ClientsPage> {
     );
     if (confirmed != true || !mounted) return;
 
-    setState(() => _serverResetBusy = true);
+    setState(() {
+      _serverResetBusy = true;
+      _lastServerResetResult = null;
+    });
     try {
       final result = await _api.resetServerSavedData();
       if (!mounted) return;
+      setState(() => _lastServerResetResult = result);
       _showActionMessage(
-        'Cancelled ${result.cancelledJobCount} active sync operation(s), removed ${result.deletedRecordCount} saved records, and reset ${result.agentResetCount} clients.',
+        'Server data cleaned. Cancelled ${result.cancelledJobCount} active sync operation(s), removed ${result.deletedRecordCount} saved records, reset ${result.agentResetCount} clients, and paused automatic sync. Live client connectivity was preserved.',
       );
       await _refresh(silent: true);
     } catch (error) {

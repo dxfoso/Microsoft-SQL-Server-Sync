@@ -98,6 +98,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _bulkClientUpdateBusy = false;
   bool _bulkWindowMinimizeBusy = false;
   bool _serverResetBusy = false;
+  AdminServerResetResult? _lastServerResetResult;
   bool _handledLaunchAction = false;
   String? _bulkDiagnosticsRequestId;
   String? _bulkDiagnosticsRequestedAt;
@@ -2449,6 +2450,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     setState(() {
       _serverResetBusy = true;
+      _lastServerResetResult = null;
     });
 
     try {
@@ -2456,10 +2458,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (!mounted) {
         return;
       }
+      setState(() => _lastServerResetResult = result);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Cancelled ${result.cancelledJobCount} active sync operation(s), deleted ${result.deletedRecordCount} saved records, and reset ${result.agentResetCount} agents.',
+            'Server data cleaned. Cancelled ${result.cancelledJobCount} active sync operation(s), deleted ${result.deletedRecordCount} saved records, reset ${result.agentResetCount} agents, and paused automatic sync. Live client connectivity was preserved.',
           ),
         ),
       );
@@ -7206,8 +7209,36 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   Icons.delete_sweep_rounded,
                                   size: 16,
                                 ),
-                        label: const Text('Reset Server Data'),
+                        label: Text(
+                          _serverResetBusy
+                              ? 'Cleaning Server Data…'
+                              : 'Reset Server Data',
+                        ),
                       ),
+            ),
+          if (widget.authenticatedUser.isAdmin &&
+              !_serverResetBusy &&
+              _lastServerResetResult?.cleaned == true &&
+              !compactAppBar)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Tooltip(
+                message: 'Server data cleaned; automatic sync is paused',
+                child: Chip(
+                  avatar: const Icon(
+                    Icons.check_circle_outline_rounded,
+                    size: 16,
+                    color: Color(0xFF067647),
+                  ),
+                  label: const Text('Cleaned'),
+                  labelStyle: const TextStyle(
+                    color: Color(0xFF067647),
+                    fontWeight: FontWeight.w700,
+                  ),
+                  backgroundColor: const Color(0xFFECFDF3),
+                  side: const BorderSide(color: Color(0xFFABEFC6)),
+                ),
+              ),
             ),
           if (_showBulkActionsInLegacyDashboard &&
               widget.authenticatedUser.canManageUsers)
