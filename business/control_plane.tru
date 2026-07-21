@@ -4484,33 +4484,35 @@ function reset_all_agent_saved_state(): int {
   });
 }
 
-function delete_all_snapshot_storage(cursor: string? = null): int {
-  const storedSnapshotPage = db.page(SnapshotRecord, {
+function delete_snapshot_storage_batch(): map<json> {
+  const storedSnapshots = db.selectMany(SnapshotRecord, {
     where: { id: { gte: '' } },
-    orderBy: [
-      { field: 'createdAt', dir: 'asc' },
-      { field: 'id', dir: 'asc' }
-    ],
-    fields: ['storageId'],
-    limit: 1000,
-    cursor
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id', 'storageId'],
+    limit: 50
   });
   let deletedStorageObjectCount = 0;
-  for (const storedSnapshot of storedSnapshotPage.rows) {
+  let snapshotIds = [];
+  for (const storedSnapshot of storedSnapshots) {
+    snapshotIds = snapshotIds.concat([storedSnapshot.id]);
     const storageId = string.from(storedSnapshot.storageId ?? '').trim();
     if (storageId.length != 0) {
       storage.delete(storageId);
       deletedStorageObjectCount += 1;
     }
   }
-  const nextCursor = string.from(storedSnapshotPage.nextCursor ?? '').trim();
-  if (nextCursor.length != 0) {
-    deletedStorageObjectCount += delete_all_snapshot_storage(nextCursor);
+  let snapshotDeletedCount = 0;
+  if (snapshotIds.length != 0) {
+    snapshotDeletedCount = db.deleteMany(SnapshotRecord, { id: { in: snapshotIds } });
   }
-  return deletedStorageObjectCount;
+  return {
+    deletedStorageObjectCount,
+    snapshotDeletedCount,
+    hasMore: storedSnapshots.length == 50
+  };
 }
 
-function server_saved_data_reset(resetAgents: bool = true, token: string? = null): map<json> {
+function server_saved_data_reset(resetAgents: bool = true, continueReset: bool = false, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -4525,17 +4527,19 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
   const cancellation = jobs_cancel_active(null, 'Cancelled because all server sync data was deleted.', token);
   const cancelledJobCount = int.from(cancellation.cancelledJobCount ?? 0);
 
-  const deletedStorageObjectCount = delete_all_snapshot_storage();
-
+  // Keep every request bounded below the server timeout and memory limits.
+  // The control plane repeats this idempotent batch while hasMore is true.
+  const snapshotBatch = delete_snapshot_storage_batch();
+  const deletedStorageObjectCount = int.from(snapshotBatch.deletedStorageObjectCount ?? 0);
+  const snapshotDeletedCount = int.from(snapshotBatch.snapshotDeletedCount ?? 0);
   const downloadSessionDeletedCount = db.deleteMany(DownloadSession, { jobId: { gte: '' } });
   const uploadSessionDeletedCount = db.deleteMany(UploadSession, { jobId: { gte: '' } });
-  const snapshotDeletedCount = db.deleteMany(SnapshotRecord, { id: { gte: '' } });
   const batchDeletedCount = db.deleteMany(SyncBatch, { id: { gte: '' } });
   const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });
   const schedulerStateDeletedCount = db.deleteMany(PeriodicSyncState, { ownerUserId: { gte: '' } });
   const deletedRecordCount = downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
   let agentResetCount = 0;
-  if (resetAgents) {
+  if (resetAgents && !continueReset) {
     agentResetCount = reset_all_agent_saved_state();
   }
 
@@ -4550,7 +4554,8 @@ function server_saved_data_reset(resetAgents: bool = true, token: string? = null
     uploadSessionDeletedCount,
     snapshotDeletedCount,
     batchDeletedCount,
-    schedulerStateDeletedCount
+    schedulerStateDeletedCount,
+    hasMore: snapshotBatch.hasMore == true
   };
 }
 

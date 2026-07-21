@@ -303,13 +303,40 @@ class LiveSyncApiClient {
   }
 
   Future<AdminServerResetResult> resetServerSavedData() async {
-    final decoded = await _invokeFunction('server_saved_data_reset', {
-      'resetAgents': true,
-    });
-    if (decoded is! Map) {
-      throw const LiveSyncApiException('Unexpected server reset payload.');
+    var continueReset = false;
+    var cancelledJobCount = 0;
+    var deletedRecordCount = 0;
+    var jobDeletedCount = 0;
+    var agentResetCount = 0;
+
+    // Drain bounded, durable server batches instead of holding one recursive
+    // request open until every storage object has been removed.
+    for (var batch = 0; batch < 10000; batch += 1) {
+      final decoded = await _invokeFunction('server_saved_data_reset', {
+        'resetAgents': true,
+        'continueReset': continueReset,
+      });
+      if (decoded is! Map) {
+        throw const LiveSyncApiException('Unexpected server reset payload.');
+      }
+      final result = Map<String, dynamic>.from(decoded);
+      cancelledJobCount += (result['cancelledJobCount'] as num? ?? 0).round();
+      deletedRecordCount += (result['deletedRecordCount'] as num? ?? 0).round();
+      jobDeletedCount += (result['jobDeletedCount'] as num? ?? 0).round();
+      agentResetCount += (result['agentResetCount'] as num? ?? 0).round();
+      if (result['hasMore'] != true) {
+        return AdminServerResetResult(
+          cancelledJobCount: cancelledJobCount,
+          deletedRecordCount: deletedRecordCount,
+          jobDeletedCount: jobDeletedCount,
+          agentResetCount: agentResetCount,
+        );
+      }
+      continueReset = true;
     }
-    return AdminServerResetResult.fromJson(Map<String, dynamic>.from(decoded));
+    throw const LiveSyncApiException(
+      'Server reset did not finish within the safety batch limit.',
+    );
   }
 
   Future<AdminAgentDiagnostics> requestAgentDiagnostics({

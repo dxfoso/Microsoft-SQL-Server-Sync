@@ -673,7 +673,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("windowActionStatus: 'idle',", reset_body)
 
         server_reset_match = re.search(
-            r"function server_saved_data_reset\(resetAgents: bool = true, token: string\? = null\): map<json> \{(?P<body>.*?)\n\}",
+            r"function server_saved_data_reset\(resetAgents: bool = true, continueReset: bool = false, token: string\? = null\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
@@ -682,23 +682,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("jobs_cancel_active(null, 'Cancelled because all server sync data was deleted.', token)", server_reset_body)
         self.assertIn("cancelledJobCount", server_reset_body)
-        self.assertIn("delete_all_snapshot_storage()", server_reset_body)
+        self.assertIn("delete_snapshot_storage_batch()", server_reset_body)
         self.assertIn("deletedStorageObjectCount", server_reset_body)
-        storage_cleanup = source.split("function delete_all_snapshot_storage(", 1)[1].split("\nfunction ", 1)[0]
-        self.assertIn("db.page(SnapshotRecord", storage_cleanup)
-        self.assertIn("limit: 1000", storage_cleanup)
+        self.assertIn("hasMore: snapshotBatch.hasMore == true", server_reset_body)
+        storage_cleanup = source.split("function delete_snapshot_storage_batch(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("db.selectMany(SnapshotRecord", storage_cleanup)
+        self.assertIn("limit: 50", storage_cleanup)
         self.assertIn("storage.delete(storageId);", storage_cleanup)
-        self.assertIn("delete_all_snapshot_storage(nextCursor)", storage_cleanup)
+        self.assertIn("snapshotIds = snapshotIds.concat([storedSnapshot.id])", storage_cleanup)
+        self.assertIn("db.deleteMany(SnapshotRecord, { id: { in: snapshotIds } })", storage_cleanup)
+        self.assertNotIn("delete_snapshot_storage_batch(", storage_cleanup)
+        self.assertNotIn("db.page(SnapshotRecord", storage_cleanup)
         self.assertIn("const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });", server_reset_body)
         self.assertIn("db.deleteMany(DownloadSession", server_reset_body)
         self.assertIn("db.deleteMany(UploadSession", server_reset_body)
-        self.assertIn("db.deleteMany(SnapshotRecord", server_reset_body)
+        self.assertNotIn("db.deleteMany(SnapshotRecord", server_reset_body)
         self.assertIn("db.deleteMany(SyncBatch", server_reset_body)
         self.assertIn("db.deleteMany(PeriodicSyncState", server_reset_body)
         self.assertIn("deletedRecordCount,", server_reset_body)
         self.assertIn("agentResetCount = reset_all_agent_saved_state();", server_reset_body)
         self.assertIn("jobDeletedCount,", server_reset_body)
         self.assertIn("agentResetCount", server_reset_body)
+        self.assertIn("if (resetAgents && !continueReset)", server_reset_body)
         self.assertIn("if (!is_admin_user(current) && !is_owner_user(current))", server_reset_body)
 
     def test_active_job_statuses_include_snapshot_transfer_and_apply_states(self):
