@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'sync_state.dart';
 
+const int kSyncProtocolVersion = 2;
 const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
   defaultValue: 'https://sync.velvet-leaf.com/call',
@@ -1074,6 +1075,8 @@ class AgentControlPlaneClient {
     int? changeTrackingVersion,
     String? payloadBase64,
     bool payloadIsDelta = true,
+    required int protocolVersion,
+    required String syncEpoch,
   }) async {
     final encodedPayload =
         payloadBase64 ?? base64Encode(utf8.encode(jsonEncode(rows)));
@@ -1094,6 +1097,8 @@ class AgentControlPlaneClient {
       'payloadBase64': encodedPayload,
       'payloadRowCount': rows.length,
       'payloadIsDelta': payloadIsDelta,
+      'protocolVersion': protocolVersion,
+      'syncEpoch': syncEpoch,
     }, 'uploading multi-writer delta');
     if (decoded is! Map || decoded['job'] is! Map) {
       throw const AgentControlPlaneException(
@@ -1109,6 +1114,8 @@ class AgentControlPlaneClient {
   Future<RemoteSnapshot> downloadMultiWriterDelta(
     String jobId, {
     required String batchId,
+    required int protocolVersion,
+    required String syncEpoch,
     Future<void> Function(RemoteSnapshot snapshot)? onChunk,
     SyncCancellationCheck? checkCancelled,
   }) async {
@@ -1123,6 +1130,8 @@ class AgentControlPlaneClient {
           await _invokeFunctionWithRetry('jobs_multi_writer_download', {
             'jobId': jobId,
             'batchId': batchId,
+            'protocolVersion': protocolVersion,
+            'syncEpoch': syncEpoch,
             if (cursor != null && cursor!.isNotEmpty) 'cursor': cursor,
           }, 'downloading merged multi-writer delta');
       checkCancelled?.call();
@@ -1712,6 +1721,8 @@ class RemoteSyncJob {
     required this.message,
     required this.error,
     this.batchId,
+    this.protocolVersion = 0,
+    this.syncEpoch = '',
   });
 
   final String id;
@@ -1738,6 +1749,8 @@ class RemoteSyncJob {
   final String message;
   final String? error;
   final String? batchId;
+  final int protocolVersion;
+  final String syncEpoch;
 
   factory RemoteSyncJob.fromJson(Map<String, dynamic> json) {
     return RemoteSyncJob(
@@ -1765,6 +1778,8 @@ class RemoteSyncJob {
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
       batchId: json['batchId'] as String?,
+      protocolVersion: (json['protocolVersion'] as num? ?? 0).round(),
+      syncEpoch: json['syncEpoch'] as String? ?? '',
     );
   }
 
@@ -1851,7 +1866,7 @@ class RemoteSnapshot {
       }
       final clientName = item['clientName']?.toString().trim() ?? '';
       final version = (item['changeTrackingVersion'] as num?)?.round();
-      if (clientName.isNotEmpty && version != null && version > 0) {
+      if (clientName.isNotEmpty && version != null && version >= 0) {
         result[clientName] = version;
       }
     }

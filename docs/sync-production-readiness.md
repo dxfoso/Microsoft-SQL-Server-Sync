@@ -1,6 +1,6 @@
 # Sync Production Readiness
 
-Date: 2026-07-16
+Date: 2026-07-22
 
 ## Result
 
@@ -12,6 +12,26 @@ between clients.
 This report does not claim that every possible SQL Server schema or external
 failure can be simulated. The remaining limitations are listed explicitly
 below.
+
+## Protocol V2 Incompatible Reset
+
+Protocol v2 removes multi-client full-snapshot anti-entropy. A multi-writer
+batch accepts Change Tracking deltas only; a full snapshot must be an explicit
+one-source bootstrap into an empty or deliberately replaceable target. The
+server rejects v1 uploads, non-delta multi-writer payloads, and requests from a
+stale sync epoch.
+
+Every server-data reset rotates the durable sync epoch. Windows clients persist
+that epoch and clear their Change Tracking cursors when it changes. A nonempty
+database without a valid cursor fails closed with a bootstrap-required error;
+it is never converted into a full-table multi-writer upload.
+
+The current relay has one outbound cursor per client/table rather than a
+durable per-subscriber operation log. Therefore scheduling uses an all-client
+barrier: if any registered peer is offline, the table is deferred and no
+client cursor advances. This preserves offline catch-up without losing deltas.
+Decommissioned clients must be removed or disabled so they do not hold the
+barrier indefinitely.
 
 ## Verification Evidence
 

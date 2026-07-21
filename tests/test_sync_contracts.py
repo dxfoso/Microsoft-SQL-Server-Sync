@@ -462,18 +462,25 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("shouldApplyLocalRowCount", apply_state_body)
         self.assertNotIn("rowCount: job.rowCount,\n      message:", apply_state_body)
 
-    def test_fingerprint_mismatch_forces_non_destructive_full_multi_writer_upload(self):
+    def test_protocol_v2_multi_writer_is_delta_only_and_fails_closed_without_baseline(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
         snapshot_body = agent_page.split(
             "Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1
         )[1].split("List<Map<String, String?>> _snapshotRows(", 1)[0]
 
-        self.assertIn("job.sourceClientName == 'server-anti-entropy'", snapshot_body)
-        self.assertIn("!forceFullSnapshot &&", snapshot_body)
-        self.assertIn(
-            "job.batchId?.trim().isNotEmpty == true && !forceFullSnapshot",
-            snapshot_body,
-        )
+        self.assertNotIn("server-anti-entropy", snapshot_body)
+        self.assertIn("const forceFullSnapshot = false", snapshot_body)
+        self.assertIn("if (rowCount != 0 || tracking == null)", snapshot_body)
+        self.assertIn("requires a deliberate one-source bootstrap", snapshot_body)
+        self.assertIn("previousVersion >= 0", snapshot_body)
+        self.assertIn("const int kSyncProtocolVersion = 2", client_api)
+        self.assertIn("required int protocolVersion", client_api)
+        self.assertIn("required String syncEpoch", client_api)
+        self.assertIn("final int protocolVersion", sync_state)
+        self.assertIn("final String syncEpoch", sync_state)
+        self.assertIn("void _prepareSyncProtocolJob(RemoteSyncJob job)", agent_page)
         self.assertIn("const batchSize = 200;", snapshot_body)
 
     def test_snapshot_upload_job_advances_through_start_progress_and_chunk_upload_only(self):
@@ -964,7 +971,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Portable builds must target https://sync.velvet-leaf.com/call", build_script)
         self.assertIn("BackendBaseUrl: $BackendBaseUrl", build_script)
         self.assertIn("Never classify a shell host as a Flutter dev process.", build_helpers)
-        self.assertIn("'powershell.exe', 'pwsh.exe', 'cmd.exe'", build_helpers)
+        self.assertIn("'powershell.exe', 'pwsh.exe', 'conhost.exe'", build_helpers)
+        self.assertIn("$_.Name -eq 'cmd.exe'", build_helpers)
         self.assertNotIn(
             "defaultValue: 'http://127.0.0.1:6006/call'",
             client_api,

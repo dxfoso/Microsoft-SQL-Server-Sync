@@ -197,11 +197,15 @@ class SyncClientState {
     required this.tables,
     this.historyLimit = kDefaultHistoryLimit,
     this.autoSyncIntervalMinutes = kDefaultAutoSyncIntervalMinutes,
+    this.protocolVersion = 0,
+    this.syncEpoch = '',
   });
 
   final Map<String, SyncTableState> tables;
   final int historyLimit;
   final int autoSyncIntervalMinutes;
+  final int protocolVersion;
+  final String syncEpoch;
 
   factory SyncClientState.fromJson(Map<String, dynamic> json) {
     final tablesJson = Map<String, dynamic>.from(
@@ -219,6 +223,8 @@ class SyncClientState {
               .round()
               .clamp(kMinAutoSyncIntervalMinutes, kMaxAutoSyncIntervalMinutes)
               .toInt(),
+      protocolVersion: (json['protocolVersion'] as num? ?? 0).round(),
+      syncEpoch: json['syncEpoch'] as String? ?? '',
       tables: tablesJson.map(
         (key, value) => MapEntry(
           key,
@@ -231,6 +237,8 @@ class SyncClientState {
   Map<String, dynamic> toJson() => {
     'historyLimit': historyLimit,
     'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+    'protocolVersion': protocolVersion,
+    'syncEpoch': syncEpoch,
     'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
   };
 
@@ -238,11 +246,15 @@ class SyncClientState {
     Map<String, SyncTableState>? tables,
     int? historyLimit,
     int? autoSyncIntervalMinutes,
+    int? protocolVersion,
+    String? syncEpoch,
   }) {
     return SyncClientState(
       historyLimit: historyLimit ?? this.historyLimit,
       autoSyncIntervalMinutes:
           autoSyncIntervalMinutes ?? this.autoSyncIntervalMinutes,
+      protocolVersion: protocolVersion ?? this.protocolVersion,
+      syncEpoch: syncEpoch ?? this.syncEpoch,
       tables: tables ?? this.tables,
     );
   }

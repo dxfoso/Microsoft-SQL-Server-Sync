@@ -842,24 +842,41 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "remaining manual tables will drain in bounded scheduler waves",
             source,
         )
-        self.assertIn("Periodic sync uses the same multi-writer barrier as manual Sync All", source)
-        self.assertIn("every online client uploads first, then every client downloads the merge", source)
+        self.assertIn("Periodic sync uses the same all-client protocol-v2 barrier", source)
+        self.assertIn("every registered client uploads first, then every client downloads", source)
+        self.assertIn("ownerAgents.length != allOwnerAgents.length", source)
+        self.assertIn("onlineAgents.length != ownerAgents.length", source)
+        self.assertIn("Sync deferred without advancing Change Tracking", source)
         self.assertIn("skippedOfflineClients", source)
 
-    def test_multi_writer_repairs_fingerprint_divergence_with_full_snapshots(self):
+    def test_protocol_v2_never_unions_full_multi_writer_snapshots(self):
         source = read_text("business/control_plane.tru")
 
-        self.assertIn(
-            "function multi_writer_agents_have_fingerprint_mismatch(",
-            source,
-        )
-        self.assertIn("return fingerprints.length > 1;", source)
-        self.assertIn("'server-anti-entropy'", source)
-        self.assertIn(
-            "const forceFullSnapshot = multi_writer_agents_have_fingerprint_mismatch(table, agents);",
-            source,
-        )
+        batch_body = source.split("function create_multi_writer_batch(", 1)[1].split(
+            "function multi_writer_batch_stale(", 1
+        )[0]
+        self.assertNotIn("multi_writer_agents_have_fingerprint_mismatch", batch_body)
+        self.assertNotIn("'server-anti-entropy'", source)
+        self.assertIn("sourceClientName: 'server-delta-v2'", source)
+        self.assertIn("protocol-v2 multi-writer batches accept deltas only", source)
+        self.assertIn("field protocolVersion: int? min=2 max=2", source)
+        self.assertIn("field syncEpoch: string? min=0 max=64", source)
+        self.assertIn("protocolVersion != sync_protocol_version()", source)
+        self.assertIn("sync epoch changed; discard this job", source)
         self.assertIn("{ field: 'subscriberClientName', dir: 'asc' }", source)
+
+    def test_server_reset_rotates_protocol_v2_epoch(self):
+        source = read_text("business/control_plane.tru")
+        reset_body = source.split("function server_saved_data_reset(", 1)[1].split(
+            "function jobs_upload_chunk_start(", 1
+        )[0]
+
+        self.assertIn("class SyncProtocolState {", source)
+        self.assertIn("function rotate_sync_epoch(): map<json>", source)
+        self.assertIn("if (!continueReset)", reset_body)
+        self.assertIn("protocol = rotate_sync_epoch();", reset_body)
+        self.assertIn("protocolVersion: protocol.protocolVersion", reset_body)
+        self.assertIn("syncEpoch: protocol.syncEpoch", reset_body)
 
     def test_multi_writer_heartbeat_exposes_upload_and_download_for_same_table(self):
         source = read_text("business/control_plane.tru")

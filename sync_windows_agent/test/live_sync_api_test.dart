@@ -193,6 +193,8 @@ void main() {
       ],
       chunkId: 'chunk-0',
       finalChunk: true,
+      protocolVersion: 2,
+      syncEpoch: 'epoch-test',
     );
 
     expect(job.id, 'job-mw-timeout');
@@ -3372,6 +3374,8 @@ void main() {
           expect(args['rows'], isEmpty);
           expect(args['payloadBase64'], isNotEmpty);
           expect(args['payloadRowCount'], 1);
+          expect(args['protocolVersion'], 2);
+          expect(args['syncEpoch'], 'epoch-test');
           final decoded = jsonDecode(
             utf8.decode(base64Decode(args['payloadBase64'] as String)),
           );
@@ -3427,6 +3431,8 @@ void main() {
         chunkId: 'chunk-0',
         finalChunk: true,
         changeTrackingVersion: 4,
+        protocolVersion: 2,
+        syncEpoch: 'epoch-test',
       );
     },
   );
@@ -3479,6 +3485,8 @@ void main() {
       final snapshot = await api.downloadMultiWriterDelta(
         'job-mw-download',
         batchId: 'batch-1',
+        protocolVersion: 2,
+        syncEpoch: 'epoch-test',
       );
 
       expect(snapshot.rows, [
@@ -3547,6 +3555,8 @@ void main() {
       final snapshot = await api.downloadMultiWriterDelta(
         'job-mw-download-streamed',
         batchId: 'batch-1',
+        protocolVersion: 2,
+        syncEpoch: 'epoch-test',
         onChunk: (chunk) async => streamedRows.add(chunk.rows),
       );
 

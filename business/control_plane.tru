@@ -114,6 +114,8 @@ class SyncJob {
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field batchId: string? min=0 max=128
+  field protocolVersion: int? min=2 max=2
+  field syncEpoch: string? min=0 max=64
 }
 
 class SyncBatch {
@@ -131,6 +133,16 @@ class SyncBatch {
   field rows: array<json>
   field status: string min=1 max=32
   field createdAt: datetime
+  field updatedAt: datetime
+  field protocolVersion: int? min=2 max=2
+  field syncEpoch: string? min=0 max=64
+}
+
+// One durable row fences every job and cursor to the current reset epoch.
+class SyncProtocolState {
+  field id: string min=1 max=32
+  field protocolVersion: int min=2 max=2
+  field syncEpoch: string min=1 max=64
   field updatedAt: datetime
 }
 
@@ -211,6 +223,7 @@ index SyncJob_createdAt on SyncJob(createdAt)
 index SyncJob_batchId on SyncJob(batchId)
 index SyncBatch_id on SyncBatch(id)
 index SyncBatch_ownerUserId_table on SyncBatch(ownerUserId, table)
+index SyncProtocolState_id on SyncProtocolState(id)
 index SnapshotRecord_id on SnapshotRecord(id)
 index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
 index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
@@ -222,6 +235,38 @@ index PeriodicSyncState_ownerUserId on PeriodicSyncState(ownerUserId)
 
 function now_iso(): datetime {
   return date.now();
+}
+
+function sync_protocol_version(): int {
+  return 2;
+}
+
+function sync_protocol_state(): map<json> {
+  const existing = db.selectOne(SyncProtocolState, { id: 'global' });
+  if (existing != null) {
+    return existing;
+  }
+  return db.insert(SyncProtocolState, {
+    id: 'global',
+    protocolVersion: sync_protocol_version(),
+    syncEpoch: uuid.v4(),
+    updatedAt: now_iso()
+  });
+}
+
+function rotate_sync_epoch(): map<json> {
+  const existing = sync_protocol_state();
+  const nextEpoch = uuid.v4();
+  db.update(SyncProtocolState, { id: 'global' }, {
+    protocolVersion: sync_protocol_version(),
+    syncEpoch: nextEpoch,
+    updatedAt: now_iso()
+  });
+  return {
+    protocolVersion: sync_protocol_version(),
+    syncEpoch: nextEpoch,
+    previousSyncEpoch: existing.syncEpoch
+  };
 }
 
 function raw_json_error(status: int, message: string): json {
@@ -1261,7 +1306,7 @@ function find_waiting_download_job(sourceClientName: string, targetClientName: s
   const jobs = db.selectMany(SyncJob, {
     where: { clientName: targetClientName, sourceClientName, table },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
     limit: 20
   });
   if (jobs == null) {
@@ -1405,7 +1450,7 @@ function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
     limit: 1000
   });
   if (rows == null) {
@@ -1749,7 +1794,9 @@ function public_job_payload(job: map<json>): map<json> {
     error: job.error,
     rejectedRowCount: job.rejectedRowCount,
     rejectionSummary: job.rejectionSummary,
-    batchId: job.batchId
+    batchId: job.batchId,
+    protocolVersion: job.protocolVersion,
+    syncEpoch: job.syncEpoch
   };
 }
 
@@ -1781,7 +1828,9 @@ function agent_job_payload(job: map<json>): map<json> {
     error: job.error,
     rejectedRowCount: job.rejectedRowCount,
     rejectionSummary: job.rejectionSummary,
-    batchId: job.batchId
+    batchId: job.batchId,
+    protocolVersion: job.protocolVersion,
+    syncEpoch: job.syncEpoch
   };
 }
 
@@ -1824,7 +1873,7 @@ function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1976,7 +2025,7 @@ function active_jobs_for_client(clientName: string): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { clientName },
     orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
     limit: 1000
   });
   if (rows == null) {
@@ -2354,15 +2403,22 @@ function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: arr
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  let allOwnerAgents = [];
   let ownerAgents = [];
   for (const agent of sourceAgents) {
+    if (agent.ownerUserId == ownerUserId) {
+      allOwnerAgents = allOwnerAgents.concat([agent]);
+    }
     if (agent.ownerUserId == ownerUserId &&
         agent_recent_enough_for_periodic_sync(agent) &&
         effective_agent_online(agent)) {
       ownerAgents = ownerAgents.concat([agent]);
     }
   }
-  if (ownerAgents.length == 0) {
+  // Protocol v2 has one outbound Change Tracking cursor per client/table. Do
+  // not advance it while a registered peer is offline, otherwise that peer
+  // could miss the delta permanently after it reconnects.
+  if (ownerAgents.length == 0 || ownerAgents.length != allOwnerAgents.length) {
     return [];
   }
 
@@ -2378,8 +2434,8 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     }
   }
 
-  // Periodic sync uses the same multi-writer barrier as manual Sync All:
-  // every online client uploads first, then every client downloads the merge.
+  // Periodic sync uses the same all-client protocol-v2 barrier as manual Sync
+  // All: every registered client uploads first, then every client downloads.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
   const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
@@ -2972,6 +3028,7 @@ function bulk_source_client_name_for_agent_table(targetAgent: map<json>, table: 
 
 function build_snapshot_relay_job_rows(sourceAgent: map<json>, targetClientName: string, targetClientUserId: string? = null, targetOwnerUserId: string? = null, tables: array<string>): array<json> {
   let rows = [];
+  const protocol = sync_protocol_state();
   for (const table of tables) {
     rows = rows.concat([{
       id: uuid.v4(),
@@ -2998,7 +3055,9 @@ function build_snapshot_relay_job_rows(sourceAgent: map<json>, targetClientName:
       message: string.concat('Queued sync for ', table, '.'),
       error: null,
       clientUserId: sourceAgent.clientUserId,
-      ownerUserId: sourceAgent.ownerUserId
+      ownerUserId: sourceAgent.ownerUserId,
+      protocolVersion: protocol.protocolVersion,
+      syncEpoch: protocol.syncEpoch
     }, {
       id: uuid.v4(),
       clientName: targetClientName,
@@ -3024,7 +3083,9 @@ function build_snapshot_relay_job_rows(sourceAgent: map<json>, targetClientName:
       message: string.concat('Waiting for source snapshot upload for ', table, '.'),
       error: null,
       clientUserId: targetClientUserId,
-      ownerUserId: targetOwnerUserId
+      ownerUserId: targetOwnerUserId,
+      protocolVersion: protocol.protocolVersion,
+      syncEpoch: protocol.syncEpoch
     }]);
   }
   return rows;
@@ -3182,25 +3243,7 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_agents_have_fingerprint_mismatch(table: string, agents: array<json>): bool {
-  let fingerprints = [];
-  for (const agent of agents) {
-    const state = agent_sync_table_state(agent, table);
-    if (state == null || state.rowCount == null) {
-      continue;
-    }
-    const checksum = string.from(state.tableChecksum ?? '').trim();
-    if (checksum.length == 0) {
-      continue;
-    }
-    fingerprints = unique_string_values(fingerprints.concat([
-      string.concat(string.from(state.rowCount), '::', checksum)
-    ]));
-  }
-  return fingerprints.length > 1;
-}
-
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, forceFullSnapshot: bool = false): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
@@ -3208,7 +3251,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     rows = rows.concat([{
       id: uuid.v4(),
       clientName,
-      sourceClientName: forceFullSnapshot ? 'server-anti-entropy' : '',
+      sourceClientName: 'server-delta-v2',
       subscriberClientName: '',
       table,
       direction: 'upload',
@@ -3227,13 +3270,13 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       updatedAt: createdAt,
       startedAt: null,
       completedAt: null,
-      message: forceFullSnapshot
-        ? string.concat('Queued anti-entropy full upload for ', table, '.')
-        : string.concat('Queued multi-writer upload for ', table, '.'),
+      message: string.concat('Queued protocol-v2 delta upload for ', table, '.'),
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId,
-      batchId
+      batchId,
+      protocolVersion: protocol.protocolVersion,
+      syncEpoch: protocol.syncEpoch
     }, {
       id: uuid.v4(),
       clientName,
@@ -3260,7 +3303,9 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId,
-      batchId
+      batchId,
+      protocolVersion: protocol.protocolVersion,
+      syncEpoch: protocol.syncEpoch
     }]);
   }
   return rows;
@@ -3271,7 +3316,7 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     return [];
   }
   const batchId = uuid.v4();
-  const forceFullSnapshot = multi_writer_agents_have_fingerprint_mismatch(table, agents);
+  const protocol = sync_protocol_state();
   const clientNames = agents.map((agent) => string.from(agent.clientName));
   const createdAt = now_iso();
   db.insert(SyncBatch, {
@@ -3289,14 +3334,16 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     rows: [],
     status: 'uploading',
     createdAt,
-    updatedAt: createdAt
+    updatedAt: createdAt,
+    protocolVersion: protocol.protocolVersion,
+    syncEpoch: protocol.syncEpoch
   });
   return db.insertMany(SyncJob, multi_writer_job_rows(
     batchId,
     table,
     agents,
     ownerUserId,
-    forceFullSnapshot
+    protocol
   ));
 }
 
@@ -4353,10 +4400,23 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
       }
     }
-    if (onlineAgents.length == 0) {
+    const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+    if (onlineAgents.length == 0 || onlineAgents.length != ownerAgents.length) {
+      let blockedTables = [];
+      for (const agent of ownerAgents) {
+        blockedTables = blockedTables.concat(
+          enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+            enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+          )
+        );
+      }
+      blockedTables = unique_string_values(blockedTables);
+      deferredTables = deferredTables.concat(
+        blockedTables.map((table) => string.concat(ownerUserId, '::', table))
+      );
+      set_manual_sync_pending_tables_for_owner(ownerUserId, blockedTables);
       continue;
     }
-    const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
     let enabledTables = [];
     for (const agent of onlineAgents) {
       enabledTables = enabledTables.concat(
@@ -4440,9 +4500,11 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     skippedBusyTables: unique_string_values(skippedBusyTables),
     skippedSourceResolutionTables: [],
     deferredTables: unique_string_values(deferredTables),
-    message: deferredTables.length > 0
-      ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
-      : 'Sync queued for all eligible tables.'
+    message: createdJobs.length == 0 && skippedOfflineClients.length > 0
+      ? 'Sync deferred without advancing Change Tracking because every registered client must be online for protocol v2.'
+      : deferredTables.length > 0
+        ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
+        : 'Sync queued for all eligible tables.'
   };
 }
 
@@ -4603,6 +4665,10 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   const jobDeletedCount = int.from(syncJobBatch.deletedCount ?? 0);
   const schedulerStateDeletedCount = int.from(schedulerStateBatch.deletedCount ?? 0);
   const deletedRecordCount = downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
+  let protocol = sync_protocol_state();
+  if (!continueReset) {
+    protocol = rotate_sync_epoch();
+  }
   let agentResetCount = 0;
   if (resetAgents && !continueReset) {
     agentResetCount = reset_all_agent_saved_state();
@@ -4624,6 +4690,8 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     batchDeletedCount,
     schedulerStateDeletedCount,
     automaticSyncPaused: automaticSyncControl.automaticSyncPaused == true,
+    protocolVersion: protocol.protocolVersion,
+    syncEpoch: protocol.syncEpoch,
     hasMore
   };
 }
@@ -4719,7 +4787,7 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   });
 }
 
-function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true): map<json> {
+function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, protocolVersion: int = 0, syncEpoch: string = ''): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -4740,6 +4808,15 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   const batch = find_sync_batch(batchId);
   if (batch == null || string.from(batch.table).trim() != table.trim()) {
     return raw_json_error(404, 'sync batch not found');
+  }
+  if (protocolVersion != sync_protocol_version() || protocolVersion != int.from(batch.protocolVersion ?? 0)) {
+    return raw_json_error(426, 'sync protocol upgrade required');
+  }
+  if (syncEpoch.trim().length == 0 || syncEpoch.trim() != string.from(batch.syncEpoch).trim()) {
+    return raw_json_error(409, 'sync epoch changed; discard this job and refresh client state');
+  }
+  if (!payloadIsDelta) {
+    return raw_json_error(409, 'protocol-v2 multi-writer batches accept deltas only; use a deliberate one-source bootstrap for full data');
   }
   if (multi_writer_batch_stale(batch)) {
     return raw_json_error(410, 'multi-writer batch expired; start a new sync');
@@ -4859,7 +4936,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     rows: [],
     status: ready ? 'ready' : 'uploading',
     createdAt: batch.createdAt,
-    updatedAt: now_iso()
+    updatedAt: now_iso(),
+    protocolVersion: batch.protocolVersion,
+    syncEpoch: batch.syncEpoch
   });
   if (updatedBatch == 0) {
     db.delete(SnapshotRecord, { id: chunkRecord.id });
@@ -4889,7 +4968,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   });
 }
 
-function jobs_multi_writer_download(jobId: string, batchId: string, cursor: string? = null, token: string? = null): map<json> {
+function jobs_multi_writer_download(jobId: string, batchId: string, cursor: string? = null, token: string? = null, protocolVersion: int = 0, syncEpoch: string = ''): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -4905,6 +4984,12 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   if (batch == null || string.from(job.batchId).trim() != batchId.trim()) {
     return raw_json_error(404, 'sync batch not found');
   }
+  if (protocolVersion != sync_protocol_version() || protocolVersion != int.from(batch.protocolVersion ?? 0)) {
+    return raw_json_error(426, 'sync protocol upgrade required');
+  }
+  if (syncEpoch.trim().length == 0 || syncEpoch.trim() != string.from(batch.syncEpoch).trim()) {
+    return raw_json_error(409, 'sync epoch changed; discard this job and refresh client state');
+  }
   if (multi_writer_batch_stale(batch)) {
     return raw_json_error(410, 'multi-writer batch expired; start a new sync');
   }
@@ -4913,8 +4998,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   }
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
-    // Full anti-entropy snapshots can contain the same key on many clients.
-    // Stable source ordering makes every target resolve those rows identically.
+    // Protocol v2 stores only Change Tracking deltas. Full snapshots are
+    // bootstrapped deliberately from one source and never unioned here.
     orderBy: [
       { field: 'subscriberClientName', dir: 'asc' },
       { field: 'createdAt', dir: 'asc' },
@@ -4972,6 +5057,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     clientChangeTrackingVersions: batch.clientChangeTrackingVersions,
     rows: chunkRows,
     isDelta: chunkIsDelta,
+    protocolVersion: batch.protocolVersion,
+    syncEpoch: batch.syncEpoch,
     totalRowCount,
     done,
     nextCursor

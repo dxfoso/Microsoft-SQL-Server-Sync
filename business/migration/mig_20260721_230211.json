@@ -1,0 +1,75 @@
+{
+  "name": "mig_20260721_230211",
+  "timestamp": "2026-07-21T23:02:11.197087300+00:00",
+  "objects": [
+    {
+      "object": "SyncProtocolState",
+      "namespace": null,
+      "action": "added",
+      "fields": [
+        {
+          "field": "id",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "1", "max": "32", "default": null }
+        },
+        {
+          "field": "protocolVersion",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "int", "optional": false, "min": "2", "max": "2", "default": null }
+        },
+        {
+          "field": "syncEpoch",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "1", "max": "64", "default": null }
+        },
+        {
+          "field": "updatedAt",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "datetime", "optional": false, "min": null, "max": null, "default": null }
+        }
+      ]
+    },
+    {
+      "object": "SyncBatch",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "protocolVersion",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "int", "optional": true, "min": "2", "max": "2", "default": null }
+        },
+        {
+          "field": "syncEpoch",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": true, "min": "0", "max": "64", "default": null }
+        }
+      ]
+    },
+    {
+      "object": "SyncJob",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "protocolVersion",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "int", "optional": true, "min": "2", "max": "2", "default": null }
+        },
+        {
+          "field": "syncEpoch",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": true, "min": "0", "max": "64", "default": null }
+        }
+      ]
+    }
+  ]
+}

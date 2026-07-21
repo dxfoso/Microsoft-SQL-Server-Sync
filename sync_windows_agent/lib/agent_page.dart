@@ -3183,6 +3183,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _processingJobIds.add(job.id);
         _updateTraySyncIndicator();
         try {
+          _prepareSyncProtocolJob(job);
           await _processSnapshotJob(job);
         } on _SyncJobCancelled catch (error) {
           logStartupEvent(error.toString());
@@ -3226,6 +3227,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             completedAt: DateTime.now().toIso8601String(),
             message: errorMessage,
             error: errorMessage,
+            batchId: job.batchId,
+            protocolVersion: job.protocolVersion,
+            syncEpoch: job.syncEpoch,
           );
           _applyRemoteJobState(
             failedJob,
@@ -3358,6 +3362,46 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     throw Exception('Unsupported sync job direction: ${job.direction}');
   }
 
+  void _prepareSyncProtocolJob(RemoteSyncJob job) {
+    if (job.protocolVersion != kSyncProtocolVersion || job.syncEpoch.isEmpty) {
+      throw StateError(
+        'This sync job uses an unsupported protocol. Update the Windows client and reset the server sync state.',
+      );
+    }
+    if (_syncState.syncEpoch == job.syncEpoch &&
+        _syncState.protocolVersion == job.protocolVersion) {
+      return;
+    }
+    logStartupEvent(
+      'Sync epoch changed from ${_syncState.syncEpoch.isEmpty ? '(none)' : _syncState.syncEpoch} to ${job.syncEpoch}; clearing local sync cursors before protocol-v2 processing.',
+    );
+    _replaceSyncState(
+      SyncClientState(
+        tables: _syncState.tables.map(
+          (table, state) => MapEntry(
+            table,
+            state.copyWith(
+              status: 'Ready',
+              lastSync: '--',
+              progress: 0,
+              savedRowCount: null,
+              tableChecksum: '',
+              changeTrackingVersion: null,
+              changeTrackingOwner: null,
+              message:
+                  'Sync epoch changed; Change Tracking cursor reset. Bootstrap non-empty databases from one deliberate source.',
+              history: const <SyncHistoryEntry>[],
+            ),
+          ),
+        ),
+        historyLimit: _syncState.historyLimit,
+        autoSyncIntervalMinutes: _syncState.autoSyncIntervalMinutes,
+        protocolVersion: job.protocolVersion,
+        syncEpoch: job.syncEpoch,
+      ),
+    );
+  }
+
   Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {
     _checkSyncJobNotCancelled(job.id);
     var activeJob = await _controlPlaneClient.startJob(
@@ -3410,6 +3454,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           finalChunk: true,
           changeTrackingVersion: snapshot.changeTrackingVersion,
           payloadIsDelta: snapshot.isDelta,
+          protocolVersion: job.protocolVersion,
+          syncEpoch: job.syncEpoch,
         );
         _checkSyncJobNotCancelled(job.id);
       } else {
@@ -3438,6 +3484,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             changeTrackingVersion: snapshot.changeTrackingVersion,
             payloadBase64: payloadBase64,
             payloadIsDelta: snapshot.isDelta,
+            protocolVersion: job.protocolVersion,
+            syncEpoch: job.syncEpoch,
           );
           _checkSyncJobNotCancelled(job.id);
           offset = end;
@@ -3533,6 +3581,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             ? await _controlPlaneClient.downloadMultiWriterDelta(
               job.id,
               batchId: job.batchId!,
+              protocolVersion: job.protocolVersion,
+              syncEpoch: job.syncEpoch,
               checkCancelled: () => _checkSyncJobNotCancelled(job.id),
               onChunk: (snapshot) async {
                 _checkSyncJobNotCancelled(job.id);
@@ -3699,7 +3749,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (job.batchId?.trim().isNotEmpty == true) {
       final appliedVersion =
           snapshotToApply.changeTrackingVersions[widget.clientName];
-      if (appliedVersion != null && appliedVersion > 0) {
+      if (appliedVersion != null && appliedVersion >= 0) {
         final current =
             _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
         _updateSyncTableState(
@@ -3823,9 +3873,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     final rowCount = rowCountResult.value;
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
-    final forceFullSnapshot =
-        job.batchId?.trim().isNotEmpty == true &&
-        job.sourceClientName == 'server-anti-entropy';
+    const forceFullSnapshot = false;
     final tracking = await _queryChangeTrackingState(
       profile: sourceProfile,
       database: database,
@@ -3838,7 +3886,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         previousVersion != null &&
         _syncState.tables[job.table]?.changeTrackingOwner ==
             widget.clientName &&
-        previousVersion > 0 &&
+        previousVersion >= 0 &&
         previousVersion >= tracking.minValidVersion;
     final rows = <Map<String, String?>>[];
     var isDelta = false;
@@ -3855,8 +3903,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rows.addAll(deltaRows);
       isDelta = true;
     } else if (job.batchId?.trim().isNotEmpty == true && !forceFullSnapshot) {
-      // A multi-writer relay carries only changes. Never turn a missing or
-      // expired tracking baseline into a destructive full-table upload.
+      // Protocol v2 establishes a baseline only from an empty database. A
+      // non-empty database without a valid cursor must be bootstrapped from a
+      // deliberately selected source; silently unioning full snapshots is the
+      // duplication bug that protocol v2 removes.
+      if (rowCount != 0 || tracking == null) {
+        throw StateError(
+          'Protocol-v2 sync for ${job.table} requires a deliberate one-source bootstrap because this non-empty database has no valid Change Tracking baseline.',
+        );
+      }
       isDelta = true;
     } else {
       const batchSize = 200;

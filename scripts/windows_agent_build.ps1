@@ -432,8 +432,8 @@ function Get-WindowsAgentConflictingDevProcesses {
             }
 
             # The launcher PowerShell command line contains the repository
-            # path. Never classify a general shell host as a Flutter dev
-            # process. A cmd.exe that explicitly launches `flutter run -d
+            # path. Never classify a shell host as a Flutter dev process.
+            # A cmd.exe that explicitly launches `flutter run -d
             # windows` is handled below because it owns the dev process tree.
             if ($_.Name -in @('powershell.exe', 'pwsh.exe', 'conhost.exe', 'WindowsTerminal.exe')) {
                 return $false
