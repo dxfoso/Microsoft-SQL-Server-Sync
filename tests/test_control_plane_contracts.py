@@ -687,7 +687,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("hasMore: snapshotBatch.hasMore == true", server_reset_body)
         storage_cleanup = source.split("function delete_snapshot_storage_batch(", 1)[1].split("\nfunction ", 1)[0]
         self.assertIn("db.selectMany(SnapshotRecord", storage_cleanup)
-        self.assertIn("limit: 50", storage_cleanup)
+        self.assertIn("limit: 25", storage_cleanup)
         self.assertIn("storage.delete(storageId);", storage_cleanup)
         self.assertIn("snapshotIds = snapshotIds.concat([storedSnapshot.id])", storage_cleanup)
         self.assertIn("db.deleteMany(SnapshotRecord, { id: { in: snapshotIds } })", storage_cleanup)
@@ -699,6 +699,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("db.deleteMany(SnapshotRecord", server_reset_body)
         self.assertIn("delete_sync_batch_batch()", server_reset_body)
         self.assertIn("delete_periodic_sync_state_batch()", server_reset_body)
+        for helper_name in (
+            "delete_download_session_batch",
+            "delete_upload_session_batch",
+            "delete_sync_batch_batch",
+            "delete_sync_job_batch",
+            "delete_periodic_sync_state_batch",
+        ):
+            helper_body = source.split(f"function {helper_name}(", 1)[1].split("\nfunction ", 1)[0]
+            self.assertIn("limit: 50", helper_body)
         self.assertIn("deletedRecordCount,", server_reset_body)
         self.assertIn("agentResetCount = reset_all_agent_saved_state();", server_reset_body)
         self.assertIn("jobDeletedCount,", server_reset_body)

@@ -304,6 +304,7 @@ class LiveSyncApiClient {
 
   Future<AdminServerResetResult> resetServerSavedData() async {
     var continueReset = false;
+    var transientRetryCount = 0;
     var cancelledJobCount = 0;
     var deletedRecordCount = 0;
     var jobDeletedCount = 0;
@@ -311,11 +312,21 @@ class LiveSyncApiClient {
 
     // Drain bounded, durable server batches instead of holding one recursive
     // request open until every storage object has been removed.
-    for (var batch = 0; batch < 10000; batch += 1) {
-      final decoded = await _invokeFunction('server_saved_data_reset', {
-        'resetAgents': true,
-        'continueReset': continueReset,
-      });
+    for (var batch = 0; batch < 10000;) {
+      dynamic decoded;
+      try {
+        decoded = await _invokeFunction('server_saved_data_reset', {
+          'resetAgents': true,
+          'continueReset': continueReset,
+        });
+        transientRetryCount = 0;
+      } catch (error) {
+        if (!_isTransientServerResetError(error) || transientRetryCount >= 4) {
+          rethrow;
+        }
+        transientRetryCount += 1;
+        continue;
+      }
       if (decoded is! Map) {
         throw const LiveSyncApiException('Unexpected server reset payload.');
       }
@@ -333,10 +344,21 @@ class LiveSyncApiClient {
         );
       }
       continueReset = true;
+      batch += 1;
     }
     throw const LiveSyncApiException(
       'Server reset did not finish within the safety batch limit.',
     );
+  }
+
+  bool _isTransientServerResetError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('request timeout') ||
+        message.contains('timed out') ||
+        message.contains('connection reset') ||
+        message.contains('request failed with 502') ||
+        message.contains('request failed with 503') ||
+        message.contains('request failed with 504');
   }
 
   Future<AdminAgentDiagnostics> requestAgentDiagnostics({

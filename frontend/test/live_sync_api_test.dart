@@ -133,4 +133,59 @@ void main() {
     expect(result.agentResetCount, 2);
     api.dispose();
   });
+
+  test(
+    'server reset retries a transient timeout without advancing phase',
+    () async {
+      final requestPayloads = <Map<String, dynamic>>[];
+      var requestCount = 0;
+      final api = LiveSyncApiClient(
+        baseUrl: 'https://sync.example/call',
+        client: MockClient((request) async {
+          requestPayloads.add(
+            Map<String, dynamic>.from(jsonDecode(request.body) as Map),
+          );
+          requestCount += 1;
+          if (requestCount == 1) {
+            return http.Response(
+              jsonEncode({
+                'status': 'failed',
+                'messages': [
+                  {'type': 'error', 'text': 'request timeout'},
+                ],
+              }),
+              504,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          return http.Response(
+            jsonEncode({
+              'status': 'success',
+              'value': {
+                'cancelledJobCount': 1,
+                'deletedRecordCount': 3,
+                'jobDeletedCount': 2,
+                'agentResetCount': 1,
+                'hasMore': false,
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      api.setAuthToken('test-token');
+
+      final result = await api.resetServerSavedData();
+
+      expect(requestPayloads, hasLength(2));
+      expect(requestPayloads[0]['args']['continueReset'], isFalse);
+      expect(requestPayloads[1]['args']['continueReset'], isFalse);
+      expect(result.cancelledJobCount, 1);
+      expect(result.deletedRecordCount, 3);
+      expect(result.jobDeletedCount, 2);
+      expect(result.agentResetCount, 1);
+      api.dispose();
+    },
+  );
 }

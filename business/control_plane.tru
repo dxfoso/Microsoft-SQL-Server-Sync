@@ -4489,7 +4489,7 @@ function delete_snapshot_storage_batch(): map<json> {
     where: { id: { gte: '' } },
     orderBy: { field: 'createdAt', dir: 'asc' },
     fields: ['id', 'storageId'],
-    limit: 50
+    limit: 25
   });
   let deletedStorageObjectCount = 0;
   let snapshotIds = [];
@@ -4514,7 +4514,7 @@ function delete_snapshot_storage_batch(): map<json> {
 
 function delete_download_session_batch(): map<json> {
   const rows = db.selectMany(DownloadSession, {
-    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 50
   });
   let ids = [];
   for (const row of rows) { ids = ids.concat([row.id]); }
@@ -4525,7 +4525,7 @@ function delete_download_session_batch(): map<json> {
 
 function delete_upload_session_batch(): map<json> {
   const rows = db.selectMany(UploadSession, {
-    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 50
   });
   let ids = [];
   for (const row of rows) { ids = ids.concat([row.id]); }
@@ -4536,7 +4536,7 @@ function delete_upload_session_batch(): map<json> {
 
 function delete_sync_batch_batch(): map<json> {
   const rows = db.selectMany(SyncBatch, {
-    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 50
   });
   let ids = [];
   for (const row of rows) { ids = ids.concat([row.id]); }
@@ -4547,7 +4547,7 @@ function delete_sync_batch_batch(): map<json> {
 
 function delete_sync_job_batch(): map<json> {
   const rows = db.selectMany(SyncJob, {
-    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 50
   });
   let ids = [];
   for (const row of rows) { ids = ids.concat([row.id]); }
@@ -4558,7 +4558,7 @@ function delete_sync_job_batch(): map<json> {
 
 function delete_periodic_sync_state_batch(): map<json> {
   const rows = db.selectMany(PeriodicSyncState, {
-    where: { ownerUserId: { gte: '' } }, orderBy: { field: 'ownerUserId', dir: 'asc' }, fields: ['ownerUserId'], limit: 200
+    where: { ownerUserId: { gte: '' } }, orderBy: { field: 'ownerUserId', dir: 'asc' }, fields: ['ownerUserId'], limit: 50
   });
   let ownerUserIds = [];
   for (const row of rows) { ownerUserIds = ownerUserIds.concat([row.ownerUserId]); }
