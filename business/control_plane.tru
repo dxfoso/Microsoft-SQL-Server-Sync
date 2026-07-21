@@ -4512,6 +4512,61 @@ function delete_snapshot_storage_batch(): map<json> {
   };
 }
 
+function delete_download_session_batch(): map<json> {
+  const rows = db.selectMany(DownloadSession, {
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+  });
+  let ids = [];
+  for (const row of rows) { ids = ids.concat([row.id]); }
+  let deletedCount = 0;
+  if (ids.length != 0) { deletedCount = db.deleteMany(DownloadSession, { id: { in: ids } }); }
+  return { deletedCount, hasMore: rows.length == 200 };
+}
+
+function delete_upload_session_batch(): map<json> {
+  const rows = db.selectMany(UploadSession, {
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+  });
+  let ids = [];
+  for (const row of rows) { ids = ids.concat([row.id]); }
+  let deletedCount = 0;
+  if (ids.length != 0) { deletedCount = db.deleteMany(UploadSession, { id: { in: ids } }); }
+  return { deletedCount, hasMore: rows.length == 200 };
+}
+
+function delete_sync_batch_batch(): map<json> {
+  const rows = db.selectMany(SyncBatch, {
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+  });
+  let ids = [];
+  for (const row of rows) { ids = ids.concat([row.id]); }
+  let deletedCount = 0;
+  if (ids.length != 0) { deletedCount = db.deleteMany(SyncBatch, { id: { in: ids } }); }
+  return { deletedCount, hasMore: rows.length == 200 };
+}
+
+function delete_sync_job_batch(): map<json> {
+  const rows = db.selectMany(SyncJob, {
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 200
+  });
+  let ids = [];
+  for (const row of rows) { ids = ids.concat([row.id]); }
+  let deletedCount = 0;
+  if (ids.length != 0) { deletedCount = db.deleteMany(SyncJob, { id: { in: ids } }); }
+  return { deletedCount, hasMore: rows.length == 200 };
+}
+
+function delete_periodic_sync_state_batch(): map<json> {
+  const rows = db.selectMany(PeriodicSyncState, {
+    where: { ownerUserId: { gte: '' } }, orderBy: { field: 'ownerUserId', dir: 'asc' }, fields: ['ownerUserId'], limit: 200
+  });
+  let ownerUserIds = [];
+  for (const row of rows) { ownerUserIds = ownerUserIds.concat([row.ownerUserId]); }
+  let deletedCount = 0;
+  if (ownerUserIds.length != 0) { deletedCount = db.deleteMany(PeriodicSyncState, { ownerUserId: { in: ownerUserIds } }); }
+  return { deletedCount, hasMore: rows.length == 200 };
+}
+
 function server_saved_data_reset(resetAgents: bool = true, continueReset: bool = false, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -4522,21 +4577,30 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   }
 
   // Cancel first so every in-flight endpoint observes a terminal job before
-  // its relay/session rows are removed. This closes the race where a client
-  // could append another chunk while the reset was deleting saved state.
-  const cancellation = jobs_cancel_active(null, 'Cancelled because all server sync data was deleted.', token);
-  const cancelledJobCount = int.from(cancellation.cancelledJobCount ?? 0);
+  // its relay/session rows are removed. The direct update avoids materializing
+  // public payloads for old jobs that are about to be deleted.
+  const cancelledAt = now_iso();
+  const cancellationMessage = 'Cancelled because all server sync data was deleted.';
+  const cancelledJobCount = db.updateMany(SyncJob, { status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] } }, {
+    status: 'cancelled', progress: 100, completedAt: cancelledAt,
+    message: cancellationMessage, error: cancellationMessage, updatedAt: cancelledAt
+  });
 
   // Keep every request bounded below the server timeout and memory limits.
   // The control plane repeats this idempotent batch while hasMore is true.
   const snapshotBatch = delete_snapshot_storage_batch();
   const deletedStorageObjectCount = int.from(snapshotBatch.deletedStorageObjectCount ?? 0);
   const snapshotDeletedCount = int.from(snapshotBatch.snapshotDeletedCount ?? 0);
-  const downloadSessionDeletedCount = db.deleteMany(DownloadSession, { jobId: { gte: '' } });
-  const uploadSessionDeletedCount = db.deleteMany(UploadSession, { jobId: { gte: '' } });
-  const batchDeletedCount = db.deleteMany(SyncBatch, { id: { gte: '' } });
-  const jobDeletedCount = db.deleteMany(SyncJob, { id: { gte: '' } });
-  const schedulerStateDeletedCount = db.deleteMany(PeriodicSyncState, { ownerUserId: { gte: '' } });
+  const downloadSessionBatch = delete_download_session_batch();
+  const uploadSessionBatch = delete_upload_session_batch();
+  const syncBatchBatch = delete_sync_batch_batch();
+  const syncJobBatch = delete_sync_job_batch();
+  const schedulerStateBatch = delete_periodic_sync_state_batch();
+  const downloadSessionDeletedCount = int.from(downloadSessionBatch.deletedCount ?? 0);
+  const uploadSessionDeletedCount = int.from(uploadSessionBatch.deletedCount ?? 0);
+  const batchDeletedCount = int.from(syncBatchBatch.deletedCount ?? 0);
+  const jobDeletedCount = int.from(syncJobBatch.deletedCount ?? 0);
+  const schedulerStateDeletedCount = int.from(schedulerStateBatch.deletedCount ?? 0);
   const deletedRecordCount = downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
   let agentResetCount = 0;
   if (resetAgents && !continueReset) {
@@ -4555,7 +4619,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     snapshotDeletedCount,
     batchDeletedCount,
     schedulerStateDeletedCount,
-    hasMore: snapshotBatch.hasMore == true
+    hasMore: snapshotBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true
   };
 }
 
