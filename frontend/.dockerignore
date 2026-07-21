@@ -7,11 +7,12 @@ build/
 .pub-cache/
 coverage/
 test/
-client-updates/*
+client-updates/**
 !client-updates/latest.json
 !client-updates/latest-files.json
 !client-updates/update.ps1
 !client-updates/sync_windows_agent_latest.zip
 !client-updates/packages/
+client-updates/packages/**
 !client-updates/packages/latest-package/
 !client-updates/packages/latest-package/**
