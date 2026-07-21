@@ -420,6 +420,11 @@ function Get-WindowsAgentConflictingDevProcesses {
     $runScriptPath = [System.IO.Path]::GetFullPath((Join-Path -Path $repoRoot -ChildPath 'run.ps1'))
 
     $allProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $processById = @{}
+    foreach ($process in $allProcesses) {
+        $processById[[int] $process.ProcessId] = $process
+    }
+
     $directConflicts = @($allProcesses |
         Where-Object {
             if ($_.ProcessId -eq $PID) {
@@ -427,8 +432,10 @@ function Get-WindowsAgentConflictingDevProcesses {
             }
 
             # The launcher PowerShell command line contains the repository
-            # path. Never classify a shell host as a Flutter dev process.
-            if ($_.Name -in @('powershell.exe', 'pwsh.exe', 'cmd.exe', 'conhost.exe', 'WindowsTerminal.exe')) {
+            # path. Never classify a general shell host as a Flutter dev
+            # process. A cmd.exe that explicitly launches `flutter run -d
+            # windows` is handled below because it owns the dev process tree.
+            if ($_.Name -in @('powershell.exe', 'pwsh.exe', 'conhost.exe', 'WindowsTerminal.exe')) {
                 return $false
             }
 
@@ -446,42 +453,67 @@ function Get-WindowsAgentConflictingDevProcesses {
                 return $false
             }
 
+            if ($_.Name -eq 'cmd.exe' -and
+                $commandLine -match '(?i)flutter(?:\.bat)?["'']?\s+run\s+-d\s+windows(?:\s|$)' -and
+                $processById.ContainsKey([int] $_.ParentProcessId)) {
+                $shellParent = $processById[[int] $_.ParentProcessId]
+                $shellParentCommandLine = [string] $shellParent.CommandLine
+                if ($shellParent.Name -in @('powershell.exe', 'pwsh.exe') -and
+                    $shellParentCommandLine.IndexOf('-SkipGet', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                    ($shellParentCommandLine.IndexOf($runScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                        $shellParentCommandLine -match '(?i)(?:^|\s)(?:\.\\)?run\.ps1(?:\s|$)')) {
+                    return $true
+                }
+            }
+
             return $commandLine.IndexOf($projectRootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
                 $commandLine.IndexOf($runScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
         })
 
-    $processById = @{}
-    foreach ($process in $allProcesses) {
-        $processById[$process.ProcessId] = $process
-    }
-
     $selectedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
-    $queue = [System.Collections.Generic.Queue[object]]::new()
     foreach ($process in $directConflicts) {
-        if ($selectedProcessIds.Add($process.ProcessId)) {
-            $queue.Enqueue($process)
-        }
-    }
+        [void] $selectedProcessIds.Add($process.ProcessId)
 
-    while ($queue.Count -gt 0) {
-        $process = $queue.Dequeue()
-        if (-not $processById.ContainsKey($process.ParentProcessId)) {
-            continue
-        }
+        # Walk through the known `flutter run -d windows` process chain so the
+        # parent cannot recreate a child that was just stopped. Stop at the
+        # repo launcher and never continue into its terminal/Codex ancestors.
+        $ancestor = $process
+        while ($processById.ContainsKey([int] $ancestor.ParentProcessId)) {
+            $parentProcess = $processById[[int] $ancestor.ParentProcessId]
+            if ($parentProcess.ProcessId -eq $PID) {
+                break
+            }
 
-        $parentProcess = $processById[$process.ParentProcessId]
-        if ($parentProcess.ProcessId -eq $PID) {
-            continue
-        }
+            $parentName = $parentProcess.Name.ToLowerInvariant()
+            $parentCommandLine = [string] $parentProcess.CommandLine
+            $isRepoLauncher = $parentName -in @('powershell.exe', 'pwsh.exe') -and
+                $parentCommandLine.IndexOf('-SkipGet', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                ($parentCommandLine.IndexOf($runScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                    $parentCommandLine -match '(?i)(?:^|\s)(?:\.\\)?run\.ps1(?:\s|$)')
+            $isFlutterChainProcess = $parentName -in @(
+                'cmd.exe',
+                'dart.exe',
+                'dartvm.exe',
+                'dartaotruntime.exe',
+                'flutter.exe'
+            )
 
-        if ($selectedProcessIds.Add($parentProcess.ProcessId)) {
-            $queue.Enqueue($parentProcess)
+            if (-not $isRepoLauncher -and -not $isFlutterChainProcess) {
+                break
+            }
+
+            [void] $selectedProcessIds.Add($parentProcess.ProcessId)
+            if ($isRepoLauncher) {
+                break
+            }
+
+            $ancestor = $parentProcess
         }
     }
 
     return @(
         $selectedProcessIds |
-            ForEach-Object { $processById[$_] } |
+            ForEach-Object { $processById[[int] $_] } |
             Sort-Object ProcessId
     )
 }
@@ -490,7 +522,31 @@ function Stop-WindowsAgentConflictingDevProcesses {
     param([Parameter(Mandatory = $true)][string] $ProjectPath)
 
     $conflictingProcesses = @(Get-WindowsAgentConflictingDevProcesses -ProjectPath $ProjectPath)
+    $conflictingProcessIds = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($process in $conflictingProcesses) {
+        [void] $conflictingProcessIds.Add($process.ProcessId)
+    }
+
+    # Stop leaves before parents. In particular, keep the repo launcher alive
+    # until all of its Flutter children have exited, then stop the launcher so
+    # its auto-restart loop cannot race the release CMake configure.
+    $orderedProcesses = @($conflictingProcesses |
+        ForEach-Object {
+            $depth = 0
+            $ancestor = $_
+            while ($conflictingProcessIds.Contains([int] $ancestor.ParentProcessId)) {
+                $depth++
+                $ancestor = $conflictingProcesses |
+                    Where-Object ProcessId -eq $ancestor.ParentProcessId |
+                    Select-Object -First 1
+            }
+
+            [pscustomobject]@{ Process = $_; Depth = $depth }
+        } |
+        Sort-Object Depth -Descending)
+
+    foreach ($entry in $orderedProcesses) {
+        $process = $entry.Process
         try {
             Write-Host "Stopping conflicting Windows dev process: $($process.Name) [$($process.ProcessId)]"
             Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
