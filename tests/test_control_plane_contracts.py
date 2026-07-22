@@ -851,6 +851,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
 
         self.assertIn("field syncEnabled: bool?", source)
+        live_rows = source.split("function live_state_agent_rows_for(", 1)[1].split(
+            "function live_state_job_rows_for(", 1
+        )[0]
+        self.assertIn("'syncEnabled'", live_rows)
         self.assertIn("function agent_sync_enabled(agent: map<json>): bool", source)
         self.assertIn("syncEnabled: agent_sync_enabled(agent)", source)
         self.assertIn("function agent_sync_enabled_set(", source)
