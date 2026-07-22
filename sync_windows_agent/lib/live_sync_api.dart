@@ -694,12 +694,9 @@ class AgentControlPlaneClient {
   Future<List<RemoteSyncJob>> createJobs({
     required String clientName,
     required List<String> tables,
-    String? sourceClientName,
   }) async {
     final response = await _invokeFunction('jobs_create', {
       'clientName': clientName,
-      if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
-        'sourceClientName': sourceClientName,
       'tables': tables,
     }, 'creating jobs');
 

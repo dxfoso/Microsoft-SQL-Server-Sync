@@ -3368,6 +3368,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'This sync job uses an unsupported protocol. Update the Windows client and reset the server sync state.',
       );
     }
+    if (job.batchId?.trim().isNotEmpty != true) {
+      throw StateError(
+        'Protocol-v2 jobs require a batch. Remove stale server jobs and retry.',
+      );
+    }
     if (_syncState.syncEpoch == job.syncEpoch &&
         _syncState.protocolVersion == job.protocolVersion) {
       return;
@@ -3433,15 +3438,43 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       throw _SyncJobCancelled(job.id);
     }
 
-    if (job.batchId?.trim().isNotEmpty == true) {
-      // Bound serialized payload size; SQL rows can contain large text.
-      const maxDeltaPayloadBytes = 500000;
-      final rows = _snapshotRows(snapshot.snapshotJson);
-      final columns = _snapshotColumns(snapshot.snapshotJson);
-      final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
-      RemoteSyncJob? uploadedJob;
-      if (rows.isEmpty) {
+    // Bound serialized payload size; SQL rows can contain large text.
+    const maxDeltaPayloadBytes = 500000;
+    final rows = _snapshotRows(snapshot.snapshotJson);
+    final columns = _snapshotColumns(snapshot.snapshotJson);
+    final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
+    RemoteSyncJob? uploadedJob;
+    if (rows.isEmpty) {
+      _checkSyncJobNotCancelled(job.id);
+      uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
+        job.id,
+        batchId: job.batchId!,
+        clientName: widget.clientName,
+        table: job.table,
+        columns: columns,
+        keyColumns: keyColumns,
+        rows: rows,
+        chunkId: '${job.id}-0',
+        finalChunk: true,
+        changeTrackingVersion: snapshot.changeTrackingVersion,
+        payloadIsDelta: snapshot.isDelta,
+        protocolVersion: job.protocolVersion,
+        syncEpoch: job.syncEpoch,
+      );
+      _checkSyncJobNotCancelled(job.id);
+    } else {
+      for (var offset = 0; offset < rows.length;) {
         _checkSyncJobNotCancelled(job.id);
+        var end = math.min(offset + 500, rows.length);
+        while (end > offset + 1 &&
+            utf8.encode(jsonEncode(rows.sublist(offset, end))).length >
+                maxDeltaPayloadBytes) {
+          end--;
+        }
+        final isFinalChunk = end == rows.length;
+        final payloadBase64 = base64Encode(
+          utf8.encode(jsonEncode(rows.sublist(offset, end))),
+        );
         uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
           job.id,
           batchId: job.batchId!,
@@ -3449,92 +3482,26 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           table: job.table,
           columns: columns,
           keyColumns: keyColumns,
-          rows: rows,
-          chunkId: '${job.id}-0',
-          finalChunk: true,
+          rows: rows.sublist(offset, end),
+          chunkId: '${job.id}-$offset',
+          finalChunk: isFinalChunk,
           changeTrackingVersion: snapshot.changeTrackingVersion,
+          payloadBase64: payloadBase64,
           payloadIsDelta: snapshot.isDelta,
           protocolVersion: job.protocolVersion,
           syncEpoch: job.syncEpoch,
         );
         _checkSyncJobNotCancelled(job.id);
-      } else {
-        for (var offset = 0; offset < rows.length;) {
-          _checkSyncJobNotCancelled(job.id);
-          var end = math.min(offset + 500, rows.length);
-          while (end > offset + 1 &&
-              utf8.encode(jsonEncode(rows.sublist(offset, end))).length >
-                  maxDeltaPayloadBytes) {
-            end--;
-          }
-          final isFinalChunk = end == rows.length;
-          final payloadBase64 = base64Encode(
-            utf8.encode(jsonEncode(rows.sublist(offset, end))),
-          );
-          uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
-            job.id,
-            batchId: job.batchId!,
-            clientName: widget.clientName,
-            table: job.table,
-            columns: columns,
-            keyColumns: keyColumns,
-            rows: rows.sublist(offset, end),
-            chunkId: '${job.id}-$offset',
-            finalChunk: isFinalChunk,
-            changeTrackingVersion: snapshot.changeTrackingVersion,
-            payloadBase64: payloadBase64,
-            payloadIsDelta: snapshot.isDelta,
-            protocolVersion: job.protocolVersion,
-            syncEpoch: job.syncEpoch,
-          );
-          _checkSyncJobNotCancelled(job.id);
-          offset = end;
-        }
+        offset = end;
       }
-      _applyRemoteJobState(
-        uploadedJob!,
-        appendHistory: true,
-        success: true,
-        overrideMessage:
-            'Uploaded ${snapshot.rowCount} changed row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
-      );
-      return;
     }
-
-    final uploadResult = await _controlPlaneClient.uploadSnapshot(
-      job.id,
-      clientName: widget.clientName,
-      table: job.table,
-      rowCount: snapshot.rowCount,
-      snapshotCreatedAt: snapshot.createdAt,
-      snapshotBytes: snapshot.snapshotBytes,
-      snapshotJson: snapshot.snapshotJson,
-      checkCancelled: () => _checkSyncJobNotCancelled(job.id),
-    );
-
     _applyRemoteJobState(
-      uploadResult.job,
+      uploadedJob!,
       appendHistory: true,
       success: true,
       overrideMessage:
-          'Uploaded ${snapshot.rowCount} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
+          'Uploaded ${snapshot.rowCount} ${snapshot.isDelta ? 'changed' : 'bootstrap'} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
     );
-    if (snapshot.changeTrackingVersion != null) {
-      _updateSyncTableState(
-        job.table,
-        (_syncState.tables[job.table] ?? _defaultSyncTableState(job.table))
-            .copyWith(
-              changeTrackingVersion: snapshot.changeTrackingVersion,
-              changeTrackingOwner: widget.clientName,
-            ),
-      );
-    }
-    final targetJob = uploadResult.targetJob;
-    if (targetJob != null) {
-      // The server queues the dependent download when upload completes. Keep
-      // that transition locally so it runs in this sync cycle.
-      _applyRemoteJobState(targetJob);
-    }
   }
 
   Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {
@@ -3550,97 +3517,57 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       throw _SyncJobCancelled(job.id);
     }
 
-    final isMultiWriter = job.batchId?.trim().isNotEmpty == true;
     var streamedTargetRowCount = -1;
     final latestDeltaModifiedAtByKey = <String, DateTime?>{};
     final applyStats = _DeltaApplyStats();
-    final pendingRejectedChanges =
-        isMultiWriter
-            ? await _rejectionOutbox.loadTable(widget.clientName, job.table)
-            : const <SyncRejectedChange>[];
-    if (isMultiWriter) {
-      // Apply each bounded relay page as it arrives. Keeping the whole
-      // multi-writer delta in memory makes a valid change backlog look like a
-      // duplicate/full snapshot and can stall both clients at once.
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'applying',
-        progress: 20,
-        message: 'Applying streamed changes to ${_localTableName(job.table)}.',
-        rowCount: 0,
-      );
-      _applyRemoteJobState(activeJob);
-      if (!activeJob.isActive) {
-        throw _SyncJobCancelled(job.id);
-      }
+    final pendingRejectedChanges = await _rejectionOutbox.loadTable(
+      widget.clientName,
+      job.table,
+    );
+    // Apply each bounded relay page as it arrives. Keeping the whole delta in
+    // memory can make a valid backlog look like a full snapshot.
+    activeJob = await _controlPlaneClient.updateJobProgress(
+      job.id,
+      status: 'applying',
+      progress: 20,
+      message: 'Applying streamed changes to ${_localTableName(job.table)}.',
+      rowCount: 0,
+    );
+    _applyRemoteJobState(activeJob);
+    if (!activeJob.isActive) {
+      throw _SyncJobCancelled(job.id);
     }
-
-    // Legacy path remains `final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);`.
-    final snapshotToApply =
-        isMultiWriter
-            ? await _controlPlaneClient.downloadMultiWriterDelta(
-              job.id,
-              batchId: job.batchId!,
-              protocolVersion: job.protocolVersion,
-              syncEpoch: job.syncEpoch,
-              checkCancelled: () => _checkSyncJobNotCancelled(job.id),
-              onChunk: (snapshot) async {
-                _checkSyncJobNotCancelled(job.id);
-                streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
-                  job: job,
-                  snapshot: snapshot,
-                  refreshLocalState: false,
-                  latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
-                  applyStats: applyStats,
-                );
-                _checkSyncJobNotCancelled(job.id);
-              },
-            )
-            : await _controlPlaneClient.downloadSnapshot(
-              job.id,
-              checkCancelled: () => _checkSyncJobNotCancelled(job.id),
-            );
+    final snapshotToApply = await _controlPlaneClient.downloadMultiWriterDelta(
+      job.id,
+      batchId: job.batchId!,
+      protocolVersion: job.protocolVersion,
+      syncEpoch: job.syncEpoch,
+      checkCancelled: () => _checkSyncJobNotCancelled(job.id),
+      onChunk: (snapshot) async {
+        _checkSyncJobNotCancelled(job.id);
+        streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
+          job: job,
+          snapshot: snapshot,
+          refreshLocalState: false,
+          latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
+          applyStats: applyStats,
+        );
+        _checkSyncJobNotCancelled(job.id);
+      },
+    );
 
     _checkSyncJobNotCancelled(job.id);
 
-    if (!isMultiWriter) {
-      activeJob = await _controlPlaneClient.updateJobProgress(
-        job.id,
-        status: 'applying',
-        progress: 80,
-        message:
-            'Applying downloaded snapshot to ${_localTableName(job.table)}.',
-        rowCount: snapshotToApply.rowCount,
+    if (streamedTargetRowCount < 0) {
+      await _applyDownloadedSnapshotToTarget(
+        job: job,
+        snapshot: snapshotToApply,
+        applyStats: applyStats,
       );
-      _applyRemoteJobState(activeJob);
-      if (!activeJob.isActive) {
-        throw _SyncJobCancelled(job.id);
-      }
     }
-
-    if (job.batchId?.trim().isNotEmpty != true) {
-      await _ensureNoLocalChangesBeforeRemoteApply(job);
-    }
-    final targetRowCount =
-        streamedTargetRowCount >= 0
-            ? streamedTargetRowCount
-            : await _applyDownloadedSnapshotToTarget(
-              job: job,
-              snapshot: snapshotToApply,
-              applyStats: applyStats,
-            );
     _checkSyncJobNotCancelled(job.id);
-    if (!isMultiWriter && applyStats.rejectedRows.isNotEmpty) {
-      final detail = formatSqlSyncRejectedRows(
-        rejected: applyStats.rejectedRows,
-        keyColumns: applyStats.rejectedRowKeyColumns,
-      );
-      throw StateError(
-        'Legacy snapshot apply rejected ${applyStats.rejectedRows.length} change(s). $detail',
-      );
-    }
     var pendingAfterApply = pendingRejectedChanges;
-    if (isMultiWriter) {
+    {
       final retryablePending = pendingRejectedChanges
           .where(
             (change) =>
@@ -3710,10 +3637,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'Retained ${pendingAfterApply.length} quarantined change(s) for ${job.table}: $quarantineDetail',
       );
     }
-    final reconciledTargetRowCount =
-        isMultiWriter
-            ? await _refreshTargetStateAfterRemoteApply(job)
-            : targetRowCount;
+    final reconciledTargetRowCount = await _refreshTargetStateAfterRemoteApply(
+      job,
+    );
     // The remote job records changed rows; targetRowCount remains local state.
     if (reconciledTargetRowCount < 0) {
       throw StateError(
@@ -3746,20 +3672,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       overrideMessage:
           'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${pendingAfterApply.length} quarantined.',
     );
-    if (job.batchId?.trim().isNotEmpty == true) {
-      final appliedVersion =
-          snapshotToApply.changeTrackingVersions[widget.clientName];
-      if (appliedVersion != null && appliedVersion >= 0) {
-        final current =
-            _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
-        _updateSyncTableState(
-          job.table,
-          current.copyWith(
-            changeTrackingVersion: appliedVersion,
-            changeTrackingOwner: widget.clientName,
-          ),
-        );
-      }
+    final appliedVersion =
+        snapshotToApply.changeTrackingVersions[widget.clientName];
+    if (appliedVersion != null && appliedVersion >= 0) {
+      final current =
+          _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
+      _updateSyncTableState(
+        job.table,
+        current.copyWith(
+          changeTrackingVersion: appliedVersion,
+          changeTrackingOwner: widget.clientName,
+        ),
+      );
     }
   }
 
@@ -3777,31 +3701,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             .length;
     final transient = changes.length - permanent - dependency;
     return 'quarantined=${changes.length}; permanent=$permanent; dependency=$dependency; transient=$transient';
-  }
-
-  Future<void> _ensureNoLocalChangesBeforeRemoteApply(RemoteSyncJob job) async {
-    final localState = _syncState.tables[job.table];
-    if (localState?.changeTrackingOwner != widget.clientName ||
-        localState?.changeTrackingVersion == null) {
-      return;
-    }
-
-    final database = _databaseNameFromSyncKey(job.table).trim();
-    final tableParts = _splitQualifiedName(_localTableName(job.table));
-    final tracking = await _queryChangeTrackingState(
-      profile: _activeProfile(),
-      database: database,
-      schema: tableParts.schema,
-      table: tableParts.table,
-    );
-    if (tracking != null &&
-        tracking.currentVersion > localState!.changeTrackingVersion!) {
-      throw StateError(
-        'Sync conflict for ${job.table}: local changes exist on '
-        '${widget.clientName} after the last local upload. Upload local '
-        'changes before applying ${job.sourceClientName} changes.',
-      );
-    }
   }
 
   Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(
@@ -3873,7 +3772,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     final rowCount = rowCountResult.value;
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
-    const forceFullSnapshot = false;
     final tracking = await _queryChangeTrackingState(
       profile: sourceProfile,
       database: database,
@@ -3881,7 +3779,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       table: tableParts.table,
     );
     final canUseDelta =
-        !forceFullSnapshot &&
         tracking != null &&
         previousVersion != null &&
         _syncState.tables[job.table]?.changeTrackingOwner ==
@@ -3902,18 +3799,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       rows.addAll(deltaRows);
       isDelta = true;
-    } else if (job.batchId?.trim().isNotEmpty == true && !forceFullSnapshot) {
-      // Protocol v2 establishes a baseline only from an empty database. A
-      // non-empty database without a valid cursor must be bootstrapped from a
-      // deliberately selected source; silently unioning full snapshots is the
-      // duplication bug that protocol v2 removes.
-      if (rowCount != 0 || tracking == null) {
-        throw StateError(
-          'Protocol-v2 sync for ${job.table} requires a deliberate one-source bootstrap because this non-empty database has no valid Change Tracking baseline.',
-        );
+    } else if (job.sourceClientName == 'server-bootstrap-v2') {
+      if (job.batchId?.trim().isNotEmpty != true) {
+        throw StateError('Explicit protocol-v2 bootstrap requires a batch.');
       }
-      isDelta = true;
-    } else {
       const batchSize = 200;
       var processed = 0;
       while (processed < rowCount) {
@@ -3936,6 +3825,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         processed += batch.length;
         if (batch.isEmpty) break;
       }
+    } else {
+      // Protocol v2 establishes a baseline only from an empty database. A
+      // non-empty database without a valid cursor must be bootstrapped from a
+      // deliberately selected source; silently unioning full snapshots is the
+      // duplication bug that protocol v2 removes.
+      if (rowCount != 0 || tracking == null) {
+        throw StateError(
+          'Protocol-v2 sync for ${job.table} requires a deliberate one-source bootstrap because this non-empty database has no valid Change Tracking baseline.',
+        );
+      }
+      isDelta = true;
     }
 
     final createdAt = DateTime.now().toIso8601String();

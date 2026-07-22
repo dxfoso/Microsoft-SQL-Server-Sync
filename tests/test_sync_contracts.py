@@ -236,15 +236,15 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_latestClientSync(agent)", clients_page)
         self.assertIn("_showBulkActionsInLegacyDashboard => false", dashboard)
 
-    def test_control_plane_exposes_snapshot_sync_jobs(self):
+    def test_control_plane_exposes_protocol_v2_jobs_and_explicit_bootstrap(self):
         control_plane = read_text("business/control_plane.tru")
 
         self.assertIn(
-            "function jobs_create(clientName: string, tables: array<string>, sourceClientName: string = ''",
+            "function jobs_create(clientName: string, tables: array<string>, token: string? = null)",
             control_plane,
         )
-        self.assertIn("function jobs_upload_chunk_start(", control_plane)
-        self.assertIn("function jobs_download_snapshot_manifest(", control_plane)
+        self.assertIn("function jobs_bootstrap(clientName: string, tables: array<string>", control_plane)
+        self.assertIn("sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v2' : 'server-bootstrap-v2'", control_plane)
         self.assertNotIn("mergeRole", control_plane)
         self.assertNotIn("publicationName", control_plane)
         self.assertIn("field syncMode: string min=1 max=32", control_plane)
@@ -471,7 +471,7 @@ class SyncContractsTests(unittest.TestCase):
         )[1].split("List<Map<String, String?>> _snapshotRows(", 1)[0]
 
         self.assertNotIn("server-anti-entropy", snapshot_body)
-        self.assertIn("const forceFullSnapshot = false", snapshot_body)
+        self.assertIn("job.sourceClientName == 'server-bootstrap-v2'", snapshot_body)
         self.assertIn("if (rowCount != 0 || tracking == null)", snapshot_body)
         self.assertIn("requires a deliberate one-source bootstrap", snapshot_body)
         self.assertIn("previousVersion >= 0", snapshot_body)
@@ -495,7 +495,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("await _controlPlaneClient.updateJobProgress(", upload_body)
         self.assertIn("status: 'uploading',", upload_body)
         self.assertIn("progress: 35,", upload_body)
-        self.assertIn("final uploadResult = await _controlPlaneClient.uploadSnapshot(", upload_body)
+        self.assertIn("await _controlPlaneClient.uploadMultiWriterDelta(", upload_body)
+        self.assertNotIn("await _controlPlaneClient.uploadSnapshot(", upload_body)
         self.assertIn("_applyRemoteJobState(", upload_body)
         self.assertIn("appendHistory: true,", upload_body)
         self.assertIn("success: true,", upload_body)
@@ -509,16 +510,13 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("await _controlPlaneClient.startJob(", download_body)
         self.assertIn("status: 'downloading',", download_body)
-        self.assertIn("final snapshot = await _controlPlaneClient.downloadSnapshot(job.id);", download_body)
+        self.assertIn("await _controlPlaneClient.downloadMultiWriterDelta(", download_body)
+        self.assertNotIn("await _controlPlaneClient.downloadSnapshot(", download_body)
         self.assertIn("await _controlPlaneClient.updateJobProgress(", download_body)
         self.assertIn("status: 'applying',", download_body)
-        self.assertIn("progress: 80,", download_body)
-        self.assertIn("final targetRowCount =", download_body)
-        self.assertIn(": await _applyDownloadedSnapshotToTarget(", download_body)
-        self.assertIn(
-            "if (!isMultiWriter && applyStats.rejectedRows.isNotEmpty)",
-            download_body,
-        )
+        self.assertIn("progress: 20,", download_body)
+        self.assertIn("if (streamedTargetRowCount < 0)", download_body)
+        self.assertIn("await _applyDownloadedSnapshotToTarget(", download_body)
         self.assertIn("await _rejectionOutbox.saveTable(", download_body)
         self.assertIn("rejectedRowCount: pendingAfterApply.length", download_body)
         self.assertIn("rejectionSummary:", download_body)
@@ -528,7 +526,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("status: 'completed',", download_body)
         self.assertIn("progress: 100,", download_body)
         self.assertLess(
-            download_body.index("final targetRowCount ="),
+            download_body.index("if (streamedTargetRowCount < 0)"),
             download_body.index("await _controlPlaneClient.completeJob("),
         )
         self.assertLess(
@@ -749,7 +747,7 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("function expand_sync_job_tables_for_owner", control_plane)
         self.assertIn(
-            "const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables)",
+            "const requestedTables = expand_sync_job_tables_for_owner(ownerId, unique_string_values(tables))",
             control_plane,
         )
         self.assertIn("final tablesToQueue = <String>{", agent_page)
@@ -802,12 +800,12 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function Invoke-AutoUpdate", update_script)
         self.assertIn("No client process detected; checking the live update manifest.", update_script)
         self.assertIn("changeTrackingOwner", read_text("sync_windows_agent/lib/sync_state.dart"))
-        self.assertIn("changeTrackingOwner != widget.clientName", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn("changeTrackingOwner ==", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertIn(
             "Applied ${applyStats.appliedRows} change",
             read_text("sync_windows_agent/lib/agent_page.dart"),
         )
-        self.assertIn("_ensureNoLocalChangesBeforeRemoteApply", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn("Protocol-v2 jobs require a batch", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
 
@@ -1136,10 +1134,10 @@ class SyncContractsTests(unittest.TestCase):
             "function auto_sync_tick(", 1
         )[0]
         scheduler_body = control_plane.split(
-            "function queue_due_periodic_sync_jobs_for_agent(", 1
-        )[1].split("function queue_due_periodic_sync_jobs_for_owner(", 1)[0]
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
 
-        self.assertIn("function queue_due_periodic_sync_jobs_for_agent", control_plane)
+        self.assertNotIn("function queue_due_periodic_sync_jobs_for_agent", control_plane)
         self.assertIn("function queue_due_periodic_sync_jobs_for_owner", control_plane)
         self.assertIn("function claim_periodic_sync_scheduler_for_owner", control_plane)
         self.assertIn("function auto_sync_tick", control_plane)
@@ -1167,7 +1165,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("!string_array_contains(ownerIds, ownerUserId)", control_plane)
         self.assertIn("if (ownerIds.length >= ownerLimit) {", control_plane)
         self.assertIn("queuedTableCount >= periodic_sync_scheduler_table_limit()", control_plane)
-        self.assertNotIn("!effective_agent_online(agent)", scheduler_body)
+        self.assertIn("agent_sync_enabled(agent)", scheduler_body)
+        self.assertIn("effective_agent_online(agent)", scheduler_body)
         self.assertIn("function json_payload_changed", control_plane)
         self.assertIn("if (tablesChanged || relationshipsChanged)", heartbeat_body)
         self.assertIn("_scheduleSelectedTableFingerprintRefresh();", agent_page)

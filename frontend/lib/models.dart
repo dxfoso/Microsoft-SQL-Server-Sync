@@ -108,6 +108,7 @@ class AdminAgent {
     required this.machineName,
     required this.server,
     required this.database,
+    required this.syncEnabled,
     required this.isOnline,
     required this.historyLimit,
     required this.autoSyncIntervalMinutes,
@@ -127,6 +128,7 @@ class AdminAgent {
   final String machineName;
   final String server;
   final String database;
+  final bool syncEnabled;
   final bool isOnline;
   final int historyLimit;
   final int autoSyncIntervalMinutes;
@@ -147,6 +149,7 @@ class AdminAgent {
       machineName: json['machineName'] as String? ?? '',
       server: json['server'] as String? ?? '',
       database: json['database'] as String? ?? '',
+      syncEnabled: json['syncEnabled'] as bool? ?? true,
       isOnline: json['isOnline'] as bool? ?? false,
       historyLimit: (json['historyLimit'] as num? ?? 5).round(),
       autoSyncIntervalMinutes:

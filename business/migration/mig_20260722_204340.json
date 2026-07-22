@@ -1,0 +1,25 @@
+{
+  "name": "mig_20260722_204340",
+  "timestamp": "2026-07-22T20:43:40.217657100+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "syncEnabled",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "bool",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

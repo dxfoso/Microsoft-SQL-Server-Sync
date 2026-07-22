@@ -203,17 +203,30 @@ class LiveSyncApiClient {
   Future<void> triggerJob({
     required String clientName,
     required String table,
-    String? sourceClientName,
   }) async {
     final decoded = await _invokeFunction('jobs_create', {
       'clientName': clientName,
-      if (sourceClientName != null && sourceClientName.trim().isNotEmpty)
-        'sourceClientName': sourceClientName,
       'tables': [table],
     });
     if (decoded is! Map || decoded['jobs'] is! List) {
       throw const LiveSyncApiException('Unexpected job queue payload.');
     }
+  }
+
+  Future<bool> setAgentSyncEnabled({
+    required String clientName,
+    required bool enabled,
+  }) async {
+    final decoded = await _invokeFunction('agent_sync_enabled_set', {
+      'clientName': clientName,
+      'enabled': enabled,
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected client synchronization state payload.',
+      );
+    }
+    return decoded['syncEnabled'] as bool? ?? enabled;
   }
 
   Future<AdminBulkSyncResult> triggerSyncAllEnabledNow() async {

@@ -36,6 +36,7 @@ class Agent {
   field replicationUseWindowsAuth: bool
   field replicationUser: string min=0 max=256
   field replicationPassword: string min=0 max=256
+  field syncEnabled: bool?
   field isOnline: bool
   field historyLimit: int min=1 max=100
   field autoSyncIntervalMinutes: int min=1 max=1440
@@ -474,6 +475,10 @@ function effective_agent_online(agent: map<json>): bool {
   return ageMinutes != null && ageMinutes <= agent_online_timeout_minutes(agent);
 }
 
+function agent_sync_enabled(agent: map<json>): bool {
+  return agent.syncEnabled != false;
+}
+
 // Command delivery only needs a live heartbeat. Database readiness is
 // required for sync scheduling, but must not block updates or diagnostics.
 function agent_command_delivery_online(agent: map<json>): bool {
@@ -552,35 +557,6 @@ function sync_table_reference(syncTable: string): map<json> {
     table: localTable,
     syncKey: string.concat(databaseName, kSyncTableKeySeparator(), localTable)
   };
-}
-
-function remote_source_server(agent: map<json>): string {
-  const machineName = string.from(agent.machineName ?? '').trim();
-  const server = string.from(agent.server ?? '').trim();
-  if (server.length == 0 || machineName.length == 0) {
-    return server;
-  }
-  const normalized = server.toLowerCase();
-  if (normalized == '.' || normalized == 'localhost' || normalized == '127.0.0.1') {
-    return machineName;
-  }
-  const parts = server.split('\\');
-  if (parts.length >= 2) {
-    const host = string.from(parts[0]).trim().toLowerCase();
-    const instance = string.from(parts[1]).trim();
-    if ((host == '.' || host == 'localhost' || host == '127.0.0.1') && instance.length != 0) {
-      return string.concat(machineName, '\\', instance);
-    }
-  }
-  return server;
-}
-
-function relay_publisher_database(agent: map<json>, table: string): string {
-  const tableReference = sync_table_reference(table);
-  if (tableReference.database != null && string.from(tableReference.database).trim().length != 0) {
-    return string.from(tableReference.database).trim();
-  }
-  return string.from(agent.database ?? '').trim();
 }
 
 function table_sync_policy_database_name(policy: map<json>): string {
@@ -1424,7 +1400,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1437,7 +1413,7 @@ function list_scheduler_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'tables', 'clientUserId', 'ownerUserId'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'tables', 'clientUserId', 'ownerUserId'],
     limit: 1000
   });
   if (rows == null) {
@@ -1509,6 +1485,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     machineName: agent.machineName,
     server: agent.server,
     database: agent.database,
+    syncEnabled: agent_sync_enabled(agent),
     isOnline: effective_agent_online(agent),
     historyLimit: agent.historyLimit,
     autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
@@ -1932,6 +1909,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       replicationUseWindowsAuth: true,
       replicationUser: '',
       replicationPassword: '',
+      syncEnabled: true,
       diagnosticRequestId: null,
       diagnosticRequestedAt: null,
       diagnosticRequestedByUserId: null,
@@ -1974,6 +1952,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     replicationUseWindowsAuth: true,
     replicationUser: '',
     replicationPassword: '',
+    syncEnabled: true,
     isOnline: false,
     historyLimit: 5,
     autoSyncIntervalMinutes: 15,
@@ -2104,15 +2083,6 @@ function active_job_tables_for_client(clientName: string): array<string> {
     tables = tables.concat([string.from(job.table)]);
   }
   return unique_string_values(tables);
-}
-
-function agent_row_for_client_name(agents: array<json>, clientName: string): map<json>? {
-  for (const agent of agents) {
-    if (string.from(agent.clientName) == clientName) {
-      return agent;
-    }
-  }
-  return null;
 }
 
 function active_job_tables_from_cache(clientName: string, activeTableCaches: array<json>? = null): array<string>? {
@@ -2363,61 +2333,25 @@ function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, poli
   return dueTables;
 }
 
-function sync_peer_agents_for_agent(agent: map<json>, allAgents: array<json>? = null): array<json> {
-  const sourceAgents = allAgents ?? list_scheduler_agent_rows();
-  let peers = [];
-  for (const candidate of sourceAgents) {
-    if (candidate.ownerUserId == agent.ownerUserId) {
-      peers = peers.concat([candidate]);
-    }
-  }
-  return peers;
-}
-
-function queue_due_periodic_sync_jobs_for_agent(agent: map<json>, allAgents: array<json>? = null, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null, completedJobRows: array<json>? = null): array<json> {
-  const peerAgents = sync_peer_agents_for_agent(agent, allAgents);
-  const tableCache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), allTableCaches ?? []);
-  const dueTables = due_periodic_sync_tables_for_agent_with_policies(agent, ownerPolicies, tableCache, periodic_sync_scheduler_table_limit());
-  if (dueTables.length == 0) {
-    return [];
-  }
-  let createdJobs = [];
-  let queuedTableCount = 0;
-  for (const table of dueTables) {
-    if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
-      break;
-    }
-    const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents, ownerPolicies, allTableCaches, completedJobRows);
-    if (sourceClientName.length == 0) {
-      continue;
-    }
-    const clientJobs = create_sync_jobs_for_agent(agent, [table], sourceClientName);
-    if (clientJobs.length > 0) {
-      createdJobs = createdJobs.concat(clientJobs);
-      queuedTableCount += 1;
-    }
-  }
-  return createdJobs;
-}
-
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
   let allOwnerAgents = [];
   let ownerAgents = [];
   for (const agent of sourceAgents) {
-    if (agent.ownerUserId == ownerUserId) {
+    if (agent.ownerUserId == ownerUserId && agent_sync_enabled(agent)) {
       allOwnerAgents = allOwnerAgents.concat([agent]);
     }
     if (agent.ownerUserId == ownerUserId &&
+        agent_sync_enabled(agent) &&
         agent_recent_enough_for_periodic_sync(agent) &&
         effective_agent_online(agent)) {
       ownerAgents = ownerAgents.concat([agent]);
     }
   }
-  // Protocol v2 has one outbound Change Tracking cursor per client/table. Do
-  // not advance it while a registered peer is offline, otherwise that peer
-  // could miss the delta permanently after it reconnects.
+  // Protocol v2 has one outbound Change Tracking cursor per enabled
+  // client/table. Do not advance it while an enabled peer is offline;
+  // explicitly disabled clients are outside the synchronization set.
   if (ownerAgents.length == 0 || ownerAgents.length != allOwnerAgents.length) {
     return [];
   }
@@ -2794,363 +2728,6 @@ function automatic_sync_control_set(paused: bool, token: string? = null): map<js
   return { ok: true, automaticSyncPaused: paused, scope: 'global' };
 }
 
-function list_completed_scheduler_job_rows(ownerUserId: string? = null): array<json> {
-  const rows = db.selectMany(SyncJob, {
-    where: {
-      ownerUserId: table_sync_policy_scope(ownerUserId),
-      status: 'completed'
-    },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'rowCount'],
-    limit: 500
-  });
-  if (rows == null) {
-    return [];
-  }
-  return rows;
-}
-
-function latest_completed_upload_row_count_for_source_from_rows(rows: array<json>, clientName: string, table: string): int {
-  for (const row of rows) {
-    if (row.clientName != clientName
-      || row.sourceClientName != clientName
-      || row.table != table
-      || row.direction != 'upload') {
-      continue;
-    }
-    if (row.rowCount != null) {
-      const rowCount = int.from(row.rowCount);
-      if (rowCount >= 0) {
-        return rowCount;
-      }
-    }
-  }
-  return -1;
-}
-
-function latest_completed_upload_row_count_for_source(clientName: string, table: string, completedJobRows: array<json>? = null): int {
-  if (completedJobRows != null) {
-    return latest_completed_upload_row_count_for_source_from_rows(completedJobRows, clientName, table);
-  }
-  const rows = db.selectMany(SyncJob, {
-    where: {
-      clientName,
-      sourceClientName: clientName,
-      table,
-      direction: 'upload',
-      status: 'completed'
-    },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['rowCount'],
-    limit: 20
-  });
-  if (rows == null) {
-    return -1;
-  }
-  for (const row of rows) {
-    if (row.rowCount != null) {
-      const rowCount = int.from(row.rowCount);
-      if (rowCount >= 0) {
-        return rowCount;
-      }
-    }
-  }
-  return -1;
-}
-
-function latest_completed_source_for_target_table_from_rows(rows: array<json>, targetClientName: string, table: string): string {
-  for (const row of rows) {
-    if (row.subscriberClientName != targetClientName || row.table != table) {
-      continue;
-    }
-    if (row.sourceClientName != null) {
-      const sourceClientName = string.from(row.sourceClientName).trim();
-      if (sourceClientName.length != 0 && sourceClientName != targetClientName) {
-        return sourceClientName;
-      }
-    }
-  }
-  return '';
-}
-
-function latest_completed_source_for_target_table(targetClientName: string, table: string, completedJobRows: array<json>? = null): string {
-  if (completedJobRows != null) {
-    return latest_completed_source_for_target_table_from_rows(completedJobRows, targetClientName, table);
-  }
-  const rows = db.selectMany(SyncJob, {
-    where: {
-      subscriberClientName: targetClientName,
-      table,
-      status: 'completed'
-    },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['sourceClientName'],
-    limit: 20
-  });
-  if (rows == null) {
-    return '';
-  }
-  for (const row of rows) {
-    if (row.sourceClientName != null) {
-      const sourceClientName = string.from(row.sourceClientName).trim();
-      if (sourceClientName.length != 0 && sourceClientName != targetClientName) {
-        return sourceClientName;
-      }
-    }
-  }
-  return '';
-}
-
-function agent_sync_table_state(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null): map<json>? {
-  let cachedTables = scheduler_agent_table_states(agent, policies);
-  if (tableCache != null && tableCache.tables != null) {
-    cachedTables = tableCache.tables;
-  }
-  return scheduler_agent_table_state(cachedTables, table);
-}
-
-function live_row_count_for_agent_table(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null, completedJobRows: array<json>? = null): int {
-  const tableState = agent_sync_table_state(agent, table, policies, tableCache);
-  if (tableState != null && tableState.rowCount != null) {
-    const rowCount = int.from(tableState.rowCount);
-    if (rowCount >= 0) {
-      return rowCount;
-    }
-  }
-  return latest_completed_upload_row_count_for_source(string.from(agent.clientName), table, completedJobRows);
-}
-
-function live_checksum_for_agent_table(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null): string {
-  const tableState = agent_sync_table_state(agent, table, policies, tableCache);
-  if (tableState != null && tableState.tableChecksum != null) {
-    return string.from(tableState.tableChecksum).trim();
-  }
-  return '';
-}
-
-function agent_table_sync_enabled(agent: map<json>, table: string, policies: array<json>? = null, tableCache: map<json>? = null): bool {
-  const tableState = agent_sync_table_state(agent, table, policies, tableCache);
-  if (tableState == null) {
-    return false;
-  }
-  return tableState.enabled == true;
-}
-
-function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null, completedJobRows: array<json>? = null): string {
-  const targetClientName = string.from(targetAgent.clientName);
-  const targetTableCache = scheduler_agent_table_state_cache_for_agent(targetClientName, allTableCaches ?? []);
-  const targetRowCount = live_row_count_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache, completedJobRows);
-  const targetChecksum = live_checksum_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache);
-  let bestKnownSource = '';
-  let bestKnownRowCount = targetRowCount;
-  let bestChecksumSource = '';
-  let firstAvailableSource = '';
-  for (const candidate of visibleAgents) {
-    if (candidate.clientName == targetClientName
-      || candidate.ownerUserId != targetAgent.ownerUserId
-      ) {
-      continue;
-    }
-    const candidateTableCache = scheduler_agent_table_state_cache_for_agent(string.from(candidate.clientName), allTableCaches ?? []);
-    if (!agent_table_sync_enabled(candidate, table, ownerPolicies, candidateTableCache)) {
-      continue;
-    }
-    if (firstAvailableSource.length == 0) {
-      firstAvailableSource = string.from(candidate.clientName);
-    }
-    const candidateRowCount = live_row_count_for_agent_table(candidate, table, ownerPolicies, candidateTableCache, completedJobRows);
-    if (candidateRowCount < 0) {
-      continue;
-    }
-    if (bestKnownSource.length == 0 || candidateRowCount > bestKnownRowCount) {
-      bestKnownSource = string.from(candidate.clientName);
-      bestKnownRowCount = candidateRowCount;
-    }
-    const candidateChecksum = live_checksum_for_agent_table(candidate, table, ownerPolicies, candidateTableCache);
-    if (candidateRowCount == targetRowCount
-      && targetChecksum.length != 0
-      && candidateChecksum.length != 0
-      && candidateChecksum != targetChecksum
-      && string.from(candidate.clientName) > targetClientName
-      && (bestChecksumSource.length == 0 || string.from(candidate.clientName) > bestChecksumSource)) {
-      bestChecksumSource = string.from(candidate.clientName);
-    }
-  }
-  if (bestKnownSource.length != 0) {
-    if (targetRowCount < 0 || bestKnownRowCount > targetRowCount) {
-      return bestKnownSource;
-    }
-    if (bestChecksumSource.length != 0) {
-      return bestChecksumSource;
-    }
-    return '';
-  }
-  const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table, completedJobRows);
-  if (rememberedSource.length != 0) {
-    for (const candidate of visibleAgents) {
-      const candidateTableCache = scheduler_agent_table_state_cache_for_agent(string.from(candidate.clientName), allTableCaches ?? []);
-      if (candidate.clientName == rememberedSource
-        && candidate.clientName != targetAgent.clientName
-        && candidate.ownerUserId == targetAgent.ownerUserId
-        && agent_table_sync_enabled(candidate, table, ownerPolicies, candidateTableCache)) {
-        return rememberedSource;
-      }
-    }
-  }
-  if (targetRowCount < 0) {
-    return firstAvailableSource;
-  }
-  return '';
-}
-
-function bulk_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, completedJobRows: array<json>? = null): string {
-  const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table, completedJobRows);
-  if (rememberedSource.length != 0) {
-    for (const candidate of visibleAgents) {
-      if (string.from(candidate.clientName) == rememberedSource
-        && string.from(candidate.clientName) != string.from(targetAgent.clientName)
-        && candidate.ownerUserId == targetAgent.ownerUserId
-        && agent_table_sync_enabled(candidate, table, ownerPolicies)) {
-        return rememberedSource;
-      }
-    }
-  }
-  for (const candidate of visibleAgents) {
-    if (string.from(candidate.clientName) == string.from(targetAgent.clientName)
-      || candidate.ownerUserId != targetAgent.ownerUserId
-      || !agent_table_sync_enabled(candidate, table, ownerPolicies)) {
-      continue;
-    }
-    return string.from(candidate.clientName);
-  }
-  return '';
-}
-
-function build_snapshot_relay_job_rows(sourceAgent: map<json>, targetClientName: string, targetClientUserId: string? = null, targetOwnerUserId: string? = null, tables: array<string>): array<json> {
-  let rows = [];
-  const protocol = sync_protocol_state();
-  for (const table of tables) {
-    rows = rows.concat([{
-      id: uuid.v4(),
-      clientName: sourceAgent.clientName,
-      sourceClientName: sourceAgent.clientName,
-      subscriberClientName: targetClientName,
-      table,
-      direction: 'upload',
-      publisherServer: sync_job_text(sourceAgent.server),
-      publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
-      publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-      publisherUser: sync_job_text(sourceAgent.replicationUser),
-      publisherPassword: sync_job_text(sourceAgent.replicationPassword),
-      status: 'queued',
-      progress: 0,
-      rowCount: 0,
-      snapshotBytes: 0,
-      snapshotCreatedAt: null,
-      snapshotId: null,
-      createdAt: now_iso(),
-      updatedAt: now_iso(),
-      startedAt: null,
-      completedAt: null,
-      message: string.concat('Queued sync for ', table, '.'),
-      error: null,
-      clientUserId: sourceAgent.clientUserId,
-      ownerUserId: sourceAgent.ownerUserId,
-      protocolVersion: protocol.protocolVersion,
-      syncEpoch: protocol.syncEpoch
-    }, {
-      id: uuid.v4(),
-      clientName: targetClientName,
-      sourceClientName: sourceAgent.clientName,
-      subscriberClientName: targetClientName,
-      table,
-      direction: 'download',
-      publisherServer: sync_job_text(remote_source_server(sourceAgent)),
-      publisherDatabase: sync_job_text(relay_publisher_database(sourceAgent, table)),
-      publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
-      publisherUser: sync_job_text(sourceAgent.replicationUser),
-      publisherPassword: sync_job_text(sourceAgent.replicationPassword),
-      status: 'waiting',
-      progress: 0,
-      rowCount: 0,
-      snapshotBytes: 0,
-      snapshotCreatedAt: null,
-      snapshotId: null,
-      createdAt: now_iso(),
-      updatedAt: now_iso(),
-      startedAt: null,
-      completedAt: null,
-      message: string.concat('Waiting for source snapshot upload for ', table, '.'),
-      error: null,
-      clientUserId: targetClientUserId,
-      ownerUserId: targetOwnerUserId,
-      protocolVersion: protocol.protocolVersion,
-      syncEpoch: protocol.syncEpoch
-    }]);
-  }
-  return rows;
-}
-
-function create_sync_jobs_for_agent(agent: map<json>, tables: array<string>, sourceClientName: string = '', activeTableCaches: array<json>? = null, sourceAgentOverride: map<json>? = null): array<json> {
-  if (tables.length == 0) {
-    return [];
-  }
-  let sourceAgent = null;
-  const resolvedSourceClientName = sourceClientName.trim();
-  if (resolvedSourceClientName.length != 0 && resolvedSourceClientName != agent.clientName) {
-    sourceAgent = sourceAgentOverride;
-    if (sourceAgent == null || string.from(sourceAgent.clientName) != resolvedSourceClientName) {
-      sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
-    }
-    if (sourceAgent == null) {
-      return [];
-    }
-  }
-  let activeTables = active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches);
-  if (activeTables == null) {
-    activeTables = active_job_tables_for_client(agent.clientName);
-  }
-  let sourceActiveTables = [];
-  if (sourceAgent != null) {
-    sourceActiveTables = active_job_tables_from_cache(string.from(sourceAgent.clientName), activeTableCaches);
-    if (sourceActiveTables == null) {
-      sourceActiveTables = active_job_tables_for_client(sourceAgent.clientName);
-    }
-  }
-  const expandedTables = expand_sync_job_tables_for_owner(agent.ownerUserId, tables);
-  let tablesToCreate = [];
-  for (const table of expandedTables) {
-    let busy = false;
-    for (const activeTable of activeTables) {
-      if (activeTable == table) {
-        busy = true;
-      }
-    }
-    for (const sourceActiveTable of sourceActiveTables) {
-      if (sourceActiveTable == table) {
-        busy = true;
-      }
-    }
-    if (!busy) {
-      tablesToCreate = tablesToCreate.concat([table]);
-    }
-  }
-  if (tablesToCreate.length == 0) {
-    return [];
-  }
-  if (sourceAgent == null) {
-    return [];
-  }
-  const rows = build_snapshot_relay_job_rows(
-    sourceAgent,
-    agent.clientName,
-    agent.clientUserId,
-    agent.ownerUserId,
-    tablesToCreate
-  );
-  return db.insertMany(SyncJob, rows);
-}
-
 function row_key(row: map<json>, keyColumns: array<string>): string {
   if (keyColumns.length == 0) {
     return json.stringify(row);
@@ -3243,7 +2820,7 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = ''): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
@@ -3251,7 +2828,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     rows = rows.concat([{
       id: uuid.v4(),
       clientName,
-      sourceClientName: 'server-delta-v2',
+      sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v2' : 'server-bootstrap-v2',
       subscriberClientName: '',
       table,
       direction: 'upload',
@@ -3270,7 +2847,9 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       updatedAt: createdAt,
       startedAt: null,
       completedAt: null,
-      message: string.concat('Queued protocol-v2 delta upload for ', table, '.'),
+      message: bootstrapSourceClientName.length == 0
+        ? string.concat('Queued protocol-v2 delta upload for ', table, '.')
+        : string.concat('Queued explicit protocol-v2 bootstrap upload for ', table, '.'),
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId,
@@ -3311,8 +2890,12 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
   return rows;
 }
 
-function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>): array<json> {
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = ''): array<json> {
   if (agents.length == 0) {
+    return [];
+  }
+  if (bootstrapSourceClientName.length != 0 &&
+      (agents.length != 1 || string.from(agents[0].clientName) != bootstrapSourceClientName)) {
     return [];
   }
   const batchId = uuid.v4();
@@ -3343,7 +2926,8 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     table,
     agents,
     ownerUserId,
-    protocol
+    protocol,
+    bootstrapSourceClientName
   ));
 }
 
@@ -3669,6 +3253,9 @@ function auto_sync_tick(token: string? = null): map<json> {
   } else {
     const ownerLimit = periodic_sync_scheduler_owner_limit();
     for (const agent of allAgents) {
+      if (!agent_sync_enabled(agent)) {
+        continue;
+      }
       if (!agent_recent_enough_for_periodic_sync(agent)) {
         continue;
       }
@@ -3722,7 +3309,40 @@ function agent_sync_settings_get(clientName: string, token: string? = null): map
     ownerUserId = user.ownerUserId;
   }
   const agent = ensure_agent(clientName, userId, ownerUserId);
-  return { syncSettings: sync_settings_payload(agent) };
+  return {
+    syncEnabled: agent_sync_enabled(agent),
+    syncSettings: sync_settings_payload(agent)
+  };
+}
+
+function agent_sync_enabled_set(clientName: string, enabled: bool, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const user = find_user_by_identity(clientName);
+  if (user == null || !is_client_user(user)) {
+    return raw_json_error(404, 'client not found');
+  }
+  if (!can_manage_user(current, user)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const agent = ensure_agent(clientName, user.id, user.ownerUserId);
+  const updated = db.update(Agent, { clientName: agent.clientName }, {
+    syncEnabled: enabled,
+    updatedAt: now_iso()
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'agent not found');
+  }
+  return {
+    ok: true,
+    clientName: updated.clientName,
+    syncEnabled: agent_sync_enabled(updated)
+  };
 }
 
 function agent_sync_settings_post(clientName: string, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, token: string? = null): map<json> {
@@ -4298,82 +3918,6 @@ function agent_diagnostics_get(clientName: string, token: string? = null): map<j
   };
 }
 
-function jobs_create_all_enabled_legacy(token: string? = null): map<json> {
-  const current = current_user_record(token);
-  if (current == null) {
-    return raw_json_error(401, 'permission denied');
-  }
-  if (!is_admin_user(current) && !is_owner_user(current)) {
-    return raw_json_error(403, 'permission denied');
-  }
-
-  let createdJobs = [];
-  let queuedClientNames = [];
-  let skippedOfflineClients = [];
-  let skippedBusyTables = [];
-  let skippedSourceResolutionTables = [];
-
-  const visibleAgents = visible_agent_rows_for(current);
-  const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
-  for (const ownerUserId of ownerUserIds) {
-    const ownerAgents = visibleAgents.filter((agent) => string.from(agent.ownerUserId) == ownerUserId);
-    const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
-    const completedJobRows = list_completed_scheduler_job_rows(ownerUserId);
-    const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
-    const activeTableCaches = ownerAgents.map((agent) => ({
-      clientName: agent.clientName,
-      tables: active_job_tables_for_client(string.from(agent.clientName))
-    }));
-
-    for (const agent of ownerAgents) {
-      const enabledTables = unique_string_values(
-        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-        )
-      );
-      if (enabledTables.length == 0) {
-        continue;
-      }
-      const activeCache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), activeTableCaches);
-      let activeTables = [];
-      if (activeCache != null && activeCache.tables != null) {
-        activeTables = activeCache.tables;
-      }
-      let tablesToQueue = [];
-      for (const table of enabledTables) {
-        if (string_array_contains(activeTables, table)) {
-          skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
-        } else {
-          tablesToQueue = tablesToQueue.concat([table]);
-        }
-      }
-      for (const table of tablesToQueue) {
-        const sourceClientName = bulk_source_client_name_for_agent_table(agent, table, ownerAgents, ownerPolicies, completedJobRows);
-        if (sourceClientName.length == 0) {
-          skippedSourceResolutionTables = skippedSourceResolutionTables.concat([string.concat(agent.clientName, '::', table)]);
-          continue;
-        }
-        const sourceAgent = agent_row_for_client_name(ownerAgents, sourceClientName);
-        const clientJobs = create_sync_jobs_for_agent(agent, [table], sourceClientName, activeTableCaches, sourceAgent);
-        if (clientJobs.length > 0) {
-          createdJobs = createdJobs.concat(clientJobs);
-          queuedClientNames = queuedClientNames.concat([string.from(agent.clientName)]);
-        }
-      }
-    }
-  }
-
-  return {
-    ok: true,
-    jobs: createdJobs.map((job) => public_job_payload(job)),
-    queuedJobCount: createdJobs.length,
-    queuedClientCount: unique_string_values(queuedClientNames).length,
-    skippedOfflineClients: unique_string_values(skippedOfflineClients),
-    skippedBusyTables: unique_string_values(skippedBusyTables),
-    skippedSourceResolutionTables: unique_string_values(skippedSourceResolutionTables)
-  };
-}
-
 function jobs_create_all_enabled(token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -4391,7 +3935,9 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   const visibleAgents = visible_agent_rows_for(current);
   const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
   for (const ownerUserId of ownerUserIds) {
-    const ownerAgents = visibleAgents.filter((agent) => string.from(agent.ownerUserId) == ownerUserId);
+    const ownerAgents = visibleAgents.filter((agent) =>
+      string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)
+    );
     let onlineAgents = [];
     for (const agent of ownerAgents) {
       if (effective_agent_online(agent)) {
@@ -4401,6 +3947,9 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       }
     }
     const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+    if (ownerAgents.length == 0) {
+      continue;
+    }
     if (onlineAgents.length == 0 || onlineAgents.length != ownerAgents.length) {
       let blockedTables = [];
       for (const agent of ownerAgents) {
@@ -4501,7 +4050,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     skippedSourceResolutionTables: [],
     deferredTables: unique_string_values(deferredTables),
     message: createdJobs.length == 0 && skippedOfflineClients.length > 0
-      ? 'Sync deferred without advancing Change Tracking because every registered client must be online for protocol v2.'
+      ? 'Sync deferred without advancing Change Tracking because every enabled client must be online for protocol v2.'
       : deferredTables.length > 0
         ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
         : 'Sync queued for all eligible tables.'
@@ -4815,8 +4364,12 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (syncEpoch.trim().length == 0 || syncEpoch.trim() != string.from(batch.syncEpoch).trim()) {
     return raw_json_error(409, 'sync epoch changed; discard this job and refresh client state');
   }
-  if (!payloadIsDelta) {
-    return raw_json_error(409, 'protocol-v2 multi-writer batches accept deltas only; use a deliberate one-source bootstrap for full data');
+  const explicitSingleClientBootstrap =
+    string.from(job.sourceClientName).trim() == 'server-bootstrap-v2' &&
+    batch.expectedClients.length == 1 &&
+    string.from(batch.expectedClients[0]).trim() == clientName.trim();
+  if (!payloadIsDelta && !explicitSingleClientBootstrap) {
+    return raw_json_error(409, 'protocol-v2 batches accept deltas only unless this is an explicit single-client bootstrap');
   }
   if (multi_writer_batch_stale(batch)) {
     return raw_json_error(410, 'multi-writer batch expired; start a new sync');
@@ -5498,7 +5051,7 @@ function jobs_download_snapshot_chunk(jobId: string, chunkIndex: int? = null, to
   });
 }
 
-function jobs_create(clientName: string, tables: array<string>, sourceClientName: string = '', token: string? = null): map<json> {
+function jobs_create(clientName: string, tables: array<string>, token: string? = null): map<json> {
   if (tables.length == 0) {
     return raw_json_error(400, 'tables are required.');
   }
@@ -5516,36 +5069,109 @@ function jobs_create(clientName: string, tables: array<string>, sourceClientName
   if (clientUser != null && !can_manage_user(current, clientUser)) {
     return raw_json_error(403, 'permission denied');
   }
-  let clientUserId = null;
-  let ownerId = owner_namespace_for_user(current);
-  if (clientUser != null) {
-    clientUserId = clientUser.id;
-    ownerId = owner_namespace_for_user(clientUser);
+  if (clientUser == null || !is_client_user(clientUser)) {
+    return raw_json_error(404, 'client not found');
   }
+  const ownerId = owner_namespace_for_user(clientUser);
   const targetAgent = db.selectOne(Agent, { clientName: resolvedClientName });
   if (targetAgent == null) {
     return raw_json_error(404, 'client not found');
   }
-  let resolvedSourceClientName = sourceClientName.trim();
-  if (resolvedSourceClientName.length != 0) {
-    const sourceAgent = db.selectOne(Agent, { clientName: resolvedSourceClientName });
-    if (sourceAgent == null) {
-      return raw_json_error(404, 'source client not found');
+  if (!agent_sync_enabled(targetAgent)) {
+    return raw_json_error(409, 'client synchronization is disabled');
+  }
+  const ownerAgents = list_scheduler_agent_rows().filter((agent) =>
+    string.from(agent.ownerUserId) == ownerId && agent_sync_enabled(agent)
+  );
+  let offlineClients = [];
+  for (const agent of ownerAgents) {
+    if (!effective_agent_online(agent)) {
+      offlineClients = offlineClients.concat([string.from(agent.clientName)]);
     }
   }
-  const visibleAgents = visible_agent_rows_for(current);
+  if (ownerAgents.length == 0 || offlineClients.length != 0) {
+    return raw_json_error(409, 'every enabled client must be online before a protocol-v2 batch can start');
+  }
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
+  const requestedTables = expand_sync_job_tables_for_owner(ownerId, unique_string_values(tables));
   let createdJobs = [];
-  for (const table of tables) {
-    let nextSourceClientName = resolvedSourceClientName;
-    if (nextSourceClientName.length == 0) {
-      nextSourceClientName = preferred_source_client_name_for_agent_table(targetAgent, table, visibleAgents);
+  for (const table of requestedTables) {
+    let tableAgents = [];
+    for (const agent of ownerAgents) {
+      const enabledTables = unique_string_values(
+        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+        )
+      );
+      if (string_array_contains(enabledTables, table)) {
+        tableAgents = tableAgents.concat([agent]);
+      }
     }
-    const nextJobs = create_sync_jobs_for_agent(targetAgent, [table], nextSourceClientName);
+    const nextJobs = create_multi_writer_batch(ownerId, table, tableAgents);
     if (nextJobs.length > 0) {
       createdJobs = createdJobs.concat(nextJobs);
     }
   }
-  return raw_json_success({ jobs: createdJobs.map((job) => public_job_payload(job)) }, 201);
+  return raw_json_success({
+    mode: 'protocol-v2',
+    jobs: createdJobs.map((job) => public_job_payload(job))
+  }, 201);
+}
+
+function jobs_bootstrap(clientName: string, tables: array<string>, token: string? = null): map<json> {
+  if (tables.length == 0) {
+    return raw_json_error(400, 'tables are required.');
+  }
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const clientUser = find_user_by_identity(normalizedClientName);
+  if (clientUser == null || !is_client_user(clientUser) || !can_manage_user(current, clientUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const ownerId = owner_namespace_for_user(clientUser);
+  const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
+  if (targetAgent == null || !agent_sync_enabled(targetAgent)) {
+    return raw_json_error(409, 'bootstrap client is unavailable or disabled');
+  }
+  if (!effective_agent_online(targetAgent)) {
+    return raw_json_error(409, 'bootstrap client must be online and SQL-connected');
+  }
+  const enabledOwnerAgents = list_scheduler_agent_rows().filter((agent) =>
+    string.from(agent.ownerUserId) == ownerId && agent_sync_enabled(agent)
+  );
+  if (enabledOwnerAgents.length != 1 || string.from(enabledOwnerAgents[0].clientName) != normalizedClientName) {
+    return raw_json_error(409, 'explicit bootstrap requires exactly one enabled client');
+  }
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
+  const enabledTables = unique_string_values(
+    enabled_sync_tables_for_agent_with_policies(targetAgent, ownerPolicies).concat(
+      enabled_sync_policy_tables_for_agent(targetAgent, ownerPolicies)
+    )
+  );
+  if (active_job_tables_for_client(normalizedClientName).length != 0) {
+    return raw_json_error(409, 'bootstrap client already has active jobs');
+  }
+  let createdJobs = [];
+  for (const table of unique_string_values(tables)) {
+    if (!string_array_contains(enabledTables, table)) {
+      return raw_json_error(409, string.concat('bootstrap table is not enabled: ', table));
+    }
+    const jobs = create_multi_writer_batch(ownerId, table, [targetAgent], normalizedClientName);
+    if (jobs.length > 0) {
+      createdJobs = createdJobs.concat(jobs);
+    }
+  }
+  return raw_json_success({
+    mode: 'protocol-v2-bootstrap',
+    clientName: normalizedClientName,
+    jobs: createdJobs.map((job) => public_job_payload(job))
+  }, 201);
 }
 
 function sync_job_status_is_terminal(status: string): bool {

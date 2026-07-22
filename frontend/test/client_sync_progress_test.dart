@@ -77,6 +77,7 @@ AdminAgent _agent({required List<AdminTableState> tables}) {
     machineName: 'machine-a',
     server: 'localhost',
     database: 'velvet',
+    syncEnabled: true,
     isOnline: true,
     historyLimit: 5,
     autoSyncIntervalMinutes: 15,

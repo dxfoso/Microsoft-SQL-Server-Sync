@@ -250,7 +250,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIsNotNone(scheduler_rows_match)
         scheduler_rows_body = scheduler_rows_match.group("body")
-        self.assertIn("fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'isOnline', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'tables', 'clientUserId', 'ownerUserId'],", scheduler_rows_body)
+        self.assertIn("fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'tables', 'clientUserId', 'ownerUserId'],", scheduler_rows_body)
         self.assertNotIn("diagnosticRequestId", scheduler_rows_body)
         self.assertNotIn("clientUpdateRequestId", scheduler_rows_body)
 
@@ -339,19 +339,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (bypassCooldown != true &&", claim_body)
         self.assertNotIn("bool.from(", claim_body)
 
-        preferred_source_match = re.search(
-            r"function preferred_source_client_name_for_agent_table\(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>\? = null, allTableCaches: array<json>\? = null, completedJobRows: array<json>\? = null\): string \{(?P<body>.*?)\n\}",
-            source,
-            flags=re.S,
-        )
-        self.assertIsNotNone(preferred_source_match)
-        preferred_source_body = preferred_source_match.group("body")
-        self.assertIn("const targetTableCache = scheduler_agent_table_state_cache_for_agent(targetClientName, allTableCaches ?? []);", preferred_source_body)
-        self.assertIn("const targetRowCount = live_row_count_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache, completedJobRows);", preferred_source_body)
-        self.assertIn("const targetChecksum = live_checksum_for_agent_table(targetAgent, table, ownerPolicies, targetTableCache);", preferred_source_body)
-        self.assertIn("const candidateTableCache = scheduler_agent_table_state_cache_for_agent(string.from(candidate.clientName), allTableCaches ?? []);", preferred_source_body)
-        self.assertIn("if (!agent_table_sync_enabled(candidate, table, ownerPolicies, candidateTableCache)) {", preferred_source_body)
-        self.assertIn("const rememberedSource = latest_completed_source_for_target_table(string.from(targetAgent.clientName), table, completedJobRows);", preferred_source_body)
+        self.assertNotIn("preferred_source_client_name_for_agent_table(", source)
+        self.assertNotIn("bulk_source_client_name_for_agent_table(", source)
+        self.assertNotIn("latest_completed_source_for_target_table(", source)
 
         due_match = re.search(
             r"function due_periodic_sync_tables_for_agent_with_policies\(agent: map<json>, policies: array<json>\? = null, tableCache: map<json>\? = null, maxCount: int\? = null\): array<string> \{(?P<body>.*?)\n\}",
@@ -571,30 +561,24 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("compatibleKey =", agent_page)
         self.assertNotIn("dbo.$localTable", agent_page)
 
-    def test_jobs_create_queues_snapshot_sync_for_remote_source(self):
+    def test_jobs_create_queues_protocol_v2_for_enabled_owner_clients(self):
         source = read_text("business/control_plane.tru")
+        jobs_create = source.split("function jobs_create(", 1)[1].split(
+            "function jobs_bootstrap(", 1
+        )[0]
 
         self.assertIn(
             "const targetAgent = db.selectOne(Agent, { clientName: resolvedClientName });",
             source,
         )
-        self.assertIn(
-            "nextSourceClientName = preferred_source_client_name_for_agent_table(targetAgent, table, visibleAgents);",
-            source,
-        )
-        self.assertIn(
-            "const nextJobs = create_sync_jobs_for_agent(targetAgent, [table], nextSourceClientName);",
-            source,
-        )
+        self.assertIn("agent_sync_enabled(targetAgent)", source)
+        self.assertIn("const nextJobs = create_multi_writer_batch(ownerId, table, tableAgents);", source)
         self.assertIn(
             "function jobs_progress(jobId: string, status: string = 'running', progress: int, message: string, rowCount: int, token: string? = null): map<json> {",
             source,
         )
-        self.assertIn("return raw_json_error(404, 'source client not found');", source)
-        self.assertIn(
-            "message: string.concat('Waiting for source snapshot upload for ', table, '.')",
-            source,
-        )
+        self.assertNotIn("sourceClientName", jobs_create)
+        self.assertIn("every enabled client must be online", source)
         self.assertIn("field syncMode: string min=1 max=32", source)
         self.assertNotIn("mergeRole", source)
         self.assertNotIn("publicationName", source)
@@ -621,15 +605,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
         self.assertNotIn("_runDirectQueuedTableSync(", agent_page)
 
-    def test_source_selection_and_related_tables_remain_active(self):
+    def test_v2_related_table_expansion_remains_active_without_source_selection(self):
         source = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertIn(
-            "function preferred_source_client_name_for_agent_table(targetAgent: map<json>, table: string, visibleAgents: array<json>, ownerPolicies: array<json>? = null, allTableCaches: array<json>? = null, completedJobRows: array<json>? = null): string {",
-            source,
-        )
-        self.assertIn("const sourceClientName = preferred_source_client_name_for_agent_table(agent, table, peerAgents, ownerPolicies, allTableCaches, completedJobRows);", source)
+        self.assertNotIn("create_sync_jobs_for_agent(", source)
+        self.assertNotIn("queue_due_periodic_sync_jobs_for_agent(", source)
         self.assertIn("function expand_sync_job_tables_for_owner", source)
         self.assertNotIn("latest_completed_job_tables_for_client", source)
         self.assertNotIn("enabledTables = latest_completed_job_tables_for_client(agent.clientName);", source)
@@ -857,13 +838,46 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertNotIn("multi_writer_agents_have_fingerprint_mismatch", batch_body)
         self.assertNotIn("'server-anti-entropy'", source)
-        self.assertIn("sourceClientName: 'server-delta-v2'", source)
-        self.assertIn("protocol-v2 multi-writer batches accept deltas only", source)
+        self.assertIn("'server-delta-v2' : 'server-bootstrap-v2'", source)
+        self.assertIn("protocol-v2 batches accept deltas only unless this is an explicit single-client bootstrap", source)
+        self.assertIn("explicitSingleClientBootstrap", source)
         self.assertIn("field protocolVersion: int? min=2 max=2", source)
         self.assertIn("field syncEpoch: string? min=0 max=64", source)
         self.assertIn("protocolVersion != sync_protocol_version()", source)
         self.assertIn("sync epoch changed; discard this job", source)
         self.assertIn("{ field: 'subscriberClientName', dir: 'asc' }", source)
+
+    def test_disabled_clients_are_excluded_from_protocol_v2_barriers(self):
+        source = read_text("business/control_plane.tru")
+
+        self.assertIn("field syncEnabled: bool?", source)
+        self.assertIn("function agent_sync_enabled(agent: map<json>): bool", source)
+        self.assertIn("syncEnabled: agent_sync_enabled(agent)", source)
+        self.assertIn("function agent_sync_enabled_set(", source)
+        self.assertIn(
+            "agent.ownerUserId == ownerUserId && agent_sync_enabled(agent)",
+            source,
+        )
+        self.assertIn(
+            "string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)",
+            source,
+        )
+        self.assertIn("every enabled client must be online", source)
+
+    def test_explicit_bootstrap_is_single_enabled_client_and_retry_safe(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("function jobs_bootstrap(", source)
+        self.assertIn("explicit bootstrap requires exactly one enabled client", source)
+        self.assertIn("'server-bootstrap-v2'", source)
+        self.assertIn("explicitSingleClientBootstrap", source)
+        self.assertIn("sync_batch_chunk_seen(", source)
+        self.assertIn("duplicate: true", source)
+        self.assertIn("job.sourceClientName == 'server-bootstrap-v2'", agent_page)
+        self.assertIn("matchClauseForColumnSets", read_text("sync_windows_agent/lib/sql_sync_merge.dart"))
+        self.assertNotIn("create_sync_jobs_for_agent(", source)
+        self.assertNotIn("jobs_create_all_enabled_legacy(", source)
 
     def test_server_reset_rotates_protocol_v2_epoch(self):
         source = read_text("business/control_plane.tru")
