@@ -993,6 +993,62 @@ class SyncContractsTests(unittest.TestCase):
             "-File `$UpdateScriptPath -InstallDir `$InstallDir",
             watchdog_update,
         )
+        window_settings = read_text(
+            "sync_windows_agent/lib/window_settings.dart"
+        )
+        generated_watchdog_update = window_settings.split(
+            "function Invoke-AutoUpdate {",
+            1,
+        )[1].split(
+            r"$mutexName =",
+            1,
+        )[0]
+        self.assertNotIn(
+            "-File $UpdateScriptPath -InstallDir $InstallDir -NoStart",
+            generated_watchdog_update,
+        )
+        self.assertIn(
+            "-File $UpdateScriptPath -InstallDir $InstallDir",
+            generated_watchdog_update,
+        )
+
+    def test_new_install_retires_obsolete_agent_install_processes(self):
+        window_settings = read_text(
+            "sync_windows_agent/lib/window_settings.dart"
+        )
+        generated_watchdog = window_settings.split(
+            "static String _watchdogScriptContents() {",
+            1,
+        )[1].split(
+            "static String _quotePowerShellString",
+            1,
+        )[0]
+        self.assertIn(
+            "function Stop-ObsoleteInstallProcesses {",
+            generated_watchdog,
+        )
+        self.assertIn(
+            "sync_windows_agent_watchdog.ps1",
+            generated_watchdog,
+        )
+        self.assertIn(
+            "Name = 'sync_windows_agent.exe'",
+            generated_watchdog,
+        )
+        self.assertIn(
+            "[System.StringComparison]::OrdinalIgnoreCase",
+            generated_watchdog,
+        )
+        self.assertIn(
+            "Retired obsolete installs.",
+            generated_watchdog,
+        )
+        self.assertLess(
+            generated_watchdog.index("Stop-ObsoleteInstallProcesses"),
+            generated_watchdog.index(
+                "$mutexName = Get-WatchdogMutexName"
+            ),
+        )
 
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")

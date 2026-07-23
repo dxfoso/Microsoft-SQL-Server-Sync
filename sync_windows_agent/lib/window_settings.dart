@@ -302,19 +302,59 @@ function Invoke-AutoUpdate {
 
     try {
         Write-WatchdogLog 'No client process detected; checking the live update manifest.'
+        # The updater owns the relaunch. It stops this watchdog immediately
+        # before replacement and starts a fresh watchdog after verification.
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden `
-            -File $UpdateScriptPath -InstallDir $InstallDir -NoStart
+            -File $UpdateScriptPath -InstallDir $InstallDir
         if ($LASTEXITCODE -ne 0) {
             Write-WatchdogLog "Independent updater exited with code $LASTEXITCODE."
         }
-        # Allow the deferred installer to finish before the supervisor starts
-        # the executable again.
+        # The current watchdog is normally stopped by the updater. This delay
+        # only protects the failure path from an immediate restart loop.
         Start-Sleep -Seconds 5
     } catch {
         Write-WatchdogLog "Independent updater failed: $($_.Exception.Message)"
     }
 }
 
+function Stop-ObsoleteInstallProcesses {
+    $currentExecutable = [System.IO.Path]::GetFullPath($executablePath)
+    $currentWatchdog = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)
+    $stoppedWatchdogs = 0
+    $stoppedAgents = 0
+
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
+            $_.ProcessId -ne $PID -and
+            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
+            $_.CommandLine.IndexOf('sync_windows_agent_watchdog.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $_.CommandLine.IndexOf($currentWatchdog, [System.StringComparison]::OrdinalIgnoreCase) -lt 0
+        } |
+        ForEach-Object {
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            $stoppedWatchdogs += 1
+        }
+
+    Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+            -not ([System.IO.Path]::GetFullPath($_.ExecutablePath)).Equals(
+                $currentExecutable,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        } |
+        ForEach-Object {
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            $stoppedAgents += 1
+        }
+
+    if ($stoppedWatchdogs -gt 0 -or $stoppedAgents -gt 0) {
+        Write-WatchdogLog "Retired obsolete installs. watchdogs=$stoppedWatchdogs agents=$stoppedAgents"
+    }
+}
+
+Stop-ObsoleteInstallProcesses
 $mutexName = Get-WatchdogMutexName -InstallDir $targetInstallDir
 $createdNew = $false
 $mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref] $createdNew)
