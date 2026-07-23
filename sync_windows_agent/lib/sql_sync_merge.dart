@@ -12,7 +12,6 @@ String buildTargetSnapshotMergeSql({
   required String table,
   required List<SqlSyncColumnDefinition> columns,
   required List<String> primaryKeyColumns,
-  required List<List<String>> matchColumnSets,
   required List<Map<String, dynamic>> rows,
   int targetMergeInsertBatchSize = 100,
   int targetMergeApplyBatchSize = 500,
@@ -21,7 +20,6 @@ String buildTargetSnapshotMergeSql({
   final insertColumns = columns
       .where((column) => column.isWritable)
       .toList(growable: false);
-  final updatePrimaryKeysFromUniqueMatch = matchColumnSets.length > 1;
   final primaryKeyColumnNames =
       primaryKeyColumns.map((column) => column.toLowerCase()).toSet();
   final updatableColumns = insertColumns
@@ -29,14 +27,13 @@ String buildTargetSnapshotMergeSql({
         if (column.isIdentity) {
           return false;
         }
-        if (primaryKeyColumnNames.contains(column.name.toLowerCase()) &&
-            !updatePrimaryKeysFromUniqueMatch) {
+        if (primaryKeyColumnNames.contains(column.name.toLowerCase())) {
           return false;
         }
         return true;
       })
       .toList(growable: false);
-  final joinClause = matchClauseForColumnSets(matchColumnSets, columns);
+  final joinClause = matchClauseForColumns(primaryKeyColumns, columns);
   final insertColumnList = insertColumns
       .map((column) => quoteIdentifier(column.name))
       .join(', ');
@@ -52,9 +49,9 @@ String buildTargetSnapshotMergeSql({
             '${quoteIdentifier(column.name)} ${column.sqlCastType} NULL',
       )
       .join(',\n    ');
-  final sourceIndexStatements = _buildSourceTempIndexStatements(
-    matchColumnSets,
-  );
+  final sourceIndexStatements = _buildSourceTempIndexStatements(<List<String>>[
+    primaryKeyColumns,
+  ]);
   final identityColumns = insertColumns
       .where((column) => column.isIdentity)
       .toList(growable: false);
@@ -204,7 +201,6 @@ String buildTargetSnapshotStageApplySql({
   required String stageTableName,
   required List<SqlSyncColumnDefinition> columns,
   required List<String> primaryKeyColumns,
-  required List<List<String>> matchColumnSets,
   int targetMergeApplyBatchSize = 500,
   bool deleteMissing = true,
   bool manageTriggers = true,
@@ -213,7 +209,6 @@ String buildTargetSnapshotStageApplySql({
   final insertColumns = columns
       .where((column) => column.isWritable)
       .toList(growable: false);
-  final updatePrimaryKeysFromUniqueMatch = matchColumnSets.length > 1;
   final primaryKeyColumnNames =
       primaryKeyColumns.map((column) => column.toLowerCase()).toSet();
   final updatableColumns = insertColumns
@@ -221,14 +216,13 @@ String buildTargetSnapshotStageApplySql({
         if (column.isIdentity) {
           return false;
         }
-        if (primaryKeyColumnNames.contains(column.name.toLowerCase()) &&
-            !updatePrimaryKeysFromUniqueMatch) {
+        if (primaryKeyColumnNames.contains(column.name.toLowerCase())) {
           return false;
         }
         return true;
       })
       .toList(growable: false);
-  final joinClause = matchClauseForColumnSets(matchColumnSets, columns);
+  final joinClause = matchClauseForColumns(primaryKeyColumns, columns);
   final insertColumnList = insertColumns
       .map((column) => quoteIdentifier(column.name))
       .join(', ');
@@ -239,9 +233,9 @@ String buildTargetSnapshotStageApplySql({
       .map((column) => quoteIdentifier(column.name))
       .join(', ');
   final stageTarget = stageTableReference(stageTableName);
-  final sourceIndexStatements = _buildSourceTempIndexStatements(
-    matchColumnSets,
-  ).replaceAll('#source_rows', stageTarget);
+  final sourceIndexStatements = _buildSourceTempIndexStatements(<List<String>>[
+    primaryKeyColumns,
+  ]).replaceAll('#source_rows', stageTarget);
   final identityColumns = insertColumns
       .where((column) => column.isIdentity)
       .toList(growable: false);
@@ -430,114 +424,63 @@ END CATCH;
 String stageTableReference(String stageTableName) =>
     'tempdb.dbo.${quoteIdentifier(stageTableName)}';
 
-/// Keeps the last row for each primary key in a streamed multi-writer page.
-/// The relay order is deterministic, so this makes last-arrival-wins explicit
-/// and prevents duplicate source keys from reaching the SQL join.
+/// Keeps one deterministic version for each permanent primary identity.
+///
+/// Alternate unique/business keys never participate in identity matching.
+/// Different GUIDs therefore remain independent and any business-key collision
+/// is rejected by the target constraint and retained in the conflict outbox.
 List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
   required List<Map<String, dynamic>> rows,
   required List<String> primaryKeyColumns,
-  List<List<String>>? matchColumnSets,
-  Map<String, DateTime?>? latestModifiedAtByKey,
+  Map<String, Map<String, dynamic>>? latestRowByKey,
 }) {
   if (rows.isEmpty || primaryKeyColumns.isEmpty) {
     return rows;
   }
-  final identitySets = (matchColumnSets ?? <List<String>>[primaryKeyColumns])
-      .where((columns) => columns.isNotEmpty)
-      .toList(growable: false);
-  const modifiedAtKey = '__sync_modified_at_utc';
   final candidates = <Map<String, dynamic>>[];
-  final candidateIdentities = <List<String>>[];
+  final candidateIdentities = <String>[];
 
   for (final row in rows) {
-    final identities = <String>[];
-    for (var setIndex = 0; setIndex < identitySets.length; setIndex++) {
-      final values =
-          identitySets[setIndex].map((column) => row[column]).toList();
-      if (values.any((value) => value == null)) {
-        continue;
-      }
-      identities.add('$setIndex:${jsonEncode(values)}');
+    final values = primaryKeyColumns.map((column) => row[column]).toList();
+    if (values.any((value) => value == null)) {
+      candidates.add(row);
+      candidateIdentities.add('missing:${candidates.length - 1}');
+      continue;
     }
-    final candidateTime = _parseSyncUtcTimestamp(row[modifiedAtKey]);
-    final isStale = identities.any((identity) {
-      final previousTime = latestModifiedAtByKey?[identity];
-      return previousTime != null &&
-          (candidateTime == null || candidateTime.isBefore(previousTime));
-    });
-    if (isStale) {
+    final identity = jsonEncode(values);
+    final previousRow = latestRowByKey?[identity];
+    if (previousRow != null && !_isLaterSyncRow(row, previousRow)) {
       continue;
     }
     candidates.add(row);
-    candidateIdentities.add(identities);
+    candidateIdentities.add(identity);
   }
 
-  final parents = List<int>.generate(candidates.length, (index) => index);
-  int find(int index) {
-    var root = index;
-    while (parents[root] != root) {
-      root = parents[root];
-    }
-    while (parents[index] != index) {
-      final next = parents[index];
-      parents[index] = root;
-      index = next;
-    }
-    return root;
-  }
-
-  void union(int left, int right) {
-    final leftRoot = find(left);
-    final rightRoot = find(right);
-    if (leftRoot != rightRoot) {
-      parents[rightRoot] = leftRoot;
-    }
-  }
-
-  final ownerByIdentity = <String, int>{};
+  final winnerByIdentity = <String, int>{};
+  final firstIndexByIdentity = <String, int>{};
   for (var index = 0; index < candidates.length; index++) {
-    for (final identity in candidateIdentities[index]) {
-      final owner = ownerByIdentity[identity];
-      if (owner == null) {
-        ownerByIdentity[identity] = index;
-      } else {
-        union(index, owner);
-      }
-    }
-  }
-
-  final winnerByRoot = <int, int>{};
-  final firstIndexByRoot = <int, int>{};
-  for (var index = 0; index < candidates.length; index++) {
-    final root = find(index);
-    firstIndexByRoot[root] = firstIndexByRoot[root] ?? index;
-    final currentIndex = winnerByRoot[root];
+    final identity = candidateIdentities[index];
+    firstIndexByIdentity[identity] ??= index;
+    final currentIndex = winnerByIdentity[identity];
     if (currentIndex == null ||
         _isLaterSyncRow(candidates[index], candidates[currentIndex])) {
-      winnerByRoot[root] = index;
+      winnerByIdentity[identity] = index;
     }
   }
 
-  final roots = winnerByRoot.keys.toList(growable: false)..sort(
+  final identities = winnerByIdentity.keys.toList(growable: false)..sort(
     (left, right) =>
-        firstIndexByRoot[left]!.compareTo(firstIndexByRoot[right]!),
+        firstIndexByIdentity[left]!.compareTo(firstIndexByIdentity[right]!),
   );
-  final winners = roots
-      .map((root) => candidates[winnerByRoot[root]!])
+  final winners = identities
+      .map((identity) => candidates[winnerByIdentity[identity]!])
       .toList(growable: false);
-  if (latestModifiedAtByKey != null) {
-    for (final root in roots) {
-      final winnerIndex = winnerByRoot[root]!;
-      final winnerTime = _parseSyncUtcTimestamp(
-        candidates[winnerIndex][modifiedAtKey],
+  if (latestRowByKey != null) {
+    for (final identity in identities) {
+      final winnerIndex = winnerByIdentity[identity]!;
+      latestRowByKey[identity] = Map<String, dynamic>.from(
+        candidates[winnerIndex],
       );
-      for (var index = 0; index < candidates.length; index++) {
-        if (find(index) == root) {
-          for (final identity in candidateIdentities[index]) {
-            latestModifiedAtByKey[identity] = winnerTime;
-          }
-        }
-      }
     }
   }
   return winners;
@@ -552,9 +495,30 @@ bool _isLaterSyncRow(
   );
   final currentTime = _parseSyncUtcTimestamp(current['__sync_modified_at_utc']);
   if (candidateTime == null) {
-    return currentTime == null;
+    if (currentTime != null) return false;
+  } else if (currentTime == null || candidateTime.isAfter(currentTime)) {
+    return true;
+  } else if (candidateTime.isBefore(currentTime)) {
+    return false;
   }
-  return currentTime == null || !candidateTime.isBefore(currentTime);
+  final candidateVersion =
+      int.tryParse(candidate['__sync_change_version']?.toString() ?? '') ?? -1;
+  final currentVersion =
+      int.tryParse(current['__sync_change_version']?.toString() ?? '') ?? -1;
+  if (candidateVersion != currentVersion) {
+    return candidateVersion > currentVersion;
+  }
+  final candidateOrigin =
+      candidate['__sync_origin_client']?.toString().toLowerCase() ?? '';
+  final currentOrigin =
+      current['__sync_origin_client']?.toString().toLowerCase() ?? '';
+  if (candidateOrigin != currentOrigin) {
+    return candidateOrigin.compareTo(currentOrigin) > 0;
+  }
+  return (candidate['__sync_operation_id']?.toString() ?? '').compareTo(
+        current['__sync_operation_id']?.toString() ?? '',
+      ) >=
+      0;
 }
 
 DateTime? _parseSyncUtcTimestamp(dynamic value) {
@@ -743,24 +707,6 @@ String matchClauseForColumns(
         return '$sourceExpression IS NOT NULL AND $targetExpression = $sourceExpression';
       })
       .join(' AND ');
-}
-
-String matchClauseForColumnSets(
-  List<List<String>> matchColumnSets,
-  List<SqlSyncColumnDefinition> columns,
-) {
-  final usableSets = matchColumnSets
-      .where((columnSet) => columnSet.isNotEmpty)
-      .toList(growable: false);
-  if (usableSets.isEmpty) {
-    return '1 = 0';
-  }
-  if (usableSets.length == 1) {
-    return matchClauseForColumns(usableSets.first, columns);
-  }
-  return usableSets
-      .map((columnSet) => '(${matchClauseForColumns(columnSet, columns)})')
-      .join('\n  OR ');
 }
 
 String quoteIdentifier(String value) => '[${value.replaceAll(']', ']]')}]';

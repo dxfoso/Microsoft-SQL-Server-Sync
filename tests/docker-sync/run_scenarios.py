@@ -142,7 +142,6 @@ def generate_sql(database, *, rows=None, deletes=None, delete_missing=False):
         "stageTableName": f"sync_stage_{uuid.uuid4().hex}",
         "columns": COLUMNS,
         "primaryKeyColumns": ["Id"],
-        "matchColumnSets": [["Id"], ["Code"]],
         "rows": rows or [],
         "deletes": deletes or [],
         "deleteMissing": delete_missing,
@@ -185,7 +184,6 @@ def coalesce(rows):
         "operation": "coalesce",
         "rows": rows,
         "primaryKeyColumns": ["Id"],
-        "matchColumnSets": [["Id"], ["Code"]],
     }
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
         json.dump(request, handle, ensure_ascii=False)
@@ -398,6 +396,25 @@ def run_scenarios():
         apply(database, rows=multi_writer_rows)
     assert_equal(*DATABASES)
 
+    # Different permanent IDs are independent even when a business unique key
+    # collides. The target constraint rejects/quarantines the second identity;
+    # sync must never coalesce it into an overwrite of the first identity.
+    identity_collision = coalesce([
+        {**row(34, "SAME-BUSINESS-KEY", "Created by c1"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
+        {**row(35, "SAME-BUSINESS-KEY", "Created by c2"), "__sync_modified_at_utc": "2026-07-16T10:00:01Z"},
+    ])
+    if len(identity_collision) != 2:
+        raise AssertionError(f"Different permanent identities were silently collapsed: {identity_collision}")
+    for database in DATABASES:
+        apply(database, rows=[identity_collision[0]])
+        expect_apply_failure(database, rows=[identity_collision[1]])
+        current = table_rows(database)
+        if not any("34|SAME-BUSINESS-KEY|Created by c1" in value for value in current):
+            raise AssertionError(f"Unique collision replaced the established identity in {database}: {current}")
+        if any("35|SAME-BUSINESS-KEY" in value for value in current):
+            raise AssertionError(f"Unique collision inserted a second invalid identity in {database}: {current}")
+    assert_equal(*DATABASES)
+
     # Client 3 is offline for two rounds, then receives the accumulated delta once.
     offline_rows = [
         row(40, "OFFLINE-1", "Queued while client 3 offline"),
@@ -474,6 +491,7 @@ def run_scenarios():
             "missing-delete", "empty-delta", "newest-commit-conflict",
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "independent-multi-writer", "offline-catch-up",
+            "guid-only-identity-unique-collision-quarantine",
             "large-1200-row-batch", "idempotent-retry",
             "authoritative-replace-delete-missing-unicode-retry",
             "rejected-row-rollback-and-recovery", "change-context",

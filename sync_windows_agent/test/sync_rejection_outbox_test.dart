@@ -4,6 +4,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sync_windows_agent/sync_rejection_outbox.dart';
 
 void main() {
+  test('SQL unique identity collisions are permanent quarantined conflicts', () {
+    expect(
+      classifySyncRejection(
+        "Violation of UNIQUE KEY constraint 'UQ_er000_Parent'. Error 2627. The duplicate key value is (2, 141).",
+      ),
+      SyncRejectionKind.permanentBusinessRule,
+    );
+    expect(
+      classifySyncRejection(
+        "Cannot insert duplicate key row in object 'dbo.er000' with unique index 'IX_er000_Parent'. Error 2601.",
+      ),
+      SyncRejectionKind.permanentBusinessRule,
+    );
+  });
+
   SyncRejectedChange rejectedChange({
     required String id,
     required SyncRejectionKind kind,

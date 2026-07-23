@@ -807,7 +807,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
     def test_sync_all_queues_one_batch_for_online_peers(self):
         source = read_text("business/control_plane.tru")
 
-        self.assertIn("mode: 'multi-writer'", source)
+        self.assertIn("mode: 'protocol-v3'", source)
         self.assertIn("if (effective_agent_online(agent))", source)
         self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", source)
         self.assertIn("if (string_array_contains(agentTables, table))", source)
@@ -823,14 +823,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "remaining manual tables will drain in bounded scheduler waves",
             source,
         )
-        self.assertIn("Periodic sync uses the same all-client protocol-v2 barrier", source)
+        self.assertIn("Periodic sync uses the same all-client protocol-v3 barrier", source)
         self.assertIn("every registered client uploads first, then every client downloads", source)
         self.assertIn("ownerAgents.length != allOwnerAgents.length", source)
         self.assertIn("onlineAgents.length != ownerAgents.length", source)
         self.assertIn("Sync deferred without advancing Change Tracking", source)
         self.assertIn("skippedOfflineClients", source)
 
-    def test_protocol_v2_never_unions_full_multi_writer_snapshots(self):
+    def test_protocol_v3_never_unions_full_multi_writer_snapshots(self):
         source = read_text("business/control_plane.tru")
 
         batch_body = source.split("function create_multi_writer_batch(", 1)[1].split(
@@ -838,10 +838,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertNotIn("multi_writer_agents_have_fingerprint_mismatch", batch_body)
         self.assertNotIn("'server-anti-entropy'", source)
-        self.assertIn("'server-delta-v2' : 'server-bootstrap-v2'", source)
-        self.assertIn("protocol-v2 batches accept deltas only unless this is an explicit single-client bootstrap", source)
+        self.assertIn("'server-delta-v3' : 'server-bootstrap-v3'", source)
+        self.assertIn("protocol-v3 batches accept deltas only unless this is an explicit single-client bootstrap", source)
         self.assertIn("explicitSingleClientBootstrap", source)
-        self.assertIn("field protocolVersion: int? min=2 max=2", source)
+        self.assertIn("field protocolVersion: int? min=3 max=3", source)
         self.assertIn("field syncEpoch: string? min=0 max=64", source)
         self.assertIn("protocolVersion != sync_protocol_version()", source)
         self.assertIn("sync epoch changed; discard this job", source)
@@ -874,12 +874,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("function jobs_bootstrap(", source)
         self.assertIn("explicit bootstrap requires exactly one enabled client", source)
-        self.assertIn("'server-bootstrap-v2'", source)
+        self.assertIn("'server-bootstrap-v3'", source)
         self.assertIn("explicitSingleClientBootstrap", source)
         self.assertIn("sync_batch_chunk_seen(", source)
         self.assertIn("duplicate: true", source)
-        self.assertIn("job.sourceClientName == 'server-bootstrap-v2'", agent_page)
-        self.assertIn("matchClauseForColumnSets", read_text("sync_windows_agent/lib/sql_sync_merge.dart"))
+        self.assertIn("job.sourceClientName == 'server-bootstrap-v3'", agent_page)
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        self.assertIn("matchClauseForColumns(primaryKeyColumns, columns)", merge)
+        self.assertNotIn("matchClauseForColumnSets", merge)
         self.assertNotIn("create_sync_jobs_for_agent(", source)
         self.assertNotIn("jobs_create_all_enabled_legacy(", source)
 

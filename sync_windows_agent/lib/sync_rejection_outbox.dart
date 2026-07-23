@@ -3,7 +3,7 @@ import 'dart:io';
 
 enum SyncRejectionKind { dependency, permanentBusinessRule, transient }
 
-const syncRejectionApplyPolicyVersion = 2;
+const syncRejectionApplyPolicyVersion = 3;
 
 class SyncRejectionObservation {
   const SyncRejectionObservation({required this.row, required this.error});
@@ -98,7 +98,12 @@ SyncRejectionKind classifySyncRejection(String error) {
   final normalized = error.toLowerCase();
   if (normalized.contains('amne0271') ||
       normalized.contains("can't touch posted") ||
-      normalized.contains('cannot touch posted')) {
+      normalized.contains('cannot touch posted') ||
+      normalized.contains('duplicate key') ||
+      normalized.contains('unique index') ||
+      normalized.contains('unique constraint') ||
+      normalized.contains('error 2601') ||
+      normalized.contains('error 2627')) {
     return SyncRejectionKind.permanentBusinessRule;
   }
   if (normalized.contains('amnw0077') ||

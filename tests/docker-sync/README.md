@@ -14,8 +14,9 @@ Run from the repository root:
 Covered scenarios:
 
 - insert, update, primary-key change, and delete
-- alternate unique-key matching
-- newest-database-commit conflict selection
+- permanent primary/GUID identity matching
+- deterministic same-GUID version selection
+- different-GUID business-key collision rejection without silent replacement
 - Arabic and Unicode values
 - exact Arabic, emoji, and CJK UTF-16 storage
 - null, binary, decimal, and datetime fidelity

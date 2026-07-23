@@ -249,7 +249,7 @@ class SyncContractsTests(unittest.TestCase):
             control_plane,
         )
         self.assertIn("function jobs_bootstrap(clientName: string, tables: array<string>", control_plane)
-        self.assertIn("sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v2' : 'server-bootstrap-v2'", control_plane)
+        self.assertIn("sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v3' : 'server-bootstrap-v3'", control_plane)
         self.assertNotIn("mergeRole", control_plane)
         self.assertNotIn("publicationName", control_plane)
         self.assertIn("field syncMode: string min=1 max=32", control_plane)
@@ -268,22 +268,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_downloadWindowsClientButton(compact: false)", app)
         self.assertIn("_downloadWindowsClientButton(compact: true)", app)
 
-    def test_windows_snapshot_apply_matches_unique_indexes(self):
+    def test_windows_snapshot_apply_uses_only_permanent_primary_identity(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
 
-        self.assertIn("Future<List<List<String>>> _queryUniqueIndexColumnSets(", agent_page)
-        self.assertIn("i.is_unique = 1", agent_page)
-        self.assertIn("i.is_primary_key = 0", agent_page)
-        self.assertIn("required List<List<String>> matchColumnSets", agent_page)
-        self.assertIn("_targetMatchColumnSets(", agent_page)
-        self.assertIn("matchClauseForColumnSets(matchColumnSets, columns)", merge_helper)
-        self.assertIn("uniqueIndexColumnSets: uniqueIndexColumnSets", agent_page)
-        self.assertIn(
-            "final updatePrimaryKeysFromUniqueMatch = matchColumnSets.length > 1;",
-            merge_helper,
-        )
-        self.assertIn("!updatePrimaryKeysFromUniqueMatch", merge_helper)
+        self.assertIn("matchClauseForColumns(primaryKeyColumns, columns)", merge_helper)
+        self.assertNotIn("_targetMatchColumnSets(", agent_page)
+        self.assertNotIn("matchClauseForColumnSets", merge_helper)
+        self.assertNotIn("updatePrimaryKeysFromUniqueMatch", merge_helper)
+        self.assertIn("hasValidCanonicalSqlSyncRowHash", agent_page)
+        self.assertIn("canonicalSqlSyncRowSha256", agent_page)
+        self.assertIn("__sync_operation_id", agent_page)
+        self.assertIn("Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged(", agent_page)
+        self.assertIn("targetHash == null || targetHash != incomingHash", agent_page)
+        self.assertIn("Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged", agent_page)
         self.assertIn("int targetMergeInsertBatchSize = 100", merge_helper)
         self.assertIn("_buildSourceTempIndexStatements(", merge_helper)
 
@@ -479,7 +477,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("shouldApplyLocalRowCount", apply_state_body)
         self.assertNotIn("rowCount: job.rowCount,\n      message:", apply_state_body)
 
-    def test_protocol_v2_multi_writer_is_delta_only_and_fails_closed_without_baseline(self):
+    def test_protocol_v3_multi_writer_is_hashed_delta_only_and_fails_closed_without_baseline(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
@@ -488,11 +486,14 @@ class SyncContractsTests(unittest.TestCase):
         )[1].split("List<Map<String, String?>> _snapshotRows(", 1)[0]
 
         self.assertNotIn("server-anti-entropy", snapshot_body)
-        self.assertIn("job.sourceClientName == 'server-bootstrap-v2'", snapshot_body)
+        self.assertIn("job.sourceClientName == 'server-bootstrap-v3'", snapshot_body)
         self.assertIn("if (rowCount != 0 || tracking == null)", snapshot_body)
         self.assertIn("requires a deliberate one-source bootstrap", snapshot_body)
         self.assertIn("previousVersion >= 0", snapshot_body)
-        self.assertIn("const int kSyncProtocolVersion = 2", client_api)
+        self.assertIn("const int kSyncProtocolVersion = 3", client_api)
+        self.assertIn("__sync_row_hash", snapshot_body)
+        self.assertIn("__sync_change_version", snapshot_body)
+        self.assertIn("__sync_origin_client", snapshot_body)
         self.assertIn("required int protocolVersion", client_api)
         self.assertIn("required String syncEpoch", client_api)
         self.assertIn("final int protocolVersion", sync_state)
@@ -882,7 +883,7 @@ class SyncContractsTests(unittest.TestCase):
             "Applied ${applyStats.appliedRows} change",
             read_text("sync_windows_agent/lib/agent_page.dart"),
         )
-        self.assertIn("Protocol-v2 jobs require a batch", read_text("sync_windows_agent/lib/agent_page.dart"))
+        self.assertIn("Protocol-v3 jobs require a batch", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertNotIn("manifest.latestZipUrl", update_script)
         self.assertNotIn("latestZipUrl =", publish_script)
 
@@ -1208,7 +1209,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("DELETE TOP ($targetMergeApplyBatchSize) target", target_apply)
         self.assertIn("WHERE NOT EXISTS (", target_apply)
         self.assertIn("target snapshot merge", agent_page)
-        self.assertIn("matchClauseForColumnSets(matchColumnSets, columns)", target_apply)
+        self.assertIn("matchClauseForColumns(primaryKeyColumns, columns)", target_apply)
         self.assertNotIn("alternateUniqueKeys", target_apply)
         self.assertIn("COLLATE DATABASE_DEFAULT", merge_helper)
         self.assertNotIn("MERGE ", target_apply)

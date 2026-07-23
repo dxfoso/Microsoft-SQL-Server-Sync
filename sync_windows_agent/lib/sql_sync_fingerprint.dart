@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 import 'sql_sync_schema.dart';
 
 const int _sqlSyncFingerprintFieldSeparator = 31;
@@ -13,10 +17,7 @@ class SqlSyncFingerprintAccumulator {
 
   int get rowCount => _rowCount;
 
-  void addRow(
-    List<SqlSyncColumnDefinition> columns,
-    Map<String, dynamic> row,
-  ) {
+  void addRow(List<SqlSyncColumnDefinition> columns, Map<String, dynamic> row) {
     for (final column in columns) {
       _addEncodedString(encodeSqlSyncFingerprintField(row[column.name]));
       _addByte(_sqlSyncFingerprintFieldSeparator);
@@ -63,4 +64,77 @@ String encodeSqlSyncFingerprintField(Object? value) {
         String.fromCharCode(_sqlSyncFingerprintRowSeparator),
         r'\u001d',
       );
+}
+
+/// Returns a stable SHA-256 for one complete synchronized business row.
+///
+/// Column names, SQL types, null markers, and UTF-8 byte lengths are framed
+/// explicitly so distinct typed rows cannot become ambiguous when concatenated.
+/// Sync transport metadata is excluded because only [columns] are encoded.
+String canonicalSqlSyncRowSha256(
+  List<SqlSyncColumnDefinition> columns,
+  Map<String, dynamic> row,
+) {
+  final bytes = <int>[];
+  void addFrame(String value) {
+    final encoded = utf8.encode(value);
+    bytes
+      ..addAll(utf8.encode(encoded.length.toString()))
+      ..add(58)
+      ..addAll(encoded)
+      ..add(30);
+  }
+
+  addFrame('sql-sync-row-v1');
+  for (final column in columns) {
+    addFrame(column.name.toLowerCase());
+    addFrame(column.sqlType.trim().toLowerCase());
+    final value = row[column.name];
+    if (value == null) {
+      addFrame('null');
+    } else {
+      addFrame('value');
+      addFrame(encodeSqlSyncFingerprintField(value));
+    }
+  }
+  return sha256.convert(bytes).toString();
+}
+
+String canonicalSqlSyncOperationId({
+  required String table,
+  required String originClient,
+  required Object? changeVersion,
+  required String operation,
+  required List<String> keyColumns,
+  required Map<String, dynamic> row,
+  required String rowHash,
+}) {
+  final identity = jsonEncode([
+    for (final column in keyColumns) [column, row[column]?.toString()],
+  ]);
+  return sha256
+      .convert(
+        utf8.encode(
+          [
+            'sql-sync-operation-v1',
+            table.trim().toLowerCase(),
+            originClient.trim().toLowerCase(),
+            changeVersion?.toString() ?? '',
+            operation.trim().toUpperCase(),
+            identity,
+            rowHash.toLowerCase(),
+          ].join('\u001e'),
+        ),
+      )
+      .toString();
+}
+
+bool hasValidCanonicalSqlSyncRowHash(
+  List<SqlSyncColumnDefinition> columns,
+  Map<String, dynamic> row,
+) {
+  final supplied = row['__sync_row_hash']?.toString().trim().toLowerCase();
+  return supplied != null &&
+      supplied.length == 64 &&
+      supplied == canonicalSqlSyncRowSha256(columns, row);
 }

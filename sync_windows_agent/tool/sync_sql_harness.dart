@@ -22,9 +22,6 @@ void main(List<String> arguments) {
     final winners = coalesceSqlSyncDeltaRows(
       rows: rows,
       primaryKeyColumns: _strings(request['primaryKeyColumns']),
-      matchColumnSets: (request['matchColumnSets'] as List?)
-          ?.map((columns) => _strings(columns))
-          .toList(growable: false),
     );
     stdout.write(jsonEncode(winners));
     return;
@@ -88,9 +85,6 @@ void main(List<String> arguments) {
         stageTableName: stageTableName,
         columns: columns,
         primaryKeyColumns: primaryKeyColumns,
-        matchColumnSets: (request['matchColumnSets'] as List)
-            .map((value) => _strings(value))
-            .toList(growable: false),
         deleteMissing: deleteMissing,
         manageTriggers: true,
         insertOnly: false,

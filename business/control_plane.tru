@@ -115,7 +115,7 @@ class SyncJob {
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field batchId: string? min=0 max=128
-  field protocolVersion: int? min=2 max=2
+  field protocolVersion: int? min=3 max=3
   field syncEpoch: string? min=0 max=64
 }
 
@@ -135,14 +135,14 @@ class SyncBatch {
   field status: string min=1 max=32
   field createdAt: datetime
   field updatedAt: datetime
-  field protocolVersion: int? min=2 max=2
+  field protocolVersion: int? min=3 max=3
   field syncEpoch: string? min=0 max=64
 }
 
 // One durable row fences every job and cursor to the current reset epoch.
 class SyncProtocolState {
   field id: string min=1 max=32
-  field protocolVersion: int min=2 max=2
+  field protocolVersion: int min=3 max=3
   field syncEpoch: string min=1 max=64
   field updatedAt: datetime
 }
@@ -239,13 +239,21 @@ function now_iso(): datetime {
 }
 
 function sync_protocol_version(): int {
-  return 2;
+  return 3;
 }
 
 function sync_protocol_state(): map<json> {
   const existing = db.selectOne(SyncProtocolState, { id: 'global' });
   if (existing != null) {
-    return existing;
+    if (int.from(existing.protocolVersion ?? 0) == sync_protocol_version()) {
+      return existing;
+    }
+    db.update(SyncProtocolState, { id: 'global' }, {
+      protocolVersion: sync_protocol_version(),
+      syncEpoch: existing.syncEpoch,
+      updatedAt: now_iso()
+    });
+    return db.selectOne(SyncProtocolState, { id: 'global' });
   }
   return db.insert(SyncProtocolState, {
     id: 'global',
@@ -2398,7 +2406,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       ownerAgents = ownerAgents.concat([agent]);
     }
   }
-  // Protocol v2 has one outbound Change Tracking cursor per enabled
+  // Protocol v3 has one outbound Change Tracking cursor per enabled
   // client/table. Do not advance it while an enabled peer is offline;
   // explicitly disabled clients are outside the synchronization set.
   if (ownerAgents.length == 0 || ownerAgents.length != allOwnerAgents.length) {
@@ -2417,7 +2425,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     }
   }
 
-  // Periodic sync uses the same all-client protocol-v2 barrier as manual Sync
+  // Periodic sync uses the same all-client protocol-v3 barrier as manual Sync
   // All: every registered client uploads first, then every client downloads.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
@@ -2882,7 +2890,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     rows = rows.concat([{
       id: uuid.v4(),
       clientName,
-      sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v2' : 'server-bootstrap-v2',
+      sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v3' : 'server-bootstrap-v3',
       subscriberClientName: '',
       table,
       direction: 'upload',
@@ -2902,8 +2910,8 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       startedAt: null,
       completedAt: null,
       message: bootstrapSourceClientName.length == 0
-        ? string.concat('Queued protocol-v2 delta upload for ', table, '.')
-        : string.concat('Queued explicit protocol-v2 bootstrap upload for ', table, '.'),
+        ? string.concat('Queued protocol-v3 delta upload for ', table, '.')
+        : string.concat('Queued explicit protocol-v3 bootstrap upload for ', table, '.'),
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId,
@@ -4219,7 +4227,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     skippedSourceResolutionTables: [],
     deferredTables: unique_string_values(deferredTables),
     message: createdJobs.length == 0 && skippedOfflineClients.length > 0
-      ? 'Sync deferred without advancing Change Tracking because every enabled client must be online for protocol v2.'
+      ? 'Sync deferred without advancing Change Tracking because every enabled client must be online for protocol v3.'
       : deferredTables.length > 0
         ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
         : 'Sync queued for all eligible tables.'
@@ -4534,12 +4542,12 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     return raw_json_error(409, 'sync epoch changed; discard this job and refresh client state');
   }
   const explicitSingleClientBootstrap =
-    (string.from(job.sourceClientName).trim() == 'server-bootstrap-v2' ||
+    (string.from(job.sourceClientName).trim() == 'server-bootstrap-v3' ||
       string.from(job.sourceClientName).trim() == 'server-authoritative-reconcile') &&
     batch.expectedClients.length == 1 &&
     string.from(batch.expectedClients[0]).trim() == clientName.trim();
   if (!payloadIsDelta && !explicitSingleClientBootstrap) {
-    return raw_json_error(409, 'protocol-v2 batches accept deltas only unless this is an explicit single-client bootstrap');
+    return raw_json_error(409, 'protocol-v3 batches accept deltas only unless this is an explicit single-client bootstrap');
   }
   if (multi_writer_batch_stale(batch)) {
     return raw_json_error(410, 'multi-writer batch expired; start a new sync');
@@ -4723,7 +4731,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   }
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
-    // Protocol v2 stores only Change Tracking deltas. Full snapshots are
+    // Protocol v3 stores only Change Tracking deltas. Full snapshots are
     // bootstrapped deliberately from one source and never unioned here.
     orderBy: [
       { field: 'subscriberClientName', dir: 'asc' },
@@ -5264,7 +5272,7 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     }
   }
   if (ownerAgents.length == 0 || offlineClients.length != 0) {
-    return raw_json_error(409, 'every enabled client must be online before a protocol-v2 batch can start');
+    return raw_json_error(409, 'every enabled client must be online before a protocol-v3 batch can start');
   }
   const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
   const requestedTables = expand_sync_job_tables_for_owner(ownerId, unique_string_values(tables));
@@ -5287,7 +5295,7 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     }
   }
   return raw_json_success({
-    mode: 'protocol-v2',
+    mode: 'protocol-v3',
     jobs: createdJobs.map((job) => public_job_payload(job))
   }, 201);
 }
@@ -5342,7 +5350,7 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
     }
   }
   return raw_json_success({
-    mode: 'protocol-v2-bootstrap',
+    mode: 'protocol-v3-bootstrap',
     clientName: normalizedClientName,
     jobs: createdJobs.map((job) => public_job_payload(job))
   }, 201);
@@ -5428,7 +5436,7 @@ function jobs_reconcile_authoritative(sourceClientName: string, targetClientName
     }
   }
   return raw_json_success({
-    mode: 'protocol-v2-authoritative-reconcile',
+    mode: 'protocol-v3-authoritative-reconcile',
     sourceClientName: normalizedSourceClientName,
     targetClientNames: normalizedTargetClientNames,
     tables: requestedTables,

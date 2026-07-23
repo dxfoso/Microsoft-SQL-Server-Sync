@@ -38,9 +38,6 @@ void main() {
         table: 'mt000',
         columns: columns,
         primaryKeyColumns: const ['Id'],
-        matchColumnSets: const [
-          ['Id'],
-        ],
         rows: rows,
       );
 
@@ -84,9 +81,7 @@ void main() {
       ),
     ];
 
-    final clause = matchClauseForColumnSets(const [
-      ['Code'],
-    ], columns);
+    final clause = matchClauseForColumns(const ['Code'], columns);
 
     expect(clause, contains('target.[Code] COLLATE DATABASE_DEFAULT'));
     expect(clause, contains('source.[Code] IS NOT NULL'));
@@ -110,9 +105,6 @@ void main() {
         ),
       ],
       primaryKeyColumns: const ['Id'],
-      matchColumnSets: const [
-        ['Id'],
-      ],
       deleteMissing: false,
     );
 
@@ -137,9 +129,6 @@ void main() {
         ),
       ],
       primaryKeyColumns: const ['Id'],
-      matchColumnSets: const [
-        ['Id'],
-      ],
       deleteMissing: false,
       manageTriggers: false,
     );
@@ -196,10 +185,6 @@ void main() {
           ),
         ],
         primaryKeyColumns: const ['Id'],
-        matchColumnSets: const [
-          ['Id'],
-          ['TenantId', 'Code'],
-        ],
         insertOnly: false,
         deleteMissing: false,
         manageTriggers: false,
@@ -211,9 +196,12 @@ void main() {
       expect(sql, isNot(contains('DISABLE TRIGGER')));
       expect(sql, contains('INSERT INTO [db].[dbo].[items]'));
       expect(sql, contains('WHERE NOT EXISTS ('));
-      expect(sql, contains('target.[Id] = source.[Id]'));
-      expect(sql, contains('target.[TenantId] = source.[TenantId]'));
-      expect(sql, contains('target.[Code] COLLATE DATABASE_DEFAULT'));
+      expect(sql, isNot(contains('target.[Id] = source.[Id]\n  OR')));
+      expect(
+        sql,
+        contains('ON source.[Id] IS NOT NULL AND target.[Id] = source.[Id];'),
+      );
+      expect(sql, isNot(contains('OR source.[TenantId] IS NOT NULL')));
       expect(sql, contains('__SQL_SYNC_INSERTED__='));
     },
   );
@@ -267,42 +255,42 @@ void main() {
     expect(sql, isNot(contains('WHERE NOT EXISTS')));
   });
 
-  test('non insert-only staged apply retains legacy update capability', () {
-    final sql = buildTargetSnapshotStageApplySql(
-      database: 'db',
-      schema: 'dbo',
-      table: 'items',
-      stageTableName: '#stage_items',
-      columns: const [
-        SqlSyncColumnDefinition(
-          name: 'Id',
-          sqlType: 'int',
-          maxLength: 4,
-          precision: 10,
-          scale: 0,
-          isIdentity: false,
-          isComputed: false,
-        ),
-        SqlSyncColumnDefinition(
-          name: 'Value',
-          sqlType: 'nvarchar',
-          maxLength: 100,
-          precision: 0,
-          scale: 0,
-          isIdentity: false,
-          isComputed: false,
-        ),
-      ],
-      primaryKeyColumns: const ['Id'],
-      matchColumnSets: const [
-        ['Id'],
-      ],
-      insertOnly: false,
-    );
+  test(
+    'non insert-only staged apply updates only by permanent primary key',
+    () {
+      final sql = buildTargetSnapshotStageApplySql(
+        database: 'db',
+        schema: 'dbo',
+        table: 'items',
+        stageTableName: '#stage_items',
+        columns: const [
+          SqlSyncColumnDefinition(
+            name: 'Id',
+            sqlType: 'int',
+            maxLength: 4,
+            precision: 10,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'Value',
+            sqlType: 'nvarchar',
+            maxLength: 100,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+        ],
+        primaryKeyColumns: const ['Id'],
+        insertOnly: false,
+      );
 
-    expect(sql, contains('UPDATE target'));
-    expect(sql, contains('DELETE TOP'));
-  });
+      expect(sql, contains('UPDATE target'));
+      expect(sql, contains('DELETE TOP'));
+    },
+  );
 
   test('delta rows keep the last value for duplicate primary keys', () {
     final rows = coalesceSqlSyncDeltaRows(
@@ -321,7 +309,7 @@ void main() {
   });
 
   test('delta rows prefer the newest database commit timestamp', () {
-    final latestByKey = <String, DateTime?>{};
+    final latestByKey = <String, Map<String, dynamic>>{};
     final first = coalesceSqlSyncDeltaRows(
       rows: [
         {
@@ -331,7 +319,7 @@ void main() {
         },
       ],
       primaryKeyColumns: const ['Id'],
-      latestModifiedAtByKey: latestByKey,
+      latestRowByKey: latestByKey,
     );
     final stale = coalesceSqlSyncDeltaRows(
       rows: [
@@ -342,48 +330,40 @@ void main() {
         },
       ],
       primaryKeyColumns: const ['Id'],
-      latestModifiedAtByKey: latestByKey,
+      latestRowByKey: latestByKey,
     );
 
     expect(first.single['Name'], 'newer');
     expect(stale, isEmpty);
   });
 
-  test(
-    'delta rows coalesce different primary keys by alternate unique key',
-    () {
-      final rows = coalesceSqlSyncDeltaRows(
-        rows: [
-          {
-            'Id': 'c1-id',
-            'Tenant': 'tenant-1',
-            'Code': 'shared',
-            'Name': 'old',
-            '__sync_modified_at_utc': '2026-07-15T10:00:00Z',
-          },
-          {
-            'Id': 'c2-id',
-            'Tenant': 'tenant-1',
-            'Code': 'shared',
-            'Name': 'new',
-            '__sync_modified_at_utc': '2026-07-15T10:01:00Z',
-          },
-        ],
-        primaryKeyColumns: const ['Id'],
-        matchColumnSets: const [
-          ['Id'],
-          ['Tenant', 'Code'],
-        ],
-      );
+  test('different GUIDs are never coalesced by an alternate business key', () {
+    final rows = coalesceSqlSyncDeltaRows(
+      rows: [
+        {
+          'Id': 'c1-id',
+          'Tenant': 'tenant-1',
+          'Code': 'shared',
+          'Name': 'old',
+          '__sync_modified_at_utc': '2026-07-15T10:00:00Z',
+        },
+        {
+          'Id': 'c2-id',
+          'Tenant': 'tenant-1',
+          'Code': 'shared',
+          'Name': 'new',
+          '__sync_modified_at_utc': '2026-07-15T10:01:00Z',
+        },
+      ],
+      primaryKeyColumns: const ['Id'],
+    );
 
-      expect(rows, hasLength(1));
-      expect(rows.single['Id'], 'c2-id');
-      expect(rows.single['Name'], 'new');
-    },
-  );
+    expect(rows, hasLength(2));
+    expect(rows.map((row) => row['Id']), ['c1-id', 'c2-id']);
+  });
 
-  test('alternate unique identity protects later pages from stale rows', () {
-    final latestByKey = <String, DateTime?>{};
+  test('different GUIDs remain independent across streamed pages', () {
+    final latestByKey = <String, Map<String, dynamic>>{};
     final newest = coalesceSqlSyncDeltaRows(
       rows: [
         {
@@ -393,11 +373,7 @@ void main() {
         },
       ],
       primaryKeyColumns: const ['Id'],
-      matchColumnSets: const [
-        ['Id'],
-        ['Code'],
-      ],
-      latestModifiedAtByKey: latestByKey,
+      latestRowByKey: latestByKey,
     );
     final stale = coalesceSqlSyncDeltaRows(
       rows: [
@@ -408,14 +384,11 @@ void main() {
         },
       ],
       primaryKeyColumns: const ['Id'],
-      matchColumnSets: const [
-        ['Id'],
-        ['Code'],
-      ],
-      latestModifiedAtByKey: latestByKey,
+      latestRowByKey: latestByKey,
     );
 
     expect(newest, hasLength(1));
-    expect(stale, isEmpty);
+    expect(stale, hasLength(1));
+    expect(stale.single['Id'], 'c1-id');
   });
 }

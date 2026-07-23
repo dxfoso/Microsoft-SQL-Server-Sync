@@ -3531,7 +3531,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     if (job.batchId?.trim().isNotEmpty != true) {
       throw StateError(
-        'Protocol-v2 jobs require a batch. Remove stale server jobs and retry.',
+        'Protocol-v3 jobs require a batch. Remove stale server jobs and retry.',
       );
     }
     if (_syncState.syncEpoch == job.syncEpoch &&
@@ -3539,25 +3539,29 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
     logStartupEvent(
-      'Sync epoch changed from ${_syncState.syncEpoch.isEmpty ? '(none)' : _syncState.syncEpoch} to ${job.syncEpoch}; clearing local sync cursors before protocol-v2 processing.',
+      'Sync protocol changed from ${_syncState.protocolVersion} to ${job.protocolVersion} or epoch changed from ${_syncState.syncEpoch.isEmpty ? '(none)' : _syncState.syncEpoch} to ${job.syncEpoch}; preparing protocol-v3 processing.',
     );
+    final epochChanged =
+        _syncState.syncEpoch.isEmpty || _syncState.syncEpoch != job.syncEpoch;
     _replaceSyncState(
       SyncClientState(
         tables: _syncState.tables.map(
           (table, state) => MapEntry(
             table,
-            state.copyWith(
-              status: 'Ready',
-              lastSync: '--',
-              progress: 0,
-              savedRowCount: null,
-              tableChecksum: '',
-              changeTrackingVersion: null,
-              changeTrackingOwner: null,
-              message:
-                  'Sync epoch changed; Change Tracking cursor reset. Bootstrap non-empty databases from one deliberate source.',
-              history: const <SyncHistoryEntry>[],
-            ),
+            epochChanged
+                ? state.copyWith(
+                  status: 'Ready',
+                  lastSync: '--',
+                  progress: 0,
+                  savedRowCount: null,
+                  tableChecksum: '',
+                  changeTrackingVersion: null,
+                  changeTrackingOwner: null,
+                  message:
+                      'Sync epoch changed; Change Tracking cursor reset. Bootstrap non-empty databases from one deliberate source.',
+                  history: const <SyncHistoryEntry>[],
+                )
+                : state,
           ),
         ),
         historyLimit: _syncState.historyLimit,
@@ -3694,7 +3698,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     var streamedTargetRowCount = -1;
-    final latestDeltaModifiedAtByKey = <String, DateTime?>{};
+    final latestDeltaRowByKey = <String, Map<String, dynamic>>{};
     final applyStats = _DeltaApplyStats();
     final authoritativeReconcile =
         job.sourceClientName == 'server-authoritative-reconcile';
@@ -3738,7 +3742,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   job: job,
                   snapshot: snapshot,
                   refreshLocalState: false,
-                  latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
+                  latestDeltaRowByKey: latestDeltaRowByKey,
                   applyStats: applyStats,
                 );
                 _checkSyncJobNotCancelled(job.id);
@@ -3998,7 +4002,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
-    if (job.sourceClientName == 'server-bootstrap-v2' ||
+    if (job.sourceClientName == 'server-bootstrap-v3' ||
         job.sourceClientName == 'server-authoritative-reconcile') {
       await _ensureChangeTrackingEnabledForDatabase(
         database: database,
@@ -4033,10 +4037,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       rows.addAll(deltaRows);
       isDelta = true;
-    } else if (job.sourceClientName == 'server-bootstrap-v2' ||
+    } else if (job.sourceClientName == 'server-bootstrap-v3' ||
         job.sourceClientName == 'server-authoritative-reconcile') {
       if (job.batchId?.trim().isNotEmpty != true) {
-        throw StateError('Explicit protocol-v2 bootstrap requires a batch.');
+        throw StateError('Explicit protocol-v3 bootstrap requires a batch.');
       }
       const batchSize = 200;
       var processed = 0;
@@ -4061,16 +4065,39 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         if (batch.isEmpty) break;
       }
     } else {
-      // Protocol v2 establishes a baseline only from an empty database. A
+      // Protocol v3 establishes a baseline only from an empty database. A
       // non-empty database without a valid cursor must be bootstrapped from a
       // deliberately selected source; silently unioning full snapshots is the
-      // duplication bug that protocol v2 removes.
+      // duplication bug that protocol v3 removes.
       if (rowCount != 0 || tracking == null) {
         throw StateError(
-          'Protocol-v2 sync for ${job.table} requires a deliberate one-source bootstrap because this non-empty database has no valid Change Tracking baseline.',
+          'Protocol-v3 sync for ${job.table} requires a deliberate one-source bootstrap because this non-empty database has no valid Change Tracking baseline.',
         );
       }
       isDelta = true;
+    }
+
+    for (final row in rows) {
+      final operation =
+          row['__sync_op']?.trim().isNotEmpty == true
+              ? row['__sync_op']!.trim().toUpperCase()
+              : 'S';
+      final changeVersion =
+          row['__sync_change_version'] ?? tracking?.currentVersion.toString();
+      final rowHash = canonicalSqlSyncRowSha256(syncColumns, row);
+      row['__sync_op'] = operation;
+      row['__sync_origin_client'] = widget.clientName;
+      row['__sync_change_version'] = changeVersion;
+      row['__sync_row_hash'] = rowHash;
+      row['__sync_operation_id'] = canonicalSqlSyncOperationId(
+        table: job.table,
+        originClient: widget.clientName,
+        changeVersion: changeVersion,
+        operation: operation,
+        keyColumns: primaryKeyColumns,
+        row: row,
+        rowHash: rowHash,
+      );
     }
 
     var snapshotChecksum = '';
@@ -4174,7 +4201,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required RemoteSyncJob job,
     required RemoteSnapshot snapshot,
     bool refreshLocalState = true,
-    Map<String, DateTime?>? latestDeltaModifiedAtByKey,
+    Map<String, Map<String, dynamic>>? latestDeltaRowByKey,
     _DeltaApplyStats? applyStats,
     bool replaceTarget = false,
   }) async {
@@ -4237,25 +4264,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
-    final uniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
-      profile: targetProfile,
-      database: targetDatabase,
-      schema: targetTable.schema,
-      table: targetTable.table,
-    );
-    final targetMatchColumnSets = _targetMatchColumnSets(
-      primaryKeyColumns: primaryKeyColumns,
-      uniqueIndexColumnSets: uniqueIndexColumnSets,
-      columns: syncColumns,
-    );
-    // All writable unique identities define the same logical target row.
-    final deltaMatchColumnSets = targetMatchColumnSets;
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     if (replaceTarget && snapshot.isDelta) {
       throw StateError(
         'Authoritative reconciliation requires a complete source snapshot.',
       );
+    }
+    for (final row in snapshot.rows) {
+      final dynamicRow = Map<String, dynamic>.from(row);
+      if (!hasValidCanonicalSqlSyncRowHash(syncColumns, dynamicRow)) {
+        throw StateError(
+          'Protocol-v3 integrity check rejected ${job.table}: a complete-row SHA-256 is missing or does not match the synchronized columns. No target data was changed.',
+        );
+      }
+      final operationId =
+          dynamicRow['__sync_operation_id']?.toString().trim() ?? '';
+      final origin =
+          dynamicRow['__sync_origin_client']?.toString().trim() ?? '';
+      final version =
+          dynamicRow['__sync_change_version']?.toString().trim() ?? '';
+      if (operationId.length != 64 || origin.isEmpty || version.isEmpty) {
+        throw StateError(
+          'Protocol-v3 metadata check rejected ${job.table}: origin, change version, or operation identity is invalid. No target data was changed.',
+        );
+      }
     }
     final rowsForApply =
         applyDelta
@@ -4264,8 +4297,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   .map((row) => Map<String, dynamic>.from(row))
                   .toList(growable: false),
               primaryKeyColumns: primaryKeyColumns,
-              matchColumnSets: deltaMatchColumnSets,
-              latestModifiedAtByKey: latestDeltaModifiedAtByKey,
+              latestRowByKey: latestDeltaRowByKey,
             )
             : snapshot.rows;
     stats.seenRowIdentities.addAll(
@@ -4278,10 +4310,27 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     if (applyDelta && rowsForApply.length != snapshot.rows.length) {
       logStartupEvent(
-        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} duplicate unique-identity row(s) for ${job.table}; policy=newest-database-commit-wins.',
+        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} version(s) with the same permanent GUID for ${job.table}; policy=commit-version-origin-order.',
       );
     }
-    final deleteRows = rowsForApply
+    final contentCheckedRows =
+        applyDelta
+            ? await _rowsWhoseContentChanged(
+              profile: targetProfile,
+              database: targetDatabase,
+              schema: targetTable.schema,
+              table: targetTable.table,
+              columns: syncColumns,
+              primaryKeyColumns: primaryKeyColumns,
+              rows: rowsForApply,
+            )
+            : rowsForApply;
+    if (contentCheckedRows.length != rowsForApply.length) {
+      logStartupEvent(
+        'Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged ${job.table} row(s) after canonical SHA-256 comparison.',
+      );
+    }
+    final deleteRows = contentCheckedRows
         .where((row) => row['__sync_op'] == 'D')
         .map(
           (row) => Map<String, String?>.fromEntries(
@@ -4291,7 +4340,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           ),
         )
         .toList(growable: false);
-    final upsertRows = rowsForApply
+    final upsertRows = contentCheckedRows
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
     final isolatedRejectedRows = <SqlSyncRejectedRow>[];
@@ -4327,7 +4376,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         table: targetTable.table,
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
-        matchColumnSets: deltaMatchColumnSets,
         rows: rows,
         deleteMissing: true,
         manageTriggers: true,
@@ -4392,7 +4440,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               table: targetTable.table,
               columns: syncColumns,
               primaryKeyColumns: primaryKeyColumns,
-              matchColumnSets: deltaMatchColumnSets,
               rows: batch,
             );
             stats.insertedRows += insertedRows;
@@ -4833,6 +4880,7 @@ SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
   ct.SYS_CHANGE_OPERATION COLLATE DATABASE_DEFAULT + NCHAR($fieldSeparator) +
+  CONVERT(nvarchar(40), ct.SYS_CHANGE_VERSION) + NCHAR($fieldSeparator) +
   $commitExpression + NCHAR($fieldSeparator) +
   $encoded + NCHAR($rowSentinel)
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
@@ -4878,17 +4926,18 @@ ORDER BY ct.SYS_CHANGE_VERSION;
               ? line.substring(0, line.length - 1)
               : line;
       final parts = payload.split(String.fromCharCode(fieldSeparator));
-      final metadataFieldCount = includesCommitTime ? 2 : 1;
+      final metadataFieldCount = includesCommitTime ? 3 : 2;
       if (parts.length != columns.length + metadataFieldCount) {
         throw Exception(
           'Change tracking delta returned ${parts.length - metadataFieldCount} column field(s) for ${columns.length} column(s).',
         );
       }
-      final columnOffset = includesCommitTime ? 2 : 1;
+      final columnOffset = includesCommitTime ? 3 : 2;
       rows.add({
         '__sync_op': parts.first,
+        '__sync_change_version': parts[1],
         '__sync_modified_at_utc':
-            includesCommitTime && parts[1].trim().isNotEmpty ? parts[1] : null,
+            includesCommitTime && parts[2].trim().isNotEmpty ? parts[2] : null,
         for (var i = 0; i < columns.length; i++)
           columns[i].name: _decodeSourceBatchField(
             parts[i + columnOffset],
@@ -4897,6 +4946,134 @@ ORDER BY ct.SYS_CHANGE_VERSION;
       });
     }
     return rows;
+  }
+
+  Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> columns,
+    required List<String> primaryKeyColumns,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    final upserts = rows
+        .where((row) => row['__sync_op'] != 'D')
+        .toList(growable: false);
+    if (upserts.isEmpty) {
+      return rows;
+    }
+    final targetRows = await _fetchRowsByPrimaryKeys(
+      profile: profile,
+      database: database,
+      schema: schema,
+      table: table,
+      columns: columns,
+      primaryKeyColumns: primaryKeyColumns,
+      keyRows: upserts,
+    );
+    final targetHashByIdentity = <String, String>{
+      for (final row in targetRows)
+        syncRejectedRowIdentity(
+          row,
+          primaryKeyColumns,
+        ): canonicalSqlSyncRowSha256(columns, row),
+    };
+    return rows
+        .where((row) {
+          if (row['__sync_op'] == 'D') {
+            return true;
+          }
+          final identity = syncRejectedRowIdentity(row, primaryKeyColumns);
+          final targetHash = targetHashByIdentity[identity];
+          final incomingHash =
+              row['__sync_row_hash']?.toString().trim().toLowerCase() ?? '';
+          return targetHash == null || targetHash != incomingHash;
+        })
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> columns,
+    required List<String> primaryKeyColumns,
+    required List<Map<String, dynamic>> keyRows,
+  }) async {
+    const fieldSeparator = 31;
+    const rowSentinel = 29;
+    final definitionsByName = {
+      for (final column in columns) column.name.toLowerCase(): column,
+    };
+    final keyDefinitions = primaryKeyColumns
+        .map((name) => definitionsByName[name.toLowerCase()])
+        .whereType<_SqlColumnDefinition>()
+        .toList(growable: false);
+    if (keyDefinitions.length != primaryKeyColumns.length) {
+      throw StateError(
+        'Whole-row hash comparison requires every primary key column to be synchronized.',
+      );
+    }
+    final payloadExpression = columns
+        .map(_sourceBatchEncodedColumnExpression)
+        .join(' + NCHAR($fieldSeparator) + ');
+    final target =
+        '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
+    final resultRows = <Map<String, dynamic>>[];
+    const keyBatchSize = 100;
+    for (var offset = 0; offset < keyRows.length; offset += keyBatchSize) {
+      final batch = keyRows
+          .skip(offset)
+          .take(keyBatchSize)
+          .toList(growable: false);
+      final predicates = batch
+          .map((row) {
+            return keyDefinitions
+                .map((column) {
+                  final value = row[column.name];
+                  if (value == null) {
+                    throw StateError(
+                      'Whole-row hash comparison rejected a null primary identity for $schema.$table.',
+                    );
+                  }
+                  return '${_quoteIdentifier(column.name)} = ${sourceBatchTargetLiteral(column, value)}';
+                })
+                .join(' AND ');
+          })
+          .map((predicate) => '($predicate)')
+          .join('\n  OR ');
+      final query = '''
+SET NOCOUNT ON;
+SELECT ($payloadExpression + NCHAR($rowSentinel)) AS [__sync_agent_row_payload]
+FROM $target
+WHERE $predicates;
+''';
+      final processResult = await _runSqlCmd(
+        profile: profile,
+        database: database,
+        query: query,
+        timeout: _snapshotSqlCmdTimeout,
+      );
+      if (processResult == null) {
+        throw Exception(_sqlCmdUnavailableMessage(profile));
+      }
+      if (processResult.exitCode != 0) {
+        throw Exception(
+          _sqlCmdFailed('target whole-row hash comparison', processResult),
+        );
+      }
+      resultRows.addAll(
+        _parseSourceBatchRows(
+          processResult.stdout.toString(),
+          columns: columns,
+          fieldSeparator: String.fromCharCode(fieldSeparator),
+          rowSentinel: String.fromCharCode(rowSentinel),
+        ),
+      );
+    }
+    return resultRows;
   }
 
   String _sourceBatchEncodedColumnExpression(
@@ -5067,7 +5244,6 @@ END
     required String table,
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
-    required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
   }) async {
     return _applySourceRowsToTarget(
@@ -5077,7 +5253,6 @@ END
       table: table,
       columns: columns,
       primaryKeyColumns: primaryKeyColumns,
-      matchColumnSets: matchColumnSets,
       rows: rows,
       deleteMissing: false,
       manageTriggers: true,
@@ -5149,7 +5324,6 @@ END
     required String table,
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
-    required List<List<String>> matchColumnSets,
     required List<Map<String, dynamic>> rows,
     bool deleteMissing = true,
     bool manageTriggers = true,
@@ -5210,7 +5384,6 @@ END
           stageTableName: stageTableName,
           columns: columns,
           primaryKeyColumns: primaryKeyColumns,
-          matchColumnSets: matchColumnSets,
           deleteMissing: deleteMissing,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,
@@ -5312,36 +5485,6 @@ END
     final message = error.toString();
     return message.contains('sqlcmd failed during target ') &&
         !message.contains('(exit -1)');
-  }
-
-  List<List<String>> _targetMatchColumnSets({
-    required List<String> primaryKeyColumns,
-    required List<List<String>> uniqueIndexColumnSets,
-    required List<_SqlColumnDefinition> columns,
-  }) {
-    final writableColumnNames = {
-      for (final column in columns) column.name.toLowerCase(),
-    };
-    final sets = <List<String>>[primaryKeyColumns];
-    for (final uniqueColumns in uniqueIndexColumnSets) {
-      if (uniqueColumns.every(
-        (column) => writableColumnNames.contains(column.toLowerCase()),
-      )) {
-        sets.add(uniqueColumns);
-      }
-    }
-
-    final seen = <String>{};
-    return sets
-        .where((columns) {
-          final key = columns.map((column) => column.toLowerCase()).join('|');
-          if (key.isEmpty || seen.contains(key)) {
-            return false;
-          }
-          seen.add(key);
-          return true;
-        })
-        .toList(growable: false);
   }
 
   Future<_StringQueryResult> _queryDatabases({

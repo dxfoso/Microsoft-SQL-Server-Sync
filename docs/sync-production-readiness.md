@@ -13,13 +13,25 @@ This report does not claim that every possible SQL Server schema or external
 failure can be simulated. The remaining limitations are listed explicitly
 below.
 
-## Protocol V2 Incompatible Reset
+## Protocol V3 GUID Identity And Row Integrity
 
-Protocol v2 removes multi-client full-snapshot anti-entropy. A multi-writer
+Protocol v3 removes multi-client full-snapshot anti-entropy. A multi-writer
 batch accepts Change Tracking deltas only; a full snapshot must be an explicit
 one-source bootstrap into an empty or deliberately replaceable target. The
-server rejects v1 uploads, non-delta multi-writer payloads, and requests from a
+server rejects older protocol uploads, non-delta multi-writer payloads, and requests from a
 stale sync epoch.
+
+The primary GUID is the only permanent row identity. Every changed row carries
+a canonical SHA-256 of all synchronized business columns, its origin client,
+Change Tracking version, database commit time when available, and a deterministic
+operation ID. Targets validate the hash, read the existing row by GUID, compare
+the complete-row hashes, and skip unchanged content.
+
+Different GUIDs are never coalesced through an alternate unique index. If two
+independent records collide on a target business constraint, the established
+row is left untouched and the incoming row is retained as a permanent
+quarantined conflict. Same-GUID concurrent versions use deterministic
+commit/version/origin/operation ordering.
 
 Every server-data reset rotates the durable sync epoch. Windows clients persist
 that epoch and clear their Change Tracking cursors when it changes. A nonempty
@@ -35,7 +47,7 @@ barrier indefinitely.
 
 ## Authoritative Reconciliation
 
-Protocol v2 has a separate repair operation for historical divergence. It is
+Protocol v3 has a separate repair operation for historical divergence. It is
 not part of ordinary multi-writer sync:
 
 1. Pause automatic sync.
@@ -86,10 +98,11 @@ Run the main database readiness gate from the repository root:
 
 ## Covered Scenarios
 
-- Insert, update, primary-key change, alternate unique-key matching, and delete.
+- Insert, update, primary-key change, permanent-GUID matching, and delete.
 - Empty deltas and idempotent deletion of an already-missing row.
 - Multiple clients writing different rows in the same synchronization wave.
-- Newest database commit wins when clients change the same identity.
+- Deterministic commit/version/origin ordering when clients change the same GUID.
+- Different GUIDs sharing a business unique key are quarantined without silent replacement.
 - Exact Arabic, emoji, and CJK preservation, verified from SQL Server UTF-16 bytes.
 - Null, binary, decimal, and datetime value preservation.
 - Offline client catch-up after multiple online-client changes.
@@ -223,8 +236,8 @@ has regression coverage for all three phases.
 
 ### Previously resolved sync defects
 
-- Existing rows are reconciled by primary or alternate unique identity instead
-  of being duplicated when a key changes (`aa944f6`).
+- Existing rows are reconciled strictly by their permanent primary GUID.
+  Alternate business identities are constraint checks, never merge identities.
 - Sync-applied writes use `WITH CHANGE_TRACKING_CONTEXT`, preventing echo loops
   and false outbound deltas (`d8a91b4`).
 - Multi-client SQL semantics are standardized in an isolated Docker harness

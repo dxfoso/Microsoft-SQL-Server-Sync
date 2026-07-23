@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'sync_state.dart';
 
-const int kSyncProtocolVersion = 2;
+const int kSyncProtocolVersion = 3;
 const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
   defaultValue: 'https://sync.velvet-leaf.com/call',
