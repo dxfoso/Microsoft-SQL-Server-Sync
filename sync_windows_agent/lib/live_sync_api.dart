@@ -1072,6 +1072,7 @@ class AgentControlPlaneClient {
     int? changeTrackingVersion,
     String? payloadBase64,
     bool payloadIsDelta = true,
+    String snapshotChecksum = '',
     required int protocolVersion,
     required String syncEpoch,
   }) async {
@@ -1094,6 +1095,8 @@ class AgentControlPlaneClient {
       'payloadBase64': encodedPayload,
       'payloadRowCount': rows.length,
       'payloadIsDelta': payloadIsDelta,
+      if (snapshotChecksum.trim().isNotEmpty)
+        'snapshotChecksum': snapshotChecksum.trim(),
       'protocolVersion': protocolVersion,
       'syncEpoch': syncEpoch,
     }, 'uploading multi-writer delta');

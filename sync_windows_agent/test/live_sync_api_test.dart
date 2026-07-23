@@ -3374,6 +3374,7 @@ void main() {
           expect(args['rows'], isEmpty);
           expect(args['payloadBase64'], isNotEmpty);
           expect(args['payloadRowCount'], 1);
+          expect(args['snapshotChecksum'], '1:0123456789abcdef');
           expect(args['protocolVersion'], 2);
           expect(args['syncEpoch'], 'epoch-test');
           final decoded = jsonDecode(
@@ -3431,6 +3432,7 @@ void main() {
         chunkId: 'chunk-0',
         finalChunk: true,
         changeTrackingVersion: 4,
+        snapshotChecksum: '1:0123456789abcdef',
         protocolVersion: 2,
         syncEpoch: 'epoch-test',
       );

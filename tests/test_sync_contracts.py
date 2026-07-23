@@ -176,7 +176,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("changedRowCount", clients_page)
         self.assertNotIn("changedRowsOverride", clients_page)
         self.assertIn("Not reported", clients_page)
-        self.assertIn("job.sourceClientName == 'server-anti-entropy'", clients_page)
+        self.assertIn(
+            "job.sourceClientName == 'server-authoritative-reconcile'",
+            clients_page,
+        )
+        self.assertNotIn("server-anti-entropy", clients_page)
         self.assertIn("'Reconciliation'", clients_page)
         self.assertIn("'Snapshot'", clients_page)
         self.assertIn("Filter clients", clients_page)
@@ -250,6 +254,18 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("field syncMode: string min=1 max=32", control_plane)
         self.assertNotIn("direction: 'sync'", control_plane)
         self.assertNotIn("Queued SymmetricDS sync", control_plane)
+
+    def test_web_header_exposes_the_stable_windows_client_download(self):
+        app = read_text("frontend/lib/app.dart")
+
+        self.assertIn(
+            "'/client/sync_windows_agent_latest.zip'",
+            app,
+        )
+        self.assertIn("'Download Windows Client'", app)
+        self.assertIn("openBrowserTab(_windowsClientDownloadPath)", app)
+        self.assertIn("_downloadWindowsClientButton(compact: false)", app)
+        self.assertIn("_downloadWindowsClientButton(compact: true)", app)
 
     def test_windows_snapshot_apply_matches_unique_indexes(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -482,6 +498,29 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("final String syncEpoch", sync_state)
         self.assertIn("void _prepareSyncProtocolJob(RemoteSyncJob job)", agent_page)
         self.assertIn("const batchSize = 200;", snapshot_body)
+
+    def test_authoritative_reconciliation_replaces_and_verifies_the_target(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        download_body = agent_page.split(
+            "Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {", 1
+        )[1].split("Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1)[0]
+        snapshot_body = agent_page.split(
+            "Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1
+        )[1].split("List<Map<String, String?>> _snapshotRows(", 1)[0]
+        apply_body = agent_page.split(
+            "Future<int> _applyDownloadedSnapshotToTarget({", 1
+        )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
+
+        self.assertIn("server-authoritative-reconcile", download_body)
+        self.assertIn("replaceTarget: authoritativeReconcile", download_body)
+        self.assertIn("authoritativeAppliedVersion = tracking.currentVersion", download_body)
+        self.assertIn("SqlSyncFingerprintAccumulator()", snapshot_body)
+        self.assertIn("sourceFingerprint.checksum != snapshotChecksum", snapshot_body)
+        self.assertIn("deleteMissing: true", apply_body)
+        self.assertIn("if (!replaceTarget && upsertRows.isNotEmpty)", apply_body)
+        self.assertIn("targetFingerprint.checksum != snapshot.checksum", apply_body)
+        self.assertIn("'snapshotChecksum': snapshotChecksum.trim()", client_api)
 
     def test_snapshot_upload_job_advances_through_start_progress_and_chunk_upload_only(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

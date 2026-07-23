@@ -63,7 +63,8 @@ void main(List<String> arguments) {
       ),
     );
   }
-  if (rows.isNotEmpty) {
+  final deleteMissing = request['deleteMissing'] == true;
+  if (rows.isNotEmpty || deleteMissing) {
     sql.writeln(
       buildTargetSnapshotStageSetupSql(
         stageTableName: stageTableName,
@@ -90,7 +91,7 @@ void main(List<String> arguments) {
         matchColumnSets: (request['matchColumnSets'] as List)
             .map((value) => _strings(value))
             .toList(growable: false),
-        deleteMissing: false,
+        deleteMissing: deleteMissing,
         manageTriggers: true,
         insertOnly: false,
       ),

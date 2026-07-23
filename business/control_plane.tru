@@ -1422,6 +1422,15 @@ function list_scheduler_agent_rows(): array<json> {
   return rows;
 }
 
+function find_agent_row_by_name(rows: array<json>, clientName: string): map<json>? {
+  for (const row of rows) {
+    if (string.from(row.clientName).trim() == clientName.trim()) {
+      return row;
+    }
+  }
+  return null;
+}
+
 function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
@@ -2931,6 +2940,111 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
   ));
 }
 
+function authoritative_reconcile_job_rows(batchId: string, table: string, sourceAgent: map<json>, targetAgents: array<json>, ownerUserId: string, protocol: map<json>): array<json> {
+  const createdAt = now_iso();
+  let rows = [{
+    id: uuid.v4(),
+    clientName: string.from(sourceAgent.clientName),
+    sourceClientName: 'server-authoritative-reconcile',
+    subscriberClientName: '',
+    table,
+    direction: 'upload',
+    publisherServer: sync_job_text(sourceAgent.server),
+    publisherDatabase: sync_job_text(sourceAgent.database),
+    publisherUseWindowsAuth: sourceAgent.replicationUseWindowsAuth == true,
+    publisherUser: sync_job_text(sourceAgent.replicationUser),
+    publisherPassword: sync_job_text(sourceAgent.replicationPassword),
+    status: 'queued',
+    progress: 0,
+    rowCount: 0,
+    snapshotBytes: 0,
+    snapshotCreatedAt: null,
+    snapshotId: null,
+    createdAt,
+    updatedAt: createdAt,
+    startedAt: null,
+    completedAt: null,
+    message: string.concat('Queued authoritative source snapshot for ', table, '.'),
+    error: null,
+    clientUserId: sourceAgent.clientUserId,
+    ownerUserId,
+    batchId,
+    protocolVersion: protocol.protocolVersion,
+    syncEpoch: protocol.syncEpoch
+  }];
+  for (const targetAgent of targetAgents) {
+    const targetClientName = string.from(targetAgent.clientName);
+    rows = rows.concat([{
+      id: uuid.v4(),
+      clientName: targetClientName,
+      sourceClientName: 'server-authoritative-reconcile',
+      subscriberClientName: targetClientName,
+      table,
+      direction: 'download',
+      publisherServer: '',
+      publisherDatabase: sync_job_text(targetAgent.database),
+      publisherUseWindowsAuth: targetAgent.replicationUseWindowsAuth == true,
+      publisherUser: '',
+      publisherPassword: '',
+      status: 'waiting',
+      progress: 0,
+      rowCount: 0,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
+      createdAt,
+      updatedAt: createdAt,
+      startedAt: null,
+      completedAt: null,
+      message: string.concat('Waiting for the authoritative source snapshot for ', table, '.'),
+      error: null,
+      clientUserId: targetAgent.clientUserId,
+      ownerUserId,
+      batchId,
+      protocolVersion: protocol.protocolVersion,
+      syncEpoch: protocol.syncEpoch
+    }]);
+  }
+  return rows;
+}
+
+function create_authoritative_reconcile_batch(ownerUserId: string, table: string, sourceAgent: map<json>, targetAgents: array<json>): array<json> {
+  if (targetAgents.length == 0) {
+    return [];
+  }
+  const batchId = uuid.v4();
+  const protocol = sync_protocol_state();
+  const sourceClientName = string.from(sourceAgent.clientName);
+  const createdAt = now_iso();
+  db.insert(SyncBatch, {
+    id: batchId,
+    table,
+    revision: 0,
+    ownerUserId,
+    expectedClients: [sourceClientName],
+    uploadedClients: [],
+    receivedChunks: [],
+    receivedBytes: 0,
+    clientChangeTrackingVersions: [],
+    keyColumns: [],
+    columns: [],
+    rows: [],
+    status: 'uploading',
+    createdAt,
+    updatedAt: createdAt,
+    protocolVersion: protocol.protocolVersion,
+    syncEpoch: protocol.syncEpoch
+  });
+  return db.insertMany(SyncJob, authoritative_reconcile_job_rows(
+    batchId,
+    table,
+    sourceAgent,
+    targetAgents,
+    ownerUserId,
+    protocol
+  ));
+}
+
 function multi_writer_batch_stale(batch: map<json>): bool {
   // Large tables can take longer than 30 minutes on slow client links. Expire
   // only batches that have made no upload progress during that period.
@@ -4336,7 +4450,7 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   });
 }
 
-function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, protocolVersion: int = 0, syncEpoch: string = ''): map<json> {
+function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, snapshotChecksum: string = '', protocolVersion: int = 0, syncEpoch: string = ''): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -4365,7 +4479,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     return raw_json_error(409, 'sync epoch changed; discard this job and refresh client state');
   }
   const explicitSingleClientBootstrap =
-    string.from(job.sourceClientName).trim() == 'server-bootstrap-v2' &&
+    (string.from(job.sourceClientName).trim() == 'server-bootstrap-v2' ||
+      string.from(job.sourceClientName).trim() == 'server-authoritative-reconcile') &&
     batch.expectedClients.length == 1 &&
     string.from(batch.expectedClients[0]).trim() == clientName.trim();
   if (!payloadIsDelta && !explicitSingleClientBootstrap) {
@@ -4457,7 +4572,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     subscriberClientName: normalizedClientName,
     table: batch.table,
     rowCount: incomingRowCount,
-    checksum: string.concat(normalizedChunkId, '-', string.from(nextOrdinal)),
+    checksum: snapshotChecksum.trim().length == 0
+      ? string.concat(normalizedChunkId, '-', string.from(nextOrdinal))
+      : snapshotChecksum.trim(),
     snapshotBytes: incomingBytes,
     columns: resolvedColumns,
     rows: storedRows,
@@ -4558,7 +4675,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       { field: 'createdAt', dir: 'asc' },
       { field: 'id', dir: 'asc' }
     ],
-    fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'snapshotBytes', 'storageId', 'isDelta', 'createdAt'],
+    fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'checksum', 'snapshotBytes', 'storageId', 'isDelta', 'createdAt'],
     limit: 1,
     cursor
   });
@@ -4598,7 +4715,9 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     subscriberClientName: job.clientName,
     table: batch.table,
     rowCount: chunkRows.length,
-    checksum: snapshot_checksum({ batchId, cursor, rows: chunkRows }),
+    checksum: storedChunks.length == 0
+      ? snapshot_checksum({ batchId, cursor, rows: chunkRows })
+      : string.from(storedChunks[0].checksum),
     createdAt: batch.updatedAt,
     snapshotBytes: json.stringify(chunkRows).length,
     compressedBytes: 0,
@@ -5170,6 +5289,94 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
   return raw_json_success({
     mode: 'protocol-v2-bootstrap',
     clientName: normalizedClientName,
+    jobs: createdJobs.map((job) => public_job_payload(job))
+  }, 201);
+}
+
+function jobs_reconcile_authoritative(sourceClientName: string, targetClientNames: array<string>, tables: array<string>, token: string? = null): map<json> {
+  if (targetClientNames.length == 0) {
+    return raw_json_error(400, 'at least one target client is required.');
+  }
+  if (tables.length == 0) {
+    return raw_json_error(400, 'tables are required.');
+  }
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  if (!automatic_sync_is_paused_for_user(current)) {
+    return raw_json_error(409, 'pause automatic sync before authoritative reconciliation');
+  }
+
+  const visibleAgents = visible_agent_rows_for(current);
+  const normalizedSourceClientName = normalize_user_name(sourceClientName);
+  const sourceAgent = find_agent_row_by_name(visibleAgents, normalizedSourceClientName);
+  if (sourceAgent == null) {
+    return raw_json_error(403, 'source client is unavailable or outside your scope');
+  }
+  const ownerId = string.from(sourceAgent.ownerUserId);
+  if (!effective_agent_online(sourceAgent)) {
+    return raw_json_error(409, 'source client must be online and SQL-connected');
+  }
+
+  let targetAgents = [];
+  let normalizedTargetClientNames = [];
+  for (const requestedTargetClientName of unique_string_values(targetClientNames)) {
+    const normalizedTargetClientName = normalize_user_name(requestedTargetClientName);
+    if (normalizedTargetClientName == normalizedSourceClientName) {
+      return raw_json_error(409, 'source client cannot also be a reconciliation target');
+    }
+    if (string_array_contains(normalizedTargetClientNames, normalizedTargetClientName)) {
+      continue;
+    }
+    const targetAgent = find_agent_row_by_name(visibleAgents, normalizedTargetClientName);
+    if (targetAgent == null || string.from(targetAgent.ownerUserId) != ownerId) {
+      return raw_json_error(403, string.concat('target client is unavailable or outside the source owner scope: ', normalizedTargetClientName));
+    }
+    if (!effective_agent_online(targetAgent)) {
+      return raw_json_error(409, string.concat('target client must be online and SQL-connected: ', normalizedTargetClientName));
+    }
+    targetAgents = targetAgents.concat([targetAgent]);
+    normalizedTargetClientNames = normalizedTargetClientNames.concat([normalizedTargetClientName]);
+  }
+
+  const participants = [sourceAgent].concat(targetAgents);
+  for (const participant of participants) {
+    if (active_job_tables_for_client(string.from(participant.clientName)).length != 0) {
+      return raw_json_error(409, string.concat('reconciliation participant already has active jobs: ', string.from(participant.clientName)));
+    }
+  }
+
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
+  const requestedTables = unique_string_values(tables);
+  for (const participant of participants) {
+    const enabledTables = unique_string_values(
+      enabled_sync_tables_for_agent_with_policies(participant, ownerPolicies).concat(
+        enabled_sync_policy_tables_for_agent(participant, ownerPolicies)
+      )
+    );
+    for (const table of requestedTables) {
+      if (!string_array_contains(enabledTables, table)) {
+        return raw_json_error(409, string.concat('reconciliation table is not enabled for ', string.from(participant.clientName), ': ', table));
+      }
+    }
+  }
+
+  let createdJobs = [];
+  for (const table of requestedTables) {
+    const jobs = create_authoritative_reconcile_batch(ownerId, table, sourceAgent, targetAgents);
+    if (jobs.length > 0) {
+      createdJobs = createdJobs.concat(jobs);
+    }
+  }
+  return raw_json_success({
+    mode: 'protocol-v2-authoritative-reconcile',
+    sourceClientName: normalizedSourceClientName,
+    targetClientNames: normalizedTargetClientNames,
+    tables: requestedTables,
     jobs: createdJobs.map((job) => public_job_payload(job))
   }, 201);
 }

@@ -71,6 +71,51 @@ void main() {
     },
   );
 
+  test(
+    'authoritative reconciliation posts exact source targets and tables',
+    () async {
+      late Map<String, dynamic> requestPayload;
+      final api = LiveSyncApiClient(
+        baseUrl: 'https://sync.example/call',
+        client: MockClient((request) async {
+          requestPayload = Map<String, dynamic>.from(
+            jsonDecode(request.body) as Map,
+          );
+          return http.Response(
+            jsonEncode({
+              'status': 'success',
+              'value': {
+                'jobs': [
+                  {'id': 'upload'},
+                  {'id': 'download'},
+                ],
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      api.setAuthToken('test-token');
+
+      final count = await api.reconcileAuthoritative(
+        sourceClientName: ' c1 ',
+        targetClientNames: const [' c2 '],
+        tables: const [' db::pt000 '],
+      );
+
+      expect(count, 2);
+      expect(requestPayload['name'], 'jobs_reconcile_authoritative');
+      expect(requestPayload['args'], {
+        'sourceClientName': 'c1',
+        'targetClientNames': ['c2'],
+        'tables': ['db::pt000'],
+        'token': 'test-token',
+      });
+      api.dispose();
+    },
+  );
+
   test('server reset drains bounded batches and aggregates totals', () async {
     final requestPayloads = <Map<String, dynamic>>[];
     final responses = <Map<String, dynamic>>[

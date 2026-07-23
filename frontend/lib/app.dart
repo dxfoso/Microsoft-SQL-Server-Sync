@@ -453,6 +453,8 @@ class _AdminWorkspace extends StatefulWidget {
 }
 
 class _AdminWorkspaceState extends State<_AdminWorkspace> {
+  static const _windowsClientDownloadPath =
+      '/client/sync_windows_agent_latest.zip';
   int _selectedIndex = 0;
 
   @override
@@ -622,13 +624,63 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
     );
   }
 
+  Widget _downloadWindowsClientButton({required bool compact}) {
+    const color = Color(0xFF0F766E);
+    if (compact) {
+      return IconButton(
+        tooltip: 'Download Windows Client',
+        onPressed: () => openBrowserTab(_windowsClientDownloadPath),
+        icon: const Icon(Icons.download_for_offline_outlined),
+        color: color,
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: () => openBrowserTab(_windowsClientDownloadPath),
+      icon: const Icon(Icons.download_for_offline_outlined, size: 18),
+      label: const Text('Download Windows Client'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: const BorderSide(color: Color(0xFF80CBC4)),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      ),
+    );
+  }
+
+  Widget _workspaceHeader() {
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFDDE3EA))),
+      ),
+      child: Row(
+        children: [
+          Text(
+            _selectedIndex == 0 ? 'Dashboard' : 'Clients',
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+          const Spacer(),
+          _downloadWindowsClientButton(compact: false),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 900;
     if (!compact) {
       return Scaffold(
         body: Row(
-          children: [_navigation(compact: false), Expanded(child: _page())],
+          children: [
+            _navigation(compact: false),
+            Expanded(
+              child: Column(
+                children: [_workspaceHeader(), Expanded(child: _page())],
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -636,6 +688,10 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
       drawer: Drawer(child: SafeArea(child: _navigation(compact: true))),
       appBar: AppBar(
         title: Text(_selectedIndex == 0 ? 'Dashboard' : 'Clients'),
+        actions: [
+          _downloadWindowsClientButton(compact: true),
+          const SizedBox(width: 4),
+        ],
         leading: Builder(
           builder:
               (context) => IconButton(

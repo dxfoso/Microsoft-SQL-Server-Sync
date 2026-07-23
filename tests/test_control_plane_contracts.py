@@ -883,6 +883,45 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("create_sync_jobs_for_agent(", source)
         self.assertNotIn("jobs_create_all_enabled_legacy(", source)
 
+    def test_authoritative_reconciliation_is_explicit_paused_and_one_way(self):
+        source = read_text("business/control_plane.tru")
+        reconcile_body = source.split(
+            "function jobs_reconcile_authoritative(", 1
+        )[1].split("function sync_job_status_is_terminal(", 1)[0]
+        reconcile_rows = source.split(
+            "function authoritative_reconcile_job_rows(", 1
+        )[1].split("function create_authoritative_reconcile_batch(", 1)[0]
+        reconcile_batch = source.split(
+            "function create_authoritative_reconcile_batch(", 1
+        )[1].split("function multi_writer_batch_stale(", 1)[0]
+
+        self.assertIn("'server-authoritative-reconcile'", reconcile_rows)
+        self.assertEqual(reconcile_rows.count("direction: 'upload'"), 1)
+        self.assertEqual(reconcile_rows.count("direction: 'download'"), 1)
+        self.assertIn("expectedClients: [sourceClientName]", reconcile_batch)
+        self.assertIn("automatic_sync_is_paused_for_user(current)", reconcile_body)
+        self.assertIn("effective_agent_online(sourceAgent)", reconcile_body)
+        self.assertIn("effective_agent_online(targetAgent)", reconcile_body)
+        self.assertIn("active_job_tables_for_client", reconcile_body)
+        self.assertIn("source client cannot also be a reconciliation target", reconcile_body)
+        self.assertIn("reconciliation table is not enabled", reconcile_body)
+        self.assertIn("create_authoritative_reconcile_batch(", reconcile_body)
+
+    def test_authoritative_full_snapshots_preserve_verification_checksum(self):
+        source = read_text("business/control_plane.tru")
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+        download_body = source.split(
+            "function jobs_multi_writer_download(", 1
+        )[1].split("function jobs_upload_chunk(", 1)[0]
+
+        self.assertIn("snapshotChecksum: string = ''", source)
+        self.assertIn("snapshotChecksum.trim()", upload_body)
+        self.assertIn("'server-authoritative-reconcile'", upload_body)
+        self.assertIn("'checksum'", download_body)
+        self.assertIn("string.from(storedChunks[0].checksum)", download_body)
+
     def test_server_reset_rotates_protocol_v2_epoch(self):
         source = read_text("business/control_plane.tru")
         reset_body = source.split("function server_saved_data_reset(", 1)[1].split(

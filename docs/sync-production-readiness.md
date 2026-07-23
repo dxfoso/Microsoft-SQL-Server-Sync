@@ -33,6 +33,37 @@ client cursor advances. This preserves offline catch-up without losing deltas.
 Decommissioned clients must be removed or disabled so they do not hold the
 barrier indefinitely.
 
+## Authoritative Reconciliation
+
+Protocol v2 has a separate repair operation for historical divergence. It is
+not part of ordinary multi-writer sync:
+
+1. Pause automatic sync.
+2. Keep the trusted source and every repair target online and SQL-connected.
+3. In **Clients**, choose **Reconcile from Source**.
+4. Select the authoritative source, target clients, and enabled tables.
+5. Confirm the target replacement warning.
+
+The source client reads a complete, primary-key-ordered snapshot and verifies
+that its fingerprint did not change during extraction. Each target stages the
+complete snapshot, updates/inserts source rows, deletes target-only rows, and
+commits that replacement atomically with business triggers restored. The
+target then compares its row count and full writable-column fingerprint with
+the source snapshot before advancing its local Change Tracking baseline.
+
+This operation is deliberately fail-closed: the control plane rejects it while
+automatic sync is running, when any participant is busy/offline, when clients
+belong to different owners, or when a requested table is not enabled on every
+participant. A retry of the same authoritative snapshot is idempotent.
+
+For a scripted live proof, including an automatic idempotent retry:
+
+```powershell
+python .\scripts\verify_live_authoritative_reconcile.py `
+  --source c1 --targets c2 `
+  --tables AmnDb028::en000 AmnDb028::mt000 AmnDb028::pt000
+```
+
 ## Verification Evidence
 
 | Layer | Result |

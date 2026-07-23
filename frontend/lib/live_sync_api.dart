@@ -249,6 +249,30 @@ class LiveSyncApiClient {
     return decoded['automaticSyncPaused'] as bool? ?? paused;
   }
 
+  Future<int> reconcileAuthoritative({
+    required String sourceClientName,
+    required List<String> targetClientNames,
+    required List<String> tables,
+  }) async {
+    final decoded = await _invokeFunction('jobs_reconcile_authoritative', {
+      'sourceClientName': sourceClientName.trim(),
+      'targetClientNames': targetClientNames
+          .map((name) => name.trim())
+          .where((name) => name.isNotEmpty)
+          .toList(growable: false),
+      'tables': tables
+          .map((table) => table.trim())
+          .where((table) => table.isNotEmpty)
+          .toList(growable: false),
+    });
+    if (decoded is! Map || decoded['jobs'] is! List) {
+      throw const LiveSyncApiException(
+        'Unexpected authoritative reconciliation payload.',
+      );
+    }
+    return (decoded['jobs'] as List).length;
+  }
+
   Future<AdminBulkDiagnosticsRequestResult> requestAllAgentDiagnostics() async {
     final decoded = await _invokeFunction('agent_diagnostics_request_all', {});
     if (decoded is! Map) {

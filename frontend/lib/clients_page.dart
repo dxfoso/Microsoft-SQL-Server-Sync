@@ -53,7 +53,10 @@ class _SyncLogOperation {
   int? get downloadedRows => _localRows(download);
   int? get changedRows => downloadedRows ?? uploadedRows;
   bool get isReconciliation =>
-      jobs.any((job) => job.sourceClientName == 'server-anti-entropy');
+      jobs.any(
+        (job) =>
+            job.sourceClientName == 'server-authoritative-reconcile',
+      );
 
   String get status {
     final failed = jobs.any(
@@ -220,6 +223,7 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _bulkUpdateBusy = false;
   bool _bulkLogsBusy = false;
   bool _automaticSyncBusy = false;
+  bool _reconcileBusy = false;
   bool _serverResetBusy = false;
   AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
@@ -1079,6 +1083,18 @@ class _ClientsPageState extends State<ClientsPage> {
                   ? 'Resume Automatic Sync'
                   : 'Pause Automatic Sync',
             ),
+          ),
+        if (widget.authenticatedUser.canManageUsers)
+          OutlinedButton.icon(
+            onPressed:
+                _reconcileBusy
+                    ? null
+                    : () => unawaited(_openAuthoritativeReconcileDialog()),
+            icon: _actionIcon(
+              busy: _reconcileBusy,
+              icon: Icons.compare_arrows_rounded,
+            ),
+            label: const Text('Reconcile from Source'),
           ),
         if (widget.authenticatedUser.canManageUsers)
           OutlinedButton.icon(
@@ -2451,6 +2467,282 @@ class _ClientsPageState extends State<ClientsPage> {
       if (mounted) _showActionError(error);
     } finally {
       if (mounted) setState(() => _automaticSyncBusy = false);
+    }
+  }
+
+  Future<void> _openAuthoritativeReconcileDialog() async {
+    if (_reconcileBusy || !widget.authenticatedUser.canManageUsers) return;
+    final onlineAgents =
+        (_state?.agents ?? const <AdminAgent>[])
+            .where(
+              (agent) =>
+                  agent.isOnline &&
+                  agent.serverConnected &&
+                  agent.sqlConnected &&
+                  agent.clientName.trim().isNotEmpty,
+            )
+            .toList()
+          ..sort((left, right) => left.clientName.compareTo(right.clientName));
+    if (onlineAgents.length < 2) {
+      _showActionError(
+        'At least two online, SQL-connected clients are required.',
+      );
+      return;
+    }
+
+    var sourceName = onlineAgents.first.clientName;
+    final selectedTargets = <String>{
+      for (final agent in onlineAgents.skip(1)) agent.clientName,
+    };
+    final selectedTables = <String>{};
+    var acknowledged = false;
+
+    List<AdminAgent> scopedAgents() {
+      final source = onlineAgents.firstWhere(
+        (agent) => agent.clientName == sourceName,
+      );
+      return onlineAgents
+          .where(
+            (agent) =>
+                agent.ownerUserId == source.ownerUserId &&
+                agent.clientName != sourceName,
+          )
+          .toList(growable: false);
+    }
+
+    List<String> availableTables() {
+      final participantNames = {sourceName, ...selectedTargets};
+      final participants = onlineAgents
+          .where((agent) => participantNames.contains(agent.clientName))
+          .toList(growable: false);
+      if (participants.length < 2) return const [];
+      Set<String>? common;
+      for (final participant in participants) {
+        final enabled =
+            participant.tables
+                .where((table) => table.enabled && table.table.isNotEmpty)
+                .map((table) => table.table)
+                .toSet();
+        common = common == null ? enabled : common.intersection(enabled);
+      }
+      final result =
+          (common ?? <String>{}).toList()
+            ..sort((left, right) => left.compareTo(right));
+      return result;
+    }
+
+    final selection = await showDialog<
+      ({String source, List<String> targets, List<String> tables})
+    >(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              final targets = scopedAgents();
+              selectedTargets.removeWhere(
+                (name) =>
+                    name == sourceName ||
+                    !targets.any((agent) => agent.clientName == name),
+              );
+              final tables = availableTables();
+              selectedTables.removeWhere((table) => !tables.contains(table));
+              final automaticPaused = _state?.automaticSyncPaused ?? false;
+              final canContinue =
+                  automaticPaused &&
+                  selectedTargets.isNotEmpty &&
+                  selectedTables.isNotEmpty &&
+                  acknowledged;
+              return AlertDialog(
+                title: const Text('Authoritative reconciliation'),
+                content: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: 620,
+                    maxHeight: 620,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Choose the trusted source. Each selected target table will be replaced exactly with that source table, including removal of target-only rows.',
+                        ),
+                        const SizedBox(height: 14),
+                        DropdownButtonFormField<String>(
+                          initialValue: sourceName,
+                          decoration: const InputDecoration(
+                            labelText: 'Authoritative source',
+                          ),
+                          items: onlineAgents
+                              .map(
+                                (agent) => DropdownMenuItem(
+                                  value: agent.clientName,
+                                  child: Text(agent.clientName),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setDialogState(() {
+                              sourceName = value;
+                              selectedTargets.clear();
+                              selectedTargets.addAll(
+                                scopedAgents().map((agent) => agent.clientName),
+                              );
+                              selectedTables.clear();
+                              acknowledged = false;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Targets',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        for (final agent in targets)
+                          CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(agent.clientName),
+                            subtitle: Text(
+                              agent.syncEnabled
+                                  ? 'Sync enabled'
+                                  : 'Sync disabled (repair is still allowed)',
+                            ),
+                            value: selectedTargets.contains(agent.clientName),
+                            onChanged:
+                                (selected) => setDialogState(() {
+                                  if (selected == true) {
+                                    selectedTargets.add(agent.clientName);
+                                  } else {
+                                    selectedTargets.remove(agent.clientName);
+                                  }
+                                  selectedTables.clear();
+                                  acknowledged = false;
+                                }),
+                          ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Tables',
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed:
+                                  tables.isEmpty
+                                      ? null
+                                      : () => setDialogState(() {
+                                        if (selectedTables.length ==
+                                            tables.length) {
+                                          selectedTables.clear();
+                                        } else {
+                                          selectedTables
+                                            ..clear()
+                                            ..addAll(tables);
+                                        }
+                                        acknowledged = false;
+                                      }),
+                              child: Text(
+                                selectedTables.length == tables.length &&
+                                        tables.isNotEmpty
+                                    ? 'Clear all'
+                                    : 'Select all',
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (tables.isEmpty)
+                          const Text(
+                            'No enabled tables are shared by the selected clients.',
+                          )
+                        else
+                          ...tables.map(
+                            (table) => CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(_displayTable(table)),
+                              subtitle: Text(table),
+                              value: selectedTables.contains(table),
+                              onChanged:
+                                  (selected) => setDialogState(() {
+                                    if (selected == true) {
+                                      selectedTables.add(table);
+                                    } else {
+                                      selectedTables.remove(table);
+                                    }
+                                    acknowledged = false;
+                                  }),
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        if (!automaticPaused)
+                          const Text(
+                            'Pause automatic sync before starting this repair.',
+                            style: TextStyle(
+                              color: Color(0xFFB42318),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          title: const Text(
+                            'I understand that selected target tables will be replaced.',
+                          ),
+                          value: acknowledged,
+                          onChanged:
+                              (value) => setDialogState(
+                                () => acknowledged = value == true,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed:
+                        canContinue
+                            ? () => Navigator.of(context).pop((
+                              source: sourceName,
+                              targets: selectedTargets.toList(growable: false),
+                              tables: selectedTables.toList(growable: false),
+                            ))
+                            : null,
+                    child: const Text('Replace Target Data'),
+                  ),
+                ],
+              );
+            },
+          ),
+    );
+    if (selection == null || !mounted) return;
+
+    setState(() => _reconcileBusy = true);
+    try {
+      final jobCount = await _api.reconcileAuthoritative(
+        sourceClientName: selection.source,
+        targetClientNames: selection.targets,
+        tables: selection.tables,
+      );
+      if (!mounted) return;
+      _showActionMessage(
+        'Authoritative reconciliation queued $jobCount jobs from ${selection.source} to ${selection.targets.join(', ')}.',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) setState(() => _reconcileBusy = false);
     }
   }
 

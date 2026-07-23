@@ -133,7 +133,7 @@ END;
         )
 
 
-def generate_sql(database, *, rows=None, deletes=None):
+def generate_sql(database, *, rows=None, deletes=None, delete_missing=False):
     request = {
         "operation": "apply",
         "database": database,
@@ -145,6 +145,7 @@ def generate_sql(database, *, rows=None, deletes=None):
         "matchColumnSets": [["Id"], ["Code"]],
         "rows": rows or [],
         "deletes": deletes or [],
+        "deleteMissing": delete_missing,
     }
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
         json.dump(request, handle, ensure_ascii=False)
@@ -159,8 +160,13 @@ def generate_sql(database, *, rows=None, deletes=None):
         request_path.unlink(missing_ok=True)
 
 
-def apply(database, *, rows=None, deletes=None):
-    generated = generate_sql(database, rows=rows, deletes=deletes)
+def apply(database, *, rows=None, deletes=None, delete_missing=False):
+    generated = generate_sql(
+        database,
+        rows=rows,
+        deletes=deletes,
+        delete_missing=delete_missing,
+    )
     with tempfile.NamedTemporaryFile("w", suffix=".sql", encoding="utf-8", delete=False) as handle:
         handle.write(generated)
         sql_path = Path(handle.name)
@@ -315,7 +321,7 @@ WHERE object_id = OBJECT_ID(N'dbo.TR_SyncItems_Protect');
     if values != ["0"]:
         raise AssertionError(f"Business trigger is not enabled in {database}: {values}")
     direct_update = sqlcmd(
-        "UPDATE dbo.SyncItems SET Name = Name WHERE Id = 1;",
+        "UPDATE dbo.SyncItems SET Name = Name WHERE Id = (SELECT MIN(Id) FROM dbo.SyncItems);",
         database=database,
         check=False,
     )
@@ -417,6 +423,34 @@ def run_scenarios():
         apply(database, rows=large_rows[:25])
     assert_equal(*DATABASES)
 
+    # An authoritative reconciliation atomically replaces stale target-only
+    # rows and remains idempotent when the same complete snapshot is retried.
+    authoritative_rows = [
+        row(
+            7001,
+            "AUTHORITATIVE-AR",
+            "Authoritative Arabic row",
+            arabic="البيانات العربية الصحيحة",
+            quantity=77,
+        ),
+        row(7002, "AUTHORITATIVE-2", "Second authoritative row"),
+    ]
+    apply(DATABASES[0], rows=authoritative_rows, delete_missing=True)
+    apply(DATABASES[2], rows=authoritative_rows, delete_missing=True)
+    apply(DATABASES[1], rows=[row(7999, "STALE-TARGET", "Must be removed")])
+    apply(DATABASES[1], rows=authoritative_rows, delete_missing=True)
+    if table_rows(DATABASES[1]) != [
+        line for line in table_rows(DATABASES[1])
+        if "STALE-TARGET" not in line
+    ]:
+        raise AssertionError("Authoritative replacement retained a stale target-only row.")
+    assert_text_value(DATABASES[1], 7001, authoritative_rows[0]["ArabicText"])
+    authoritative_once = table_rows(DATABASES[1])
+    apply(DATABASES[1], rows=authoritative_rows, delete_missing=True)
+    if table_rows(DATABASES[1]) != authoritative_once:
+        raise AssertionError("Authoritative replacement retry was not idempotent.")
+    assert_equal(*DATABASES)
+
     before_failure = table_rows(DATABASES[0])
     expect_apply_failure(
         DATABASES[0],
@@ -441,6 +475,7 @@ def run_scenarios():
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "independent-multi-writer", "offline-catch-up",
             "large-1200-row-batch", "idempotent-retry",
+            "authoritative-replace-delete-missing-unicode-retry",
             "rejected-row-rollback-and-recovery", "change-context",
             "business-trigger-bypass-and-restore",
         ],

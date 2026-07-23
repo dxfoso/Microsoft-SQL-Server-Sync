@@ -3458,6 +3458,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         finalChunk: true,
         changeTrackingVersion: snapshot.changeTrackingVersion,
         payloadIsDelta: snapshot.isDelta,
+        snapshotChecksum: snapshot.checksum,
         protocolVersion: job.protocolVersion,
         syncEpoch: job.syncEpoch,
       );
@@ -3488,6 +3489,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           changeTrackingVersion: snapshot.changeTrackingVersion,
           payloadBase64: payloadBase64,
           payloadIsDelta: snapshot.isDelta,
+          snapshotChecksum: snapshot.checksum,
           protocolVersion: job.protocolVersion,
           syncEpoch: job.syncEpoch,
         );
@@ -3520,6 +3522,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     var streamedTargetRowCount = -1;
     final latestDeltaModifiedAtByKey = <String, DateTime?>{};
     final applyStats = _DeltaApplyStats();
+    final authoritativeReconcile =
+        job.sourceClientName == 'server-authoritative-reconcile';
     final pendingRejectedChanges = await _rejectionOutbox.loadTable(
       widget.clientName,
       job.table,
@@ -3543,31 +3547,44 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       protocolVersion: job.protocolVersion,
       syncEpoch: job.syncEpoch,
       checkCancelled: () => _checkSyncJobNotCancelled(job.id),
-      onChunk: (snapshot) async {
-        _checkSyncJobNotCancelled(job.id);
-        streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
-          job: job,
-          snapshot: snapshot,
-          refreshLocalState: false,
-          latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
-          applyStats: applyStats,
-        );
-        _checkSyncJobNotCancelled(job.id);
-      },
+      onChunk:
+          authoritativeReconcile
+              ? null
+              : (snapshot) async {
+                _checkSyncJobNotCancelled(job.id);
+                streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
+                  job: job,
+                  snapshot: snapshot,
+                  refreshLocalState: false,
+                  latestDeltaModifiedAtByKey: latestDeltaModifiedAtByKey,
+                  applyStats: applyStats,
+                );
+                _checkSyncJobNotCancelled(job.id);
+              },
     );
 
     _checkSyncJobNotCancelled(job.id);
 
     if (streamedTargetRowCount < 0) {
-      await _applyDownloadedSnapshotToTarget(
+      streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
         job: job,
         snapshot: snapshotToApply,
         applyStats: applyStats,
+        replaceTarget: authoritativeReconcile,
       );
     }
     _checkSyncJobNotCancelled(job.id);
-    var pendingAfterApply = pendingRejectedChanges;
-    {
+    var pendingAfterApply =
+        authoritativeReconcile
+            ? const <SyncRejectedChange>[]
+            : pendingRejectedChanges;
+    if (authoritativeReconcile) {
+      await _rejectionOutbox.saveTable(
+        widget.clientName,
+        job.table,
+        pendingAfterApply,
+      );
+    } else {
       final retryablePending = pendingRejectedChanges
           .where(
             (change) =>
@@ -3646,6 +3663,23 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'Downloaded snapshot produced an invalid target row count.',
       );
     }
+    int? authoritativeAppliedVersion;
+    if (authoritativeReconcile) {
+      final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
+      final targetTable = _splitQualifiedName(_localTableName(job.table));
+      final tracking = await _queryChangeTrackingState(
+        profile: _activeProfile(),
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+      );
+      if (tracking == null) {
+        throw StateError(
+          'Authoritative reconciliation could not establish a target Change Tracking baseline for ${job.table}.',
+        );
+      }
+      authoritativeAppliedVersion = tracking.currentVersion;
+    }
 
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
@@ -3673,6 +3707,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${pendingAfterApply.length} quarantined.',
     );
     final appliedVersion =
+        authoritativeAppliedVersion ??
         snapshotToApply.changeTrackingVersions[widget.clientName];
     if (appliedVersion != null && appliedVersion >= 0) {
       final current =
@@ -3799,7 +3834,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       rows.addAll(deltaRows);
       isDelta = true;
-    } else if (job.sourceClientName == 'server-bootstrap-v2') {
+    } else if (job.sourceClientName == 'server-bootstrap-v2' ||
+        job.sourceClientName == 'server-authoritative-reconcile') {
       if (job.batchId?.trim().isNotEmpty != true) {
         throw StateError('Explicit protocol-v2 bootstrap requires a batch.');
       }
@@ -3838,6 +3874,30 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       isDelta = true;
     }
 
+    var snapshotChecksum = '';
+    if (job.sourceClientName == 'server-authoritative-reconcile') {
+      final accumulator = SqlSyncFingerprintAccumulator();
+      for (final row in rows) {
+        accumulator.addRow(syncColumns, row);
+      }
+      snapshotChecksum = accumulator.build();
+      final sourceFingerprint = await _computeTableFingerprint(
+        profile: sourceProfile,
+        database: database,
+        schema: tableParts.schema,
+        table: tableParts.table,
+        writableColumns: syncColumns,
+        orderColumns: primaryKeyColumns,
+      );
+      if (sourceFingerprint == null ||
+          sourceFingerprint.rowCount != rows.length ||
+          sourceFingerprint.checksum != snapshotChecksum) {
+        throw StateError(
+          'Authoritative source ${job.table} changed while its snapshot was being read. Pause writes and retry reconciliation.',
+        );
+      }
+    }
+
     final createdAt = DateTime.now().toIso8601String();
     Map<String, dynamic> payload = {
       'id': '',
@@ -3845,7 +3905,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'table': job.table,
       'createdAt': createdAt,
       'rowCount': rows.length,
-      'checksum': '',
+      'checksum': snapshotChecksum,
       'snapshotBytes': 0,
       'columns': syncColumns
           .map((column) => column.name)
@@ -3866,6 +3926,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rowCount: rows.length,
       snapshotBytes: utf8.encode(snapshotJson).length,
       snapshotJson: snapshotJson,
+      checksum: snapshotChecksum,
       changeTrackingVersion: tracking?.currentVersion,
       keyColumns: primaryKeyColumns,
       isDelta: isDelta,
@@ -3916,6 +3977,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     bool refreshLocalState = true,
     Map<String, DateTime?>? latestDeltaModifiedAtByKey,
     _DeltaApplyStats? applyStats,
+    bool replaceTarget = false,
   }) async {
     final stats = applyStats ?? _DeltaApplyStats();
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
@@ -3991,6 +4053,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final deltaMatchColumnSets = targetMatchColumnSets;
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
+    if (replaceTarget && snapshot.isDelta) {
+      throw StateError(
+        'Authoritative reconciliation requires a complete source snapshot.',
+      );
+    }
     final rowsForApply =
         applyDelta
             ? coalesceSqlSyncDeltaRows(
@@ -4029,7 +4096,63 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
     final isolatedRejectedRows = <SqlSyncRejectedRow>[];
-    if (deleteRows.isNotEmpty) {
+    if (replaceTarget) {
+      if (deleteRows.isNotEmpty) {
+        throw StateError(
+          'Authoritative reconciliation snapshots cannot contain delta delete markers.',
+        );
+      }
+      final rowCountBefore = await _queryTableRowCount(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+      );
+      if (!rowCountBefore.success) {
+        throw Exception(
+          rowCountBefore.errorText ??
+              'Unable to read the target row count before authoritative reconciliation.',
+        );
+      }
+      final rows = upsertRows
+          .map(
+            (row) => <String, dynamic>{
+              for (final column in syncColumns) column.name: row[column.name],
+            },
+          )
+          .toList(growable: false);
+      final insertedRows = await _applySourceRowsToTarget(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        columns: syncColumns,
+        primaryKeyColumns: primaryKeyColumns,
+        matchColumnSets: deltaMatchColumnSets,
+        rows: rows,
+        deleteMissing: true,
+        manageTriggers: true,
+        insertOnly: false,
+      );
+      final rowCountAfter = await _queryTableRowCount(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+      );
+      if (!rowCountAfter.success) {
+        throw Exception(
+          rowCountAfter.errorText ??
+              'Unable to read the target row count after authoritative reconciliation.',
+        );
+      }
+      stats.insertedRows += insertedRows;
+      stats.updatedRows += rows.length - insertedRows;
+      stats.deletedRows += math.max(
+        0,
+        rowCountBefore.value + insertedRows - rowCountAfter.value,
+      );
+    } else if (deleteRows.isNotEmpty) {
       isolatedRejectedRows.addAll(
         await applySqlSyncRowsWithIsolation(
           rows: deleteRows.cast<Map<String, dynamic>>(),
@@ -4050,7 +4173,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         ),
       );
     }
-    if (upsertRows.isNotEmpty) {
+    if (!replaceTarget && upsertRows.isNotEmpty) {
       final rows = upsertRows
           .map(
             (row) => <String, dynamic>{
@@ -4118,6 +4241,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       database: targetDatabase,
       fingerprints: targetFingerprints,
     );
+    if (replaceTarget) {
+      final targetFingerprint = targetFingerprints[visibleTableName];
+      if (snapshot.checksum.trim().isEmpty ||
+          targetFingerprint == null ||
+          targetFingerprint.rowCount != snapshot.rowCount ||
+          targetFingerprint.checksum != snapshot.checksum) {
+        throw StateError(
+          'Authoritative reconciliation verification failed for ${job.table}; the target fingerprint does not match the source snapshot.',
+        );
+      }
+    }
 
     if (_selectedDatabase == targetDatabase) {
       _applyTableRowCounts(
@@ -8876,6 +9010,7 @@ class _RelaySnapshotDocument {
     required this.rowCount,
     required this.snapshotBytes,
     required this.snapshotJson,
+    this.checksum = '',
     this.changeTrackingVersion,
     this.keyColumns = const [],
     this.isDelta = false,
@@ -8885,6 +9020,7 @@ class _RelaySnapshotDocument {
   final int rowCount;
   final int snapshotBytes;
   final String snapshotJson;
+  final String checksum;
   final int? changeTrackingVersion;
   final List<String> keyColumns;
   final bool isDelta;
