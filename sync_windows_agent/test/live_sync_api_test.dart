@@ -1604,8 +1604,7 @@ void main() {
 
   test('uploadSnapshot rejects malformed upload completion JSON', () async {
     final client = MockClient((request) async {
-      final payload =
-          jsonDecode(request.body as String) as Map<String, dynamic>;
+      final payload = jsonDecode(request.body) as Map<String, dynamic>;
       if (payload['name'] == 'jobs_upload_chunk_start') {
         return http.Response(
           jsonEncode({
@@ -1774,11 +1773,6 @@ void main() {
         fail('Unexpected function call $name');
       },
     );
-    final api = AgentControlPlaneClient(
-      client: client,
-      baseUrl: 'https://example.com/call',
-    );
-
     client.requests.clear();
     final manifestClient = MockClient((request) async {
       return http.Response(jsonEncode(['bad', 'manifest']), 200);

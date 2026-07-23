@@ -147,10 +147,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     logStartupEvent('SyncWindowsAgentApp initState');
     if (Platform.isWindows) {
       unawaited(
-        WindowsAgentWindowSettings.ensureWatchdogInstalledAndRunning()
-            .catchError((Object error, StackTrace _) {
-              logStartupEvent('Watchdog ensure failed: $error');
-            }),
+        WindowsAgentWindowSettings.ensureSupervisorRunning().catchError((
+          Object error,
+          StackTrace _,
+        ) {
+          logStartupEvent('Independent supervisor ensure failed: $error');
+        }),
       );
     }
     _clientUpdateCheckTimer = Timer.periodic(
@@ -543,7 +545,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         '-WindowStyle',
         'Hidden',
         '-File',
-        localScriptPath!,
+        localScriptPath,
         '-ManifestUrl',
         manifestUrl,
         '-InstallDir',

@@ -1639,7 +1639,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         '-WindowStyle',
         'Hidden',
         '-File',
-        localScriptPath!,
+        localScriptPath,
         '-ManifestUrl',
         manifestUrl,
         '-InstallDir',

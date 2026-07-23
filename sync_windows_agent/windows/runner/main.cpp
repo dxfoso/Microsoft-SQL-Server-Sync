@@ -5,6 +5,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <functional>
+#include <string>
 
 #include "flutter_window.h"
 #include "startup_log.h"
@@ -36,6 +37,54 @@ std::filesystem::path GetExecutableDirectory() {
   }
 
   return std::filesystem::path(path).parent_path();
+}
+
+void StartIndependentSupervisor() {
+  const auto executable_directory = GetExecutableDirectory();
+  const auto supervisor_path =
+      executable_directory / L"sync_windows_agent_supervisor.ps1";
+  if (!std::filesystem::exists(supervisor_path)) {
+    LogStartupEvent(L"Independent supervisor script is not packaged; continuing.");
+    return;
+  }
+
+  wchar_t system_directory[MAX_PATH];
+  const UINT system_directory_length =
+      GetSystemDirectoryW(system_directory, MAX_PATH);
+  if (system_directory_length == 0 ||
+      system_directory_length >= MAX_PATH) {
+    LogStartupLastError(L"Unable to resolve Windows system directory for supervisor");
+    return;
+  }
+
+  const auto powershell_path =
+      std::filesystem::path(system_directory) /
+      L"WindowsPowerShell" / L"v1.0" / L"powershell.exe";
+  std::wstring command_line =
+      L"\"" + powershell_path.wstring() +
+      L"\" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" +
+      supervisor_path.wstring() + L"\"";
+  std::vector<wchar_t> mutable_command_line(command_line.begin(),
+                                             command_line.end());
+  mutable_command_line.push_back(L'\0');
+
+  STARTUPINFOW startup_info{};
+  startup_info.cb = sizeof(startup_info);
+  startup_info.dwFlags = STARTF_USESHOWWINDOW;
+  startup_info.wShowWindow = SW_HIDE;
+  PROCESS_INFORMATION process_info{};
+  const BOOL started = CreateProcessW(
+      powershell_path.c_str(), mutable_command_line.data(), nullptr, nullptr,
+      FALSE, CREATE_NO_WINDOW, nullptr,
+      executable_directory.c_str(), &startup_info, &process_info);
+  if (!started) {
+    LogStartupLastError(L"Independent supervisor launch failed");
+    return;
+  }
+
+  CloseHandle(process_info.hThread);
+  CloseHandle(process_info.hProcess);
+  LogStartupEvent(L"Independent supervisor launch requested before Flutter initialization");
 }
 
 std::wstring GetInstanceMutexName() {
@@ -149,6 +198,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   LogStartupEvent(L"Native wWinMain starting");
   LogWindowsVersion();
+  StartIndependentSupervisor();
   ConfigureEngineSwitches();
   if (!AcquireSingleInstanceMutex()) {
     return EXIT_SUCCESS;

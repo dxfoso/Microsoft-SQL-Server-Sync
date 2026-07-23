@@ -805,15 +805,13 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("function Get-AgentProcesses {", update_script)
         self.assertIn("function Stop-AgentProcesses {", update_script)
-        self.assertIn("function Get-WatchdogScriptPath {", update_script)
-        self.assertIn("function Start-WatchdogProcess {", update_script)
-        self.assertIn("function Update-StartupShortcutToWatchdog {", update_script)
-        self.assertIn("sync_windows_agent_watchdog.ps1", update_script)
-        self.assertIn("ensureWatchdogInstalledAndRunning", read_text("sync_windows_agent/lib/window_settings.dart"))
+        self.assertIn("function Get-SupervisorScriptPath {", update_script)
+        self.assertIn("function Start-SupervisorProcess {", update_script)
+        self.assertIn("function Update-StartupShortcutToSupervisor {", update_script)
+        self.assertIn("sync_windows_agent_supervisor.ps1", update_script)
+        self.assertIn("ensureSupervisorRunning", read_text("sync_windows_agent/lib/window_settings.dart"))
         self.assertIn("unawaited(", read_text("sync_windows_agent/lib/app.dart"))
-        self.assertIn("WindowsAgentWindowSettings.ensureWatchdogInstalledAndRunning()", read_text("sync_windows_agent/lib/app.dart"))
-        self.assertIn("ArgumentList '--start-minimized'", update_script)
-        self.assertIn("-WindowStyle Minimized", update_script)
+        self.assertIn("WindowsAgentWindowSettings.ensureSupervisorRunning()", read_text("sync_windows_agent/lib/app.dart"))
         self.assertIn(
             "Timed out waiting for sync_windows_agent.exe to exit from $TargetInstallDir",
             update_script,
@@ -841,8 +839,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Shell_NotifyIcon(NIM_DELETE, &tray_icon_data_);", runner_window)
         self.assertIn('RegisterWindowMessageW(L"TaskbarCreated")', runner_window)
         self.assertIn("TaskbarCreated; restoring tray icon", runner_window)
-        self.assertIn("function Invoke-AutoUpdate", update_script)
-        self.assertIn("No client process detected; checking the live update manifest.", update_script)
+        self.assertIn("StartIndependentSupervisor();", runner_main)
+        self.assertIn("before Flutter initialization", runner_main)
         self.assertIn("changeTrackingOwner", read_text("sync_windows_agent/lib/sync_state.dart"))
         self.assertIn("changeTrackingOwner ==", read_text("sync_windows_agent/lib/agent_page.dart"))
         self.assertIn(
@@ -916,9 +914,12 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("class RemoteAgentClientUpdate {", client_api)
         self.assertIn("requestAllAgentClientUpdates() async {", web_api)
 
-    def test_update_script_relaunches_after_noop_and_failure(self):
+    def test_update_script_keeps_noop_running_and_recovers_after_failure(self):
         update_script = read_text("update.ps1")
-        self.assertIn("No installation required. Relaunching the current client.", update_script)
+        self.assertIn(
+            "No installation required. The current client and supervisor remain running.",
+            update_script,
+        )
         self.assertIn("Attempting recovery relaunch of the current client.", update_script)
         self.assertIn("Start-UpdatedClient -ExecutablePath $currentExe", update_script)
         self.assertIn("Updater failed:", update_script)
@@ -940,7 +941,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Verified installed client payload for version $Version.", update_script)
         self.assertIn("Start-Sleep -Milliseconds 500", update_script)
 
-    def test_update_script_stops_watchdog_before_replacing_client_files(self):
+    def test_update_script_stops_supervisor_before_replacing_client_files(self):
         update_script = read_text("update.ps1")
         helper_install = update_script.split(
             'Write-UpdateLog -Message "Finalize update helper started.',
@@ -951,111 +952,63 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertLess(
             helper_install.index(
-                "Stop-WatchdogProcesses -TargetInstallDir $InstallDir"
+                "Stop-SupervisorProcesses -TargetInstallDir $InstallDir"
             ),
             helper_install.index(
                 "Stop-AgentProcesses -TargetInstallDir $InstallDir"
             ),
         )
         differential_install = update_script.split(
-            "Stopping the watchdog before scheduling differential replacement.",
+            "Stopping the supervisor before scheduling differential replacement.",
             1,
         )[1].split("Start-DeferredInstall", 1)[0]
         self.assertLess(
             differential_install.index(
-                "Stop-WatchdogProcesses -TargetInstallDir $InstallDir"
+                "Stop-SupervisorProcesses -TargetInstallDir $InstallDir"
             ),
             differential_install.index(
                 "Stop-AgentProcesses -TargetInstallDir $InstallDir"
             ),
         )
         package_install = update_script.split(
-            "Stopping the watchdog before scheduling package replacement.",
+            "Stopping the supervisor before scheduling package replacement.",
             1,
         )[1].split("Start-DeferredInstall", 1)[0]
         self.assertLess(
             package_install.index(
-                "Stop-WatchdogProcesses -TargetInstallDir $InstallDir"
+                "Stop-SupervisorProcesses -TargetInstallDir $InstallDir"
             ),
             package_install.index(
                 "Stop-AgentProcesses -TargetInstallDir $InstallDir"
             ),
         )
-        watchdog_update = update_script.split(
-            "function Invoke-AutoUpdate {",
-            1,
-        )[1].split("`$mutexName =", 1)[0]
-        self.assertNotIn(
-            "-File `$UpdateScriptPath -InstallDir `$InstallDir -NoStart",
-            watchdog_update,
-        )
-        self.assertIn(
-            "-File `$UpdateScriptPath -InstallDir `$InstallDir",
-            watchdog_update,
-        )
-        window_settings = read_text(
-            "sync_windows_agent/lib/window_settings.dart"
-        )
-        generated_watchdog_update = window_settings.split(
-            "function Invoke-AutoUpdate {",
-            1,
-        )[1].split(
-            r"$mutexName =",
-            1,
-        )[0]
-        self.assertNotIn(
-            "-File $UpdateScriptPath -InstallDir $InstallDir -NoStart",
-            generated_watchdog_update,
-        )
-        self.assertIn(
-            "-File $UpdateScriptPath -InstallDir $InstallDir",
-            generated_watchdog_update,
-        )
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        self.assertIn("function Invoke-IndependentUpdateCheck {", supervisor)
+        self.assertIn("sync_windows_agent_update_requests.log", supervisor)
+        self.assertNotIn("-NoStart", supervisor)
 
     def test_new_install_retires_obsolete_agent_install_processes(self):
-        window_settings = read_text(
-            "sync_windows_agent/lib/window_settings.dart"
-        )
-        generated_watchdog = window_settings.split(
-            "static String _watchdogScriptContents() {",
-            1,
-        )[1].split(
-            "static String _quotePowerShellString",
-            1,
-        )[0]
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
         self.assertIn(
             "function Stop-ObsoleteInstallProcesses {",
-            generated_watchdog,
+            supervisor,
         )
         self.assertIn(
-            "$watchdogScriptPath = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)",
-            generated_watchdog,
+            "$scriptPath = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)",
+            supervisor,
         )
-        self.assertIn(
-            "$currentWatchdog = $watchdogScriptPath",
-            generated_watchdog,
-        )
-        self.assertIn(
-            "sync_windows_agent_watchdog.ps1",
-            generated_watchdog,
-        )
+        self.assertIn("sync_windows_agent_supervisor.ps1", supervisor)
         self.assertIn(
             "Name = 'sync_windows_agent.exe'",
-            generated_watchdog,
+            supervisor,
         )
         self.assertIn(
             "[System.StringComparison]::OrdinalIgnoreCase",
-            generated_watchdog,
+            supervisor,
         )
         self.assertIn(
             "Retired obsolete installs.",
-            generated_watchdog,
-        )
-        self.assertLess(
-            generated_watchdog.index("Stop-ObsoleteInstallProcesses"),
-            generated_watchdog.index(
-                "$mutexName = Get-WatchdogMutexName"
-            ),
+            supervisor,
         )
 
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):

@@ -140,7 +140,6 @@ class AgentControlPlaneClient {
         : trimmed;
   }
 
-  Uri _uri(String path) => Uri.parse('$_baseUrl$path');
   Uri _uriCall() => Uri.parse(_baseUrl);
 
   Uri _originUri(String path) {
@@ -1132,7 +1131,7 @@ class AgentControlPlaneClient {
             'batchId': batchId,
             'protocolVersion': protocolVersion,
             'syncEpoch': syncEpoch,
-            if (cursor != null && cursor!.isNotEmpty) 'cursor': cursor,
+            if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
           }, 'downloading merged multi-writer delta');
       checkCancelled?.call();
       if (decoded is! Map || decoded['snapshot'] is! Map) {

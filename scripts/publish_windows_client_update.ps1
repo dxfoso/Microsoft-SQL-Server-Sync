@@ -82,6 +82,7 @@ function Assert-ClientUpdateZipContents {
         $requiredEntries = @(
             "$PortableName/sync_windows_agent.exe",
             "$PortableName/update.ps1",
+            "$PortableName/sync_windows_agent_supervisor.ps1",
             "$PortableName/portable-manifest.txt"
         )
         foreach ($requiredEntry in $requiredEntries) {
