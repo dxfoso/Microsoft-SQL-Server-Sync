@@ -4545,7 +4545,10 @@ ORDER BY ct.SYS_CHANGE_VERSION;
         '__sync_modified_at_utc':
             includesCommitTime && parts[1].trim().isNotEmpty ? parts[1] : null,
         for (var i = 0; i < columns.length; i++)
-          columns[i].name: _decodeSourceBatchField(parts[i + columnOffset]),
+          columns[i].name: _decodeSourceBatchField(
+            parts[i + columnOffset],
+            column: columns[i],
+          ),
       });
     }
     return rows;
@@ -4591,6 +4594,12 @@ END
     final normalized = column.sqlType.trim().toLowerCase();
     if (normalized == 'binary' || normalized == 'varbinary') {
       return 'master.dbo.fn_varbintohexstr(CONVERT(varbinary(max), $columnName))';
+    }
+    if (column.usesHexTextTransport) {
+      // Keep text output ASCII-only across sqlcmd. Windows console/code-page
+      // conversion can otherwise replace Arabic and other Unicode characters
+      // before Dart receives the bytes.
+      return "N'\\U' + CONVERT(nvarchar(max), CONVERT(varchar(max), CONVERT(varbinary(max), CONVERT(nvarchar(max), $columnName)), 2))";
     }
     if (normalized == 'date') {
       return 'CONVERT(nvarchar(10), $columnName, 23)';
@@ -4638,13 +4647,19 @@ END
       }
       rows.add({
         for (var index = 0; index < columns.length; index++)
-          columns[index].name: _decodeSourceBatchField(parts[index]),
+          columns[index].name: _decodeSourceBatchField(
+            parts[index],
+            column: columns[index],
+          ),
       });
     }
     return rows;
   }
 
-  String? _decodeSourceBatchField(String raw) {
+  String? _decodeSourceBatchField(
+    String raw, {
+    required _SqlColumnDefinition column,
+  }) {
     if (raw == r'\N') {
       return null;
     }
@@ -4688,7 +4703,16 @@ END
       }
       buffer.write(char);
     }
-    return buffer.toString();
+    final decoded = buffer.toString();
+    if (!column.usesHexTextTransport) {
+      return decoded;
+    }
+    if (!decoded.startsWith(r'\U')) {
+      throw const FormatException(
+        'Unicode SQL text did not use the required UTF-16 hex transport.',
+      );
+    }
+    return decodeSqlServerUtf16Hex(decoded.substring(2));
   }
 
   Future<int> _applyDeltaRowsToTarget({
@@ -6036,8 +6060,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }) async {
     _lastSqlCmdLaunchError = null;
     final rawQuery = query.trim();
-    const maxInlineQueryLength = 24000;
-    final useInputFile = rawQuery.length > maxInlineQueryLength;
+    final useInputFile = shouldUseSqlCmdInputFile(
+      isWindows: Platform.isWindows,
+      query: rawQuery,
+    );
     final arguments = <String>[
       '-S',
       profile.server,

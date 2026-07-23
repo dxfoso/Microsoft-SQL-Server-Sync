@@ -264,6 +264,35 @@ WHERE Id = {id_};
         )
 
 
+def assert_unicode_hex_transport(database, id_, expected):
+    result = sqlcmd(
+        f"""
+SET NOCOUNT ON;
+SELECT N'\\U' + CONVERT(
+  nvarchar(max),
+  CONVERT(
+    varchar(max),
+    CONVERT(varbinary(max), CONVERT(nvarchar(max), ArabicText)),
+    2
+  )
+)
+FROM dbo.SyncItems
+WHERE Id = {id_};
+""",
+        database=database,
+    )
+    values = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(values) != 1 or not values[0].startswith("\\U"):
+        raise AssertionError(
+            f"Unicode transport marker mismatch in {database} for Id={id_}: {values}"
+        )
+    decoded = bytes.fromhex(values[0][2:]).decode("utf-16-le")
+    if decoded != expected:
+        raise AssertionError(
+            f"Unicode transport mismatch in {database} for Id={id_}: expected {expected!r}, got {decoded!r}"
+        )
+
+
 def expect_apply_failure(database, *, rows=None, deletes=None):
     try:
         apply(database, rows=rows, deletes=deletes)
@@ -350,6 +379,7 @@ def run_scenarios():
     for database in DATABASES:
         apply(database, rows=[typed_row])
         assert_text_value(database, 31, exact_unicode)
+        assert_unicode_hex_transport(database, 31, exact_unicode)
     assert_equal(*DATABASES)
 
     multi_writer_rows = coalesce([

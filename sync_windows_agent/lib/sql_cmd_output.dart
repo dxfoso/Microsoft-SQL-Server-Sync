@@ -16,6 +16,34 @@ String decodeSqlCmdOutputBytes(List<int> bytes) {
   return utf8.decode(data, allowMalformed: true);
 }
 
+bool shouldUseSqlCmdInputFile({
+  required bool isWindows,
+  required String query,
+  int maxInlineQueryLength = 24000,
+}) {
+  return isWindows || query.length > maxInlineQueryLength;
+}
+
+String decodeSqlServerUtf16Hex(String hex) {
+  if (hex.isEmpty) {
+    return '';
+  }
+  if (hex.length % 4 != 0 || !RegExp(r'^[0-9A-Fa-f]+$').hasMatch(hex)) {
+    throw const FormatException('Invalid SQL Server UTF-16 hex payload.');
+  }
+
+  final codeUnits = <int>[];
+  for (var offset = 0; offset < hex.length; offset += 4) {
+    final lowByte = int.parse(hex.substring(offset, offset + 2), radix: 16);
+    final highByte = int.parse(
+      hex.substring(offset + 2, offset + 4),
+      radix: 16,
+    );
+    codeUnits.add(lowByte | (highByte << 8));
+  }
+  return String.fromCharCodes(codeUnits);
+}
+
 bool _looksLikeUtf16Le(Uint8List bytes) {
   if (bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe) {
     return true;

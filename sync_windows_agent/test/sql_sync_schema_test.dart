@@ -64,4 +64,28 @@ void main() {
     expect(assessment.hasWritableColumns, isTrue);
     expect(assessment.writableColumns.single.isIdentity, isTrue);
   });
+
+  test('text and XML columns use code-page-independent hex transport', () {
+    SqlSyncColumnDefinition column(String sqlType) => SqlSyncColumnDefinition(
+      name: 'Value',
+      sqlType: sqlType,
+      maxLength: -1,
+      precision: 0,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+
+    for (final sqlType in [
+      'char',
+      'varchar',
+      'nchar',
+      'nvarchar',
+      'sysname',
+      'xml',
+    ]) {
+      expect(column(sqlType).usesHexTextTransport, isTrue);
+    }
+    expect(column('int').usesHexTextTransport, isFalse);
+  });
 }

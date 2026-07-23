@@ -22,6 +22,8 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn('"rejected-row-rollback-and-recovery"', runner)
         self.assertIn('"-f", "65001"', runner)
         self.assertIn('encode("utf-16-le")', runner)
+        self.assertIn("assert_unicode_hex_transport", runner)
+        self.assertIn('decode("utf-16-le")', runner)
         self.assertIn("0x53514C53594E43", runner)
 
     def test_production_backup_is_copy_only_and_ignored_by_git(self):

@@ -664,6 +664,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("'0',", agent_page)
         self.assertNotIn("'-h',", agent_page)
         self.assertIn("List<String> _dataOutputLines(String output)", agent_page)
+        self.assertIn("shouldUseSqlCmdInputFile(", agent_page)
+        self.assertIn("isWindows: Platform.isWindows,", agent_page)
+        self.assertIn("column.usesHexTextTransport", agent_page)
+        self.assertIn("decodeSqlServerUtf16Hex(decoded.substring(2))", agent_page)
+        self.assertIn("CONVERT(varbinary(max), CONVERT(nvarchar(max), $columnName))", agent_page)
         self.assertIn("bool _looksLikeHeaderLine(List<String> lines, int index)", agent_page)
         self.assertIn("bool _isHeaderSeparatorLine(String line)", agent_page)
         self.assertIn(

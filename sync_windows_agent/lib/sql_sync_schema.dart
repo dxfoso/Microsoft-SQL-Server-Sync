@@ -61,6 +61,11 @@ class SqlSyncColumnDefinition {
         normalized == 'sysname';
   }
 
+  bool get usesHexTextTransport {
+    final normalized = sqlType.trim().toLowerCase();
+    return isTextLike || normalized == 'xml';
+  }
+
   String get openJsonType {
     final normalized = sqlType.trim().toLowerCase();
     if (normalized == 'nvarchar' || normalized == 'nchar') {

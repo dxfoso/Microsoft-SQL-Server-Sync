@@ -28,4 +28,48 @@ void main() {
 
     expect(decodeSqlCmdOutputBytes(bytes), value);
   });
+
+  test('decodes SQL Server UTF-16 hex without a console code page', () {
+    const value = 'العربية 🌍 漢字';
+    final hex =
+        value.codeUnits
+            .expand(
+              (codeUnit) => [
+                (codeUnit & 0xff).toRadixString(16).padLeft(2, '0'),
+                (codeUnit >> 8).toRadixString(16).padLeft(2, '0'),
+              ],
+            )
+            .join();
+
+    expect(decodeSqlServerUtf16Hex(hex), value);
+  });
+
+  test('rejects malformed SQL Server UTF-16 hex', () {
+    expect(
+      () => decodeSqlServerUtf16Hex('062'),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => decodeSqlServerUtf16Hex('GGGG'),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('always uses an input file for Windows sqlcmd queries', () {
+    expect(
+      shouldUseSqlCmdInputFile(isWindows: true, query: 'SELECT Nالعربية'),
+      isTrue,
+    );
+    expect(
+      shouldUseSqlCmdInputFile(isWindows: false, query: 'SELECT 1'),
+      isFalse,
+    );
+    expect(
+      shouldUseSqlCmdInputFile(
+        isWindows: false,
+        query: List.filled(24001, 'x').join(),
+      ),
+      isTrue,
+    );
+  });
 }
