@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
+import 'automatic_change_discovery.dart';
 import 'client_version.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
@@ -118,6 +119,9 @@ class AgentDashboardPage extends StatefulWidget {
 class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const int _rowsPerPage = 25;
   static const Duration _syncPollInterval = Duration(seconds: 15);
+  static const Duration _automaticChangeDiscoveryInterval = Duration(
+    seconds: 30,
+  );
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
   static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);
   static const int _heartbeatTablePayloadLimit = 150;
@@ -132,6 +136,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Timer? _connectionCheckTimer;
   Timer? _syncPollTimer;
   Timer? _clientUpdateCheckTimer;
+  Timer? _automaticChangeDiscoveryTimer;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -153,7 +158,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _diagnosticsUploadBusy = false;
   String? _diagnosticsUploadRequestId;
   bool _rowCountsRefreshing = false;
-  bool _markChangedTablesBusy = false;
+  bool _automaticChangeDiscoveryBusy = false;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
@@ -211,6 +216,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       const Duration(minutes: 5),
       (_) => unawaited(_checkClientUpdate()),
     );
+    _automaticChangeDiscoveryTimer = Timer.periodic(
+      _automaticChangeDiscoveryInterval,
+      (_) => unawaited(_discoverAndEnableChangedTables()),
+    );
     if (widget.autoLoadOnStart) {
       logStartupEvent('AgentDashboardPage autoLoadOnStart scheduled');
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -237,6 +246,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _connectionCheckTimer?.cancel();
     _syncPollTimer?.cancel();
     _clientUpdateCheckTimer?.cancel();
+    _automaticChangeDiscoveryTimer?.cancel();
     _controlPlaneClient.dispose();
     _serverController.dispose();
     _userController.dispose();
@@ -987,7 +997,158 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     unawaited(_syncWithControlPlane());
-    unawaited(_queryChangeTrackingDiagnostics());
+    unawaited(
+      _queryChangeTrackingDiagnostics().whenComplete(
+        () => _discoverAndEnableChangedTables(),
+      ),
+    );
+  }
+
+  Future<void> _discoverAndEnableChangedTables() async {
+    final database = _selectedDatabase?.trim() ?? '';
+    if (!mounted ||
+        database.isEmpty ||
+        _isSystemDatabase(database) ||
+        _automaticChangeDiscoveryBusy) {
+      return;
+    }
+
+    final states = <String, SyncTableState>{};
+    for (final entry in _syncState.tables.entries) {
+      if (_syncKeyMatchesDatabase(entry.key, database)) {
+        states[_localTableName(entry.key)] = entry.value;
+      }
+    }
+    if (states.isEmpty) {
+      return;
+    }
+
+    _automaticChangeDiscoveryBusy = true;
+    try {
+      final query = buildAutomaticChangeDiscoveryQuery(
+        database: database,
+        tableBaselines: states.map(
+          (table, state) => MapEntry(
+            table,
+            state.changeTrackingOwner == widget.clientName
+                ? state.changeTrackingVersion
+                : null,
+          ),
+        ),
+      );
+      final result = await _runSqlCmd(
+        profile: _activeProfile(),
+        database: database,
+        query: query,
+        timeout: _snapshotSqlCmdTimeout,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (result == null || result.exitCode != 0) {
+        logStartupEvent(
+          result == null
+              ? 'Automatic changed-table discovery skipped: SQL command unavailable.'
+              : 'Automatic changed-table discovery failed: ${_sqlCmdFailed('change discovery', result)}',
+        );
+        return;
+      }
+
+      final probes = parseAutomaticChangeDiscoveryOutput(
+        _dataOutputLines(result.stdout.toString()).map(_splitRowValues),
+      );
+      if (probes.isEmpty) {
+        return;
+      }
+
+      final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
+      final changedTables = <String>[];
+      var stateChanged = false;
+      for (final probe in probes) {
+        final syncKey = _syncTableKey(probe.table, database: database);
+        final current = nextTables[syncKey] ?? _defaultSyncTableState(syncKey);
+        if (probe.canAdvanceBaseline && probe.currentVersion != null) {
+          nextTables[syncKey] = current.copyWith(
+            changeTrackingVersion: probe.currentVersion,
+            changeTrackingOwner: widget.clientName,
+            changeTrackingStatus: 'enabled',
+            changeTrackingMessage:
+                probe.status == 'baseline'
+                    ? 'Automatic Change Tracking baseline established.'
+                    : 'Automatic change scan is current.',
+          );
+          stateChanged = true;
+          continue;
+        }
+        if (probe.hasChanges) {
+          if (!current.enabled) {
+            changedTables.add(syncKey);
+          }
+          nextTables[syncKey] = current.copyWith(
+            enabled: true,
+            autoRequired: false,
+            status: 'Queued',
+            progress: 0,
+            changeTrackingStatus: 'enabled',
+            changeTrackingMessage:
+                'A local SQL change was detected automatically.',
+            message:
+                'Changed automatically; waiting for every online client baseline.',
+          );
+          stateChanged = true;
+          continue;
+        }
+        if (probe.baselineExpired) {
+          nextTables[syncKey] = current.copyWith(
+            changeTrackingVersion: null,
+            changeTrackingOwner: null,
+            changeTrackingStatus: 'expired',
+            changeTrackingMessage:
+                'Change Tracking retention expired. Automatic delta sync is blocked to prevent data loss.',
+            status: 'Blocked',
+            message:
+                'Change Tracking baseline expired; authoritative reconciliation is required.',
+          );
+          stateChanged = true;
+          continue;
+        }
+        if (current.changeTrackingStatus != probe.status) {
+          nextTables[syncKey] = current.copyWith(
+            changeTrackingStatus: probe.status,
+            changeTrackingMessage:
+                probe.status == 'no_primary_key'
+                    ? 'Automatic sync requires a primary key.'
+                    : probe.status == 'not_tracked'
+                    ? 'Change Tracking is not enabled for this table.'
+                    : 'Table is unavailable for automatic sync.',
+          );
+          stateChanged = true;
+        }
+      }
+
+      if (stateChanged) {
+        _replaceSyncState(
+          _syncState.copyWith(tables: _nextTablesWithAutoRequired(nextTables)),
+        );
+      }
+      for (final syncKey in changedTables) {
+        await _controlPlaneClient.updateTableSyncPolicy(
+          table: syncKey,
+          enabled: true,
+          cascadeRelated: false,
+        );
+        logStartupEvent(
+          'Automatically enabled $syncKey after detecting a local SQL change.',
+        );
+      }
+      if (changedTables.isNotEmpty) {
+        unawaited(_syncWithControlPlane());
+      }
+    } catch (error) {
+      logStartupEvent('Automatic changed-table discovery failed: $error');
+    } finally {
+      _automaticChangeDiscoveryBusy = false;
+    }
   }
 
   Future<void> _selectDatabase(String database) async {
@@ -3827,6 +3988,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final rowCount = rowCountResult.value;
+    if (job.sourceClientName == 'server-authoritative-reconcile' &&
+        job.rowCount != rowCount) {
+      throw StateError(
+        'Authoritative source safety check blocked ${job.table}: '
+        'the control plane expected ${job.rowCount} rows, but SQL Server '
+        'returned $rowCount. Refresh the table inventory and investigate the '
+        'reader before retrying; no target data was changed.',
+      );
+    }
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
     if (job.sourceClientName == 'server-bootstrap-v2' ||
         job.sourceClientName == 'server-authoritative-reconcile') {
@@ -7060,8 +7230,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     _SyncTableRowData? selectedRow,
   ) {
     final tableCount = syncRows.length;
-    final changedCount =
-        syncRows.where((row) => _hasSavedRowCountChange(row.state)).length;
     final selectedTable = selectedRow?.table;
     return Container(
       width: double.infinity,
@@ -7105,22 +7273,21 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           const SizedBox(width: 6),
           Tooltip(
             message:
-                'Enable only visible tables whose current row count differs from the saved counter',
+                'Scan SQL Server Change Tracking now; changed tables are selected automatically',
             child: TextButton.icon(
               onPressed:
-                  tableCount == 0 || _markChangedTablesBusy
+                  tableCount == 0 || _automaticChangeDiscoveryBusy
                       ? null
-                      : () =>
-                          unawaited(_markOnlyChangedCounterTables(syncRows)),
+                      : () => unawaited(_discoverAndEnableChangedTables()),
               icon:
-                  _markChangedTablesBusy
+                  _automaticChangeDiscoveryBusy
                       ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                      : const Icon(Icons.fact_check_outlined, size: 16),
-              label: Text('Mark changed ($changedCount)'),
+                      : const Icon(Icons.manage_search_rounded, size: 16),
+              label: const Text('Scan changes'),
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFF0F766E),
                 textStyle: const TextStyle(
@@ -7822,80 +7989,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       return const Color(0xFF15803D);
     }
     return const Color(0xFF2563EB);
-  }
-
-  bool _hasSavedRowCountChange(SyncTableState state) {
-    final savedRowCount = state.savedRowCount;
-    return savedRowCount != null && savedRowCount != state.rowCount;
-  }
-
-  Future<void> _markOnlyChangedCounterTables(
-    List<_SyncTableRowData> rows,
-  ) async {
-    if (_markChangedTablesBusy || rows.isEmpty) {
-      return;
-    }
-
-    setState(() {
-      _markChangedTablesBusy = true;
-    });
-
-    var changedCount = 0;
-    try {
-      for (final row in rows) {
-        final shouldEnable = _hasSavedRowCountChange(row.state);
-        if (!shouldEnable) {
-          continue;
-        }
-        changedCount += 1;
-        await _controlPlaneClient.updateTableSyncPolicy(
-          table: row.syncKey,
-          enabled: true,
-          cascadeRelated: false,
-        );
-      }
-
-      if (!mounted) {
-        return;
-      }
-
-      final nextTables = Map<String, SyncTableState>.from(_syncState.tables);
-      for (final row in rows) {
-        final shouldEnable = _hasSavedRowCountChange(row.state);
-        if (!shouldEnable) {
-          continue;
-        }
-        nextTables[row.syncKey] = row.state.copyWith(
-          enabled: true,
-          autoRequired: false,
-          status: 'Queued',
-          progress: 0,
-          message: 'Row counter changed. Waiting for snapshot sync.',
-        );
-      }
-      _replaceSyncState(_syncState.copyWith(tables: nextTables));
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Added $changedCount changed table${changedCount == 1 ? '' : 's'} to the current sync selection.',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
-    } finally {
-      if (mounted) {
-        setState(() {
-          _markChangedTablesBusy = false;
-        });
-      }
-    }
   }
 
   Widget _buildSyncEnabledToolbarControl(_SyncTableRowData row) {

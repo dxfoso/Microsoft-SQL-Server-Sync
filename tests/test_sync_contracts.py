@@ -66,7 +66,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_isSystemDatabase", agent_page)
         self.assertIn("System databases are not modified automatically.", agent_page)
         self.assertIn("_buildChangeTrackingBadge", agent_page)
-        self.assertIn("unawaited(_queryChangeTrackingDiagnostics());", agent_page)
+        self.assertIn("_queryChangeTrackingDiagnostics().whenComplete(", agent_page)
+        self.assertIn("_discoverAndEnableChangedTables()", agent_page)
         self.assertIn("changeTrackingStatus", read_text("sync_windows_agent/lib/sync_state.dart"))
 
     def test_change_tracking_delta_query_avoids_reserved_current_alias(self):
@@ -520,6 +521,8 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("SqlSyncFingerprintAccumulator()", snapshot_body)
         self.assertIn("sourceFingerprint.checksum != snapshotChecksum", snapshot_body)
+        self.assertIn("job.rowCount != rowCount", snapshot_body)
+        self.assertIn("no target data was changed", snapshot_body)
         self.assertIn(
             "await _ensureChangeTrackingEnabledForDatabase(", snapshot_body
         )
@@ -1314,8 +1317,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("queuedTableCount >= periodic_sync_scheduler_table_limit()", control_plane)
         self.assertIn("agent_sync_enabled(agent)", scheduler_body)
         self.assertIn("effective_agent_online(agent)", scheduler_body)
+        self.assertIn("scheduler_table_change_tracking_ready(", scheduler_body)
         self.assertIn("function json_payload_changed", control_plane)
         self.assertIn("if (tablesChanged || relationshipsChanged)", heartbeat_body)
+        self.assertEqual(heartbeat_body.count("syncEnabled: true,"), 2)
         self.assertIn("_scheduleSelectedTableFingerprintRefresh();", agent_page)
         self.assertNotIn("await _refreshSelectedTableFingerprints();", agent_page)
         self.assertNotIn("_prepareAutomaticSyncQueueIfDue", agent_page)

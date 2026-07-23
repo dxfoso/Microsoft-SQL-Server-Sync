@@ -896,6 +896,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("function multi_writer_batch_stale(", 1)[0]
 
         self.assertIn("'server-authoritative-reconcile'", reconcile_rows)
+        self.assertIn("expectedSourceRowCount", reconcile_rows)
+        self.assertIn("sourceTableState.rowCount", reconcile_rows)
         self.assertEqual(reconcile_rows.count("direction: 'upload'"), 1)
         self.assertEqual(reconcile_rows.count("direction: 'download'"), 1)
         self.assertIn("expectedClients: [sourceClientName]", reconcile_batch)

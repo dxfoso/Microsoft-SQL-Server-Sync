@@ -445,6 +445,9 @@ function lightweight_agent_heartbeat_state_changed(agent: map<json>, machineName
   if (agent.isOnline != true) {
     return true;
   }
+  if (agent.syncEnabled == false) {
+    return true;
+  }
   if (int.from(agent.historyLimit ?? 0) != historyLimit) {
     return true;
   }
@@ -912,6 +915,10 @@ function apply_table_sync_policies_with_policies(ownerUserId: string? = null, ta
       progress: tableState.progress,
       rowCount: tableState.rowCount,
       tableChecksum: tableState.tableChecksum,
+      changeTrackingVersion: tableState.changeTrackingVersion,
+      changeTrackingOwner: tableState.changeTrackingOwner,
+      changeTrackingStatus: tableState.changeTrackingStatus,
+      changeTrackingMessage: tableState.changeTrackingMessage,
       message: tableState.message,
       history: tableState.history
     };
@@ -958,6 +965,10 @@ function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: st
       progress: int.from(tableState.progress ?? 0),
       rowCount: int.from(tableState.rowCount ?? 0),
       tableChecksum: string.from(tableState.tableChecksum ?? ''),
+      changeTrackingVersion: tableState.changeTrackingVersion,
+      changeTrackingOwner: tableState.changeTrackingOwner,
+      changeTrackingStatus: string.from(tableState.changeTrackingStatus ?? ''),
+      changeTrackingMessage: string.from(tableState.changeTrackingMessage ?? ''),
       message: string.from(tableState.message ?? ''),
       history: []
     };
@@ -2144,6 +2155,10 @@ function normalize_agent_table_payload_state(agent: map<json>, tableState: map<j
       progress: activeJob.progress,
       rowCount: activeJob.rowCount,
       tableChecksum: tableState.tableChecksum,
+      changeTrackingVersion: tableState.changeTrackingVersion,
+      changeTrackingOwner: tableState.changeTrackingOwner,
+      changeTrackingStatus: tableState.changeTrackingStatus,
+      changeTrackingMessage: tableState.changeTrackingMessage,
       message: activeJob.message,
       history: tableState.history
     };
@@ -2161,6 +2176,10 @@ function normalize_agent_table_payload_state(agent: map<json>, tableState: map<j
       progress: 100,
       rowCount: tableState.rowCount,
       tableChecksum: tableState.tableChecksum,
+      changeTrackingVersion: tableState.changeTrackingVersion,
+      changeTrackingOwner: tableState.changeTrackingOwner,
+      changeTrackingStatus: tableState.changeTrackingStatus,
+      changeTrackingMessage: tableState.changeTrackingMessage,
       message: 'Up to date.',
       history: tableState.history
     };
@@ -2237,6 +2256,27 @@ function scheduler_agent_table_state_cache_for_agent(clientName: string, caches:
     }
   }
   return null;
+}
+
+function scheduler_table_change_tracking_ready(agent: map<json>, table: string, tableCache: map<json>? = null): bool {
+  let states = scheduler_agent_table_states(agent);
+  if (tableCache != null && tableCache.tables != null) {
+    states = tableCache.tables;
+  }
+  const state = scheduler_agent_table_state(states, table);
+  if (state == null || state.changeTrackingVersion == null || state.changeTrackingOwner == null) {
+    return false;
+  }
+  const version = int.from(state.changeTrackingVersion);
+  const owner = string.from(state.changeTrackingOwner).trim();
+  const trackingStatus = string.from(state.changeTrackingStatus ?? '').trim().toLowerCase();
+  return version >= 0
+    && owner == string.from(agent.clientName)
+    && trackingStatus != 'expired'
+    && trackingStatus != 'failed'
+    && trackingStatus != 'missing'
+    && trackingStatus != 'no_primary_key'
+    && trackingStatus != 'not_tracked';
 }
 
 function enabled_sync_policy_tables_for_agent(agent: map<json>, policies: array<json>? = null): array<string> {
@@ -2419,6 +2459,11 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         )
       );
       if (string_array_contains(enabledTables, table) &&
+          scheduler_table_change_tracking_ready(
+            agent,
+            table,
+            scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches)
+          ) &&
           !string_array_contains(
             active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches) ?? [],
             table
@@ -2942,6 +2987,14 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
 
 function authoritative_reconcile_job_rows(batchId: string, table: string, sourceAgent: map<json>, targetAgents: array<json>, ownerUserId: string, protocol: map<json>): array<json> {
   const createdAt = now_iso();
+  const sourceTableState = scheduler_agent_table_state(
+    scheduler_agent_table_states(sourceAgent),
+    table
+  );
+  let expectedSourceRowCount = 0;
+  if (sourceTableState != null && sourceTableState.rowCount != null) {
+    expectedSourceRowCount = int.from(sourceTableState.rowCount);
+  }
   let rows = [{
     id: uuid.v4(),
     clientName: string.from(sourceAgent.clientName),
@@ -2956,7 +3009,7 @@ function authoritative_reconcile_job_rows(batchId: string, table: string, source
     publisherPassword: sync_job_text(sourceAgent.replicationPassword),
     status: 'queued',
     progress: 0,
-    rowCount: 0,
+    rowCount: expectedSourceRowCount,
     snapshotBytes: 0,
     snapshotCreatedAt: null,
     snapshotId: null,
@@ -3291,6 +3344,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       replicationUseWindowsAuth,
       replicationUser,
       replicationPassword,
+      syncEnabled: true,
       isOnline: true,
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
@@ -3311,6 +3365,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       replicationUseWindowsAuth,
       replicationUser,
       replicationPassword,
+      syncEnabled: true,
       isOnline: true,
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: clamp_auto_sync_interval(agent.autoSyncIntervalMinutes),
