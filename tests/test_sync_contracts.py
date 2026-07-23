@@ -1028,6 +1028,14 @@ class SyncContractsTests(unittest.TestCase):
             generated_watchdog,
         )
         self.assertIn(
+            "$watchdogScriptPath = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)",
+            generated_watchdog,
+        )
+        self.assertIn(
+            "$currentWatchdog = $watchdogScriptPath",
+            generated_watchdog,
+        )
+        self.assertIn(
             "sync_windows_agent_watchdog.ps1",
             generated_watchdog,
         )

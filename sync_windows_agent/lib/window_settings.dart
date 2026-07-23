@@ -225,6 +225,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$watchdogScriptPath = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)
 $targetInstallDir = [System.IO.Path]::GetFullPath($scriptDir)
 $executablePath = Join-Path -Path $targetInstallDir -ChildPath 'sync_windows_agent.exe'
 $updateScriptPath = Join-Path -Path $targetInstallDir -ChildPath 'update.ps1'
@@ -319,7 +320,7 @@ function Invoke-AutoUpdate {
 
 function Stop-ObsoleteInstallProcesses {
     $currentExecutable = [System.IO.Path]::GetFullPath($executablePath)
-    $currentWatchdog = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)
+    $currentWatchdog = $watchdogScriptPath
     $stoppedWatchdogs = 0
     $stoppedAgents = 0
 
