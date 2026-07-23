@@ -940,6 +940,60 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Verified installed client payload for version $Version.", update_script)
         self.assertIn("Start-Sleep -Milliseconds 500", update_script)
 
+    def test_update_script_stops_watchdog_before_replacing_client_files(self):
+        update_script = read_text("update.ps1")
+        helper_install = update_script.split(
+            'Write-UpdateLog -Message "Finalize update helper started.',
+            1,
+        )[1].split(
+            "Get-ChildItem -LiteralPath $PayloadDir -Force |",
+            1,
+        )[0]
+        self.assertLess(
+            helper_install.index(
+                "Stop-WatchdogProcesses -TargetInstallDir $InstallDir"
+            ),
+            helper_install.index(
+                "Stop-AgentProcesses -TargetInstallDir $InstallDir"
+            ),
+        )
+        differential_install = update_script.split(
+            "Stopping the watchdog before scheduling differential replacement.",
+            1,
+        )[1].split("Start-DeferredInstall", 1)[0]
+        self.assertLess(
+            differential_install.index(
+                "Stop-WatchdogProcesses -TargetInstallDir $InstallDir"
+            ),
+            differential_install.index(
+                "Stop-AgentProcesses -TargetInstallDir $InstallDir"
+            ),
+        )
+        package_install = update_script.split(
+            "Stopping the watchdog before scheduling package replacement.",
+            1,
+        )[1].split("Start-DeferredInstall", 1)[0]
+        self.assertLess(
+            package_install.index(
+                "Stop-WatchdogProcesses -TargetInstallDir $InstallDir"
+            ),
+            package_install.index(
+                "Stop-AgentProcesses -TargetInstallDir $InstallDir"
+            ),
+        )
+        watchdog_update = update_script.split(
+            "function Invoke-AutoUpdate {",
+            1,
+        )[1].split("`$mutexName =", 1)[0]
+        self.assertNotIn(
+            "-File `$UpdateScriptPath -InstallDir `$InstallDir -NoStart",
+            watchdog_update,
+        )
+        self.assertIn(
+            "-File `$UpdateScriptPath -InstallDir `$InstallDir",
+            watchdog_update,
+        )
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")

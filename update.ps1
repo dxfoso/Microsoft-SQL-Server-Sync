@@ -359,8 +359,13 @@ function Invoke-AutoUpdate {
 
     try {
         Write-WatchdogLog 'No client process detected; checking the live update manifest.'
+        # Let the updater own the relaunch. The updater stops this watchdog
+        # immediately before replacing files, then starts the updated client
+        # and a fresh watchdog after payload verification. Using -NoStart here
+        # lets this loop race the deferred installer and recreate the old,
+        # file-locking client before replacement completes.
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden `
-            -File `$UpdateScriptPath -InstallDir `$InstallDir -NoStart
+            -File `$UpdateScriptPath -InstallDir `$InstallDir
         if (`$LASTEXITCODE -ne 0) {
             Write-WatchdogLog "Independent updater exited with code `$LASTEXITCODE."
         }
@@ -998,6 +1003,8 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
     Start-Sleep -Milliseconds 250
 }
 
+Write-UpdateLog -Message "Stopping the watchdog before replacing client files." -LogPath $logPath
+Stop-WatchdogProcesses -TargetInstallDir $InstallDir
 Write-UpdateLog -Message "Ensuring the prior client instance from this install is stopped before install." -LogPath $logPath
 Stop-AgentProcesses -TargetInstallDir $InstallDir
 Start-Sleep -Milliseconds 500
@@ -1191,6 +1198,8 @@ try {
                 return
             }
 
+            Write-UpdateLog -Message 'Stopping the watchdog before scheduling differential replacement.' -LogPath $mainLogPath
+            Stop-WatchdogProcesses -TargetInstallDir $InstallDir
             Stop-AgentProcesses -TargetInstallDir $InstallDir
             Write-UpdateLog -Message "Scheduling differential install. files=$downloadCount bytes=$downloadBytes deletes=$($staleManagedPaths.Count)" -LogPath $mainLogPath
             Start-DeferredInstall `
@@ -1227,6 +1236,8 @@ try {
         throw "Downloaded package does not contain sync_windows_agent.exe at the expected path: $payloadExe"
     }
 
+    Write-UpdateLog -Message 'Stopping the watchdog before scheduling package replacement.' -LogPath $mainLogPath
+    Stop-WatchdogProcesses -TargetInstallDir $InstallDir
     Stop-AgentProcesses -TargetInstallDir $InstallDir
     Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath
     Start-DeferredInstall `
