@@ -3850,7 +3850,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         previousVersion >= tracking.minValidVersion;
     final rows = <Map<String, String?>>[];
     var isDelta = false;
-    if (canUseDelta) {
+    if (canUseDelta &&
+        job.sourceClientName != 'server-authoritative-reconcile') {
       final deltaRows = await _fetchChangeTrackingRows(
         profile: sourceProfile,
         database: database,

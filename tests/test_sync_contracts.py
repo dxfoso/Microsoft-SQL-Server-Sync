@@ -523,6 +523,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn(
             "await _ensureChangeTrackingEnabledForDatabase(", snapshot_body
         )
+        self.assertIn(
+            "canUseDelta &&\n"
+            "        job.sourceClientName != 'server-authoritative-reconcile'",
+            snapshot_body,
+        )
         self.assertIn("deleteMissing: true", apply_body)
         self.assertIn("if (!replaceTarget && upsertRows.isNotEmpty)", apply_body)
         self.assertIn("targetFingerprint.checksum != snapshot.checksum", apply_body)
