@@ -515,12 +515,39 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("server-authoritative-reconcile", download_body)
         self.assertIn("replaceTarget: authoritativeReconcile", download_body)
         self.assertIn("authoritativeAppliedVersion = tracking.currentVersion", download_body)
+        self.assertIn(
+            "await _ensureChangeTrackingEnabledForDatabase(", download_body
+        )
         self.assertIn("SqlSyncFingerprintAccumulator()", snapshot_body)
         self.assertIn("sourceFingerprint.checksum != snapshotChecksum", snapshot_body)
+        self.assertIn(
+            "await _ensureChangeTrackingEnabledForDatabase(", snapshot_body
+        )
         self.assertIn("deleteMissing: true", apply_body)
         self.assertIn("if (!replaceTarget && upsertRows.isNotEmpty)", apply_body)
         self.assertIn("targetFingerprint.checksum != snapshot.checksum", apply_body)
         self.assertIn("'snapshotChecksum': snapshotChecksum.trim()", client_api)
+
+    def test_change_tracking_baselines_accept_enabled_initial_version_zero(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        query_body = agent_page.split(
+            "Future<_ChangeTrackingState?> _queryChangeTrackingState(", 1
+        )[1].split(
+            "Future<List<Map<String, String?>>> _fetchChangeTrackingRows(", 1
+        )[0]
+        upload_body = agent_page.split(
+            "Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {", 1
+        )[1].split(
+            "Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {", 1
+        )[0]
+
+        self.assertIn("FROM sys.change_tracking_databases", query_body)
+        self.assertIn("FROM sys.change_tracking_tables", query_body)
+        self.assertIn("values[0] != '1' || values[1] != '1'", query_body)
+        self.assertIn("current < 0 || minimum < 0", query_body)
+        self.assertNotIn("current <= 0", query_body)
+        self.assertIn("changeTrackingVersion: uploadedVersion", upload_body)
+        self.assertIn("changeTrackingOwner: widget.clientName", upload_body)
 
     def test_snapshot_upload_job_advances_through_start_progress_and_chunk_upload_only(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

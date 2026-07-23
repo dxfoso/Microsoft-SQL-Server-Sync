@@ -3504,6 +3504,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       overrideMessage:
           'Uploaded ${snapshot.rowCount} ${snapshot.isDelta ? 'changed' : 'bootstrap'} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
     );
+    final uploadedVersion = snapshot.changeTrackingVersion;
+    if (uploadedVersion != null && uploadedVersion >= 0) {
+      final current =
+          _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
+      _updateSyncTableState(
+        job.table,
+        current.copyWith(
+          changeTrackingVersion: uploadedVersion,
+          changeTrackingOwner: widget.clientName,
+        ),
+      );
+      unawaited(_syncWithControlPlane());
+    }
   }
 
   Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {
@@ -3524,6 +3537,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final applyStats = _DeltaApplyStats();
     final authoritativeReconcile =
         job.sourceClientName == 'server-authoritative-reconcile';
+    if (authoritativeReconcile) {
+      final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
+      final targetTable = _splitQualifiedName(_localTableName(job.table));
+      await _ensureChangeTrackingEnabledForDatabase(
+        database: targetDatabase,
+        tables: ['${targetTable.schema}.${targetTable.table}'],
+      );
+    }
     final pendingRejectedChanges = await _rejectionOutbox.loadTable(
       widget.clientName,
       job.table,
@@ -3807,6 +3828,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     final rowCount = rowCountResult.value;
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
+    if (job.sourceClientName == 'server-bootstrap-v2' ||
+        job.sourceClientName == 'server-authoritative-reconcile') {
+      await _ensureChangeTrackingEnabledForDatabase(
+        database: database,
+        tables: ['${tableParts.schema}.${tableParts.table}'],
+      );
+    }
     final tracking = await _queryChangeTrackingState(
       profile: sourceProfile,
       database: database,
@@ -4542,6 +4570,16 @@ ORDER BY [__sync_agent_row_number];
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
+  CASE WHEN EXISTS (
+    SELECT 1
+    FROM sys.change_tracking_databases
+    WHERE database_id = DB_ID()
+  ) THEN N'1' ELSE N'0' END,
+  CASE WHEN EXISTS (
+    SELECT 1
+    FROM sys.change_tracking_tables
+    WHERE object_id = OBJECT_ID(N'$objectName')
+  ) THEN N'1' ELSE N'0' END,
   COALESCE(CAST(CHANGE_TRACKING_CURRENT_VERSION() AS nvarchar(40)), N'0'),
   COALESCE(CAST(CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'$objectName')) AS nvarchar(40)), N'0');
 ''';
@@ -4556,10 +4594,12 @@ SELECT
     final line = lines.isEmpty ? null : lines.first;
     if (line == null) return null;
     final values = _splitRowValues(line);
-    if (values.length < 2) return null;
-    final current = int.tryParse(values[0]);
-    final minimum = int.tryParse(values[1]);
-    if (current == null || minimum == null || current <= 0) {
+    if (values.length < 4 || values[0] != '1' || values[1] != '1') {
+      return null;
+    }
+    final current = int.tryParse(values[2]);
+    final minimum = int.tryParse(values[3]);
+    if (current == null || minimum == null || current < 0 || minimum < 0) {
       return null;
     }
     return _ChangeTrackingState(
