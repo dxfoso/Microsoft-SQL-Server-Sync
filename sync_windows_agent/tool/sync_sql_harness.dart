@@ -15,6 +15,15 @@ void main(List<String> arguments) {
       jsonDecode(File(arguments.single).readAsStringSync())
           as Map<String, dynamic>;
   final operation = request['operation']?.toString() ?? '';
+  if (operation == 'transport-expression') {
+    stdout.write(
+      buildSqlSyncTransportValueExpression(
+        column: _column(Map<String, dynamic>.from(request['column'] as Map)),
+        columnReference: request['columnReference'].toString(),
+      ),
+    );
+    return;
+  }
   if (operation == 'coalesce') {
     final rows = (request['rows'] as List)
         .map((row) => Map<String, dynamic>.from(row as Map))

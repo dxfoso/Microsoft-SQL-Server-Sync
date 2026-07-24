@@ -5122,35 +5122,10 @@ END
     String? columnReference,
   }) {
     final columnName = columnReference ?? _quoteIdentifier(column.name);
-    final normalized = column.sqlType.trim().toLowerCase();
-    if (normalized == 'binary' || normalized == 'varbinary') {
-      return 'master.dbo.fn_varbintohexstr(CONVERT(varbinary(max), $columnName))';
-    }
-    if (column.usesHexTextTransport) {
-      // Keep text output ASCII-only across sqlcmd. Windows console/code-page
-      // conversion can otherwise replace Arabic and other Unicode characters
-      // before Dart receives the bytes.
-      return "N'\\U' + CONVERT(nvarchar(max), CONVERT(varchar(max), CONVERT(varbinary(max), CONVERT(nvarchar(max), $columnName)), 2))";
-    }
-    if (normalized == 'date') {
-      return 'CONVERT(nvarchar(10), $columnName, 23)';
-    }
-    if (normalized == 'datetimeoffset') {
-      return 'CONVERT(nvarchar(48), $columnName, 127)';
-    }
-    if (normalized == 'datetime' ||
-        normalized == 'smalldatetime' ||
-        normalized == 'datetime2' ||
-        normalized == 'time') {
-      return 'CONVERT(nvarchar(33), $columnName, 126)';
-    }
-    if (normalized == 'money' || normalized == 'smallmoney') {
-      return 'CONVERT(nvarchar(100), $columnName, 2)';
-    }
-    if (normalized == 'uniqueidentifier') {
-      return 'CONVERT(nvarchar(36), $columnName)';
-    }
-    return 'CONVERT(nvarchar(max), $columnName)';
+    return buildSqlSyncTransportValueExpression(
+      column: column,
+      columnReference: columnName,
+    );
   }
 
   List<Map<String, dynamic>> _parseSourceBatchRows(

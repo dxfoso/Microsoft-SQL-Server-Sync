@@ -736,6 +736,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_sqlcmd_calls_are_bounded_by_timeout(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        sync_schema = read_text("sync_windows_agent/lib/sql_sync_schema.dart")
 
         self.assertIn("const Duration _defaultSqlCmdTimeout = Duration(minutes: 2);", agent_page)
         self.assertIn("const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);", agent_page)
@@ -750,7 +751,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("isWindows: Platform.isWindows,", agent_page)
         self.assertIn("column.usesHexTextTransport", agent_page)
         self.assertIn("decodeSqlServerUtf16Hex(decoded.substring(2))", agent_page)
-        self.assertIn("CONVERT(varbinary(max), CONVERT(nvarchar(max), $columnName))", agent_page)
+        self.assertIn("buildSqlSyncTransportValueExpression(", agent_page)
+        self.assertIn(
+            "CONVERT(varbinary(max), CONVERT(nvarchar(max), $columnReference))",
+            sync_schema,
+        )
+        self.assertIn(
+            "return 'CONVERT(nvarchar(100), $columnReference, 3)';",
+            sync_schema,
+        )
+        self.assertIn("normalized == 'float' || normalized == 'real'", sync_schema)
+        self.assertNotIn(
+            "return 'CONVERT(nvarchar(max), $columnReference)';\n  }\n  if (normalized == 'money'",
+            sync_schema,
+        )
         self.assertIn("bool _looksLikeHeaderLine(List<String> lines, int index)", agent_page)
         self.assertIn("bool _isHeaderSeparatorLine(String line)", agent_page)
         self.assertIn(

@@ -88,4 +88,60 @@ void main() {
     }
     expect(column('int').usesHexTextTransport, isFalse);
   });
+
+  test('float and real transport uses lossless style 3 conversion', () {
+    SqlSyncColumnDefinition column(String sqlType) => SqlSyncColumnDefinition(
+      name: 'Qty',
+      sqlType: sqlType,
+      maxLength: 8,
+      precision: sqlType == 'real' ? 24 : 53,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+
+    for (final sqlType in ['float', 'real']) {
+      expect(
+        buildSqlSyncTransportValueExpression(
+          column: column(sqlType),
+          columnReference: '[Qty]',
+        ),
+        'CONVERT(nvarchar(100), [Qty], 3)',
+      );
+    }
+  });
+
+  test('exact SQL types retain their type-specific transport formats', () {
+    SqlSyncColumnDefinition column(String sqlType) => SqlSyncColumnDefinition(
+      name: 'Value',
+      sqlType: sqlType,
+      maxLength: 16,
+      precision: 18,
+      scale: 4,
+      isIdentity: false,
+      isComputed: false,
+    );
+
+    expect(
+      buildSqlSyncTransportValueExpression(
+        column: column('decimal'),
+        columnReference: '[Value]',
+      ),
+      'CONVERT(nvarchar(max), [Value])',
+    );
+    expect(
+      buildSqlSyncTransportValueExpression(
+        column: column('money'),
+        columnReference: '[Value]',
+      ),
+      'CONVERT(nvarchar(100), [Value], 2)',
+    );
+    expect(
+      buildSqlSyncTransportValueExpression(
+        column: column('datetime2'),
+        columnReference: '[Value]',
+      ),
+      'CONVERT(nvarchar(33), [Value], 126)',
+    );
+  });
 }

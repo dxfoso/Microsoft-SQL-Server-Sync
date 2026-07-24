@@ -22,6 +22,8 @@ COLUMNS = [
     {"name": "ArabicText", "sqlType": "nvarchar", "maxLength": 400, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
     {"name": "Quantity", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
     {"name": "Amount", "sqlType": "decimal", "maxLength": 9, "precision": 18, "scale": 2, "isIdentity": False, "isComputed": False},
+    {"name": "FloatValue", "sqlType": "float", "maxLength": 8, "precision": 53, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "RealValue", "sqlType": "real", "maxLength": 4, "precision": 24, "scale": 0, "isIdentity": False, "isComputed": False},
     {"name": "ChangedAt", "sqlType": "datetime2", "maxLength": 8, "precision": 0, "scale": 3, "isIdentity": False, "isComputed": False},
     {"name": "Payload", "sqlType": "varbinary", "maxLength": 32, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
 ]
@@ -102,15 +104,17 @@ CREATE TABLE dbo.SyncItems (
   ArabicText nvarchar(200) NULL,
   Quantity int NULL,
   Amount decimal(18,2) NULL,
+  FloatValue float NULL,
+  RealValue real NULL,
   ChangedAt datetime2(3) NULL,
   Payload varbinary(32) NULL
 );
 ALTER TABLE dbo.SyncItems ENABLE CHANGE_TRACKING
   WITH (TRACK_COLUMNS_UPDATED = ON);
 INSERT dbo.SyncItems
-  (Id, Code, Name, ArabicText, Quantity, Amount, ChangedAt, Payload)
+  (Id, Code, Name, ArabicText, Quantity, Amount, FloatValue, RealValue, ChangedAt, Payload)
 VALUES
-  (1, N'BASE-1', N'Baseline', N'بداية', 1, 10.50, '2026-01-01T00:00:00.000', 0x0102);
+  (1, N'BASE-1', N'Baseline', N'بداية', 1, 10.50, NULL, NULL, '2026-01-01T00:00:00.000', 0x0102);
 """,
             database=database,
         )
@@ -198,11 +202,51 @@ def coalesce(rows):
         request_path.unlink(missing_ok=True)
 
 
+def transport_expression(column):
+    request = {
+        "operation": "transport-expression",
+        "column": column,
+        "columnReference": f"[{column['name']}]",
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
+        json.dump(request, handle, ensure_ascii=False)
+        request_path = Path(handle.name)
+    try:
+        result = run(
+            [DART, "run", "tool/sync_sql_harness.dart", str(request_path)],
+            cwd=AGENT_DIR,
+        )
+        return result.stdout.strip()
+    finally:
+        request_path.unlink(missing_ok=True)
+
+
+def capture_float_transport_values(database, id_):
+    float_column = next(column for column in COLUMNS if column["name"] == "FloatValue")
+    real_column = next(column for column in COLUMNS if column["name"] == "RealValue")
+    float_expression = transport_expression(float_column)
+    real_expression = transport_expression(real_column)
+    result = sqlcmd(
+        f"""
+SET NOCOUNT ON;
+SELECT CONCAT({float_expression}, N'|', {real_expression})
+FROM dbo.SyncItems
+WHERE Id = {id_};
+""",
+        database=database,
+    )
+    values = [line.strip().split("|") for line in result.stdout.splitlines() if "|" in line]
+    if len(values) != 1 or len(values[0]) != 2:
+        raise AssertionError(f"Unexpected floating-point capture output: {values}")
+    return values[0]
+
+
 def row(id_, code, name, *, arabic="مرحبا بالعالم", quantity=1, amount="1.25",
-        changed_at="2026-07-16T10:00:00.000", payload="0x010203"):
+        float_value=None, real_value=None, changed_at="2026-07-16T10:00:00.000", payload="0x010203"):
     return {
         "Id": id_, "Code": code, "Name": name, "ArabicText": arabic,
-        "Quantity": quantity, "Amount": amount, "ChangedAt": changed_at,
+        "Quantity": quantity, "Amount": amount, "FloatValue": float_value,
+        "RealValue": real_value, "ChangedAt": changed_at,
         "Payload": payload,
     }
 
@@ -215,6 +259,8 @@ SELECT CONCAT(
   Id, N'|', Code, N'|', COALESCE(Name, N'<NULL>'), N'|',
   COALESCE(ArabicText, N'<NULL>'), N'|', COALESCE(CONVERT(nvarchar(20), Quantity), N'<NULL>'),
   N'|', COALESCE(CONVERT(nvarchar(30), Amount), N'<NULL>'), N'|',
+  COALESCE(CONVERT(nvarchar(100), FloatValue, 3), N'<NULL>'), N'|',
+  COALESCE(CONVERT(nvarchar(100), RealValue, 3), N'<NULL>'), N'|',
   COALESCE(CONVERT(nvarchar(33), ChangedAt, 126), N'<NULL>'), N'|',
   COALESCE(CONVERT(varchar(66), Payload, 1), '<NULL>')
 )
@@ -294,6 +340,25 @@ WHERE Id = {id_};
     if decoded != expected:
         raise AssertionError(
             f"Unicode transport mismatch in {database} for Id={id_}: expected {expected!r}, got {decoded!r}"
+        )
+
+
+def assert_float_values(database, id_, expected):
+    result = sqlcmd(
+        f"""
+SET NOCOUNT ON;
+SELECT COUNT(*)
+FROM dbo.SyncItems
+WHERE Id = {id_}
+  AND FloatValue = CAST({expected} AS float)
+  AND RealValue = CAST({expected} AS real);
+""",
+        database=database,
+    )
+    values = [line.strip() for line in result.stdout.splitlines() if line.strip().isdigit()]
+    if values != ["1"]:
+        raise AssertionError(
+            f"Floating-point value mismatch in {database} for Id={id_}: {values}"
         )
 
 
@@ -384,6 +449,56 @@ def run_scenarios():
         apply(database, rows=[typed_row])
         assert_text_value(database, 31, exact_unicode)
         assert_unicode_hex_transport(database, 31, exact_unicode)
+    assert_equal(*DATABASES)
+
+    # Exercise the production SQL capture expression against a real float/real
+    # boundary. Default SQL conversion rounds 9999999 to 1e+007; style 3 must
+    # retain the original value through capture, JSON transport, and target apply.
+    sqlcmd(
+        """
+INSERT dbo.SyncItems
+  (Id, Code, Name, ArabicText, Quantity, Amount, FloatValue, RealValue, ChangedAt, Payload)
+VALUES
+  (36, N'FLOAT-ROUNDTRIP', N'Lossless float capture', N'دقة الأرقام',
+   1, 1.25, CAST(9999999 AS float), CAST(9999999 AS real),
+   '2026-07-16T23:59:59.987', 0x999999),
+  (37, N'FLOAT-NEGATIVE', N'Lossless negative float', N'دقة سالبة',
+   1, 1.25, CAST(-9999999 AS float), CAST(-9999999 AS real),
+   '2026-07-16T23:59:59.987', 0x999998),
+  (38, N'FLOAT-FRACTION', N'Lossless fractional float', N'دقة عشرية',
+   1, 1.25, CAST(0.84551240822557006 AS float), CAST(0.84551240822557006 AS real),
+   '2026-07-16T23:59:59.987', 0x999997);
+""",
+        database=DATABASES[0],
+    )
+    float_cases = [
+        (36, "FLOAT-ROUNDTRIP", "Lossless float capture", "دقة الأرقام", "9999999", "0x999999"),
+        (37, "FLOAT-NEGATIVE", "Lossless negative float", "دقة سالبة", "-9999999", "0x999998"),
+        (38, "FLOAT-FRACTION", "Lossless fractional float", "دقة عشرية", "0.84551240822557006", "0x999997"),
+    ]
+    for id_, code, name, arabic, expected, payload in float_cases:
+        captured_float, captured_real = capture_float_transport_values(DATABASES[0], id_)
+        if (
+            captured_float.lower() in ("1e+007", "1e+7", "-1e+007", "-1e+7")
+            or captured_real.lower() in ("1e+007", "1e+7", "-1e+007", "-1e+7")
+        ):
+            raise AssertionError(
+                f"Lossy floating-point transport detected for {expected}: "
+                f"float={captured_float}, real={captured_real}"
+            )
+        float_row = row(
+            id_,
+            code,
+            name,
+            arabic=arabic,
+            float_value=captured_float,
+            real_value=captured_real,
+            changed_at="2026-07-16T23:59:59.987",
+            payload=payload,
+        )
+        for database in DATABASES:
+            apply(database, rows=[float_row])
+            assert_float_values(database, id_, expected)
     assert_equal(*DATABASES)
 
     multi_writer_rows = coalesce([
@@ -490,6 +605,7 @@ def run_scenarios():
             "insert", "update", "primary-key-change", "delete",
             "missing-delete", "empty-delta", "newest-commit-conflict",
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
+            "lossless-float-real-9999999-capture-roundtrip",
             "independent-multi-writer", "offline-catch-up",
             "guid-only-identity-unique-collision-quarantine",
             "large-1200-row-batch", "idempotent-retry",

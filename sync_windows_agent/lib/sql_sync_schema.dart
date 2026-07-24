@@ -141,6 +141,48 @@ class SqlSyncColumnDefinition {
   }
 }
 
+String buildSqlSyncTransportValueExpression({
+  required SqlSyncColumnDefinition column,
+  required String columnReference,
+}) {
+  final normalized = column.sqlType.trim().toLowerCase();
+  if (normalized == 'binary' || normalized == 'varbinary') {
+    return 'master.dbo.fn_varbintohexstr(CONVERT(varbinary(max), $columnReference))';
+  }
+  if (column.usesHexTextTransport) {
+    // Keep text output ASCII-only across sqlcmd. Windows console/code-page
+    // conversion can otherwise replace Arabic and other Unicode characters
+    // before Dart receives the bytes.
+    return "N'\\U' + CONVERT(nvarchar(max), CONVERT(varchar(max), CONVERT(varbinary(max), CONVERT(nvarchar(max), $columnReference)), 2))";
+  }
+  if (normalized == 'date') {
+    return 'CONVERT(nvarchar(10), $columnReference, 23)';
+  }
+  if (normalized == 'datetimeoffset') {
+    return 'CONVERT(nvarchar(48), $columnReference, 127)';
+  }
+  if (normalized == 'datetime' ||
+      normalized == 'smalldatetime' ||
+      normalized == 'datetime2' ||
+      normalized == 'time') {
+    return 'CONVERT(nvarchar(33), $columnReference, 126)';
+  }
+  if (normalized == 'float' || normalized == 'real') {
+    // Style 3 emits 17 significant digits and guarantees that distinct SQL
+    // floating-point values have distinct text representations. The default
+    // style emits at most six digits and turns values such as 9999999 into
+    // 1e+007, silently changing the value when the target parses it.
+    return 'CONVERT(nvarchar(100), $columnReference, 3)';
+  }
+  if (normalized == 'money' || normalized == 'smallmoney') {
+    return 'CONVERT(nvarchar(100), $columnReference, 2)';
+  }
+  if (normalized == 'uniqueidentifier') {
+    return 'CONVERT(nvarchar(36), $columnReference)';
+  }
+  return 'CONVERT(nvarchar(max), $columnReference)';
+}
+
 class SqlSyncColumnAssessment {
   const SqlSyncColumnAssessment({
     required this.columns,
