@@ -248,12 +248,18 @@ function sync_protocol_state(): map<json> {
     if (int.from(existing.protocolVersion ?? 0) == sync_protocol_version()) {
       return existing;
     }
+    const updatedAt = now_iso();
     db.update(SyncProtocolState, { id: 'global' }, {
       protocolVersion: sync_protocol_version(),
       syncEpoch: existing.syncEpoch,
-      updatedAt: now_iso()
+      updatedAt
     });
-    return db.selectOne(SyncProtocolState, { id: 'global' });
+    return {
+      id: 'global',
+      protocolVersion: sync_protocol_version(),
+      syncEpoch: existing.syncEpoch,
+      updatedAt
+    };
   }
   return db.insert(SyncProtocolState, {
     id: 'global',
