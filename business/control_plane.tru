@@ -2800,14 +2800,21 @@ function save_sync_table_issues_for_owner(ownerUserId: string, issues: array<jso
   });
 }
 
-function sync_table_issue_for_owner(ownerUserId: string, table: string): map<json>? {
+function sync_table_issue_from_values(issues: array<json>, table: string): map<json>? {
   const normalizedTable = table.trim();
-  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+  for (const issue of issues) {
     if (string.from(issue.table ?? '').trim() == normalizedTable) {
       return issue;
     }
   }
   return null;
+}
+
+function sync_table_issue_for_owner(ownerUserId: string, table: string): map<json>? {
+  return sync_table_issue_from_values(
+    sync_table_issues_for_owner(ownerUserId),
+    table
+  );
 }
 
 function replace_sync_table_issue(ownerUserId: string, nextIssue: map<json>): map<json> {
@@ -2927,6 +2934,7 @@ function sync_table_reported_change_tracking_version(tableState: map<json>? = nu
 function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<json>? = null): void {
   const sourceAgents = agents ?? list_scheduler_agent_rows();
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  const existingIssues = sync_table_issues_for_owner(ownerUserId);
   let ownerAgents = [];
   let candidateTables = [];
   for (const agent of sourceAgents) {
@@ -2943,14 +2951,25 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   if (ownerAgents.length < 2) {
     return;
   }
+  const tableCaches = ownerAgents.map((agent) =>
+    scheduler_agent_table_state_cache(agent, ownerPolicies)
+  );
   for (const table of unique_string_values(candidateTables)) {
-    const existing = sync_table_issue_for_owner(ownerUserId, table);
+    const existing = sync_table_issue_from_values(existingIssues, table);
     let fingerprints = [];
     let allUninitialized = true;
     let reportedClientCount = 0;
     for (const agent of ownerAgents) {
+      const cache = scheduler_agent_table_state_cache_for_agent(
+        string.from(agent.clientName),
+        tableCaches
+      );
+      let cachedStates = [];
+      if (cache != null && cache.tables != null) {
+        cachedStates = cache.tables;
+      }
       const state = scheduler_agent_table_state(
-        scheduler_agent_table_states(agent, ownerPolicies),
+        cachedStates,
         table
       );
       const fingerprint = sync_table_reported_fingerprint(state);
