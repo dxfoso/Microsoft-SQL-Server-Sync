@@ -13,6 +13,18 @@ enum _ClientSortField { name, status, database, tables, lastSync, heartbeat }
 
 enum _ClientScreen { list, detail, sync, table }
 
+enum _ClientDetailView { tables, syncLog }
+
+enum _TableSortField {
+  table,
+  changedRows,
+  uploaded,
+  downloaded,
+  readiness,
+  clientStatus,
+  lastSync,
+}
+
 enum _ClientAccountAction { syncSettings, signOut }
 
 const int _minAutoSyncIntervalMinutes = 1;
@@ -229,6 +241,9 @@ class _ClientsPageState extends State<ClientsPage> {
   _ClientSortField _sortField = _ClientSortField.name;
   bool _sortAscending = true;
   _ClientScreen _screen = _ClientScreen.list;
+  _ClientDetailView _detailView = _ClientDetailView.tables;
+  _TableSortField _tableSortField = _TableSortField.readiness;
+  bool _tableSortAscending = true;
   String? _resolvingTable;
   String? _selectedTable;
   String? _selectedSyncKey;
@@ -253,6 +268,10 @@ class _ClientsPageState extends State<ClientsPage> {
     if (segments.length >= 2 && segments[1].trim().isNotEmpty) {
       _selectedClientName = Uri.decodeComponent(segments[1]);
       _screen = _ClientScreen.detail;
+      _detailView =
+          Uri.base.queryParameters['view'] == 'sync-log'
+              ? _ClientDetailView.syncLog
+              : _ClientDetailView.tables;
     }
     if (segments.length >= 4 && segments[2] == 'tables') {
       _selectedTable = Uri.decodeComponent(segments[3]);
@@ -276,7 +295,12 @@ class _ClientsPageState extends State<ClientsPage> {
       _ClientScreen.table =>
         '/clients/${Uri.encodeComponent(client ?? '')}/tables/${Uri.encodeComponent(table ?? '')}',
     };
-    replaceBrowserUrl(Uri.base.replace(path: path, query: '').toString());
+    final query =
+        _screen == _ClientScreen.detail &&
+                _detailView == _ClientDetailView.syncLog
+            ? 'view=sync-log'
+            : '';
+    replaceBrowserUrl(Uri.base.replace(path: path, query: query).toString());
   }
 
   @override
@@ -1507,14 +1531,210 @@ class _ClientsPageState extends State<ClientsPage> {
       );
     }
     final jobs = _jobsFor(agent);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _panel(child: _buildDataViewer(agent)),
-        const SizedBox(height: 12),
-        _panel(child: _buildJobLog(jobs)),
-      ],
+    final issueCount =
+        agent.tables
+            .where(
+              (table) =>
+                  _tableSyncIssue(agent, table.table)?.blocksSync == true,
+            )
+            .length;
+    final content =
+        _detailView == _ClientDetailView.tables
+            ? _buildDataViewer(agent)
+            : _buildJobLog(jobs);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 760) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildCompactDetailViewSelector(
+                tableCount: agent.tables.length,
+                syncCount:
+                    _groupSyncLogBatches(
+                      _groupSyncLogOperations(
+                        jobs,
+                        clientName: agent.clientName,
+                      ),
+                      clientName: agent.clientName,
+                    ).length,
+              ),
+              const SizedBox(height: 12),
+              _panel(child: content),
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 224,
+              child: _buildDetailNavigation(
+                tableCount: agent.tables.length,
+                issueCount: issueCount,
+                syncCount:
+                    _groupSyncLogBatches(
+                      _groupSyncLogOperations(
+                        jobs,
+                        clientName: agent.clientName,
+                      ),
+                      clientName: agent.clientName,
+                    ).length,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: _panel(child: content)),
+          ],
+        );
+      },
     );
+  }
+
+  Widget _buildCompactDetailViewSelector({
+    required int tableCount,
+    required int syncCount,
+  }) {
+    return DropdownButtonFormField<_ClientDetailView>(
+      initialValue: _detailView,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Client view',
+        prefixIcon: Icon(Icons.view_sidebar_outlined),
+      ),
+      items: [
+        DropdownMenuItem(
+          value: _ClientDetailView.tables,
+          child: Text('Tables ($tableCount)'),
+        ),
+        DropdownMenuItem(
+          value: _ClientDetailView.syncLog,
+          child: Text('Sync history ($syncCount)'),
+        ),
+      ],
+      onChanged: (view) {
+        if (view == null) return;
+        _selectDetailView(view);
+      },
+    );
+  }
+
+  Widget _buildDetailNavigation({
+    required int tableCount,
+    required int issueCount,
+    required int syncCount,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildDetailNavigationItem(
+            view: _ClientDetailView.tables,
+            icon: Icons.table_view_outlined,
+            label: 'Tables',
+            detail:
+                issueCount == 0
+                    ? '$tableCount ready to review'
+                    : '$issueCount ${issueCount == 1 ? 'needs' : 'need'} input',
+            detailColor:
+                issueCount == 0
+                    ? const Color(0xFF667085)
+                    : const Color(0xFFB42318),
+          ),
+          const SizedBox(height: 4),
+          _buildDetailNavigationItem(
+            view: _ClientDetailView.syncLog,
+            icon: Icons.history_rounded,
+            label: 'Sync history',
+            detail: '$syncCount sync ${syncCount == 1 ? 'run' : 'runs'}',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailNavigationItem({
+    required _ClientDetailView view,
+    required IconData icon,
+    required String label,
+    required String detail,
+    Color detailColor = const Color(0xFF667085),
+  }) {
+    final selected = _detailView == view;
+    return Material(
+      color: selected ? const Color(0xFFE6F4F1) : Colors.transparent,
+      borderRadius: BorderRadius.circular(7),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(7),
+        onTap: selected ? null : () => _selectDetailView(view),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 19,
+                color:
+                    selected
+                        ? const Color(0xFF0F766E)
+                        : const Color(0xFF475467),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color:
+                            selected
+                                ? const Color(0xFF095C56)
+                                : const Color(0xFF344054),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      style: TextStyle(
+                        color: detailColor,
+                        fontSize: 11,
+                        fontWeight:
+                            detailColor == const Color(0xFFB42318)
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: Color(0xFF0F766E),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _selectDetailView(_ClientDetailView view) {
+    setState(() {
+      _detailView = view;
+      _selectedTable = null;
+      _selectedSyncKey = null;
+      _screen = _ClientScreen.detail;
+      _replaceRoute();
+    });
   }
 
   int _activeSyncCount(AdminAgent agent, List<AdminJob> jobs) {
@@ -1626,8 +1846,13 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildDataViewer(AdminAgent agent) {
-    final tables = List<AdminTableState>.from(agent.tables)
-      ..sort((left, right) => left.table.compareTo(right.table));
+    final jobsByTable = <String, List<AdminJob>>{};
+    for (final job in _jobsFor(agent)) {
+      jobsByTable.putIfAbsent(job.table, () => <AdminJob>[]).add(job);
+    }
+    final tables = List<AdminTableState>.from(agent.tables)..sort(
+      (left, right) => _compareTableStates(agent, left, right, jobsByTable),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1647,19 +1872,61 @@ class _ClientsPageState extends State<ClientsPage> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
-              columns: const [
-                DataColumn(label: Text('Table')),
-                DataColumn(label: Text('Changed rows')),
-                DataColumn(label: Text('Uploaded')),
-                DataColumn(label: Text('Downloaded')),
-                DataColumn(label: Text('Readiness')),
-                DataColumn(label: Text('Client status')),
-                DataColumn(label: Text('Last sync')),
-                DataColumn(label: Text('Actions')),
+              sortColumnIndex: _tableSortField.index,
+              sortAscending: _tableSortAscending,
+              columns: [
+                DataColumn(
+                  label: const Text('Table'),
+                  onSort:
+                      (_, ascending) =>
+                          _sortTables(_TableSortField.table, ascending),
+                ),
+                DataColumn(
+                  numeric: true,
+                  label: const Text('Changed rows'),
+                  onSort:
+                      (_, ascending) =>
+                          _sortTables(_TableSortField.changedRows, ascending),
+                ),
+                DataColumn(
+                  numeric: true,
+                  label: const Text('Uploaded'),
+                  onSort:
+                      (_, ascending) =>
+                          _sortTables(_TableSortField.uploaded, ascending),
+                ),
+                DataColumn(
+                  numeric: true,
+                  label: const Text('Downloaded'),
+                  onSort:
+                      (_, ascending) =>
+                          _sortTables(_TableSortField.downloaded, ascending),
+                ),
+                DataColumn(
+                  label: const Text('Readiness'),
+                  onSort:
+                      (_, ascending) =>
+                          _sortTables(_TableSortField.readiness, ascending),
+                ),
+                DataColumn(
+                  label: const Text('Client status'),
+                  onSort:
+                      (_, ascending) =>
+                          _sortTables(_TableSortField.clientStatus, ascending),
+                ),
+                DataColumn(
+                  label: const Text('Last sync'),
+                  onSort:
+                      (_, ascending) =>
+                          _sortTables(_TableSortField.lastSync, ascending),
+                ),
+                const DataColumn(label: Text('Actions')),
               ],
               rows:
                   tables.map((table) {
                     final issue = _tableSyncIssue(agent, table.table);
+                    final tableJobs =
+                        jobsByTable[table.table] ?? const <AdminJob>[];
                     return DataRow(
                       color:
                           issue?.blocksSync == true
@@ -1667,33 +1934,15 @@ class _ClientsPageState extends State<ClientsPage> {
                               : null,
                       cells: [
                         DataCell(Text(_displayTable(table.table))),
+                        DataCell(Text(_changedRowsLabel(tableJobs))),
                         DataCell(
                           Text(
-                            _changedRowsLabel(
-                              _jobsFor(agent)
-                                  .where((job) => job.table == table.table)
-                                  .toList(growable: false),
-                            ),
+                            _changedRowsLabel(tableJobs, direction: 'upload'),
                           ),
                         ),
                         DataCell(
                           Text(
-                            _changedRowsLabel(
-                              _jobsFor(agent)
-                                  .where((job) => job.table == table.table)
-                                  .toList(growable: false),
-                              direction: 'upload',
-                            ),
-                          ),
-                        ),
-                        DataCell(
-                          Text(
-                            _changedRowsLabel(
-                              _jobsFor(agent)
-                                  .where((job) => job.table == table.table)
-                                  .toList(growable: false),
-                              direction: 'download',
-                            ),
+                            _changedRowsLabel(tableJobs, direction: 'download'),
                           ),
                         ),
                         DataCell(
@@ -1737,6 +1986,66 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
     );
+  }
+
+  void _sortTables(_TableSortField field, bool ascending) {
+    setState(() {
+      _tableSortField = field;
+      _tableSortAscending = ascending;
+    });
+  }
+
+  int _compareTableStates(
+    AdminAgent agent,
+    AdminTableState left,
+    AdminTableState right,
+    Map<String, List<AdminJob>> jobsByTable,
+  ) {
+    final leftJobs = jobsByTable[left.table] ?? const <AdminJob>[];
+    final rightJobs = jobsByTable[right.table] ?? const <AdminJob>[];
+    int comparison;
+    switch (_tableSortField) {
+      case _TableSortField.table:
+        comparison = _displayTable(
+          left.table,
+        ).toLowerCase().compareTo(_displayTable(right.table).toLowerCase());
+      case _TableSortField.changedRows:
+        comparison = (_changedRows(leftJobs) ?? -1).compareTo(
+          _changedRows(rightJobs) ?? -1,
+        );
+      case _TableSortField.uploaded:
+        comparison = (_changedRows(leftJobs, direction: 'upload') ?? -1)
+            .compareTo(_changedRows(rightJobs, direction: 'upload') ?? -1);
+      case _TableSortField.downloaded:
+        comparison = (_changedRows(leftJobs, direction: 'download') ?? -1)
+            .compareTo(_changedRows(rightJobs, direction: 'download') ?? -1);
+      case _TableSortField.readiness:
+        comparison = _tableReadinessRank(
+          _tableSyncIssue(agent, left.table),
+        ).compareTo(_tableReadinessRank(_tableSyncIssue(agent, right.table)));
+      case _TableSortField.clientStatus:
+        comparison = left.status.toLowerCase().compareTo(
+          right.status.toLowerCase(),
+        );
+      case _TableSortField.lastSync:
+        comparison = _timestamp(
+          left.lastSync,
+        ).compareTo(_timestamp(right.lastSync));
+    }
+    if (comparison == 0) {
+      comparison = left.table.toLowerCase().compareTo(
+        right.table.toLowerCase(),
+      );
+    }
+    return _tableSortAscending ? comparison : -comparison;
+  }
+
+  int _tableReadinessRank(AdminTableSyncIssue? issue) {
+    if (issue?.needsInput == true) return 0;
+    if (issue?.resolving == true) return 1;
+    if (issue?.action == 'accept_baseline') return 2;
+    if (issue?.action == 'exclude_table') return 3;
+    return 4;
   }
 
   AdminTableSyncIssue? _tableSyncIssue(AdminAgent agent, String table) {
