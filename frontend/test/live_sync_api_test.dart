@@ -59,6 +59,7 @@ void main() {
         historyLimit: 10,
         autoSyncIntervalMinutes: 30,
         syncDataLimitMb: 128,
+        conflictPolicy: 'latest_change_wins',
       );
 
       expect(updatedCount, 2);
@@ -67,6 +68,7 @@ void main() {
         'historyLimit': 10,
         'autoSyncIntervalMinutes': 30,
         'syncDataLimitMb': 128,
+        'conflictPolicy': 'latest_change_wins',
         'token': 'test-token',
       });
       api.dispose();

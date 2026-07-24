@@ -391,4 +391,27 @@ void main() {
     expect(stale, hasLength(1));
     expect(stale.single['Id'], 'c1-id');
   });
+
+  test(
+    'latest delta metadata uses timestamp then deterministic tie breakers',
+    () {
+      final latest = latestSqlSyncDeltaRow([
+        {
+          '__sync_modified_at_utc': '2026-07-24T18:31:06.543Z',
+          '__sync_change_version': '50',
+          '__sync_origin_client': 'c1',
+          '__sync_operation_id': 'a',
+        },
+        {
+          '__sync_modified_at_utc': '2026-07-24T18:31:27.920Z',
+          '__sync_change_version': '36',
+          '__sync_origin_client': 'c2',
+          '__sync_operation_id': 'b',
+        },
+      ]);
+
+      expect(latest?['__sync_origin_client'], 'c2');
+      expect(latest?['__sync_modified_at_utc'], '2026-07-24T18:31:27.920Z');
+    },
+  );
 }

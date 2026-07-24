@@ -397,6 +397,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertIn("syncGate,", live_state)
 
+    def test_latest_change_policy_is_limited_to_timestamped_unique_key_conflicts(self):
+        source = read_text("business/control_plane.tru")
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+        resolution = source.split(
+            "function try_start_latest_change_resolution(", 1
+        )[1].split("function multi_writer_batch_stale(", 1)[0]
+        complete = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail(", 1
+        )[0]
+
+        self.assertIn("field conflictPolicy: string? min=0 max=32", source)
+        self.assertIn("latestModifiedAtUtc: latestModifiedAtUtc.trim()", upload)
+        self.assertIn("latestOperationId: latestOperationId.trim()", upload)
+        self.assertIn("'unique_business_key'", resolution)
+        self.assertIn("'latest_change_wins'", resolution)
+        self.assertIn("latest_change_candidate_for_batch(", resolution)
+        self.assertIn("create_authoritative_reconcile_batch(", resolution)
+        self.assertIn("status: 'resolving'", resolution)
+        self.assertIn("try_start_latest_change_resolution(job, conflictKind)", complete)
+
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
         body = source.split("function jobs_create_all_enabled(", 1)[1].split(

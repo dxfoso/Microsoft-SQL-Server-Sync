@@ -486,6 +486,16 @@ List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
   return winners;
 }
 
+Map<String, dynamic>? latestSqlSyncDeltaRow(List<Map<String, dynamic>> rows) {
+  Map<String, dynamic>? latest;
+  for (final row in rows) {
+    if (latest == null || _isLaterSyncRow(row, latest)) {
+      latest = row;
+    }
+  }
+  return latest;
+}
+
 bool _isLaterSyncRow(
   Map<String, dynamic> candidate,
   Map<String, dynamic> current,

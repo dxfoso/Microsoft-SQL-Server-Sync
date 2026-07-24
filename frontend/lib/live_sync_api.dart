@@ -472,12 +472,14 @@ class LiveSyncApiClient {
     required int historyLimit,
     required int autoSyncIntervalMinutes,
     int? syncDataLimitMb,
+    required String conflictPolicy,
   }) async {
     await _invokeFunction('agent_sync_settings_post', {
       'clientName': clientName,
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
       if (syncDataLimitMb != null) 'syncDataLimitMb': syncDataLimitMb,
+      'conflictPolicy': conflictPolicy,
     });
   }
 
@@ -485,11 +487,13 @@ class LiveSyncApiClient {
     required int historyLimit,
     required int autoSyncIntervalMinutes,
     int? syncDataLimitMb,
+    required String conflictPolicy,
   }) async {
     final decoded = await _invokeFunction('agent_sync_settings_post_all', {
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
       if (syncDataLimitMb != null) 'syncDataLimitMb': syncDataLimitMb,
+      'conflictPolicy': conflictPolicy,
     });
     if (decoded is! Map) {
       throw const LiveSyncApiException(

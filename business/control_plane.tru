@@ -41,6 +41,7 @@ class Agent {
   field historyLimit: int min=1 max=100
   field autoSyncIntervalMinutes: int min=1 max=1440
   field syncDataLimitMb: int? min=1 max=1024
+  field conflictPolicy: string? min=0 max=32
   field serverConnected: bool
   field sqlConnected: bool
   field clientVersion: string? min=0 max=32
@@ -579,6 +580,14 @@ function clamp_sync_data_limit_mb(value: int? = null): int {
     return 1024;
   }
   return value;
+}
+
+function normalize_conflict_policy(value: string? = null): string {
+  const normalized = string.from(value ?? '').trim().toLowerCase();
+  if (normalized == 'latest_change_wins') {
+    return normalized;
+  }
+  return 'ask';
 }
 
 function kSyncTableKeySeparator(): string {
@@ -1460,7 +1469,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1559,6 +1568,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     historyLimit: agent.historyLimit,
     autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
     syncDataLimitMb: clamp_sync_data_limit_mb(agent.syncDataLimitMb),
+    conflictPolicy: normalize_conflict_policy(agent.conflictPolicy),
     serverConnected: agent.serverConnected,
     sqlConnected: agent.sqlConnected,
     clientVersion: agent.clientVersion ?? '',
@@ -1900,7 +1910,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1980,6 +1990,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       replicationUser: '',
       replicationPassword: '',
       syncEnabled: true,
+      conflictPolicy: 'ask',
       diagnosticRequestId: null,
       diagnosticRequestedAt: null,
       diagnosticRequestedByUserId: null,
@@ -2027,6 +2038,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     historyLimit: 5,
     autoSyncIntervalMinutes: 15,
     syncDataLimitMb: 256,
+    conflictPolicy: 'ask',
     serverConnected: false,
     sqlConnected: false,
     clientVersion: '',
@@ -2068,7 +2080,8 @@ function sync_settings_payload(agent: map<json>): map<json> {
   return {
     historyLimit: agent.historyLimit,
     autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
-    syncDataLimitMb: clamp_sync_data_limit_mb(agent.syncDataLimitMb)
+    syncDataLimitMb: clamp_sync_data_limit_mb(agent.syncDataLimitMb),
+    conflictPolicy: normalize_conflict_policy(agent.conflictPolicy)
   };
 }
 
@@ -3740,6 +3753,116 @@ function create_authoritative_reconcile_batch(ownerUserId: string, table: string
   ));
 }
 
+function latest_change_candidate_for_batch(batchId: string): map<json>? {
+  const batch = find_sync_batch(batchId);
+  if (batch == null) {
+    return null;
+  }
+  let winner = null;
+  let winnerAt = '';
+  let winnerOperationId = '';
+  let winnerClientName = '';
+  for (const chunk of batch.receivedChunks ?? []) {
+    const changedAt = string.from(chunk.latestModifiedAtUtc ?? '').trim();
+    const operationId = string.from(chunk.latestOperationId ?? '').trim();
+    const clientName = normalize_user_name(chunk.clientName);
+    if (changedAt.length == 0 || clientName.length == 0) {
+      continue;
+    }
+    if (winner == null ||
+        changedAt > winnerAt ||
+        (changedAt == winnerAt && operationId > winnerOperationId) ||
+        (changedAt == winnerAt &&
+          operationId == winnerOperationId &&
+          clientName > winnerClientName)) {
+      winner = {
+        clientName,
+        modifiedAtUtc: changedAt,
+        operationId
+      };
+      winnerAt = changedAt;
+      winnerOperationId = operationId;
+      winnerClientName = clientName;
+    }
+  }
+  return winner;
+}
+
+function try_start_latest_change_resolution(job: map<json>, conflictKind: string): bool {
+  if (conflictKind.trim().toLowerCase() != 'unique_business_key') {
+    return false;
+  }
+  const policyAgent = db.selectOne(Agent, { clientName: string.from(job.clientName) });
+  if (policyAgent == null ||
+      normalize_conflict_policy(policyAgent.conflictPolicy) != 'latest_change_wins') {
+    return false;
+  }
+  const candidate = latest_change_candidate_for_batch(string.from(job.batchId ?? ''));
+  if (candidate == null) {
+    return false;
+  }
+  const ownerUserId = string.from(job.ownerUserId).trim();
+  const table = string.from(job.table).trim();
+  const agents = list_scheduler_agent_rows().filter((agent) =>
+    string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)
+  );
+  const sourceAgent = find_agent_row_by_name(agents, string.from(candidate.clientName));
+  if (sourceAgent == null || !effective_agent_online(sourceAgent)) {
+    return false;
+  }
+  let targetAgents = [];
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  for (const agent of agents) {
+    if (string.from(agent.clientName) == string.from(sourceAgent.clientName)) {
+      continue;
+    }
+    if (!effective_agent_online(agent)) {
+      return false;
+    }
+    const enabledTables = unique_string_values(
+      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+      )
+    );
+    if (!string_array_contains(enabledTables, table)) {
+      return false;
+    }
+    targetAgents = targetAgents.concat([agent]);
+  }
+  if (targetAgents.length == 0) {
+    return false;
+  }
+  const createdJobs = create_authoritative_reconcile_batch(
+    ownerUserId,
+    table,
+    sourceAgent,
+    targetAgents
+  );
+  if (createdJobs.length == 0) {
+    return false;
+  }
+  replace_sync_table_issue(ownerUserId, {
+    table,
+    status: 'resolving',
+    reason: 'unique_business_key',
+    message: string.concat(
+      'Latest-change-wins selected ',
+      string.from(sourceAgent.clientName),
+      ' at ',
+      string.from(candidate.modifiedAtUtc),
+      '. Authoritative table repair is running; normal sync remains stopped until fingerprints match.'
+    ),
+    clientName: string.from(job.clientName),
+    action: 'latest_change_wins',
+    sourceClientName: string.from(sourceAgent.clientName),
+    targetClientNames: targetAgents.map((agent) => string.from(agent.clientName)),
+    detectedAt: now_iso(),
+    updatedAt: now_iso(),
+    resolvedAt: null
+  });
+  return true;
+}
+
 function multi_writer_batch_stale(batch: map<json>): bool {
   // Large tables can take longer than 30 minutes on slow client links. Expire
   // only batches that have made no upload progress during that period.
@@ -4161,7 +4284,7 @@ function agent_sync_enabled_set(clientName: string, enabled: bool, token: string
   };
 }
 
-function agent_sync_settings_post(clientName: string, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, token: string? = null): map<json> {
+function agent_sync_settings_post(clientName: string, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, conflictPolicy: string? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -4184,6 +4307,9 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
     historyLimit: clamp_history_limit(historyLimit),
     autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes),
     syncDataLimitMb: nextSyncDataLimitMb,
+    conflictPolicy: conflictPolicy == null
+      ? normalize_conflict_policy(agent.conflictPolicy)
+      : normalize_conflict_policy(conflictPolicy),
     updatedAt: now_iso()
   });
   if (updated == null) {
@@ -4192,7 +4318,7 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
   return { ok: true, syncSettings: sync_settings_payload(updated) };
 }
 
-function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, token: string? = null): map<json> {
+function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, conflictPolicy: string? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -4204,6 +4330,7 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
   const nextHistoryLimit = clamp_history_limit(historyLimit);
   const nextAutoSyncIntervalMinutes = clamp_auto_sync_interval(autoSyncIntervalMinutes);
   const nextSyncDataLimitMb = clamp_sync_data_limit_mb(syncDataLimitMb);
+  const nextConflictPolicy = normalize_conflict_policy(conflictPolicy);
   let targetClientNames = [];
   for (const agent of visible_agent_rows_for(current)) {
     if (agent.clientName == null) {
@@ -4221,12 +4348,14 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
       syncDataLimitMb: nextSyncDataLimitMb,
+      conflictPolicy: nextConflictPolicy,
       updatedAt: now_iso()
     });
   } else if (targetClientNames.length != 0) {
     db.updateMany(Agent, { clientName: { in: targetClientNames } }, {
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
+      conflictPolicy: nextConflictPolicy,
       updatedAt: now_iso()
     });
   }
@@ -4238,7 +4367,8 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
     syncSettings: {
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
-      syncDataLimitMb: nextSyncDataLimitMb
+      syncDataLimitMb: nextSyncDataLimitMb,
+      conflictPolicy: nextConflictPolicy
     }
   };
 }
@@ -5204,7 +5334,7 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   });
 }
 
-function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, snapshotChecksum: string = '', protocolVersion: int = 0, syncEpoch: string = ''): map<json> {
+function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, snapshotChecksum: string = '', protocolVersion: int = 0, syncEpoch: string = '', latestModifiedAtUtc: string = '', latestOperationId: string = ''): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -5289,6 +5419,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     clientName: normalizedClientName,
     chunkId: normalizedChunkId,
     rowCount: incomingRowCount,
+    latestModifiedAtUtc: latestModifiedAtUtc.trim(),
+    latestOperationId: latestOperationId.trim(),
     receivedAt: now_iso()
   }]);
   let uploadedClients = batch.uploadedClients;
@@ -6436,7 +6568,7 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, rejectedRowCount: int? = null, rejectionSummary: string? = null, token: string? = null): map<json> {
+function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, rejectedRowCount: int? = null, rejectionSummary: string? = null, token: string? = null, conflictKind: string = ''): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -6506,6 +6638,7 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
       issueMessage,
       string.from(job.clientName)
     );
+    try_start_latest_change_resolution(job, conflictKind);
   }
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };

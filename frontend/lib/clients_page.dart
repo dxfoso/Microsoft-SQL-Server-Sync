@@ -762,6 +762,10 @@ class _ClientsPageState extends State<ClientsPage> {
     );
     final intervalValues =
         agents.map((agent) => agent.autoSyncIntervalMinutes).toSet();
+    final conflictPolicyValues =
+        agents.map((agent) => agent.conflictPolicy).toSet();
+    var conflictPolicy =
+        conflictPolicyValues.length == 1 ? conflictPolicyValues.first : 'ask';
     var saving = false;
     String? intervalError;
     String? historyError;
@@ -791,10 +795,11 @@ class _ClientsPageState extends State<ClientsPage> {
                             height: 1.4,
                           ),
                         ),
-                        if (intervalValues.length > 1) ...[
+                        if (intervalValues.length > 1 ||
+                            conflictPolicyValues.length > 1) ...[
                           const SizedBox(height: 8),
                           const Text(
-                            'Clients currently have mixed interval values. Saving will make them consistent.',
+                            'Clients currently have mixed settings. Saving will make them consistent.',
                             style: TextStyle(
                               color: Color(0xFFB54708),
                               fontSize: 12,
@@ -814,6 +819,44 @@ class _ClientsPageState extends State<ClientsPage> {
                             errorText: intervalError,
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: conflictPolicy,
+                          decoration: const InputDecoration(
+                            labelText: 'Duplicate business-key conflicts',
+                            helperText:
+                                'Applies to every synchronized table. Other errors still stop for review.',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'ask',
+                              child: Text('Stop and ask for a decision'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'latest_change_wins',
+                              child: Text(
+                                'Use the latest database change automatically',
+                              ),
+                            ),
+                          ],
+                          onChanged:
+                              saving
+                                  ? null
+                                  : (value) => setDialogState(
+                                    () => conflictPolicy = value ?? 'ask',
+                                  ),
+                        ),
+                        if (conflictPolicy == 'latest_change_wins') ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'When different GUIDs collide on the same unique business key, the server selects the newest database-change timestamp, records the decision, and replaces that table on other clients. Sync remains stopped until verification succeeds.',
+                            style: TextStyle(
+                              color: Color(0xFF93451A),
+                              fontSize: 12,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         TextField(
                           controller: historyController,
@@ -918,6 +961,7 @@ class _ClientsPageState extends State<ClientsPage> {
                                         historyLimit: history,
                                         autoSyncIntervalMinutes: interval,
                                         syncDataLimitMb: syncDataLimitMb,
+                                        conflictPolicy: conflictPolicy,
                                       );
                                   if (!mounted || !context.mounted) return;
                                   Navigator.of(context).pop();
@@ -928,7 +972,7 @@ class _ClientsPageState extends State<ClientsPage> {
                                   ).showSnackBar(
                                     SnackBar(
                                       content: Text(
-                                        'Saved sync settings for $updatedCount clients, including a $syncDataLimitMb MB job-data limit.',
+                                        'Saved sync settings for $updatedCount clients. Conflict policy: ${conflictPolicy == 'latest_change_wins' ? 'latest change wins' : 'ask for a decision'}.',
                                       ),
                                     ),
                                   );

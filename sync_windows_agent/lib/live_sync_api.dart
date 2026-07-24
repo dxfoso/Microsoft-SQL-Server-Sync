@@ -754,6 +754,7 @@ class AgentControlPlaneClient {
     int? snapshotBytes,
     int? rejectedRowCount,
     String? rejectionSummary,
+    String? conflictKind,
   }) async {
     final response = await _invokeFunction('jobs_complete', {
       'jobId': jobId,
@@ -769,6 +770,8 @@ class AgentControlPlaneClient {
       if (rejectedRowCount != null) 'rejectedRowCount': rejectedRowCount,
       if (rejectionSummary != null && rejectionSummary.trim().isNotEmpty)
         'rejectionSummary': rejectionSummary.trim(),
+      if (conflictKind != null && conflictKind.trim().isNotEmpty)
+        'conflictKind': conflictKind.trim(),
     }, 'completing job');
     return _parseJobPayload(response, 'job completion');
   }
@@ -1074,6 +1077,8 @@ class AgentControlPlaneClient {
     String snapshotChecksum = '',
     required int protocolVersion,
     required String syncEpoch,
+    String latestModifiedAtUtc = '',
+    String latestOperationId = '',
   }) async {
     final encodedPayload =
         payloadBase64 ?? base64Encode(utf8.encode(jsonEncode(rows)));
@@ -1098,6 +1103,10 @@ class AgentControlPlaneClient {
         'snapshotChecksum': snapshotChecksum.trim(),
       'protocolVersion': protocolVersion,
       'syncEpoch': syncEpoch,
+      if (latestModifiedAtUtc.trim().isNotEmpty)
+        'latestModifiedAtUtc': latestModifiedAtUtc.trim(),
+      if (latestOperationId.trim().isNotEmpty)
+        'latestOperationId': latestOperationId.trim(),
     }, 'uploading multi-writer delta');
     if (decoded is! Map || decoded['job'] is! Map) {
       throw const AgentControlPlaneException(

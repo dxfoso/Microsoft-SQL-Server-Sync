@@ -206,6 +206,7 @@ class AdminAgent {
     required this.historyLimit,
     required this.autoSyncIntervalMinutes,
     required this.syncDataLimitMb,
+    required this.conflictPolicy,
     required this.serverConnected,
     required this.sqlConnected,
     required this.clientVersion,
@@ -227,6 +228,7 @@ class AdminAgent {
   final int historyLimit;
   final int autoSyncIntervalMinutes;
   final int syncDataLimitMb;
+  final String conflictPolicy;
   final bool serverConnected;
   final bool sqlConnected;
   final String clientVersion;
@@ -250,6 +252,7 @@ class AdminAgent {
       autoSyncIntervalMinutes:
           (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),
       syncDataLimitMb: (json['syncDataLimitMb'] as num? ?? 256).round(),
+      conflictPolicy: json['conflictPolicy'] as String? ?? 'ask',
       serverConnected: json['serverConnected'] as bool? ?? false,
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       clientVersion: json['clientVersion'] as String? ?? '',

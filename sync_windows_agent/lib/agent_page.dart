@@ -3608,6 +3608,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final rows = _snapshotRows(snapshot.snapshotJson);
     final columns = _snapshotColumns(snapshot.snapshotJson);
     final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
+    final latestChange = latestSqlSyncDeltaRow(
+      rows.map((row) => Map<String, dynamic>.from(row)).toList(growable: false),
+    );
+    final latestModifiedAtUtc =
+        latestChange?['__sync_modified_at_utc']?.toString() ?? '';
+    final latestOperationId =
+        latestChange?['__sync_operation_id']?.toString() ?? '';
     RemoteSyncJob? uploadedJob;
     if (rows.isEmpty) {
       _checkSyncJobNotCancelled(job.id);
@@ -3626,6 +3633,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         snapshotChecksum: snapshot.checksum,
         protocolVersion: job.protocolVersion,
         syncEpoch: job.syncEpoch,
+        latestModifiedAtUtc: latestModifiedAtUtc,
+        latestOperationId: latestOperationId,
       );
       _checkSyncJobNotCancelled(job.id);
     } else {
@@ -3657,6 +3666,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           snapshotChecksum: snapshot.checksum,
           protocolVersion: job.protocolVersion,
           syncEpoch: job.syncEpoch,
+          latestModifiedAtUtc: latestModifiedAtUtc,
+          latestOperationId: latestOperationId,
         );
         _checkSyncJobNotCancelled(job.id);
         offset = end;
@@ -3883,6 +3894,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           pendingAfterApply.isEmpty
               ? null
               : _syncRejectionSummary(pendingAfterApply),
+      conflictKind:
+          pendingAfterApply.isNotEmpty &&
+                  pendingAfterApply.every(
+                    (change) => isSyncIdentityCollision(change.error),
+                  )
+              ? 'unique_business_key'
+              : null,
       snapshotId: snapshotToApply.id,
       snapshotCreatedAt: snapshotToApply.createdAt,
       snapshotBytes: snapshotToApply.snapshotBytes,
