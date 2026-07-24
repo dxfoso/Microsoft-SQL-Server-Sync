@@ -40,6 +40,7 @@ class Agent {
   field isOnline: bool
   field historyLimit: int min=1 max=100
   field autoSyncIntervalMinutes: int min=1 max=1440
+  field syncDataLimitMb: int? min=1 max=1024
   field serverConnected: bool
   field sqlConnected: bool
   field clientVersion: string? min=0 max=32
@@ -169,6 +170,26 @@ class SnapshotRecord {
   field ownerUserId: string? min=0 max=64
 }
 
+// Durable, bounded audit data for the rows carried by a specific sync job.
+// Relay SnapshotRecord rows can be deleted after delivery; these references
+// remain until the configured owner storage limit prunes an older whole job.
+class SyncJobDataChunk {
+  field id: string min=1 max=64
+  field jobId: string min=1 max=64
+  field batchId: string min=0 max=128
+  field clientName: string min=0 max=128
+  field table: string min=1 max=256
+  field ordinal: int min=0 max=1000000
+  field columns: array<json>
+  field rows: array<json>
+  field rowCount: int min=0 max=1000000000
+  field snapshotBytes: int min=0 max=2147483647
+  field storageId: string min=0 max=128
+  field clientUserId: string? min=0 max=64
+  field ownerUserId: string? min=0 max=64
+  field createdAt: datetime
+}
+
 class UploadSession {
   field id: string min=1 max=64
   field jobId: string min=1 max=64
@@ -229,6 +250,9 @@ index SyncProtocolState_id on SyncProtocolState(id)
 index SnapshotRecord_id on SnapshotRecord(id)
 index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
 index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
+index SyncJobDataChunk_jobId_ordinal on SyncJobDataChunk(jobId, ordinal)
+index SyncJobDataChunk_batchId_createdAt on SyncJobDataChunk(batchId, createdAt)
+index SyncJobDataChunk_ownerUserId_createdAt on SyncJobDataChunk(ownerUserId, createdAt)
 index UploadSession_jobId on UploadSession(jobId)
 index UploadSession_uploadId on UploadSession(uploadId)
 index DownloadSession_jobId on DownloadSession(jobId)
@@ -543,6 +567,16 @@ function clamp_auto_sync_interval(value: int? = null): int {
   }
   if (value > 1440) {
     return 1440;
+  }
+  return value;
+}
+
+function clamp_sync_data_limit_mb(value: int? = null): int {
+  if (value == null || value < 1) {
+    return 256;
+  }
+  if (value > 1024) {
+    return 1024;
   }
   return value;
 }
@@ -1426,7 +1460,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1524,6 +1558,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     isOnline: effective_agent_online(agent),
     historyLimit: agent.historyLimit,
     autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
+    syncDataLimitMb: clamp_sync_data_limit_mb(agent.syncDataLimitMb),
     serverConnected: agent.serverConnected,
     sqlConnected: agent.sqlConnected,
     clientVersion: agent.clientVersion ?? '',
@@ -1865,7 +1900,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -1991,6 +2026,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     isOnline: false,
     historyLimit: 5,
     autoSyncIntervalMinutes: 15,
+    syncDataLimitMb: 256,
     serverConnected: false,
     sqlConnected: false,
     clientVersion: '',
@@ -2031,7 +2067,272 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
 function sync_settings_payload(agent: map<json>): map<json> {
   return {
     historyLimit: agent.historyLimit,
-    autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes
+    autoSyncIntervalMinutes: agent.autoSyncIntervalMinutes,
+    syncDataLimitMb: clamp_sync_data_limit_mb(agent.syncDataLimitMb)
+  };
+}
+
+function sync_data_limit_mb_for_client(clientName: string): int {
+  const agent = db.selectOne(Agent, { clientName });
+  if (agent == null) {
+    return 256;
+  }
+  return clamp_sync_data_limit_mb(agent.syncDataLimitMb);
+}
+
+function sync_job_data_storage_referenced_by_relay(storageId: string): bool {
+  if (storageId.trim().length == 0) {
+    return false;
+  }
+  return db.selectOne(SnapshotRecord, { storageId }) != null;
+}
+
+function sync_job_data_storage_referenced_by_archive(storageId: string): bool {
+  if (storageId.trim().length == 0) {
+    return false;
+  }
+  return db.selectOne(SyncJobDataChunk, { storageId }) != null;
+}
+
+function delete_sync_job_data(jobId: string): map<json> {
+  const normalizedJobId = jobId.trim();
+  if (normalizedJobId.length == 0) {
+    return { deletedChunkCount: 0, deletedStorageObjectCount: 0, deletedBytes: 0 };
+  }
+  const chunks = db.selectMany(SyncJobDataChunk, {
+    where: { jobId: normalizedJobId },
+    orderBy: { field: 'ordinal', dir: 'asc' },
+    fields: ['id', 'storageId', 'snapshotBytes'],
+    limit: 1000
+  });
+  let ids = [];
+  let deletedStorageObjectCount = 0;
+  let deletedBytes = 0;
+  for (const chunk of chunks) {
+    ids = ids.concat([chunk.id]);
+    deletedBytes += int.from(chunk.snapshotBytes ?? 0);
+    const storageId = string.from(chunk.storageId ?? '').trim();
+    if (storageId.length != 0 && !sync_job_data_storage_referenced_by_relay(storageId)) {
+      storage.delete(storageId);
+      deletedStorageObjectCount += 1;
+    }
+  }
+  let deletedChunkCount = 0;
+  if (ids.length != 0) {
+    deletedChunkCount = db.deleteMany(SyncJobDataChunk, { id: { in: ids } });
+  }
+  return { deletedChunkCount, deletedStorageObjectCount, deletedBytes };
+}
+
+function sync_job_data_owner_stats(ownerUserId: string? = null): map<json> {
+  const rows = db.aggregate(SyncJobDataChunk, {
+    where: { ownerUserId },
+    select: [
+      { fn: 'sum', field: 'snapshotBytes', as: 'storedBytes' },
+      { fn: 'count', as: 'chunkCount' },
+      { fn: 'count', field: 'jobId', distinct: true, as: 'jobCount' }
+    ]
+  });
+  if (rows.length == 0) {
+    return { storedBytes: 0, chunkCount: 0, jobCount: 0 };
+  }
+  return {
+    storedBytes: int.from(rows[0].storedBytes ?? 0),
+    chunkCount: int.from(rows[0].chunkCount ?? 0),
+    jobCount: int.from(rows[0].jobCount ?? 0)
+  };
+}
+
+function prune_sync_job_data_for_owner(ownerUserId: string? = null, newestJobId: string, limitMb: int): map<json> {
+  const rows = db.selectMany(SyncJobDataChunk, {
+    where: { ownerUserId },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['jobId', 'snapshotBytes'],
+    limit: 1000
+  });
+  const ownerStats = sync_job_data_owner_stats(ownerUserId);
+  let totalBytes = int.from(ownerStats.storedBytes ?? 0);
+  let jobIds = [];
+  const protectedJobId = newestJobId.trim();
+  for (const row of rows) {
+    const jobId = string.from(row.jobId).trim();
+    if (jobId.length != 0 && !string_array_contains(jobIds, jobId)) {
+      jobIds = jobIds.concat([jobId]);
+    }
+  }
+  const limitBytes = clamp_sync_data_limit_mb(limitMb) * 1024 * 1024;
+  let deletedJobCount = 0;
+  let deletedChunkCount = 0;
+  let deletedBytes = 0;
+  for (const jobId of jobIds) {
+    if (totalBytes <= limitBytes || jobId == protectedJobId) {
+      continue;
+    }
+    let jobBytes = 0;
+    for (const row of rows) {
+      if (string.from(row.jobId).trim() == jobId) {
+        jobBytes += int.from(row.snapshotBytes ?? 0);
+      }
+    }
+    const deleted = delete_sync_job_data(jobId);
+    totalBytes -= jobBytes;
+    deletedBytes += int.from(deleted.deletedBytes ?? 0);
+    deletedChunkCount += int.from(deleted.deletedChunkCount ?? 0);
+    deletedJobCount += 1;
+  }
+  // A page is sufficient in normal operation. If a very large history has
+  // more than 1,000 chunks, continue pruning page-by-page without weakening
+  // the configured total-byte limit.
+  if (totalBytes > limitBytes && rows.length == 1000 && deletedJobCount != 0) {
+    const continued = prune_sync_job_data_for_owner(ownerUserId, protectedJobId, limitMb);
+    totalBytes = int.from(continued.retainedBytes ?? totalBytes);
+    deletedBytes += int.from(continued.deletedBytes ?? 0);
+    deletedChunkCount += int.from(continued.deletedChunkCount ?? 0);
+    deletedJobCount += int.from(continued.deletedJobCount ?? 0);
+  }
+  return {
+    limitMb: clamp_sync_data_limit_mb(limitMb),
+    retainedBytes: totalBytes,
+    protectedJobId,
+    deletedJobCount,
+    deletedChunkCount,
+    deletedBytes
+  };
+}
+
+function sync_job_data_chunk_page(job: map<json>, cursor: string? = null): map<json> {
+  const batchId = string.from(job.batchId ?? '').trim();
+  if (string.from(job.direction).trim() == 'download' && batchId.length != 0) {
+    return db.page(SyncJobDataChunk, {
+      where: { batchId },
+      orderBy: [
+        { field: 'createdAt', dir: 'asc' },
+        { field: 'id', dir: 'asc' }
+      ],
+      fields: ['id', 'jobId', 'batchId', 'clientName', 'table', 'ordinal', 'columns', 'rows', 'rowCount', 'snapshotBytes', 'storageId', 'createdAt'],
+      limit: 1,
+      cursor
+    });
+  }
+  return db.page(SyncJobDataChunk, {
+    where: { jobId: job.id },
+    orderBy: [
+      { field: 'ordinal', dir: 'asc' },
+      { field: 'id', dir: 'asc' }
+    ],
+    fields: ['id', 'jobId', 'batchId', 'clientName', 'table', 'ordinal', 'columns', 'rows', 'rowCount', 'snapshotBytes', 'storageId', 'createdAt'],
+    limit: 1,
+    cursor
+  });
+}
+
+function sync_job_data_stats(job: map<json>): map<json> {
+  const batchId = string.from(job.batchId ?? '').trim();
+  let rows = [];
+  if (string.from(job.direction).trim() == 'download' && batchId.length != 0) {
+    rows = db.aggregate(SyncJobDataChunk, {
+      where: { batchId },
+      select: [
+        { fn: 'sum', field: 'rowCount', as: 'retainedRowCount' },
+        { fn: 'sum', field: 'snapshotBytes', as: 'retainedBytes' },
+        { fn: 'count', as: 'chunkCount' }
+      ]
+    });
+  } else {
+    rows = db.aggregate(SyncJobDataChunk, {
+      where: { jobId: job.id },
+      select: [
+        { fn: 'sum', field: 'rowCount', as: 'retainedRowCount' },
+        { fn: 'sum', field: 'snapshotBytes', as: 'retainedBytes' },
+        { fn: 'count', as: 'chunkCount' }
+      ]
+    });
+  }
+  if (rows.length == 0) {
+    return { retainedRowCount: 0, retainedBytes: 0, chunkCount: 0 };
+  }
+  return {
+    retainedRowCount: int.from(rows[0].retainedRowCount ?? 0),
+    retainedBytes: int.from(rows[0].retainedBytes ?? 0),
+    chunkCount: int.from(rows[0].chunkCount ?? 0)
+  };
+}
+
+function sync_job_data_get(jobId: string, cursor: string? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  const job = find_job_by_id(jobId);
+  if (job == null) {
+    return raw_json_error(404, 'job not found');
+  }
+  if (!can_access_job(current, job)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const page = sync_job_data_chunk_page(job, cursor);
+  const stats = sync_job_data_stats(job);
+  const retainedRowCount = int.from(stats.retainedRowCount ?? 0);
+  const retainedBytes = int.from(stats.retainedBytes ?? 0);
+  const chunkCount = int.from(stats.chunkCount ?? 0);
+  if (page.rows.length == 0) {
+    return {
+      ok: true,
+      available: false,
+      pruned: sync_job_status_is_terminal(string.from(job.status)),
+      job: public_job_payload(job),
+      rows: [],
+      columns: [],
+      retainedRowCount,
+      retainedBytes,
+      chunkCount,
+      nextCursor: null,
+      done: true
+    };
+  }
+  const chunk = page.rows[0];
+  let payloadBase64 = '';
+  const storageId = string.from(chunk.storageId ?? '').trim();
+  if (storageId.length != 0) {
+    const stored = storage.get(storageId);
+    payloadBase64 = string.from(stored.content_base64 ?? '').trim();
+  }
+  const nextCursor = page.nextCursor;
+  return {
+    ok: true,
+    available: true,
+    pruned: false,
+    job: public_job_payload(job),
+    sourceJobId: chunk.jobId,
+    sourceClientName: chunk.clientName,
+    columns: chunk.columns,
+    rows: chunk.rows,
+    payloadBase64,
+    rowCount: chunk.rowCount,
+    retainedRowCount,
+    retainedBytes,
+    chunkCount,
+    cursor,
+    nextCursor,
+    done: nextCursor == null || string.from(nextCursor).trim().length == 0
+  };
+}
+
+function sync_data_storage_status(token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const ownerUserId = owner_namespace_for_user(current);
+  const stats = sync_job_data_owner_stats(ownerUserId);
+  let limitMb = 256;
+  const agents = visible_agent_rows_for(current);
+  if (agents.length != 0) {
+    limitMb = clamp_sync_data_limit_mb(agents[0].syncDataLimitMb);
+  }
+  return {
+    ok: true,
+    limitMb,
+    storedBytes: stats.storedBytes,
+    retainedJobCount: stats.jobCount,
+    retainedChunkCount: stats.chunkCount
   };
 }
 
@@ -3853,7 +4154,7 @@ function agent_sync_enabled_set(clientName: string, enabled: bool, token: string
   };
 }
 
-function agent_sync_settings_post(clientName: string, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, token: string? = null): map<json> {
+function agent_sync_settings_post(clientName: string, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -3868,10 +4169,14 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
     userId = user.id;
     ownerUserId = user.ownerUserId;
   }
-  ensure_agent(clientName, userId, ownerUserId);
+  const agent = ensure_agent(clientName, userId, ownerUserId);
+  const nextSyncDataLimitMb = syncDataLimitMb == null
+    ? clamp_sync_data_limit_mb(agent.syncDataLimitMb)
+    : clamp_sync_data_limit_mb(syncDataLimitMb);
   const updated = db.update(Agent, { clientName }, {
     historyLimit: clamp_history_limit(historyLimit),
     autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes),
+    syncDataLimitMb: nextSyncDataLimitMb,
     updatedAt: now_iso()
   });
   if (updated == null) {
@@ -3880,7 +4185,7 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
   return { ok: true, syncSettings: sync_settings_payload(updated) };
 }
 
-function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, token: string? = null): map<json> {
+function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -3891,6 +4196,7 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
 
   const nextHistoryLimit = clamp_history_limit(historyLimit);
   const nextAutoSyncIntervalMinutes = clamp_auto_sync_interval(autoSyncIntervalMinutes);
+  const nextSyncDataLimitMb = clamp_sync_data_limit_mb(syncDataLimitMb);
   let targetClientNames = [];
   for (const agent of visible_agent_rows_for(current)) {
     if (agent.clientName == null) {
@@ -3903,7 +4209,14 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
     targetClientNames = targetClientNames.concat([clientName]);
   }
 
-  if (targetClientNames.length != 0) {
+  if (targetClientNames.length != 0 && syncDataLimitMb != null) {
+    db.updateMany(Agent, { clientName: { in: targetClientNames } }, {
+      historyLimit: nextHistoryLimit,
+      autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
+      syncDataLimitMb: nextSyncDataLimitMb,
+      updatedAt: now_iso()
+    });
+  } else if (targetClientNames.length != 0) {
     db.updateMany(Agent, { clientName: { in: targetClientNames } }, {
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
@@ -3917,7 +4230,8 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
     updatedClients: targetClientNames,
     syncSettings: {
       historyLimit: nextHistoryLimit,
-      autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes
+      autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
+      syncDataLimitMb: nextSyncDataLimitMb
     }
   };
 }
@@ -4620,7 +4934,7 @@ function delete_snapshot_storage_batch(): map<json> {
   for (const storedSnapshot of storedSnapshots) {
     snapshotIds = snapshotIds.concat([storedSnapshot.id]);
     const storageId = string.from(storedSnapshot.storageId ?? '').trim();
-    if (storageId.length != 0) {
+    if (storageId.length != 0 && !sync_job_data_storage_referenced_by_archive(storageId)) {
       storage.delete(storageId);
       deletedStorageObjectCount += 1;
     }
@@ -4645,6 +4959,34 @@ function delete_download_session_batch(): map<json> {
   let deletedCount = 0;
   if (ids.length != 0) { deletedCount = db.deleteMany(DownloadSession, { id: { in: ids } }); }
   return { deletedCount, hasMore: rows.length == 50 };
+}
+
+function delete_sync_job_data_batch(): map<json> {
+  const rows = db.selectMany(SyncJobDataChunk, {
+    where: { id: { gte: '' } },
+    orderBy: { field: 'id', dir: 'asc' },
+    fields: ['id', 'storageId'],
+    limit: 50
+  });
+  let ids = [];
+  let deletedStorageObjectCount = 0;
+  for (const row of rows) {
+    ids = ids.concat([row.id]);
+    const storageId = string.from(row.storageId ?? '').trim();
+    if (storageId.length != 0 && !sync_job_data_storage_referenced_by_relay(storageId)) {
+      storage.delete(storageId);
+      deletedStorageObjectCount += 1;
+    }
+  }
+  let deletedCount = 0;
+  if (ids.length != 0) {
+    deletedCount = db.deleteMany(SyncJobDataChunk, { id: { in: ids } });
+  }
+  return {
+    deletedCount,
+    deletedStorageObjectCount,
+    hasMore: rows.length == 50
+  };
 }
 
 function delete_upload_session_batch(): map<json> {
@@ -4715,6 +5057,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   const snapshotBatch = delete_snapshot_storage_batch();
   const deletedStorageObjectCount = int.from(snapshotBatch.deletedStorageObjectCount ?? 0);
   const snapshotDeletedCount = int.from(snapshotBatch.snapshotDeletedCount ?? 0);
+  const syncJobDataBatch = delete_sync_job_data_batch();
   const downloadSessionBatch = delete_download_session_batch();
   const uploadSessionBatch = delete_upload_session_batch();
   const syncBatchBatch = delete_sync_batch_batch();
@@ -4723,12 +5066,14 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   // Preserve a pause marker after deleting scheduler state so automatic ticks
   // cannot recreate jobs while the reset is draining or after it completes.
   const automaticSyncControl = automatic_sync_control_set(true, token);
+  const syncJobDataDeletedCount = int.from(syncJobDataBatch.deletedCount ?? 0);
+  const syncJobDataStorageDeletedCount = int.from(syncJobDataBatch.deletedStorageObjectCount ?? 0);
   const downloadSessionDeletedCount = int.from(downloadSessionBatch.deletedCount ?? 0);
   const uploadSessionDeletedCount = int.from(uploadSessionBatch.deletedCount ?? 0);
   const batchDeletedCount = int.from(syncBatchBatch.deletedCount ?? 0);
   const jobDeletedCount = int.from(syncJobBatch.deletedCount ?? 0);
   const schedulerStateDeletedCount = int.from(schedulerStateBatch.deletedCount ?? 0);
-  const deletedRecordCount = downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
+  const deletedRecordCount = syncJobDataDeletedCount + downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
   let protocol = sync_protocol_state();
   if (!continueReset) {
     protocol = rotate_sync_epoch();
@@ -4738,19 +5083,20 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     agentResetCount = reset_all_agent_saved_state();
   }
 
-  const hasMore = snapshotBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true;
+  const hasMore = snapshotBatch.hasMore == true || syncJobDataBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true;
 
   return {
     ok: true,
     cleanupStatus: hasMore ? 'cleaning' : 'cleaned',
     cancelledJobCount,
     deletedRecordCount,
-    deletedStorageObjectCount,
+    deletedStorageObjectCount: deletedStorageObjectCount + syncJobDataStorageDeletedCount,
     jobDeletedCount,
     agentResetCount,
     downloadSessionDeletedCount,
     uploadSessionDeletedCount,
     snapshotDeletedCount,
+    syncJobDataDeletedCount,
     batchDeletedCount,
     schedulerStateDeletedCount,
     automaticSyncPaused: automaticSyncControl.automaticSyncPaused == true,
@@ -4993,6 +5339,32 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (chunkRecord == null) {
     return raw_json_error(500, 'could not store multi-writer delta chunk');
   }
+  const archivedChunk = db.insert(SyncJobDataChunk, {
+    id: uuid.v4(),
+    jobId: job.id,
+    batchId: batch.id,
+    clientName: normalizedClientName,
+    table: batch.table,
+    ordinal: nextOrdinal,
+    columns: resolvedColumns,
+    // The payload storage object is shared with the live relay record. Keep
+    // only lightweight metadata here so retained audit data is not duplicated
+    // in the database.
+    rows: [],
+    rowCount: incomingRowCount,
+    snapshotBytes: incomingBytes,
+    storageId,
+    clientUserId: job.clientUserId,
+    ownerUserId: job.ownerUserId,
+    createdAt: now_iso()
+  });
+  if (archivedChunk == null) {
+    db.delete(SnapshotRecord, { id: chunkRecord.id });
+    if (storageId.length != 0) {
+      storage.delete(storageId);
+    }
+    return raw_json_error(500, 'could not retain sync job data');
+  }
   const updatedBatch = db.updateMany(SyncBatch, { id: batch.id, revision: batch.revision }, {
     table: batch.table,
     revision: batch.revision + 1,
@@ -5013,6 +5385,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   });
   if (updatedBatch == 0) {
     db.delete(SnapshotRecord, { id: chunkRecord.id });
+    db.delete(SyncJobDataChunk, { id: archivedChunk.id });
     if (storageId.length != 0) {
       storage.delete(storageId);
     }
@@ -5027,6 +5400,14 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (updatedJob != null) {
     nextJob = updatedJob;
   }
+  let retention = null;
+  if (finalChunk) {
+    retention = prune_sync_job_data_for_owner(
+      job.ownerUserId,
+      job.id,
+      sync_data_limit_mb_for_client(normalizedClientName)
+    );
+  }
   return raw_json_success({
     job: public_job_payload(nextJob),
     batchId,
@@ -5035,7 +5416,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     uploadedClients,
     expectedClientCount: batch.expectedClients.length,
     ready,
-    clientChangeTrackingVersions
+    clientChangeTrackingVersions,
+    retention
   });
 }
 
@@ -6316,7 +6698,7 @@ function cleanup_multi_writer_batch_storage(batchId: string): int {
   });
   for (const chunk of chunks) {
     const storageId = string.from(chunk.storageId ?? '').trim();
-    if (storageId.length != 0) {
+    if (storageId.length != 0 && !sync_job_data_storage_referenced_by_archive(storageId)) {
       storage.delete(storageId);
     }
   }

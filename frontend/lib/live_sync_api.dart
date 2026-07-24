@@ -471,21 +471,25 @@ class LiveSyncApiClient {
     required String clientName,
     required int historyLimit,
     required int autoSyncIntervalMinutes,
+    int? syncDataLimitMb,
   }) async {
     await _invokeFunction('agent_sync_settings_post', {
       'clientName': clientName,
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+      if (syncDataLimitMb != null) 'syncDataLimitMb': syncDataLimitMb,
     });
   }
 
   Future<int> updateAllAgentSyncSettings({
     required int historyLimit,
     required int autoSyncIntervalMinutes,
+    int? syncDataLimitMb,
   }) async {
     final decoded = await _invokeFunction('agent_sync_settings_post_all', {
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+      if (syncDataLimitMb != null) 'syncDataLimitMb': syncDataLimitMb,
     });
     if (decoded is! Map) {
       throw const LiveSyncApiException(
@@ -493,6 +497,73 @@ class LiveSyncApiClient {
       );
     }
     return (decoded['updatedCount'] as num? ?? 0).round();
+  }
+
+  Future<AdminSyncJobDataPage> fetchSyncJobData({
+    required String jobId,
+    String? cursor,
+  }) async {
+    final decoded = await _invokeFunction('sync_job_data_get', {
+      'jobId': jobId,
+      if (cursor?.trim().isNotEmpty == true) 'cursor': cursor!.trim(),
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException('Unexpected sync job data payload.');
+    }
+    final payload = Map<String, dynamic>.from(decoded);
+    var rows = _jobDataRows(payload['rows']);
+    final encodedPayload = payload['payloadBase64']?.toString().trim() ?? '';
+    if (encodedPayload.isNotEmpty) {
+      try {
+        rows = _jobDataRows(
+          jsonDecode(utf8.decode(base64Decode(encodedPayload))),
+        );
+      } catch (_) {
+        throw const LiveSyncApiException('Stored sync job data is unreadable.');
+      }
+    }
+    var columns = (payload['columns'] as List<dynamic>? ?? const [])
+        .map((item) => item.toString())
+        .where((item) => item.trim().isNotEmpty)
+        .toList(growable: false);
+    if (columns.isEmpty && rows.isNotEmpty) {
+      columns = rows.first.keys.toList(growable: false);
+    }
+    return AdminSyncJobDataPage(
+      available: payload['available'] == true,
+      pruned: payload['pruned'] == true,
+      sourceJobId: payload['sourceJobId']?.toString() ?? '',
+      sourceClientName: payload['sourceClientName']?.toString() ?? '',
+      columns: columns,
+      rows: rows,
+      rowCount: (payload['rowCount'] as num? ?? rows.length).round(),
+      retainedRowCount:
+          (payload['retainedRowCount'] as num? ?? rows.length).round(),
+      retainedBytes: (payload['retainedBytes'] as num? ?? 0).round(),
+      chunkCount: (payload['chunkCount'] as num? ?? 0).round(),
+      nextCursor: payload['nextCursor']?.toString(),
+      done: payload['done'] != false,
+    );
+  }
+
+  Future<AdminSyncDataStorageStatus> fetchSyncDataStorageStatus() async {
+    final decoded = await _invokeFunction('sync_data_storage_status', {});
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected sync data storage status payload.',
+      );
+    }
+    return AdminSyncDataStorageStatus.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
+  List<Map<String, dynamic>> _jobDataRows(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
   }
 
   Future<void> updateTableSyncPolicy({

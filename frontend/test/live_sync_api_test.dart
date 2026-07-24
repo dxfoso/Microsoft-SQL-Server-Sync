@@ -58,6 +58,7 @@ void main() {
       final updatedCount = await api.updateAllAgentSyncSettings(
         historyLimit: 10,
         autoSyncIntervalMinutes: 30,
+        syncDataLimitMb: 128,
       );
 
       expect(updatedCount, 2);
@@ -65,6 +66,7 @@ void main() {
       expect(requestPayload['args'], {
         'historyLimit': 10,
         'autoSyncIntervalMinutes': 30,
+        'syncDataLimitMb': 128,
         'token': 'test-token',
       });
       api.dispose();
@@ -289,4 +291,83 @@ void main() {
       api.dispose();
     },
   );
+
+  test('sync job data decodes retained base64 rows', () async {
+    late Map<String, dynamic> requestPayload;
+    final encodedRows = base64Encode(
+      utf8.encode(
+        jsonEncode([
+          {'id': '1', 'name': 'مرحبا'},
+        ]),
+      ),
+    );
+    final api = LiveSyncApiClient(
+      baseUrl: 'https://sync.example/call',
+      client: MockClient((request) async {
+        requestPayload = Map<String, dynamic>.from(
+          jsonDecode(request.body) as Map,
+        );
+        return http.Response(
+          jsonEncode({
+            'status': 'success',
+            'value': {
+              'available': true,
+              'pruned': false,
+              'sourceJobId': 'upload-1',
+              'sourceClientName': 'c1',
+              'columns': ['id', 'name'],
+              'rows': [],
+              'payloadBase64': encodedRows,
+              'rowCount': 1,
+              'retainedRowCount': 1,
+              'retainedBytes': 42,
+              'chunkCount': 1,
+              'done': true,
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    api.setAuthToken('test-token');
+
+    final page = await api.fetchSyncJobData(jobId: 'job-1');
+
+    expect(requestPayload['name'], 'sync_job_data_get');
+    expect(requestPayload['args'], {'jobId': 'job-1', 'token': 'test-token'});
+    expect(page.rows.single['name'], 'مرحبا');
+    expect(page.columns, ['id', 'name']);
+    expect(page.retainedBytes, 42);
+    api.dispose();
+  });
+
+  test('sync data storage status returns configured usage', () async {
+    final api = LiveSyncApiClient(
+      baseUrl: 'https://sync.example/call',
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'status': 'success',
+            'value': {
+              'limitMb': 256,
+              'storedBytes': 1024,
+              'retainedJobCount': 3,
+              'retainedChunkCount': 5,
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
+
+    final status = await api.fetchSyncDataStorageStatus();
+
+    expect(status.limitMb, 256);
+    expect(status.storedBytes, 1024);
+    expect(status.retainedJobCount, 3);
+    expect(status.retainedChunkCount, 5);
+    api.dispose();
+  });
 }

@@ -81,6 +81,7 @@ AdminAgent _agent({required List<AdminTableState> tables}) {
     isOnline: true,
     historyLimit: 5,
     autoSyncIntervalMinutes: 15,
+    syncDataLimitMb: 256,
     serverConnected: true,
     sqlConnected: true,
     clientVersion: '1.0.0',

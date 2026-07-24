@@ -205,6 +205,7 @@ class AdminAgent {
     required this.isOnline,
     required this.historyLimit,
     required this.autoSyncIntervalMinutes,
+    required this.syncDataLimitMb,
     required this.serverConnected,
     required this.sqlConnected,
     required this.clientVersion,
@@ -225,6 +226,7 @@ class AdminAgent {
   final bool isOnline;
   final int historyLimit;
   final int autoSyncIntervalMinutes;
+  final int syncDataLimitMb;
   final bool serverConnected;
   final bool sqlConnected;
   final String clientVersion;
@@ -247,6 +249,7 @@ class AdminAgent {
       historyLimit: (json['historyLimit'] as num? ?? 5).round(),
       autoSyncIntervalMinutes:
           (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),
+      syncDataLimitMb: (json['syncDataLimitMb'] as num? ?? 256).round(),
       serverConnected: json['serverConnected'] as bool? ?? false,
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       clientVersion: json['clientVersion'] as String? ?? '',
@@ -637,4 +640,57 @@ class AdminJob {
       status.toLowerCase() == 'uploading' ||
       status.toLowerCase() == 'downloading' ||
       status.toLowerCase() == 'applying';
+}
+
+class AdminSyncJobDataPage {
+  const AdminSyncJobDataPage({
+    required this.available,
+    required this.pruned,
+    required this.sourceJobId,
+    required this.sourceClientName,
+    required this.columns,
+    required this.rows,
+    required this.rowCount,
+    required this.retainedRowCount,
+    required this.retainedBytes,
+    required this.chunkCount,
+    required this.nextCursor,
+    required this.done,
+  });
+
+  final bool available;
+  final bool pruned;
+  final String sourceJobId;
+  final String sourceClientName;
+  final List<String> columns;
+  final List<Map<String, dynamic>> rows;
+  final int rowCount;
+  final int retainedRowCount;
+  final int retainedBytes;
+  final int chunkCount;
+  final String? nextCursor;
+  final bool done;
+}
+
+class AdminSyncDataStorageStatus {
+  const AdminSyncDataStorageStatus({
+    required this.limitMb,
+    required this.storedBytes,
+    required this.retainedJobCount,
+    required this.retainedChunkCount,
+  });
+
+  final int limitMb;
+  final int storedBytes;
+  final int retainedJobCount;
+  final int retainedChunkCount;
+
+  factory AdminSyncDataStorageStatus.fromJson(Map<String, dynamic> json) {
+    return AdminSyncDataStorageStatus(
+      limitMb: (json['limitMb'] as num? ?? 256).round(),
+      storedBytes: (json['storedBytes'] as num? ?? 0).round(),
+      retainedJobCount: (json['retainedJobCount'] as num? ?? 0).round(),
+      retainedChunkCount: (json['retainedChunkCount'] as num? ?? 0).round(),
+    );
+  }
 }

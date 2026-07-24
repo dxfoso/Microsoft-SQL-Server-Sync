@@ -1,0 +1,116 @@
+{
+  "name": "mig_20260724_132500",
+  "timestamp": "2026-07-24T13:25:00.000000000+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "syncDataLimitMb",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": true,
+            "min": "1",
+            "max": "1024",
+            "default": null
+          }
+        }
+      ]
+    },
+    {
+      "object": "SyncJobDataChunk",
+      "namespace": null,
+      "action": "added",
+      "fields": [
+        {
+          "field": "id",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "1", "max": "64", "default": null }
+        },
+        {
+          "field": "jobId",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "1", "max": "64", "default": null }
+        },
+        {
+          "field": "batchId",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "0", "max": "128", "default": null }
+        },
+        {
+          "field": "clientName",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "0", "max": "128", "default": null }
+        },
+        {
+          "field": "table",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "1", "max": "256", "default": null }
+        },
+        {
+          "field": "ordinal",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "int", "optional": false, "min": "0", "max": "1000000", "default": null }
+        },
+        {
+          "field": "columns",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "array<json>", "optional": false, "min": null, "max": null, "default": null }
+        },
+        {
+          "field": "rows",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "array<json>", "optional": false, "min": null, "max": null, "default": null }
+        },
+        {
+          "field": "rowCount",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "int", "optional": false, "min": "0", "max": "1000000000", "default": null }
+        },
+        {
+          "field": "snapshotBytes",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "int", "optional": false, "min": "0", "max": "2147483647", "default": null }
+        },
+        {
+          "field": "storageId",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": false, "min": "0", "max": "128", "default": null }
+        },
+        {
+          "field": "clientUserId",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": true, "min": "0", "max": "64", "default": null }
+        },
+        {
+          "field": "ownerUserId",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "string", "optional": true, "min": "0", "max": "64", "default": null }
+        },
+        {
+          "field": "createdAt",
+          "action": "added",
+          "before": null,
+          "after": { "ty": "datetime", "optional": false, "min": null, "max": null, "default": null }
+        }
+      ]
+    }
+  ]
+}

@@ -176,7 +176,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Changed rows", clients_page)
         self.assertIn("changedRowCount", clients_page)
         self.assertNotIn("changedRowsOverride", clients_page)
-        self.assertIn("Not reported", clients_page)
+        self.assertNotIn("Not reported", clients_page)
+        self.assertIn("return '-';", clients_page)
         self.assertIn(
             "job.sourceClientName == 'server-authoritative-reconcile'",
             clients_page,
@@ -207,7 +208,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("'downloading' => 'Downloading'", clients_page)
         self.assertIn("'uploading' || 'snapshotting' => 'Uploading'", clients_page)
         self.assertIn("_replaceRoute", clients_page)
-        self.assertIn("Additional rows not reported", clients_page)
+        self.assertNotIn("Additional rows not reported", clients_page)
         self.assertIn("+${_number(changedRows)} rows", clients_page)
         self.assertIn("Filter log", clients_page)
         self.assertIn("Downloaded new", clients_page)

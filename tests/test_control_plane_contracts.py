@@ -997,6 +997,56 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("where: { status: 'ready' }", active_jobs)
         self.assertIn("if (!multiWriterDownloadReady)", active_jobs)
 
+    def test_sync_job_row_data_is_durable_authorized_and_paged(self):
+        source = read_text("business/control_plane.tru")
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+        data_body = source.split("function sync_job_data_get(", 1)[1].split(
+            "function sync_data_storage_status(", 1
+        )[0]
+
+        self.assertIn("class SyncJobDataChunk {", source)
+        self.assertIn("db.insert(SyncJobDataChunk", upload_body)
+        self.assertIn("jobId: job.id", upload_body)
+        self.assertIn("batchId: batch.id", upload_body)
+        self.assertIn("storageId", upload_body)
+        archive_insert = upload_body.split(
+            "db.insert(SyncJobDataChunk", 1
+        )[1].split("if (archivedChunk == null)", 1)[0]
+        self.assertIn("rows: []", archive_insert)
+        self.assertIn("can_access_job(current, job)", data_body)
+        self.assertIn("sync_job_data_chunk_page(job, cursor)", data_body)
+        self.assertIn("payloadBase64", data_body)
+        self.assertIn("nextCursor", data_body)
+
+    def test_sync_job_data_retention_keeps_newest_whole_job(self):
+        source = read_text("business/control_plane.tru")
+        retention = source.split(
+            "function prune_sync_job_data_for_owner(", 1
+        )[1].split("function sync_job_data_chunk_page(", 1)[0]
+        relay_cleanup = source.split(
+            "function cleanup_multi_writer_batch_storage(", 1
+        )[1].split("function jobs_cleanup_multi_writer_batch(", 1)[0]
+
+        self.assertIn("field syncDataLimitMb: int? min=1 max=1024", source)
+        self.assertIn("protectedJobId", retention)
+        self.assertIn("jobId == protectedJobId", retention)
+        self.assertIn("delete_sync_job_data(jobId)", retention)
+        self.assertIn("totalBytes <= limitBytes", retention)
+        self.assertIn("sync_job_data_owner_stats(ownerUserId)", retention)
+        self.assertIn("rows.length == 1000", retention)
+        self.assertIn(
+            "prune_sync_job_data_for_owner(ownerUserId, protectedJobId, limitMb)",
+            retention,
+        )
+        self.assertIn("db.aggregate(SyncJobDataChunk", source)
+        self.assertIn(
+            "!sync_job_data_storage_referenced_by_archive(storageId)",
+            relay_cleanup,
+        )
+        self.assertIn("delete_sync_job_data_batch()", source)
+
 
 if __name__ == "__main__":
     unittest.main()

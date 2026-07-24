@@ -11,7 +11,7 @@ import 'models.dart';
 
 enum _ClientSortField { name, status, database, tables, lastSync, heartbeat }
 
-enum _ClientScreen { list, detail, sync, table }
+enum _ClientScreen { list, detail, sync, table, jobData }
 
 enum _ClientDetailView { tables, syncLog }
 
@@ -30,6 +30,7 @@ enum _ClientAccountAction { syncSettings, signOut }
 const int _minAutoSyncIntervalMinutes = 1;
 const int _maxAutoSyncIntervalMinutes = 1440;
 const int _maxAgentHistoryLimit = 100;
+const int _maxSyncDataLimitMb = 1024;
 
 bool _messageContainsReportedRowCount(String message) => RegExp(
   r'\b\d[\d,]*\s+(?:(?:changed|missing|new)\s+)?rows?\b',
@@ -220,6 +221,8 @@ class _ClientsPageState extends State<ClientsPage> {
   final LiveSyncApiClient _api = LiveSyncApiClient();
   final TextEditingController _filterController = TextEditingController();
   final TextEditingController _logFilterController = TextEditingController();
+  final TextEditingController _tableFilterController = TextEditingController();
+  final ScrollController _tableHorizontalController = ScrollController();
   Timer? _refreshTimer;
   AdminLiveState? _state;
   String? _selectedClientName;
@@ -235,6 +238,7 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _serverResetBusy = false;
   AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
+  String _tableFilter = '';
   String _logFilter = '';
   String _logDirection = 'all';
   String _logStatus = 'all';
@@ -247,6 +251,7 @@ class _ClientsPageState extends State<ClientsPage> {
   String? _resolvingTable;
   String? _selectedTable;
   String? _selectedSyncKey;
+  String? _selectedJobId;
 
   @override
   void initState() {
@@ -281,12 +286,17 @@ class _ClientsPageState extends State<ClientsPage> {
       _selectedSyncKey = Uri.decodeComponent(segments[3]);
       _screen = _ClientScreen.sync;
     }
+    if (segments.length >= 4 && segments[2] == 'jobs') {
+      _selectedJobId = Uri.decodeComponent(segments[3]);
+      _screen = _ClientScreen.jobData;
+    }
   }
 
   void _replaceRoute() {
     final client = _selectedClientName;
     final table = _selectedTable;
     final sync = _selectedSyncKey;
+    final job = _selectedJobId;
     final path = switch (_screen) {
       _ClientScreen.list => '/clients',
       _ClientScreen.detail => '/clients/${Uri.encodeComponent(client ?? '')}',
@@ -294,6 +304,8 @@ class _ClientsPageState extends State<ClientsPage> {
         '/clients/${Uri.encodeComponent(client ?? '')}/sync/${Uri.encodeComponent(sync ?? '')}',
       _ClientScreen.table =>
         '/clients/${Uri.encodeComponent(client ?? '')}/tables/${Uri.encodeComponent(table ?? '')}',
+      _ClientScreen.jobData =>
+        '/clients/${Uri.encodeComponent(client ?? '')}/jobs/${Uri.encodeComponent(job ?? '')}',
     };
     final query =
         _screen == _ClientScreen.detail &&
@@ -317,6 +329,8 @@ class _ClientsPageState extends State<ClientsPage> {
     _refreshTimer?.cancel();
     _filterController.dispose();
     _logFilterController.dispose();
+    _tableFilterController.dispose();
+    _tableHorizontalController.dispose();
     _api.dispose();
     super.dispose();
   }
@@ -350,6 +364,7 @@ class _ClientsPageState extends State<ClientsPage> {
           _screen = _ClientScreen.list;
           _selectedTable = null;
           _selectedSyncKey = null;
+          _selectedJobId = null;
           _replaceRoute();
         }
         _loading = false;
@@ -439,6 +454,8 @@ class _ClientsPageState extends State<ClientsPage> {
                           _buildSyncDetailPage(),
                         if (_screen == _ClientScreen.table)
                           _buildTableDetailPage(),
+                        if (_screen == _ClientScreen.jobData)
+                          _buildJobDataPage(),
                       ],
                     ),
                   ),
@@ -468,20 +485,25 @@ class _ClientsPageState extends State<ClientsPage> {
           IconButton(
             visualDensity: VisualDensity.compact,
             tooltip:
-                _screen == _ClientScreen.table || _screen == _ClientScreen.sync
+                _screen == _ClientScreen.table ||
+                        _screen == _ClientScreen.sync ||
+                        _screen == _ClientScreen.jobData
                     ? 'Back to client'
                     : 'Back to clients',
             onPressed:
                 () => setState(() {
                   if (_screen == _ClientScreen.table ||
-                      _screen == _ClientScreen.sync) {
+                      _screen == _ClientScreen.sync ||
+                      _screen == _ClientScreen.jobData) {
                     _screen = _ClientScreen.detail;
                     _selectedTable = null;
                     _selectedSyncKey = null;
+                    _selectedJobId = null;
                   } else {
                     _screen = _ClientScreen.list;
                     _selectedTable = null;
                     _selectedSyncKey = null;
+                    _selectedJobId = null;
                   }
                   _replaceRoute();
                 }),
@@ -494,6 +516,8 @@ class _ClientsPageState extends State<ClientsPage> {
                   ? _displayTable(table?.table ?? _selectedTable ?? '')
                   : _screen == _ClientScreen.sync
                   ? 'Sync details'
+                  : _screen == _ClientScreen.jobData
+                  ? 'Sync job data'
                   : agent.clientName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -614,6 +638,7 @@ class _ClientsPageState extends State<ClientsPage> {
                     _screen = _ClientScreen.detail;
                     _selectedTable = null;
                     _selectedSyncKey = null;
+                    _selectedJobId = null;
                     _replaceRoute();
                   }),
               child: const Text('Review tables'),
@@ -719,11 +744,28 @@ class _ClientsPageState extends State<ClientsPage> {
     final historyController = TextEditingController(
       text: (firstAgent?.historyLimit ?? 5).toString(),
     );
+    AdminSyncDataStorageStatus? storageStatus;
+    try {
+      storageStatus = await _api.fetchSyncDataStorageStatus();
+    } catch (_) {
+      // Settings remain editable if the usage summary is temporarily unavailable.
+    }
+    if (!mounted) {
+      intervalController.dispose();
+      historyController.dispose();
+      return;
+    }
+    final syncDataLimitController = TextEditingController(
+      text:
+          (storageStatus?.limitMb ?? firstAgent?.syncDataLimitMb ?? 256)
+              .toString(),
+    );
     final intervalValues =
         agents.map((agent) => agent.autoSyncIntervalMinutes).toSet();
     var saving = false;
     String? intervalError;
     String? historyError;
+    String? syncDataLimitError;
     String? saveError;
 
     await showDialog<void>(
@@ -783,6 +825,20 @@ class _ClientsPageState extends State<ClientsPage> {
                             errorText: historyError,
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: syncDataLimitController,
+                          enabled: agents.isNotEmpty && !saving,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Saved sync data limit (MB)',
+                            helperText:
+                                storageStatus == null
+                                    ? 'Allowed range: 1 to 1024 MB'
+                                    : '${_formatBytes(storageStatus.storedBytes)} currently stored across ${storageStatus.retainedJobCount} sync jobs. Oldest job data is removed first; the newest job is always kept.',
+                            errorText: syncDataLimitError,
+                          ),
+                        ),
                         if (saveError != null) ...[
                           const SizedBox(height: 12),
                           Text(
@@ -814,6 +870,9 @@ class _ClientsPageState extends State<ClientsPage> {
                                 final history = int.tryParse(
                                   historyController.text.trim(),
                                 );
+                                final syncDataLimitMb = int.tryParse(
+                                  syncDataLimitController.text.trim(),
+                                );
                                 final validInterval =
                                     interval != null &&
                                     interval >= _minAutoSyncIntervalMinutes &&
@@ -822,7 +881,13 @@ class _ClientsPageState extends State<ClientsPage> {
                                     history != null &&
                                     history >= 1 &&
                                     history <= _maxAgentHistoryLimit;
-                                if (!validInterval || !validHistory) {
+                                final validSyncDataLimit =
+                                    syncDataLimitMb != null &&
+                                    syncDataLimitMb >= 1 &&
+                                    syncDataLimitMb <= _maxSyncDataLimitMb;
+                                if (!validInterval ||
+                                    !validHistory ||
+                                    !validSyncDataLimit) {
                                   setDialogState(() {
                                     intervalError =
                                         validInterval
@@ -832,6 +897,10 @@ class _ClientsPageState extends State<ClientsPage> {
                                         validHistory
                                             ? null
                                             : 'Enter a value from 1 to 100.';
+                                    syncDataLimitError =
+                                        validSyncDataLimit
+                                            ? null
+                                            : 'Enter a value from 1 to 1024.';
                                     saveError = null;
                                   });
                                   return;
@@ -840,6 +909,7 @@ class _ClientsPageState extends State<ClientsPage> {
                                   saving = true;
                                   intervalError = null;
                                   historyError = null;
+                                  syncDataLimitError = null;
                                   saveError = null;
                                 });
                                 try {
@@ -847,6 +917,7 @@ class _ClientsPageState extends State<ClientsPage> {
                                       .updateAllAgentSyncSettings(
                                         historyLimit: history,
                                         autoSyncIntervalMinutes: interval,
+                                        syncDataLimitMb: syncDataLimitMb,
                                       );
                                   if (!mounted || !context.mounted) return;
                                   Navigator.of(context).pop();
@@ -857,7 +928,7 @@ class _ClientsPageState extends State<ClientsPage> {
                                   ).showSnackBar(
                                     SnackBar(
                                       content: Text(
-                                        'Saved a $interval-minute interval for $updatedCount clients. It applies on the next scheduler tick.',
+                                        'Saved sync settings for $updatedCount clients, including a $syncDataLimitMb MB job-data limit.',
                                       ),
                                     ),
                                   );
@@ -887,6 +958,7 @@ class _ClientsPageState extends State<ClientsPage> {
 
     intervalController.dispose();
     historyController.dispose();
+    syncDataLimitController.dispose();
   }
 
   Widget _buildClientDetailToolbar(AdminAgent agent) {
@@ -894,10 +966,8 @@ class _ClientsPageState extends State<ClientsPage> {
     final activeSyncs = _activeSyncCount(agent, jobs);
     final statusColor =
         agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
-    final machine =
-        agent.machineName.isEmpty ? 'Machine not reported' : agent.machineName;
-    final database =
-        agent.database.isEmpty ? 'Database not reported' : agent.database;
+    final machine = agent.machineName.isEmpty ? '-' : agent.machineName;
+    final database = agent.database.isEmpty ? '-' : agent.database;
     return SizedBox(
       height: 40,
       child: SingleChildScrollView(
@@ -912,6 +982,7 @@ class _ClientsPageState extends State<ClientsPage> {
                     _screen = _ClientScreen.list;
                     _selectedTable = null;
                     _selectedSyncKey = null;
+                    _selectedJobId = null;
                     _replaceRoute();
                   }),
               icon: const Icon(Icons.arrow_back_rounded, size: 20),
@@ -1344,7 +1415,7 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(
           Text(
-            agent.database.trim().isEmpty ? 'Not reported' : agent.database,
+            agent.database.trim().isEmpty ? '-' : agent.database,
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -1358,6 +1429,8 @@ class _ClientsPageState extends State<ClientsPage> {
                   _selectedClientName = agent.clientName;
                   _screen = _ClientScreen.detail;
                   _selectedTable = null;
+                  _selectedSyncKey = null;
+                  _selectedJobId = null;
                   _replaceRoute();
                 }),
             icon: const Icon(Icons.visibility_outlined, size: 16),
@@ -1439,9 +1512,7 @@ class _ClientsPageState extends State<ClientsPage> {
     final color =
         agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
     final database =
-        agent.database.trim().isEmpty
-            ? 'Database not reported'
-            : agent.database.trim();
+        agent.database.trim().isEmpty ? '-' : agent.database.trim();
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1732,6 +1803,7 @@ class _ClientsPageState extends State<ClientsPage> {
       _detailView = view;
       _selectedTable = null;
       _selectedSyncKey = null;
+      _selectedJobId = null;
       _screen = _ClientScreen.detail;
       _replaceRoute();
     });
@@ -1781,7 +1853,7 @@ class _ClientsPageState extends State<ClientsPage> {
               ),
               const SizedBox(height: 6),
               Text(
-                '${agent.clientName} · ${agent.database.isEmpty ? 'Database not reported' : agent.database}',
+                '${agent.clientName} · ${agent.database.isEmpty ? '-' : agent.database}',
                 style: const TextStyle(color: Color(0xFF667085)),
               ),
               const SizedBox(height: 14),
@@ -1809,14 +1881,21 @@ class _ClientsPageState extends State<ClientsPage> {
                   child: _buildTableResolutionMenu(agent, table, issue),
                 ),
               ],
-              const SizedBox(height: 12),
-              _buildMessage(
-                'The control plane does not store row-level table payloads. Use the Windows client for row-level verification.',
-                error: false,
-              ),
             ],
           ),
         ),
+        if (jobs.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _panel(
+            child: _SyncJobDataTable(
+              api: _api,
+              jobId: jobs.first.id,
+              title: 'Latest captured sync data',
+              subtitle:
+                  'Rows retained for the newest sync job involving this table.',
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         _panel(child: _buildJobLog(jobs)),
       ],
@@ -1838,7 +1917,7 @@ class _ClientsPageState extends State<ClientsPage> {
 
   String _changedRowsLabel(List<AdminJob> jobs, {String? direction}) {
     final value = _changedRows(jobs, direction: direction);
-    return value == null ? 'Not reported' : _number(value);
+    return value == null ? '-' : _number(value);
   }
 
   int _transferRows(List<AdminJob> jobs, String direction) {
@@ -1850,7 +1929,15 @@ class _ClientsPageState extends State<ClientsPage> {
     for (final job in _jobsFor(agent)) {
       jobsByTable.putIfAbsent(job.table, () => <AdminJob>[]).add(job);
     }
-    final tables = List<AdminTableState>.from(agent.tables)..sort(
+    final query = _tableFilter.toLowerCase();
+    final tables = agent.tables
+      .where(
+        (table) =>
+            query.isEmpty ||
+            table.table.toLowerCase().contains(query) ||
+            _displayTable(table.table).toLowerCase().contains(query),
+      )
+      .toList(growable: false)..sort(
       (left, right) => _compareTableStates(agent, left, right, jobsByTable),
     );
     return Column(
@@ -1866,103 +1953,239 @@ class _ClientsPageState extends State<ClientsPage> {
           style: TextStyle(color: Color(0xFF667085), fontSize: 12),
         ),
         const SizedBox(height: 10),
-        if (tables.isEmpty)
-          _buildEmpty('No table state has been reported.')
-        else
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              sortColumnIndex: _tableSortField.index,
-              sortAscending: _tableSortAscending,
-              columns: [
-                DataColumn(
-                  label: const Text('Table'),
-                  onSort:
-                      (_, ascending) =>
-                          _sortTables(_TableSortField.table, ascending),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final filter = TextField(
+              controller: _tableFilterController,
+              onChanged: (value) => setState(() => _tableFilter = value.trim()),
+              decoration: InputDecoration(
+                labelText: 'Filter tables',
+                hintText: 'Table name',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon:
+                    _tableFilter.isEmpty
+                        ? null
+                        : IconButton(
+                          tooltip: 'Clear table filter',
+                          onPressed: () {
+                            _tableFilterController.clear();
+                            setState(() => _tableFilter = '');
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                isDense: true,
+              ),
+            );
+            if (constraints.maxWidth < 560) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  filter,
+                  const SizedBox(height: 6),
+                  Text(
+                    '${tables.length} of ${agent.tables.length} tables',
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                SizedBox(width: 320, child: filter),
+                const Spacer(),
+                Text(
+                  '${tables.length} of ${agent.tables.length} tables',
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 12,
+                  ),
                 ),
-                DataColumn(
-                  numeric: true,
-                  label: const Text('Changed rows'),
-                  onSort:
-                      (_, ascending) =>
-                          _sortTables(_TableSortField.changedRows, ascending),
-                ),
-                DataColumn(
-                  numeric: true,
-                  label: const Text('Uploaded'),
-                  onSort:
-                      (_, ascending) =>
-                          _sortTables(_TableSortField.uploaded, ascending),
-                ),
-                DataColumn(
-                  numeric: true,
-                  label: const Text('Downloaded'),
-                  onSort:
-                      (_, ascending) =>
-                          _sortTables(_TableSortField.downloaded, ascending),
-                ),
-                DataColumn(
-                  label: const Text('Readiness'),
-                  onSort:
-                      (_, ascending) =>
-                          _sortTables(_TableSortField.readiness, ascending),
-                ),
-                DataColumn(
-                  label: const Text('Client status'),
-                  onSort:
-                      (_, ascending) =>
-                          _sortTables(_TableSortField.clientStatus, ascending),
-                ),
-                DataColumn(
-                  label: const Text('Last sync'),
-                  onSort:
-                      (_, ascending) =>
-                          _sortTables(_TableSortField.lastSync, ascending),
-                ),
-                const DataColumn(label: Text('Actions')),
               ],
-              rows:
-                  tables.map((table) {
-                    final issue = _tableSyncIssue(agent, table.table);
-                    final tableJobs =
-                        jobsByTable[table.table] ?? const <AdminJob>[];
-                    return DataRow(
-                      color:
-                          issue?.blocksSync == true
-                              ? WidgetStateProperty.all(const Color(0xFFFFF6ED))
-                              : null,
-                      cells: [
-                        DataCell(Text(_displayTable(table.table))),
-                        DataCell(Text(_changedRowsLabel(tableJobs))),
-                        DataCell(
-                          Text(
-                            _changedRowsLabel(tableJobs, direction: 'upload'),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        if (agent.tables.isEmpty)
+          _buildEmpty('No table state has been reported.')
+        else if (tables.isEmpty)
+          _buildEmpty('No tables match this filter.')
+        else
+          _buildPinnedTableGrid(agent, tables, jobsByTable),
+      ],
+    );
+  }
+
+  Widget _buildPinnedTableGrid(
+    AdminAgent agent,
+    List<AdminTableState> tables,
+    Map<String, List<AdminJob>> jobsByTable,
+  ) {
+    const headingHeight = 48.0;
+    const rowHeight = 64.0;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Scrollbar(
+            controller: _tableHorizontalController,
+            thumbVisibility: true,
+            trackVisibility: true,
+            thickness: 8,
+            radius: const Radius.circular(8),
+            child: SingleChildScrollView(
+              controller: _tableHorizontalController,
+              scrollDirection: Axis.horizontal,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: DataTable(
+                  headingRowHeight: headingHeight,
+                  dataRowMinHeight: rowHeight,
+                  dataRowMaxHeight: rowHeight,
+                  sortColumnIndex: _tableSortField.index,
+                  sortAscending: _tableSortAscending,
+                  columns: [
+                    DataColumn(
+                      label: const Text('Table'),
+                      onSort:
+                          (_, ascending) =>
+                              _sortTables(_TableSortField.table, ascending),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: const Text('Changed rows'),
+                      onSort:
+                          (_, ascending) => _sortTables(
+                            _TableSortField.changedRows,
+                            ascending,
                           ),
-                        ),
-                        DataCell(
-                          Text(
-                            _changedRowsLabel(tableJobs, direction: 'download'),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: const Text('Uploaded'),
+                      onSort:
+                          (_, ascending) =>
+                              _sortTables(_TableSortField.uploaded, ascending),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: const Text('Downloaded'),
+                      onSort:
+                          (_, ascending) => _sortTables(
+                            _TableSortField.downloaded,
+                            ascending,
                           ),
-                        ),
-                        DataCell(
-                          _statusChip(
-                            _tableReadinessLabel(issue),
-                            _tableReadinessColor(issue),
+                    ),
+                    DataColumn(
+                      label: const Text('Readiness'),
+                      onSort:
+                          (_, ascending) =>
+                              _sortTables(_TableSortField.readiness, ascending),
+                    ),
+                    DataColumn(
+                      label: const Text('Client status'),
+                      onSort:
+                          (_, ascending) => _sortTables(
+                            _TableSortField.clientStatus,
+                            ascending,
                           ),
-                        ),
-                        DataCell(
-                          _statusChip(table.status, _statusColor(table.status)),
-                        ),
-                        DataCell(Text(_formatTimestamp(table.lastSync))),
-                        DataCell(
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
+                    ),
+                    DataColumn(
+                      label: const Text('Last sync'),
+                      onSort:
+                          (_, ascending) =>
+                              _sortTables(_TableSortField.lastSync, ascending),
+                    ),
+                  ],
+                  rows: tables
+                      .map((table) {
+                        final issue = _tableSyncIssue(agent, table.table);
+                        final tableJobs =
+                            jobsByTable[table.table] ?? const <AdminJob>[];
+                        return DataRow(
+                          color:
+                              issue?.blocksSync == true
+                                  ? WidgetStateProperty.all(
+                                    const Color(0xFFFFF6ED),
+                                  )
+                                  : null,
+                          cells: [
+                            DataCell(Text(_displayTable(table.table))),
+                            DataCell(Text(_changedRowsLabel(tableJobs))),
+                            DataCell(
+                              Text(
+                                _changedRowsLabel(
+                                  tableJobs,
+                                  direction: 'upload',
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                _changedRowsLabel(
+                                  tableJobs,
+                                  direction: 'download',
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              _statusChip(
+                                _tableReadinessLabel(issue),
+                                _tableReadinessColor(issue),
+                              ),
+                            ),
+                            DataCell(
+                              _statusChip(
+                                table.status,
+                                _statusColor(table.status),
+                              ),
+                            ),
+                            DataCell(Text(_formatTimestamp(table.lastSync))),
+                          ],
+                        );
+                      })
+                      .toList(growable: false),
+                ),
+              ),
+            ),
+          ),
+        ),
+        DecoratedBox(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(left: BorderSide(color: Color(0xFFD0D5DD))),
+          ),
+          child: DataTable(
+            horizontalMargin: 12,
+            columnSpacing: 0,
+            headingRowHeight: headingHeight,
+            dataRowMinHeight: rowHeight,
+            dataRowMaxHeight: rowHeight,
+            columns: const [
+              DataColumn(label: SizedBox(width: 176, child: Text('Actions'))),
+            ],
+            rows: tables
+                .map((table) {
+                  final issue = _tableSyncIssue(agent, table.table);
+                  return DataRow(
+                    color:
+                        issue?.blocksSync == true
+                            ? WidgetStateProperty.all(const Color(0xFFFFF6ED))
+                            : null,
+                    cells: [
+                      DataCell(
+                        SizedBox(
+                          width: 176,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
                             children: [
                               TextButton.icon(
                                 onPressed:
                                     () => setState(() {
                                       _selectedTable = table.table;
+                                      _selectedJobId = null;
                                       _screen = _ClientScreen.table;
                                       _replaceRoute();
                                     }),
@@ -1974,15 +2197,12 @@ class _ClientsPageState extends State<ClientsPage> {
                             ],
                           ),
                         ),
-                      ],
-                    );
-                  }).toList(),
-            ),
+                      ),
+                    ],
+                  );
+                })
+                .toList(growable: false),
           ),
-        const SizedBox(height: 10),
-        _buildMessage(
-          'The control plane does not store row-level table payloads. Use the Windows client for row-level verification.',
-          error: false,
         ),
       ],
     );
@@ -2584,7 +2804,7 @@ class _ClientsPageState extends State<ClientsPage> {
             batch.isReconciliation
                 ? 'Reconciliation'
                 : batch.changedRows == null
-                ? 'Not reported'
+                ? '-'
                 : '+${_number(batch.changedRows!)}',
             style: const TextStyle(
               color: Color(0xFFB54708),
@@ -2597,7 +2817,7 @@ class _ClientsPageState extends State<ClientsPage> {
             batch.isReconciliation
                 ? 'Snapshot'
                 : batch.uploadedRows == null
-                ? 'Not reported'
+                ? '-'
                 : '+${_number(batch.uploadedRows!)}',
             style: TextStyle(color: uploadColor, fontWeight: FontWeight.w800),
           ),
@@ -2607,7 +2827,7 @@ class _ClientsPageState extends State<ClientsPage> {
             batch.isReconciliation
                 ? 'Snapshot'
                 : batch.downloadedRows == null
-                ? 'Not reported'
+                ? '-'
                 : '+${_number(batch.downloadedRows!)}',
             style: TextStyle(color: downloadColor, fontWeight: FontWeight.w800),
           ),
@@ -2682,6 +2902,7 @@ class _ClientsPageState extends State<ClientsPage> {
                 DataColumn(label: Text('Uploaded new')),
                 DataColumn(label: Text('Downloaded new')),
                 DataColumn(label: Text('Message')),
+                DataColumn(label: Text('Data')),
               ],
               rows: batch.operations
                   .map(_buildLogDataRow)
@@ -2691,6 +2912,40 @@ class _ClientsPageState extends State<ClientsPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildJobDataPage() {
+    final jobId = _selectedJobId?.trim() ?? '';
+    if (jobId.isEmpty) {
+      return _panel(child: _buildEmpty('Sync job data is not available.'));
+    }
+    AdminJob? job;
+    for (final candidate in _state?.jobs ?? const <AdminJob>[]) {
+      if (candidate.id == jobId) {
+        job = candidate;
+        break;
+      }
+    }
+    final subtitle =
+        job == null
+            ? 'Saved rows for this sync job.'
+            : '${_displayTable(job.table)} · ${job.direction} · ${_formatTimestamp(job.updatedAt)}';
+    return _panel(
+      child: _SyncJobDataTable(
+        api: _api,
+        jobId: jobId,
+        title: 'Sync job data',
+        subtitle: subtitle,
+      ),
+    );
+  }
+
+  void _openJobData(AdminJob job) {
+    setState(() {
+      _selectedJobId = job.id;
+      _screen = _ClientScreen.jobData;
+      _replaceRoute();
+    });
   }
 
   List<_SyncLogOperation> _groupSyncLogOperations(
@@ -2798,7 +3053,7 @@ class _ClientsPageState extends State<ClientsPage> {
             operation.isReconciliation
                 ? 'Reconciliation'
                 : changed == null
-                ? 'Not reported'
+                ? '-'
                 : '+${_number(changed)}',
             style: const TextStyle(
               color: Color(0xFFB54708),
@@ -2811,7 +3066,7 @@ class _ClientsPageState extends State<ClientsPage> {
             operation.isReconciliation
                 ? 'Snapshot'
                 : operation.uploadedRows == null
-                ? 'Not reported'
+                ? '-'
                 : '+${_number(operation.uploadedRows!)}',
             style: const TextStyle(
               color: Color(0xFF2563EB),
@@ -2824,7 +3079,7 @@ class _ClientsPageState extends State<ClientsPage> {
             operation.isReconciliation
                 ? 'Snapshot'
                 : operation.downloadedRows == null
-                ? 'Not reported'
+                ? '-'
                 : '+${_number(operation.downloadedRows!)}',
             style: const TextStyle(
               color: Color(0xFFB54708),
@@ -2840,6 +3095,13 @@ class _ClientsPageState extends State<ClientsPage> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+          ),
+        ),
+        DataCell(
+          TextButton.icon(
+            onPressed: () => _openJobData(operation.representative),
+            icon: const Icon(Icons.table_rows_outlined, size: 15),
+            label: const Text('View data'),
           ),
         ),
       ],
@@ -2943,10 +3205,7 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _deltaChip(int? changedRows, Color color) {
-    final label =
-        changedRows == null
-            ? 'Additional rows not reported'
-            : '+${_number(changedRows)} rows';
+    final label = changedRows == null ? '-' : '+${_number(changedRows)} rows';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
@@ -3049,7 +3308,7 @@ class _ClientsPageState extends State<ClientsPage> {
 
   String _formatTimestamp(String value) {
     final parsed = DateTime.tryParse(value)?.toLocal();
-    if (parsed == null) return value.trim().isEmpty ? 'Not reported' : value;
+    if (parsed == null) return value.trim().isEmpty ? '-' : value;
     String two(int number) => number.toString().padLeft(2, '0');
     return '${parsed.year}-${two(parsed.month)}-${two(parsed.day)} ${two(parsed.hour)}:${two(parsed.minute)}';
   }
@@ -3527,4 +3786,315 @@ class _ClientsPageState extends State<ClientsPage> {
     RegExp(r'(?<!^)(?=(\d{3})+$)'),
     (_) => ',',
   );
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
+class _SyncJobDataTable extends StatefulWidget {
+  const _SyncJobDataTable({
+    required this.api,
+    required this.jobId,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final LiveSyncApiClient api;
+  final String jobId;
+  final String title;
+  final String subtitle;
+
+  @override
+  State<_SyncJobDataTable> createState() => _SyncJobDataTableState();
+}
+
+class _SyncJobDataTableState extends State<_SyncJobDataTable> {
+  final ScrollController _horizontalController = ScrollController();
+  final List<Map<String, dynamic>> _rows = [];
+  final List<String> _columns = [];
+  bool _loading = false;
+  bool _available = false;
+  bool _pruned = false;
+  bool _done = true;
+  String? _nextCursor;
+  String? _error;
+  int _retainedRowCount = 0;
+  int _retainedBytes = 0;
+  int _chunkCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load(reset: true));
+  }
+
+  @override
+  void didUpdateWidget(covariant _SyncJobDataTable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.jobId != widget.jobId) {
+      unawaited(_load(reset: true));
+    }
+  }
+
+  @override
+  void dispose() {
+    _horizontalController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load({required bool reset}) async {
+    if (_loading || widget.jobId.trim().isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+      if (reset) {
+        _rows.clear();
+        _columns.clear();
+        _nextCursor = null;
+        _done = false;
+      }
+    });
+    try {
+      final page = await widget.api.fetchSyncJobData(
+        jobId: widget.jobId,
+        cursor: reset ? null : _nextCursor,
+      );
+      if (!mounted) return;
+      final nextRows = page.rows.map((row) {
+        if (page.sourceClientName.trim().isEmpty) return row;
+        return <String, dynamic>{
+          '__sync_source_client': page.sourceClientName,
+          ...row,
+        };
+      });
+      setState(() {
+        _available = page.available;
+        _pruned = page.pruned;
+        _retainedRowCount = page.retainedRowCount;
+        _retainedBytes = page.retainedBytes;
+        _chunkCount = page.chunkCount;
+        _nextCursor = page.nextCursor;
+        _done = page.done;
+        for (final column in [
+          if (page.sourceClientName.trim().isNotEmpty) '__sync_source_client',
+          ...page.columns,
+        ]) {
+          if (!_columns.contains(column)) _columns.add(column);
+        }
+        _rows.addAll(nextRows);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.subtitle,
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_available)
+              Wrap(
+                spacing: 6,
+                children: [
+                  _dataMetric('Rows', '$_retainedRowCount'),
+                  _dataMetric('Stored', _humanBytes(_retainedBytes)),
+                  _dataMetric('Chunks', '$_chunkCount'),
+                ],
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_error != null)
+          _inlineState(
+            icon: Icons.error_outline_rounded,
+            text: _error!,
+            color: const Color(0xFFB42318),
+          )
+        else if (_loading && _rows.isEmpty)
+          const LinearProgressIndicator(minHeight: 2)
+        else if (!_available)
+          _inlineState(
+            icon:
+                _pruned
+                    ? Icons.auto_delete_outlined
+                    : Icons.hourglass_empty_rounded,
+            text:
+                _pruned
+                    ? 'This job’s saved row data was removed by the configured storage limit. Job metadata remains available.'
+                    : 'No row data has been captured for this job yet.',
+            color: _pruned ? const Color(0xFFB54708) : const Color(0xFF667085),
+          )
+        else if (_rows.isEmpty)
+          _inlineState(
+            icon: Icons.check_circle_outline_rounded,
+            text: 'This job captured no changed rows.',
+            color: const Color(0xFF0F766E),
+          )
+        else ...[
+          Scrollbar(
+            controller: _horizontalController,
+            thumbVisibility: true,
+            trackVisibility: true,
+            thickness: 8,
+            radius: const Radius.circular(8),
+            child: SingleChildScrollView(
+              controller: _horizontalController,
+              scrollDirection: Axis.horizontal,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: DataTable(
+                  headingRowHeight: 44,
+                  dataRowMinHeight: 46,
+                  dataRowMaxHeight: 62,
+                  columns: _columns
+                      .map(
+                        (column) =>
+                            DataColumn(label: Text(_displayColumnName(column))),
+                      )
+                      .toList(growable: false),
+                  rows: _rows
+                      .map(
+                        (row) => DataRow(
+                          cells: _columns
+                              .map(
+                                (column) => DataCell(
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 260,
+                                    ),
+                                    child: SelectableText(
+                                      _displayCellValue(row[column]),
+                                      maxLines: 3,
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Text(
+                '${_rows.length} of $_retainedRowCount rows loaded',
+                style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+              ),
+              const Spacer(),
+              if (!_done)
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : () => _load(reset: false),
+                  icon:
+                      _loading
+                          ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Icon(Icons.expand_more_rounded, size: 17),
+                  label: const Text('Load more rows'),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _dataMetric(String label, String value) {
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      label: Text('$label $value'),
+      labelStyle: const TextStyle(
+        color: Color(0xFF344054),
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      ),
+      backgroundColor: const Color(0xFFF2F4F7),
+      side: BorderSide.none,
+    );
+  }
+
+  Widget _inlineState({
+    required IconData icon,
+    required String text,
+    required Color color,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: color, fontSize: 12, height: 1.35),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _displayColumnName(String column) {
+    if (column == '__sync_source_client') return 'Source client';
+    return column;
+  }
+
+  String _displayCellValue(dynamic value) {
+    if (value == null) return '-';
+    final text = value.toString();
+    return text.trim().isEmpty ? '-' : text;
+  }
+
+  String _humanBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 }
