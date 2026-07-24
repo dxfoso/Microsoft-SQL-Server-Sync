@@ -478,6 +478,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
 
+    def test_authoritative_source_persists_the_verified_snapshot_fingerprint(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        upload_body = agent_page.split(
+            "Future<void> _processSnapshotRelayUploadJob(", 1
+        )[1].split("Future<void> _processSnapshotRelayDownloadJob(", 1)[0]
+
+        self.assertIn("rowCount:", upload_body)
+        self.assertIn("snapshot.checksum.isNotEmpty", upload_body)
+        self.assertIn("? snapshot.rowCount", upload_body)
+        self.assertIn("tableChecksum:", upload_body)
+        self.assertIn("? snapshot.checksum", upload_body)
+        self.assertIn("unawaited(_syncWithControlPlane());", upload_body)
+
     def test_job_changed_rows_never_replace_physical_table_row_count(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         apply_state_body = agent_page.split(

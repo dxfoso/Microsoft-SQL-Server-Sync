@@ -3687,6 +3687,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _updateSyncTableState(
         job.table,
         current.copyWith(
+          rowCount:
+              snapshot.checksum.isNotEmpty
+                  ? snapshot.rowCount
+                  : current.rowCount,
+          tableChecksum:
+              snapshot.checksum.isNotEmpty
+                  ? snapshot.checksum
+                  : current.tableChecksum,
           changeTrackingVersion: uploadedVersion,
           changeTrackingOwner: widget.clientName,
         ),
