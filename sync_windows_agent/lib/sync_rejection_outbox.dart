@@ -3,7 +3,7 @@ import 'dart:io';
 
 enum SyncRejectionKind { dependency, permanentBusinessRule, transient }
 
-const syncRejectionApplyPolicyVersion = 3;
+const syncRejectionApplyPolicyVersion = 4;
 
 class SyncRejectionObservation {
   const SyncRejectionObservation({required this.row, required this.error});
@@ -115,6 +115,15 @@ SyncRejectionKind classifySyncRejection(String error) {
   return SyncRejectionKind.transient;
 }
 
+bool isSyncIdentityCollision(Object error) {
+  final normalized = error.toString().toLowerCase();
+  return normalized.contains('duplicate key') ||
+      normalized.contains('unique index') ||
+      normalized.contains('unique constraint') ||
+      normalized.contains('error 2601') ||
+      normalized.contains('error 2627');
+}
+
 String syncRejectedRowIdentity(
   Map<String, dynamic> row,
   List<String> keyColumns,
@@ -201,7 +210,13 @@ class SyncRejectionOutbox {
     String table,
   ) async {
     final all = await _load(clientName);
-    return all.where((change) => change.table == table).toList(growable: false);
+    return all
+        .where(
+          (change) =>
+              change.table == table &&
+              !_isRetiredLegacyIdentityCollision(change),
+        )
+        .toList(growable: false);
   }
 
   Future<void> saveTable(
@@ -273,3 +288,7 @@ class SyncRejectionOutbox {
     return safe.isEmpty ? 'client' : safe;
   }
 }
+
+bool _isRetiredLegacyIdentityCollision(SyncRejectedChange change) =>
+    change.applyPolicyVersion < syncRejectionApplyPolicyVersion &&
+    isSyncIdentityCollision(change.error);

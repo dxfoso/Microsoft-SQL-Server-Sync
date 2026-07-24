@@ -5,18 +5,21 @@ import 'package:sync_windows_agent/sync_rejection_outbox.dart';
 
 void main() {
   test('SQL unique identity collisions are permanent quarantined conflicts', () {
+    const constraintError =
+        "Violation of UNIQUE KEY constraint 'UQ_er000_Parent'. Error 2627. The duplicate key value is (2, 141).";
+    const indexError =
+        "Cannot insert duplicate key row in object 'dbo.er000' with unique index 'IX_er000_Parent'. Error 2601.";
     expect(
-      classifySyncRejection(
-        "Violation of UNIQUE KEY constraint 'UQ_er000_Parent'. Error 2627. The duplicate key value is (2, 141).",
-      ),
+      classifySyncRejection(constraintError),
       SyncRejectionKind.permanentBusinessRule,
     );
     expect(
-      classifySyncRejection(
-        "Cannot insert duplicate key row in object 'dbo.er000' with unique index 'IX_er000_Parent'. Error 2601.",
-      ),
+      classifySyncRejection(indexError),
       SyncRejectionKind.permanentBusinessRule,
     );
+    expect(isSyncIdentityCollision(constraintError), isTrue);
+    expect(isSyncIdentityCollision(indexError), isTrue);
+    expect(isSyncIdentityCollision('SQL transport timeout'), isFalse);
   });
 
   SyncRejectedChange rejectedChange({
@@ -119,6 +122,27 @@ void main() {
     expect(loaded.single.applyPolicyVersion, 1);
     expect(shouldRetrySyncRejectedChange(loaded.single), isTrue);
   });
+
+  test(
+    'retires legacy identity collisions after fail-closed migration',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'sync-rejections-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final outbox = SyncRejectionOutbox(directory: directory);
+      final target = File(
+        '${directory.path}${Platform.pathSeparator}sync_rejections_c1.json',
+      );
+      await target.writeAsString('''
+{"version":1,"clientName":"c1","changes":[{"table":"db::ce000","keyColumns":["GUID"],"row":{"GUID":"old-identity"},"error":"Cannot insert duplicate key row with unique index ce000_Key_0. Error 2601.","kind":"permanentBusinessRule","firstRejectedAt":"2026-07-24T00:00:00Z","lastRejectedAt":"2026-07-24T00:00:00Z","attemptCount":2,"applyPolicyVersion":3}]}
+''', flush: true);
+
+      final loaded = await outbox.loadTable('c1', 'db::ce000');
+
+      expect(loaded, isEmpty);
+    },
+  );
 
   test('retries a permanent conflict once when the apply policy changes', () {
     final legacy = SyncRejectedChange.fromJson({

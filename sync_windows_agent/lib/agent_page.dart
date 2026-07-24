@@ -3868,14 +3868,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       authoritativeAppliedVersion = tracking.currentVersion;
     }
 
+    final converged = pendingAfterApply.isEmpty;
     activeJob = await _controlPlaneClient.completeJob(
       job.id,
-      status: 'completed',
+      status: converged ? 'completed' : 'failed',
       progress: 100,
       message:
-          pendingAfterApply.isEmpty
+          converged
               ? 'Sync applied successfully to ${_localTableName(job.table)}.'
-              : 'Sync applied with ${pendingAfterApply.length} quarantined change(s) retained for targeted retry.',
+              : 'Sync did not converge: ${pendingAfterApply.length} rejected change(s) retained for targeted retry.',
       rowCount: applyStats.appliedRows,
       rejectedRowCount: pendingAfterApply.length,
       rejectionSummary:
@@ -3889,7 +3890,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _applyRemoteJobState(
       activeJob,
       appendHistory: true,
-      success: true,
+      success: converged,
       overrideMessage:
           'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${pendingAfterApply.length} quarantined.',
     );
@@ -5468,7 +5469,8 @@ END
   bool _isIsolatableTargetSqlError(Object error) {
     final message = error.toString();
     return message.contains('sqlcmd failed during target ') &&
-        !message.contains('(exit -1)');
+        !message.contains('(exit -1)') &&
+        !isSyncIdentityCollision(error);
   }
 
   Future<_StringQueryResult> _queryDatabases({

@@ -512,8 +512,8 @@ VALUES
     assert_equal(*DATABASES)
 
     # Different permanent IDs are independent even when a business unique key
-    # collides. The target constraint rejects/quarantines the second identity;
-    # sync must never coalesce it into an overwrite of the first identity.
+    # collides. The target constraint must reject the complete incoming table
+    # delta atomically; sync must never coalesce it or partially apply siblings.
     identity_collision = coalesce([
         {**row(34, "SAME-BUSINESS-KEY", "Created by c1"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
         {**row(35, "SAME-BUSINESS-KEY", "Created by c2"), "__sync_modified_at_utc": "2026-07-16T10:00:01Z"},
@@ -522,8 +522,20 @@ VALUES
         raise AssertionError(f"Different permanent identities were silently collapsed: {identity_collision}")
     for database in DATABASES:
         apply(database, rows=[identity_collision[0]])
-        expect_apply_failure(database, rows=[identity_collision[1]])
+        before_collision = table_rows(database)
+        expect_apply_failure(
+            database,
+            rows=[
+                identity_collision[1],
+                row(39, "VALID-SIBLING", "Must roll back with collision"),
+            ],
+        )
         current = table_rows(database)
+        if current != before_collision:
+            raise AssertionError(
+                f"Identity collision partially applied its table delta in {database}: "
+                f"before={before_collision}, after={current}"
+            )
         if not any("34|SAME-BUSINESS-KEY|Created by c1" in value for value in current):
             raise AssertionError(f"Unique collision replaced the established identity in {database}: {current}")
         if any("35|SAME-BUSINESS-KEY" in value for value in current):
@@ -607,7 +619,7 @@ VALUES
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "lossless-float-real-9999999-capture-roundtrip",
             "independent-multi-writer", "offline-catch-up",
-            "guid-only-identity-unique-collision-quarantine",
+            "guid-only-identity-unique-collision-atomic-failure",
             "large-1200-row-batch", "idempotent-retry",
             "authoritative-replace-delete-missing-unicode-retry",
             "rejected-row-rollback-and-recovery", "change-context",

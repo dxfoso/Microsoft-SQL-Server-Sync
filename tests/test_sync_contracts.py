@@ -605,7 +605,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("'rejectedRowCount': rejectedRowCount", read_text("sync_windows_agent/lib/live_sync_api.dart"))
         self.assertIn("'rejectionSummary': rejectionSummary.trim()", read_text("sync_windows_agent/lib/live_sync_api.dart"))
         self.assertIn("await _controlPlaneClient.completeJob(", download_body)
-        self.assertIn("status: 'completed',", download_body)
+        self.assertIn("status: converged ? 'completed' : 'failed',", download_body)
+        self.assertIn("final converged = pendingAfterApply.isEmpty;", download_body)
         self.assertIn("progress: 100,", download_body)
         self.assertLess(
             download_body.index("if (streamedTargetRowCount < 0)"),
@@ -1262,6 +1263,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("ENABLE TRIGGER ALL", delta_delete_body)
         self.assertIn("quarantined change(s)", agent_page)
         self.assertIn("SyncRejectionKind.permanentBusinessRule", agent_page)
+        self.assertIn("!isSyncIdentityCollision(error)", agent_page)
+        self.assertIn("status: converged ? 'completed' : 'failed'", agent_page)
+        self.assertIn("success: converged", agent_page)
         self.assertIn("!applyStats.seenRowIdentities.contains(change.identity)", agent_page)
         self.assertIn("rowCount: applyStats.appliedRows", agent_page)
         self.assertIn("stats.updatedRows += batch.length - insertedRows", agent_page)
