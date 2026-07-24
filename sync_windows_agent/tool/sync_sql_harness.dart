@@ -43,6 +43,10 @@ void main(List<String> arguments) {
       .map((column) => _column(Map<String, dynamic>.from(column as Map)))
       .toList(growable: false);
   final primaryKeyColumns = _strings(request['primaryKeyColumns']);
+  final uniqueIndexColumnSets = (request['uniqueIndexColumnSets'] as List? ??
+          const [])
+      .map((columns) => _strings(columns))
+      .toList(growable: false);
   final deletes = (request['deletes'] as List? ?? const [])
       .map((row) => Map<String, dynamic>.from(row as Map))
       .toList(growable: false);
@@ -94,6 +98,7 @@ void main(List<String> arguments) {
         stageTableName: stageTableName,
         columns: columns,
         primaryKeyColumns: primaryKeyColumns,
+        uniqueIndexColumnSets: uniqueIndexColumnSets,
         deleteMissing: deleteMissing,
         manageTriggers: true,
         insertOnly: false,

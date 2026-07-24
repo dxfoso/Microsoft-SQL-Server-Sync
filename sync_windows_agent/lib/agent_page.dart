@@ -4389,6 +4389,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             },
           )
           .toList(growable: false);
+      final uniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+      );
       final insertedRows = await _applySourceRowsToTarget(
         profile: targetProfile,
         database: targetDatabase,
@@ -4396,6 +4402,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         table: targetTable.table,
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
+        uniqueIndexColumnSets: uniqueIndexColumnSets,
         rows: rows,
         deleteMissing: true,
         manageTriggers: true,
@@ -4709,6 +4716,7 @@ INNER JOIN sys.columns AS c
  AND c.column_id = ic.column_id
 WHERE i.is_unique = 1
   AND i.is_primary_key = 0
+  AND i.has_filter = 0
   AND i.is_disabled = 0
   AND i.is_hypothetical = 0
   AND ic.is_included_column = 0
@@ -5327,6 +5335,7 @@ END
     required String table,
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
+    List<List<String>> uniqueIndexColumnSets = const <List<String>>[],
     required List<Map<String, dynamic>> rows,
     bool deleteMissing = true,
     bool manageTriggers = true,
@@ -5387,6 +5396,7 @@ END
           stageTableName: stageTableName,
           columns: columns,
           primaryKeyColumns: primaryKeyColumns,
+          uniqueIndexColumnSets: uniqueIndexColumnSets,
           deleteMissing: deleteMissing,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,

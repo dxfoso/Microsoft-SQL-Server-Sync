@@ -201,6 +201,7 @@ String buildTargetSnapshotStageApplySql({
   required String stageTableName,
   required List<SqlSyncColumnDefinition> columns,
   required List<String> primaryKeyColumns,
+  List<List<String>> uniqueIndexColumnSets = const <List<String>>[],
   int targetMergeApplyBatchSize = 500,
   bool deleteMissing = true,
   bool manageTriggers = true,
@@ -235,6 +236,7 @@ String buildTargetSnapshotStageApplySql({
   final stageTarget = stageTableReference(stageTableName);
   final sourceIndexStatements = _buildSourceTempIndexStatements(<List<String>>[
     primaryKeyColumns,
+    ...uniqueIndexColumnSets,
   ]).replaceAll('#source_rows', stageTarget);
   final identityColumns = insertColumns
       .where((column) => column.isIdentity)
@@ -262,6 +264,28 @@ String buildTargetSnapshotStageApplySql({
   BEGIN CATCH
   END CATCH;'''
           : '';
+  final uniqueConflictDeleteStatements = StringBuffer();
+  if (deleteMissing && !insertOnly) {
+    for (final uniqueColumns in uniqueIndexColumnSets) {
+      if (uniqueColumns.isEmpty) {
+        continue;
+      }
+      final uniqueJoinClause = nullableMatchClauseForColumns(
+        uniqueColumns,
+        columns,
+      );
+      uniqueConflictDeleteStatements.writeln('''
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  DELETE target
+  FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
+  WHERE EXISTS (
+    SELECT 1
+    FROM $stageTarget AS source
+    WHERE $uniqueJoinClause
+      AND NOT ($joinClause)
+  );''');
+    }
+  }
   final deleteMissingBlock =
       deleteMissing && !insertOnly
           ? '''
@@ -288,6 +312,7 @@ BEGIN TRY
   $triggerDisableStatement
   $identityInsertOn
   DECLARE @SqlSyncInsertedRows INT = 0;
+  ${uniqueConflictDeleteStatements.toString()}
   ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
   SET @SqlSyncInsertedRows += @@ROWCOUNT;
@@ -715,6 +740,27 @@ String matchClauseForColumns(
           targetExpression = '$targetExpression COLLATE DATABASE_DEFAULT';
         }
         return '$sourceExpression IS NOT NULL AND $targetExpression = $sourceExpression';
+      })
+      .join(' AND ');
+}
+
+String nullableMatchClauseForColumns(
+  List<String> matchColumns,
+  List<SqlSyncColumnDefinition> columns,
+) {
+  final definitionsByName = {
+    for (final column in columns) column.name.toLowerCase(): column,
+  };
+  return matchColumns
+      .map((column) {
+        final quotedColumn = quoteIdentifier(column);
+        final sourceExpression = 'source.$quotedColumn';
+        var targetExpression = 'target.$quotedColumn';
+        final definition = definitionsByName[column.toLowerCase()];
+        if (definition != null && definition.isTextLike) {
+          targetExpression = '$targetExpression COLLATE DATABASE_DEFAULT';
+        }
+        return '(($sourceExpression IS NULL AND target.$quotedColumn IS NULL) OR $targetExpression = $sourceExpression)';
       })
       .join(' AND ');
 }

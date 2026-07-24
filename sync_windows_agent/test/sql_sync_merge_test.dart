@@ -111,6 +111,74 @@ void main() {
     expect(sql, isNot(contains('DELETE TOP (500) target')));
   });
 
+  test(
+    'authoritative replacement removes a conflicting old identity before insert',
+    () {
+      final sql = buildTargetSnapshotStageApplySql(
+        database: 'db',
+        schema: 'dbo',
+        table: 'ce000',
+        stageTableName: '#stage_ce000',
+        columns: const [
+          SqlSyncColumnDefinition(
+            name: 'GUID',
+            sqlType: 'uniqueidentifier',
+            maxLength: 16,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'Type',
+            sqlType: 'int',
+            maxLength: 4,
+            precision: 10,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'Number',
+            sqlType: 'int',
+            maxLength: 4,
+            precision: 10,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'Branch',
+            sqlType: 'uniqueidentifier',
+            maxLength: 16,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+        ],
+        primaryKeyColumns: const ['GUID'],
+        uniqueIndexColumnSets: const [
+          ['Type', 'Number', 'Branch'],
+        ],
+        deleteMissing: true,
+      );
+
+      final conflictDelete = sql.indexOf(
+        'DELETE target\n  FROM [db].[dbo].[ce000] AS target\n  WHERE EXISTS',
+      );
+      final insert = sql.indexOf('INSERT INTO [db].[dbo].[ce000]');
+      expect(conflictDelete, greaterThanOrEqualTo(0));
+      expect(insert, greaterThan(conflictDelete));
+      expect(
+        sql,
+        contains(
+          'AND NOT (source.[GUID] IS NOT NULL AND target.[GUID] = source.[GUID])',
+        ),
+      );
+    },
+  );
+
   test('staged delta apply does not toggle triggers', () {
     final sql = buildTargetSnapshotStageApplySql(
       database: 'db',

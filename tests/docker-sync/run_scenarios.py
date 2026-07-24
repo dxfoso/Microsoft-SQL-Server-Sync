@@ -137,7 +137,14 @@ END;
         )
 
 
-def generate_sql(database, *, rows=None, deletes=None, delete_missing=False):
+def generate_sql(
+    database,
+    *,
+    rows=None,
+    deletes=None,
+    delete_missing=False,
+    unique_index_column_sets=None,
+):
     request = {
         "operation": "apply",
         "database": database,
@@ -146,6 +153,7 @@ def generate_sql(database, *, rows=None, deletes=None, delete_missing=False):
         "stageTableName": f"sync_stage_{uuid.uuid4().hex}",
         "columns": COLUMNS,
         "primaryKeyColumns": ["Id"],
+        "uniqueIndexColumnSets": unique_index_column_sets or [],
         "rows": rows or [],
         "deletes": deletes or [],
         "deleteMissing": delete_missing,
@@ -163,12 +171,20 @@ def generate_sql(database, *, rows=None, deletes=None, delete_missing=False):
         request_path.unlink(missing_ok=True)
 
 
-def apply(database, *, rows=None, deletes=None, delete_missing=False):
+def apply(
+    database,
+    *,
+    rows=None,
+    deletes=None,
+    delete_missing=False,
+    unique_index_column_sets=None,
+):
     generated = generate_sql(
         database,
         rows=rows,
         deletes=deletes,
         delete_missing=delete_missing,
+        unique_index_column_sets=unique_index_column_sets,
     )
     with tempfile.NamedTemporaryFile("w", suffix=".sql", encoding="utf-8", delete=False) as handle:
         handle.write(generated)
@@ -581,8 +597,19 @@ VALUES
     ]
     apply(DATABASES[0], rows=authoritative_rows, delete_missing=True)
     apply(DATABASES[2], rows=authoritative_rows, delete_missing=True)
-    apply(DATABASES[1], rows=[row(7999, "STALE-TARGET", "Must be removed")])
-    apply(DATABASES[1], rows=authoritative_rows, delete_missing=True)
+    apply(
+        DATABASES[1],
+        rows=[
+            row(7998, "AUTHORITATIVE-AR", "Old identity with winning business key"),
+            row(7999, "STALE-TARGET", "Must be removed"),
+        ],
+    )
+    apply(
+        DATABASES[1],
+        rows=authoritative_rows,
+        delete_missing=True,
+        unique_index_column_sets=[["Code"]],
+    )
     if table_rows(DATABASES[1]) != [
         line for line in table_rows(DATABASES[1])
         if "STALE-TARGET" not in line
@@ -590,7 +617,12 @@ VALUES
         raise AssertionError("Authoritative replacement retained a stale target-only row.")
     assert_text_value(DATABASES[1], 7001, authoritative_rows[0]["ArabicText"])
     authoritative_once = table_rows(DATABASES[1])
-    apply(DATABASES[1], rows=authoritative_rows, delete_missing=True)
+    apply(
+        DATABASES[1],
+        rows=authoritative_rows,
+        delete_missing=True,
+        unique_index_column_sets=[["Code"]],
+    )
     if table_rows(DATABASES[1]) != authoritative_once:
         raise AssertionError("Authoritative replacement retry was not idempotent.")
     assert_equal(*DATABASES)
@@ -621,7 +653,7 @@ VALUES
             "independent-multi-writer", "offline-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",
             "large-1200-row-batch", "idempotent-retry",
-            "authoritative-replace-delete-missing-unicode-retry",
+            "authoritative-replace-unique-conflict-delete-missing-unicode-retry",
             "rejected-row-rollback-and-recovery", "change-context",
             "business-trigger-bypass-and-restore",
         ],
