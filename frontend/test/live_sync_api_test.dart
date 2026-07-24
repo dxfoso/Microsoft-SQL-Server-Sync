@@ -116,6 +116,51 @@ void main() {
     },
   );
 
+  test('table issue resolution posts the selected safety decision', () async {
+    late Map<String, dynamic> requestPayload;
+    final api = LiveSyncApiClient(
+      baseUrl: 'https://sync.example/call',
+      client: MockClient((request) async {
+        requestPayload = Map<String, dynamic>.from(
+          jsonDecode(request.body) as Map,
+        );
+        return http.Response(
+          jsonEncode({
+            'status': 'success',
+            'value': {
+              'ok': true,
+              'jobs': [
+                {'id': 'repair-upload'},
+                {'id': 'repair-download'},
+              ],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    api.setAuthToken('test-token');
+
+    final count = await api.resolveTableSyncIssue(
+      clientName: ' c1 ',
+      table: ' db::pt000 ',
+      action: 'replace_client',
+      sourceClientName: ' c2 ',
+    );
+
+    expect(count, 2);
+    expect(requestPayload['name'], 'table_sync_issue_resolve');
+    expect(requestPayload['args'], {
+      'clientName': 'c1',
+      'table': 'db::pt000',
+      'action': 'replace_client',
+      'sourceClientName': 'c2',
+      'token': 'test-token',
+    });
+    api.dispose();
+  });
+
   test('server reset drains bounded batches and aggregates totals', () async {
     final requestPayloads = <Map<String, dynamic>>[];
     final responses = <Map<String, dynamic>>[

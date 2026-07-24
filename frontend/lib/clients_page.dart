@@ -11,8 +11,6 @@ import 'models.dart';
 
 enum _ClientSortField { name, status, database, tables, lastSync, heartbeat }
 
-enum _ClientDetailView { logs, tables }
-
 enum _ClientScreen { list, detail, sync, table }
 
 enum _ClientAccountAction { syncSettings, signOut }
@@ -52,11 +50,9 @@ class _SyncLogOperation {
   int? get uploadedRows => _localRows(upload);
   int? get downloadedRows => _localRows(download);
   int? get changedRows => downloadedRows ?? uploadedRows;
-  bool get isReconciliation =>
-      jobs.any(
-        (job) =>
-            job.sourceClientName == 'server-authoritative-reconcile',
-      );
+  bool get isReconciliation => jobs.any(
+    (job) => job.sourceClientName == 'server-authoritative-reconcile',
+  );
 
   String get status {
     final failed = jobs.any(
@@ -232,8 +228,8 @@ class _ClientsPageState extends State<ClientsPage> {
   String _logStatus = 'all';
   _ClientSortField _sortField = _ClientSortField.name;
   bool _sortAscending = true;
-  _ClientDetailView _detailView = _ClientDetailView.logs;
   _ClientScreen _screen = _ClientScreen.list;
+  String? _resolvingTable;
   String? _selectedTable;
   String? _selectedSyncKey;
 
@@ -405,6 +401,10 @@ class _ClientsPageState extends State<ClientsPage> {
                     const SizedBox(height: 10),
                     _buildMessage(_error!, error: true),
                   ],
+                  if (_state?.syncGate.blocked == true) ...[
+                    const SizedBox(height: 10),
+                    _buildSyncGateBanner(),
+                  ],
                   const SizedBox(height: 12),
                   Expanded(
                     child: ListView(
@@ -541,6 +541,61 @@ class _ClientsPageState extends State<ClientsPage> {
           ],
         ),
       ],
+    );
+  }
+
+  Widget _buildSyncGateBanner() {
+    final gate = _state?.syncGate;
+    if (gate == null || !gate.blocked) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF6ED),
+        border: Border.all(color: const Color(0xFFF7B27A)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.pause_circle_filled, color: Color(0xFFB54708)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'All sync is stopped · ${gate.issueCount} ${gate.issueCount == 1 ? 'table needs' : 'tables need'} a decision',
+                  style: const TextStyle(
+                    color: Color(0xFF7A2E0E),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  gate.message,
+                  style: const TextStyle(
+                    color: Color(0xFF93451A),
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_screen != _ClientScreen.detail && _selectedAgent != null)
+            TextButton(
+              onPressed:
+                  () => setState(() {
+                    _screen = _ClientScreen.detail;
+                    _selectedTable = null;
+                    _selectedSyncKey = null;
+                    _replaceRoute();
+                  }),
+              child: const Text('Review tables'),
+            ),
+        ],
+      ),
     );
   }
 
@@ -865,8 +920,6 @@ class _ClientsPageState extends State<ClientsPage> {
               color: const Color(0xFFB54708),
             ),
             _toolbarMetric(Icons.sync_rounded, '$activeSyncs active'),
-            const SizedBox(width: 10),
-            _buildDetailNavigation(),
           ],
         ),
       ),
@@ -890,27 +943,6 @@ class _ClientsPageState extends State<ClientsPage> {
       ],
     ),
   );
-
-  Widget _buildDetailNavigation() {
-    return SegmentedButton<_ClientDetailView>(
-      segments: const [
-        ButtonSegment(
-          value: _ClientDetailView.logs,
-          icon: Icon(Icons.receipt_long_outlined),
-          label: Text('Sync logs'),
-        ),
-        ButtonSegment(
-          value: _ClientDetailView.tables,
-          icon: Icon(Icons.table_view_outlined),
-          label: Text('Tables'),
-        ),
-      ],
-      selected: {_detailView},
-      onSelectionChanged: (selection) {
-        setState(() => _detailView = selection.first);
-      },
-    );
-  }
 
   Widget _buildClientList() {
     final clients = _filteredClients();
@@ -1018,17 +1050,18 @@ class _ClientsPageState extends State<ClientsPage> {
 
   Widget _buildBulkActions() {
     final automaticSyncPaused = _state?.automaticSyncPaused ?? false;
+    final syncBlocked = _state?.syncGate.blocked ?? false;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
         FilledButton.icon(
           onPressed:
-              _bulkSyncBusy
+              _bulkSyncBusy || syncBlocked
                   ? null
                   : () => unawaited(_triggerSyncAllEnabledNow()),
           icon: _actionIcon(busy: _bulkSyncBusy, icon: Icons.sync_rounded),
-          label: const Text('Sync All'),
+          label: Text(syncBlocked ? 'Sync stopped' : 'Sync All'),
         ),
         FilledButton.tonalIcon(
           onPressed:
@@ -1299,7 +1332,6 @@ class _ClientsPageState extends State<ClientsPage> {
             onPressed:
                 () => setState(() {
                   _selectedClientName = agent.clientName;
-                  _detailView = _ClientDetailView.logs;
                   _screen = _ClientScreen.detail;
                   _selectedTable = null;
                   _replaceRoute();
@@ -1314,6 +1346,12 @@ class _ClientsPageState extends State<ClientsPage> {
 
   String _clientActivityStatus(AdminAgent agent, List<AdminJob> jobs) {
     if (!agent.isOnline) return 'Offline';
+    if ((_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).any(
+      (issue) =>
+          issue.ownerUserId == (agent.ownerUserId ?? '') && issue.blocksSync,
+    )) {
+      return 'Needs input';
+    }
     if (agent.clientUpdate.pending) return 'Updating';
     if (!agent.serverConnected) return 'Server offline';
     if (!agent.sqlConnected) return 'SQL offline';
@@ -1365,6 +1403,7 @@ class _ClientsPageState extends State<ClientsPage> {
       case 'offline':
       case 'server offline':
       case 'sql offline':
+      case 'needs input':
         return const Color(0xFFB42318);
       default:
         return const Color(0xFF475467);
@@ -1468,11 +1507,13 @@ class _ClientsPageState extends State<ClientsPage> {
       );
     }
     final jobs = _jobsFor(agent);
-    return _panel(
-      child:
-          _detailView == _ClientDetailView.logs
-              ? _buildJobLog(jobs)
-              : _buildDataViewer(agent),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _panel(child: _buildDataViewer(agent)),
+        const SizedBox(height: 12),
+        _panel(child: _buildJobLog(jobs)),
+      ],
     );
   }
 
@@ -1503,6 +1544,7 @@ class _ClientsPageState extends State<ClientsPage> {
     final jobs = _jobsFor(
       agent,
     ).where((job) => job.table == table.table).toList(growable: false);
+    final issue = _tableSyncIssue(agent, table.table);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1528,10 +1570,25 @@ class _ClientsPageState extends State<ClientsPage> {
                 runSpacing: 8,
                 children: [
                   _metric('Changed rows', _changedRowsLabel(jobs)),
-                  _metric('Status', table.status),
+                  _metric('Readiness', _tableReadinessLabel(issue)),
+                  _metric('Client status', table.status),
                   _metric('Last sync', _formatTimestamp(table.lastSync)),
                 ],
               ),
+              if (issue?.blocksSync == true) ...[
+                const SizedBox(height: 12),
+                _buildMessage(
+                  issue!.message.isEmpty
+                      ? 'This table needs a user decision. All synchronization remains stopped.'
+                      : issue.message,
+                  error: true,
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _buildTableResolutionMenu(agent, table, issue),
+                ),
+              ],
               const SizedBox(height: 12),
               _buildMessage(
                 'The control plane does not store row-level table payloads. Use the Windows client for row-level verification.',
@@ -1575,12 +1632,12 @@ class _ClientsPageState extends State<ClientsPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Table & data viewer',
+          'Table sync readiness',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 4),
         const Text(
-          'Table metadata and row counts reported by this client.',
+          'Every table must be ready before manual or automatic sync can start.',
           style: TextStyle(color: Color(0xFF667085), fontSize: 12),
         ),
         const SizedBox(height: 10),
@@ -1595,53 +1652,64 @@ class _ClientsPageState extends State<ClientsPage> {
                 DataColumn(label: Text('Changed rows')),
                 DataColumn(label: Text('Uploaded')),
                 DataColumn(label: Text('Downloaded')),
-                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Readiness')),
+                DataColumn(label: Text('Client status')),
                 DataColumn(label: Text('Last sync')),
-                DataColumn(label: Text('Data')),
+                DataColumn(label: Text('Actions')),
               ],
               rows:
-                  tables
-                      .map(
-                        (table) => DataRow(
-                          cells: [
-                            DataCell(Text(_displayTable(table.table))),
-                            DataCell(
-                              Text(
-                                _changedRowsLabel(
-                                  _jobsFor(agent)
-                                      .where((job) => job.table == table.table)
-                                      .toList(growable: false),
-                                ),
-                              ),
+                  tables.map((table) {
+                    final issue = _tableSyncIssue(agent, table.table);
+                    return DataRow(
+                      color:
+                          issue?.blocksSync == true
+                              ? WidgetStateProperty.all(const Color(0xFFFFF6ED))
+                              : null,
+                      cells: [
+                        DataCell(Text(_displayTable(table.table))),
+                        DataCell(
+                          Text(
+                            _changedRowsLabel(
+                              _jobsFor(agent)
+                                  .where((job) => job.table == table.table)
+                                  .toList(growable: false),
                             ),
-                            DataCell(
-                              Text(
-                                _changedRowsLabel(
-                                  _jobsFor(agent)
-                                      .where((job) => job.table == table.table)
-                                      .toList(growable: false),
-                                  direction: 'upload',
-                                ),
-                              ),
+                          ),
+                        ),
+                        DataCell(
+                          Text(
+                            _changedRowsLabel(
+                              _jobsFor(agent)
+                                  .where((job) => job.table == table.table)
+                                  .toList(growable: false),
+                              direction: 'upload',
                             ),
-                            DataCell(
-                              Text(
-                                _changedRowsLabel(
-                                  _jobsFor(agent)
-                                      .where((job) => job.table == table.table)
-                                      .toList(growable: false),
-                                  direction: 'download',
-                                ),
-                              ),
+                          ),
+                        ),
+                        DataCell(
+                          Text(
+                            _changedRowsLabel(
+                              _jobsFor(agent)
+                                  .where((job) => job.table == table.table)
+                                  .toList(growable: false),
+                              direction: 'download',
                             ),
-                            DataCell(
-                              _statusChip(
-                                table.status,
-                                _statusColor(table.status),
-                              ),
-                            ),
-                            DataCell(Text(_formatTimestamp(table.lastSync))),
-                            DataCell(
+                          ),
+                        ),
+                        DataCell(
+                          _statusChip(
+                            _tableReadinessLabel(issue),
+                            _tableReadinessColor(issue),
+                          ),
+                        ),
+                        DataCell(
+                          _statusChip(table.status, _statusColor(table.status)),
+                        ),
+                        DataCell(Text(_formatTimestamp(table.lastSync))),
+                        DataCell(
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
                               TextButton.icon(
                                 onPressed:
                                     () => setState(() {
@@ -1652,11 +1720,14 @@ class _ClientsPageState extends State<ClientsPage> {
                                 icon: const Icon(Icons.open_in_new, size: 15),
                                 label: const Text('Open'),
                               ),
-                            ),
-                          ],
+                              if (issue?.blocksSync == true)
+                                _buildTableResolutionMenu(agent, table, issue!),
+                            ],
+                          ),
                         ),
-                      )
-                      .toList(),
+                      ],
+                    );
+                  }).toList(),
             ),
           ),
         const SizedBox(height: 10),
@@ -1666,6 +1737,270 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
     );
+  }
+
+  AdminTableSyncIssue? _tableSyncIssue(AdminAgent agent, String table) {
+    for (final issue
+        in _state?.syncGate.issues ?? const <AdminTableSyncIssue>[]) {
+      if (issue.ownerUserId == (agent.ownerUserId ?? '') &&
+          issue.table == table) {
+        return issue;
+      }
+    }
+    return null;
+  }
+
+  String _tableReadinessLabel(AdminTableSyncIssue? issue) {
+    if (issue == null) return 'Ready';
+    if (issue.needsInput) return 'Needs input';
+    if (issue.resolving) return 'Resolving';
+    return switch (issue.action) {
+      'exclude_table' => 'Excluded',
+      'accept_baseline' => 'Accepted',
+      _ => 'Ready',
+    };
+  }
+
+  Color _tableReadinessColor(AdminTableSyncIssue? issue) {
+    if (issue?.needsInput == true) return const Color(0xFFB42318);
+    if (issue?.resolving == true) return const Color(0xFFB54708);
+    if (issue?.action == 'exclude_table') return const Color(0xFF667085);
+    if (issue?.action == 'accept_baseline') return const Color(0xFF7A5D00);
+    return const Color(0xFF0F766E);
+  }
+
+  Widget _buildTableResolutionMenu(
+    AdminAgent agent,
+    AdminTableState table,
+    AdminTableSyncIssue issue,
+  ) {
+    if (!widget.authenticatedUser.canManageUsers) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text(
+          'Awaiting an owner decision',
+          style: TextStyle(
+            color: Color(0xFFB54708),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+    final busy = _resolvingTable == table.table;
+    if (busy || issue.resolving) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 10),
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return PopupMenuButton<String>(
+      tooltip: 'Resolve table issue',
+      position: PopupMenuPosition.under,
+      onSelected:
+          (action) =>
+              unawaited(_confirmAndResolveTable(agent, table, issue, action)),
+      itemBuilder:
+          (context) => const [
+            PopupMenuItem(
+              value: 'replace_client',
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.download_rounded),
+                title: Text('Replace this client'),
+                subtitle: Text('Copy this table from another healthy client'),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'keep_client',
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.upload_rounded),
+                title: Text('Use this client as source'),
+                subtitle: Text('Replace this table on the other clients'),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'exclude_table',
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.sync_disabled_rounded),
+                title: Text('Exclude this table'),
+                subtitle: Text('Keep it local and do not synchronize it'),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'accept_baseline',
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.fast_forward_rounded),
+                title: Text('Accept current differences'),
+                subtitle: Text('Keep both copies and sync only future changes'),
+              ),
+            ),
+          ],
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.rule_rounded, size: 17),
+            SizedBox(width: 5),
+            Text('Choose resolution'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmAndResolveTable(
+    AdminAgent agent,
+    AdminTableState table,
+    AdminTableSyncIssue issue,
+    String action,
+  ) async {
+    final peers = (_state?.agents ?? const <AdminAgent>[])
+        .where(
+          (candidate) =>
+              candidate.ownerUserId == agent.ownerUserId &&
+              candidate.clientName != agent.clientName &&
+              candidate.syncEnabled,
+        )
+        .toList(growable: false)
+      ..sort((left, right) => left.clientName.compareTo(right.clientName));
+    String selectedSource = peers.firstOrNull?.clientName ?? '';
+    final copyAction = action == 'replace_client' || action == 'keep_client';
+    final title = switch (action) {
+      'replace_client' => 'Replace this client table?',
+      'keep_client' => 'Use ${agent.clientName} as the source?',
+      'exclude_table' => 'Exclude this table from sync?',
+      _ => 'Accept the current differences?',
+    };
+    final explanation = switch (action) {
+      'replace_client' =>
+        'The selected source will overwrite ${agent.clientName} for this table.',
+      'keep_client' =>
+        '${agent.clientName} will overwrite this table on every other enabled client.',
+      'exclude_table' =>
+        'This table will remain local on every client and will no longer synchronize.',
+      _ =>
+        'Existing differences will remain. Only future Change Tracking changes will synchronize.',
+    };
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: Text(title),
+                  content: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 460),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _displayTable(table.table),
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(explanation),
+                        if (action == 'replace_client') ...[
+                          const SizedBox(height: 16),
+                          DropdownButtonFormField<String>(
+                            initialValue:
+                                selectedSource.isEmpty ? null : selectedSource,
+                            decoration: const InputDecoration(
+                              labelText: 'Authoritative source client',
+                            ),
+                            items: peers
+                                .map(
+                                  (peer) => DropdownMenuItem(
+                                    value: peer.clientName,
+                                    child: Text(
+                                      '${peer.clientName}${peer.isOnline ? '' : ' · offline'}',
+                                    ),
+                                  ),
+                                )
+                                .toList(growable: false),
+                            onChanged:
+                                (value) => setDialogState(
+                                  () => selectedSource = value ?? '',
+                                ),
+                          ),
+                          if (peers.isEmpty) ...[
+                            const SizedBox(height: 8),
+                            const Text(
+                              'No other enabled client is available.',
+                              style: TextStyle(color: Color(0xFFB42318)),
+                            ),
+                          ],
+                        ],
+                        if (copyAction) ...[
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Both source and target clients must be online. Normal sync stays stopped until their fingerprints match.',
+                            style: TextStyle(
+                              color: Color(0xFF667085),
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed:
+                          action == 'replace_client' && selectedSource.isEmpty
+                              ? null
+                              : () => Navigator.of(dialogContext).pop(true),
+                      child: const Text('Confirm resolution'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _resolvingTable = table.table);
+    try {
+      final jobCount = await _api.resolveTableSyncIssue(
+        clientName: agent.clientName,
+        table: table.table,
+        action: action,
+        sourceClientName: action == 'replace_client' ? selectedSource : '',
+      );
+      await _refresh(silent: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            jobCount == 0
+                ? 'Table decision saved. Sync will resume when every issue is resolved.'
+                : 'Authoritative repair started with $jobCount jobs. Normal sync remains stopped until verification passes.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _resolvingTable = null);
+    }
   }
 
   Widget _buildTableLog(AdminAgent agent) {

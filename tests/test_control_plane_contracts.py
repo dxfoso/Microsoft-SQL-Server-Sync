@@ -313,6 +313,51 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function automatic_sync_is_paused_for_owner", source)
         self.assertIn("if (automatic_sync_is_paused_for_owner(ownerUserId))", source)
 
+    def test_table_issues_stop_all_normal_sync_until_user_resolves_them(self):
+        source = read_text("business/control_plane.tru")
+        self.assertIn("field tableIssues: array<json>?", source)
+        self.assertIn("function sync_owner_has_blocking_table_issues(", source)
+        self.assertIn("function raise_sync_table_issue(", source)
+        self.assertIn("function table_sync_issue_resolve(", source)
+        self.assertIn("'replace_client'", source)
+        self.assertIn("'keep_client'", source)
+        self.assertIn("'exclude_table'", source)
+        self.assertIn("'accept_baseline'", source)
+
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        self.assertIn("refresh_owner_baseline_table_issues(", scheduler)
+        self.assertIn("sync_owner_has_blocking_table_issues(", scheduler)
+        self.assertIn("return [];", scheduler)
+
+        manual_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
+            "function reset_all_agent_saved_state(", 1
+        )[0]
+        self.assertIn("const syncGate = sync_gate_payload_for_owners(", manual_all)
+        self.assertIn("if (syncGate.blocked == true)", manual_all)
+        self.assertIn("raw_json_error(409", manual_all)
+
+        manual_one = source.split("function jobs_create(", 1)[1].split(
+            "function jobs_bootstrap(", 1
+        )[0]
+        self.assertIn("sync_owner_has_blocking_table_issues(ownerId)", manual_one)
+        self.assertIn("raw_json_error(409", manual_one)
+
+        complete = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail(", 1
+        )[0]
+        fail = source.split("function jobs_fail(", 1)[1].split(
+            "function jobs_cancel_active(", 1
+        )[0]
+        self.assertIn("raise_sync_table_issue(", complete)
+        self.assertIn("raise_sync_table_issue(", fail)
+
+        live_state = source.split("function live_state(", 1)[1].split(
+            "function agents_heartbeat(", 1
+        )[0]
+        self.assertIn("syncGate,", live_state)
+
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
         body = source.split("function jobs_create_all_enabled(", 1)[1].split(

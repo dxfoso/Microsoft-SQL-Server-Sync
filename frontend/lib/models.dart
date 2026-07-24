@@ -72,12 +72,14 @@ class AdminLiveState {
   const AdminLiveState({
     required this.generatedAt,
     required this.automaticSyncPaused,
+    required this.syncGate,
     required this.agents,
     required this.jobs,
   });
 
   final String generatedAt;
   final bool automaticSyncPaused;
+  final AdminSyncGate syncGate;
   final List<AdminAgent> agents;
   final List<AdminJob> jobs;
 
@@ -85,6 +87,9 @@ class AdminLiveState {
     return AdminLiveState(
       generatedAt: json['generatedAt'] as String? ?? '',
       automaticSyncPaused: json['automaticSyncPaused'] as bool? ?? false,
+      syncGate: AdminSyncGate.fromJson(
+        Map<String, dynamic>.from(json['syncGate'] as Map? ?? const {}),
+      ),
       agents: (json['agents'] as List<dynamic>? ?? const [])
           .map(
             (item) =>
@@ -96,6 +101,94 @@ class AdminLiveState {
             (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false),
+    );
+  }
+}
+
+class AdminSyncGate {
+  const AdminSyncGate({
+    required this.blocked,
+    required this.status,
+    required this.issueCount,
+    required this.message,
+    required this.issues,
+  });
+
+  final bool blocked;
+  final String status;
+  final int issueCount;
+  final String message;
+  final List<AdminTableSyncIssue> issues;
+
+  factory AdminSyncGate.fromJson(Map<String, dynamic> json) {
+    return AdminSyncGate(
+      blocked: json['blocked'] as bool? ?? false,
+      status: json['status'] as String? ?? 'ready',
+      issueCount: (json['issueCount'] as num? ?? 0).round(),
+      message:
+          json['message'] as String? ??
+          'Every table is ready for synchronization.',
+      issues: (json['issues'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AdminTableSyncIssue.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AdminTableSyncIssue {
+  const AdminTableSyncIssue({
+    required this.ownerUserId,
+    required this.table,
+    required this.status,
+    required this.reason,
+    required this.message,
+    required this.clientName,
+    required this.action,
+    required this.sourceClientName,
+    required this.targetClientNames,
+    required this.detectedAt,
+    required this.updatedAt,
+    required this.resolvedAt,
+  });
+
+  final String ownerUserId;
+  final String table;
+  final String status;
+  final String reason;
+  final String message;
+  final String clientName;
+  final String action;
+  final String sourceClientName;
+  final List<String> targetClientNames;
+  final String detectedAt;
+  final String updatedAt;
+  final String resolvedAt;
+
+  bool get needsInput => status.toLowerCase() == 'needs_input';
+  bool get resolving => status.toLowerCase() == 'resolving';
+  bool get blocksSync => needsInput || resolving;
+
+  factory AdminTableSyncIssue.fromJson(Map<String, dynamic> json) {
+    return AdminTableSyncIssue(
+      ownerUserId: json['ownerUserId'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      status: json['status'] as String? ?? 'ready',
+      reason: json['reason'] as String? ?? '',
+      message: json['message'] as String? ?? '',
+      clientName: json['clientName'] as String? ?? '',
+      action: json['action'] as String? ?? '',
+      sourceClientName: json['sourceClientName'] as String? ?? '',
+      targetClientNames: (json['targetClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+      detectedAt: json['detectedAt']?.toString() ?? '',
+      updatedAt: json['updatedAt']?.toString() ?? '',
+      resolvedAt: json['resolvedAt']?.toString() ?? '',
     );
   }
 }

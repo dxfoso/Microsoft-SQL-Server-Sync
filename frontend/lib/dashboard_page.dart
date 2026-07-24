@@ -7568,6 +7568,37 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                 ),
               ),
+            if (state?.syncGate.blocked == true)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: const Color(0xFFFFF6ED),
+                  border: Border.all(color: const Color(0xFFF7B27A)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.pause_circle_filled,
+                      color: Color(0xFFB54708),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        'All sync is stopped: ${state!.syncGate.issueCount} ${state.syncGate.issueCount == 1 ? 'table needs' : 'tables need'} a user decision. Open Clients and resolve every table marked Needs input before manual or automatic sync can start.',
+                        style: const TextStyle(
+                          color: Color(0xFF7A2E0E),
+                          fontWeight: FontWeight.w700,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             if (_bulkDiagnosticsRequestId != null &&
                 _bulkDiagnosticsRequestedClientNames.isNotEmpty)
               _buildBulkDiagnosticsWaitCard(),

@@ -205,6 +205,7 @@ class PeriodicSyncState {
   field lastCheckedAt: datetime
   field manualPendingTables: array<json>?
   field scheduledTableAttempts: array<json>?
+  field tableIssues: array<json>?
   field updatedAt: datetime
 }
 
@@ -2398,6 +2399,11 @@ function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, poli
 
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents);
+  if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId)) {
+    return [];
+  }
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
   let allOwnerAgents = [];
   let ownerAgents = [];
@@ -2742,6 +2748,297 @@ function set_owner_automatic_sync_paused(ownerUserId: string, paused: bool): voi
     manualPendingTables: pendingTables,
     updatedAt: now_iso()
   });
+}
+
+function sync_table_issues_for_owner(ownerUserId: string? = null): array<json> {
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  const state = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (state == null || state.tableIssues == null) {
+    return [];
+  }
+  let issues = [];
+  for (const issue of state.tableIssues) {
+    const table = string.from(issue.table ?? '').trim();
+    if (table.length != 0) {
+      issues = issues.concat([issue]);
+    }
+  }
+  return issues;
+}
+
+function sync_table_issue_is_blocking(issue: map<json>): bool {
+  const status = string.from(issue.status ?? '').trim().toLowerCase();
+  return status == 'needs_input' || status == 'resolving';
+}
+
+function sync_owner_has_blocking_table_issues(ownerUserId: string? = null): bool {
+  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    if (sync_table_issue_is_blocking(issue)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function save_sync_table_issues_for_owner(ownerUserId: string, issues: array<json>): void {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing == null) {
+    db.insert(PeriodicSyncState, {
+      ownerUserId: normalizedOwnerUserId,
+      lastCheckedAt: now_iso(),
+      manualPendingTables: [],
+      scheduledTableAttempts: [],
+      tableIssues: issues,
+      updatedAt: now_iso()
+    });
+    return;
+  }
+  db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+    tableIssues: issues,
+    updatedAt: now_iso()
+  });
+}
+
+function sync_table_issue_for_owner(ownerUserId: string, table: string): map<json>? {
+  const normalizedTable = table.trim();
+  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    if (string.from(issue.table ?? '').trim() == normalizedTable) {
+      return issue;
+    }
+  }
+  return null;
+}
+
+function replace_sync_table_issue(ownerUserId: string, nextIssue: map<json>): map<json> {
+  const table = string.from(nextIssue.table).trim();
+  let nextIssues = [];
+  let replaced = false;
+  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    if (string.from(issue.table ?? '').trim() == table) {
+      nextIssues = nextIssues.concat([nextIssue]);
+      replaced = true;
+    } else {
+      nextIssues = nextIssues.concat([issue]);
+    }
+  }
+  if (!replaced) {
+    nextIssues = nextIssues.concat([nextIssue]);
+  }
+  save_sync_table_issues_for_owner(ownerUserId, nextIssues);
+  return nextIssue;
+}
+
+function cancel_owner_sync_jobs_for_input(ownerUserId: string, message: string): int {
+  const activeJobs = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id', 'batchId'],
+    limit: 1000
+  });
+  let jobIds = [];
+  let batchIds = [];
+  for (const job of activeJobs) {
+    jobIds = jobIds.concat([job.id]);
+    const batchId = string.from(job.batchId ?? '').trim();
+    if (batchId.length != 0 && !string_array_contains(batchIds, batchId)) {
+      batchIds = batchIds.concat([batchId]);
+    }
+  }
+  if (jobIds.length != 0) {
+    db.updateMany(SyncJob, { id: { in: jobIds } }, {
+      status: 'cancelled',
+      progress: 100,
+      completedAt: now_iso(),
+      message,
+      error: message,
+      updatedAt: now_iso()
+    });
+  }
+  for (const batchId of batchIds) {
+    cleanup_multi_writer_batch_storage(batchId);
+  }
+  return jobIds.length;
+}
+
+function sync_owner_table_has_active_jobs(ownerUserId: string, table: string): bool {
+  const active = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      table,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'createdAt', dir: 'desc' },
+    fields: ['id'],
+    limit: 1
+  });
+  return active.length != 0;
+}
+
+function raise_sync_table_issue(ownerUserId: string? = null, table: string, reason: string, message: string, clientName: string = ''): map<json> {
+  const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  const normalizedTable = table.trim();
+  const existing = sync_table_issue_for_owner(normalizedOwnerUserId, normalizedTable);
+  let detectedAt = now_iso();
+  if (existing != null && existing.detectedAt != null) {
+    detectedAt = existing.detectedAt;
+  }
+  const issue = replace_sync_table_issue(normalizedOwnerUserId, {
+    table: normalizedTable,
+    status: 'needs_input',
+    reason: reason.trim(),
+    message: truncate_text(message, 4000),
+    clientName: normalize_user_name(clientName),
+    action: '',
+    sourceClientName: '',
+    targetClientNames: [],
+    detectedAt,
+    updatedAt: now_iso(),
+    resolvedAt: null
+  });
+  cancel_owner_sync_jobs_for_input(
+    normalizedOwnerUserId,
+    string.concat('Sync stopped: table ', normalizedTable, ' needs a user decision.')
+  );
+  return issue;
+}
+
+function sync_table_reported_fingerprint(tableState: map<json>? = null): string {
+  if (tableState == null) {
+    return '';
+  }
+  const checksum = string.from(tableState.tableChecksum ?? '').trim();
+  if (checksum.length == 0) {
+    return '';
+  }
+  return string.concat(string.from(tableState.rowCount ?? 0), '::', checksum);
+}
+
+function sync_table_reported_change_tracking_version(tableState: map<json>? = null): int {
+  if (tableState == null || tableState.changeTrackingVersion == null) {
+    return 0;
+  }
+  return int.from(tableState.changeTrackingVersion);
+}
+
+function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<json>? = null): void {
+  const sourceAgents = agents ?? list_scheduler_agent_rows();
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  let ownerAgents = [];
+  let candidateTables = [];
+  for (const agent of sourceAgents) {
+    if (string.from(agent.ownerUserId) != ownerUserId || !agent_sync_enabled(agent)) {
+      continue;
+    }
+    ownerAgents = ownerAgents.concat([agent]);
+    candidateTables = candidateTables.concat(
+      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+      )
+    );
+  }
+  if (ownerAgents.length < 2) {
+    return;
+  }
+  for (const table of unique_string_values(candidateTables)) {
+    const existing = sync_table_issue_for_owner(ownerUserId, table);
+    let fingerprints = [];
+    let allUninitialized = true;
+    let reportedClientCount = 0;
+    for (const agent of ownerAgents) {
+      const state = scheduler_agent_table_state(
+        scheduler_agent_table_states(agent, ownerPolicies),
+        table
+      );
+      const fingerprint = sync_table_reported_fingerprint(state);
+      if (fingerprint.length == 0) {
+        continue;
+      }
+      reportedClientCount += 1;
+      if (!string_array_contains(fingerprints, fingerprint)) {
+        fingerprints = fingerprints.concat([fingerprint]);
+      }
+      if (sync_table_reported_change_tracking_version(state) > 0) {
+        allUninitialized = false;
+      }
+    }
+    if (existing != null &&
+        string.from(existing.status ?? '').trim() == 'resolving' &&
+        !sync_owner_table_has_active_jobs(ownerUserId, table) &&
+        reportedClientCount == ownerAgents.length &&
+        fingerprints.length == 1) {
+      replace_sync_table_issue(ownerUserId, {
+        table,
+        status: 'ready',
+        reason: '',
+        message: 'Authoritative repair completed and every enabled client reports the same table fingerprint.',
+        clientName: existing.clientName,
+        action: existing.action,
+        sourceClientName: existing.sourceClientName,
+        targetClientNames: existing.targetClientNames,
+        detectedAt: existing.detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: now_iso()
+      });
+      continue;
+    }
+    const acceptedDivergence = existing != null &&
+      string.from(existing.action ?? '').trim() == 'accept_baseline';
+    if (!acceptedDivergence &&
+        (existing == null || string.from(existing.status ?? '').trim() == 'ready') &&
+        allUninitialized &&
+        reportedClientCount == ownerAgents.length &&
+        fingerprints.length > 1) {
+      raise_sync_table_issue(
+        ownerUserId,
+        table,
+        'baseline_mismatch',
+        'Enabled clients report different row counts or checksums before a shared Change Tracking baseline exists.'
+      );
+    }
+  }
+}
+
+function sync_gate_payload_for_owners(ownerUserIds: array<string>): map<json> {
+  let issues = [];
+  let blockedOwnerUserIds = [];
+  for (const ownerUserId of unique_string_values(ownerUserIds)) {
+    for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+      const publicIssue = {
+        ownerUserId,
+        table: issue.table,
+        status: issue.status,
+        reason: issue.reason,
+        message: issue.message,
+        clientName: issue.clientName,
+        action: issue.action,
+        sourceClientName: issue.sourceClientName,
+        targetClientNames: issue.targetClientNames,
+        detectedAt: issue.detectedAt,
+        updatedAt: issue.updatedAt,
+        resolvedAt: issue.resolvedAt
+      };
+      issues = issues.concat([publicIssue]);
+      if (sync_table_issue_is_blocking(issue) &&
+          !string_array_contains(blockedOwnerUserIds, ownerUserId)) {
+        blockedOwnerUserIds = blockedOwnerUserIds.concat([ownerUserId]);
+      }
+    }
+  }
+  const blocked = blockedOwnerUserIds.length != 0;
+  return {
+    blocked,
+    status: blocked ? 'needs_input' : 'ready',
+    issueCount: issues.filter((issue) => sync_table_issue_is_blocking(issue)).length,
+    blockedOwnerUserIds,
+    message: blocked
+      ? 'Sync is stopped. Resolve every table marked Needs input before manual or automatic sync can start.'
+      : 'Every table is ready for synchronization.',
+    issues
+  };
 }
 
 function automatic_sync_control_set(paused: bool, token: string? = null): map<json> {
@@ -3277,9 +3574,18 @@ function live_state(token: string? = null): map<json> {
     live_state_job_rows_for(current, jobLimit),
     jobLimit
   );
+  const visibleAgents = visible_agent_rows_for(current);
+  const visibleOwnerUserIds = unique_string_values(
+    visibleAgents.map((agent) => string.from(agent.ownerUserId))
+  );
+  for (const ownerUserId of visibleOwnerUserIds) {
+    refresh_owner_baseline_table_issues(ownerUserId, visibleAgents);
+  }
+  const syncGate = sync_gate_payload_for_owners(visibleOwnerUserIds);
   return {
     generatedAt: now_iso(),
     automaticSyncPaused: automatic_sync_is_paused_for_user(current),
+    syncGate,
     agents: agentPage.items,
     jobs: jobPage.items,
     limits: {
@@ -4117,6 +4423,13 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   let deferredTables = [];
   const visibleAgents = visible_agent_rows_for(current);
   const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
+  for (const ownerUserId of ownerUserIds) {
+    refresh_owner_baseline_table_issues(ownerUserId, visibleAgents);
+  }
+  const syncGate = sync_gate_payload_for_owners(ownerUserIds);
+  if (syncGate.blocked == true) {
+    return raw_json_error(409, string.from(syncGate.message));
+  }
   for (const ownerUserId of ownerUserIds) {
     const ownerAgents = visibleAgents.filter((agent) =>
       string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)
@@ -5261,6 +5574,10 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     return raw_json_error(404, 'client not found');
   }
   const ownerId = owner_namespace_for_user(clientUser);
+  refresh_owner_baseline_table_issues(ownerId);
+  if (sync_owner_has_blocking_table_issues(ownerId)) {
+    return raw_json_error(409, 'Sync is stopped because one or more tables need a user decision.');
+  }
   const targetAgent = db.selectOne(Agent, { clientName: resolvedClientName });
   if (targetAgent == null) {
     return raw_json_error(404, 'client not found');
@@ -5323,6 +5640,10 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
     return raw_json_error(403, 'permission denied');
   }
   const ownerId = owner_namespace_for_user(clientUser);
+  refresh_owner_baseline_table_issues(ownerId);
+  if (sync_owner_has_blocking_table_issues(ownerId)) {
+    return raw_json_error(409, 'Sync is stopped because one or more tables need a user decision.');
+  }
   const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
   if (targetAgent == null || !agent_sync_enabled(targetAgent)) {
     return raw_json_error(409, 'bootstrap client is unavailable or disabled');
@@ -5446,6 +5767,162 @@ function jobs_reconcile_authoritative(sourceClientName: string, targetClientName
     sourceClientName: normalizedSourceClientName,
     targetClientNames: normalizedTargetClientNames,
     tables: requestedTables,
+    jobs: createdJobs.map((job) => public_job_payload(job))
+  }, 201);
+}
+
+function table_sync_issue_resolve(clientName: string, table: string, action: string, sourceClientName: string = '', token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const normalizedTable = table.trim();
+  const normalizedAction = action.trim().toLowerCase();
+  if (normalizedClientName.length == 0 || normalizedTable.length == 0) {
+    return raw_json_error(400, 'clientName and table are required');
+  }
+  if (normalizedAction != 'replace_client' &&
+      normalizedAction != 'keep_client' &&
+      normalizedAction != 'exclude_table' &&
+      normalizedAction != 'accept_baseline') {
+    return raw_json_error(400, 'unsupported table resolution action');
+  }
+
+  const visibleAgents = visible_agent_rows_for(current);
+  const pageAgent = find_agent_row_by_name(visibleAgents, normalizedClientName);
+  if (pageAgent == null) {
+    return raw_json_error(403, 'client is unavailable or outside your scope');
+  }
+  const ownerId = string.from(pageAgent.ownerUserId);
+  const existingIssue = sync_table_issue_for_owner(ownerId, normalizedTable);
+  if (existingIssue == null ||
+      string.from(existingIssue.status ?? '').trim() != 'needs_input') {
+    return raw_json_error(409, 'this table does not currently need a user decision');
+  }
+
+  if (normalizedAction == 'exclude_table') {
+    upsert_table_sync_policy(ownerId, normalizedTable, false, normalizedClientName);
+    const resolved = replace_sync_table_issue(ownerId, {
+      table: normalizedTable,
+      status: 'ready',
+      reason: '',
+      message: 'Excluded from synchronization. Local data is left unchanged on every client.',
+      clientName: normalizedClientName,
+      action: normalizedAction,
+      sourceClientName: '',
+      targetClientNames: [],
+      detectedAt: existingIssue.detectedAt,
+      updatedAt: now_iso(),
+      resolvedAt: now_iso()
+    });
+    return raw_json_success({ ok: true, issue: resolved, jobs: [] });
+  }
+
+  if (normalizedAction == 'accept_baseline') {
+    const resolved = replace_sync_table_issue(ownerId, {
+      table: normalizedTable,
+      status: 'ready',
+      reason: '',
+      message: 'Current differences were accepted. Only future Change Tracking changes will synchronize.',
+      clientName: normalizedClientName,
+      action: normalizedAction,
+      sourceClientName: '',
+      targetClientNames: [],
+      detectedAt: existingIssue.detectedAt,
+      updatedAt: now_iso(),
+      resolvedAt: now_iso()
+    });
+    return raw_json_success({ ok: true, issue: resolved, jobs: [] });
+  }
+
+  let sourceAgent = pageAgent;
+  let targetAgents = [];
+  if (normalizedAction == 'replace_client') {
+    sourceAgent = null;
+    const requestedSourceClientName = normalize_user_name(sourceClientName);
+    for (const agent of visibleAgents) {
+      if (string.from(agent.ownerUserId) != ownerId ||
+          !agent_sync_enabled(agent) ||
+          normalize_user_name(agent.clientName) == normalizedClientName) {
+        continue;
+      }
+      if (requestedSourceClientName.length == 0 ||
+          normalize_user_name(agent.clientName) == requestedSourceClientName) {
+        sourceAgent = agent;
+        break;
+      }
+    }
+    if (sourceAgent == null) {
+      return raw_json_error(409, 'choose an available source client for this table');
+    }
+    targetAgents = [pageAgent];
+  } else {
+    for (const agent of visibleAgents) {
+      if (string.from(agent.ownerUserId) == ownerId &&
+          agent_sync_enabled(agent) &&
+          normalize_user_name(agent.clientName) != normalizedClientName) {
+        targetAgents = targetAgents.concat([agent]);
+      }
+    }
+  }
+  if (targetAgents.length == 0) {
+    return raw_json_error(409, 'at least one other enabled client is required');
+  }
+  if (!effective_agent_online(sourceAgent)) {
+    return raw_json_error(409, 'the authoritative source client must be online and SQL-connected');
+  }
+  for (const targetAgent of targetAgents) {
+    if (!effective_agent_online(targetAgent)) {
+      return raw_json_error(409, string.concat('resolution target must be online and SQL-connected: ', string.from(targetAgent.clientName)));
+    }
+  }
+
+  const participants = [sourceAgent].concat(targetAgents);
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
+  for (const participant of participants) {
+    if (active_job_tables_for_client(string.from(participant.clientName)).length != 0) {
+      return raw_json_error(409, string.concat('resolution participant already has active jobs: ', string.from(participant.clientName)));
+    }
+    const enabledTables = unique_string_values(
+      enabled_sync_tables_for_agent_with_policies(participant, ownerPolicies).concat(
+        enabled_sync_policy_tables_for_agent(participant, ownerPolicies)
+      )
+    );
+    if (!string_array_contains(enabledTables, normalizedTable)) {
+      return raw_json_error(409, string.concat('resolution table is not enabled for ', string.from(participant.clientName)));
+    }
+  }
+
+  const createdJobs = create_authoritative_reconcile_batch(
+    ownerId,
+    normalizedTable,
+    sourceAgent,
+    targetAgents
+  );
+  if (createdJobs.length == 0) {
+    return raw_json_error(409, 'the authoritative repair could not be queued');
+  }
+  const targetClientNames = targetAgents.map((agent) => string.from(agent.clientName));
+  const resolving = replace_sync_table_issue(ownerId, {
+    table: normalizedTable,
+    status: 'resolving',
+    reason: existingIssue.reason,
+    message: 'Authoritative table repair is running. Normal manual and automatic sync remain stopped.',
+    clientName: normalizedClientName,
+    action: normalizedAction,
+    sourceClientName: sourceAgent.clientName,
+    targetClientNames,
+    detectedAt: existingIssue.detectedAt,
+    updatedAt: now_iso(),
+    resolvedAt: null
+  });
+  return raw_json_success({
+    ok: true,
+    issue: resolving,
     jobs: createdJobs.map((job) => public_job_payload(job))
   }, 201);
 }
@@ -5608,6 +6085,20 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   if (updated != null) {
     nextJob = updated;
   }
+  if (status.trim().toLowerCase() == 'failed' ||
+      (rejectedRowCount != null && rejectedRowCount > 0)) {
+    let issueMessage = message;
+    if (rejectionSummary != null && rejectionSummary.trim().length != 0) {
+      issueMessage = rejectionSummary;
+    }
+    raise_sync_table_issue(
+      job.ownerUserId,
+      string.from(job.table),
+      rejectedRowCount != null && rejectedRowCount > 0 ? 'rejected_rows' : 'sync_failed',
+      issueMessage,
+      string.from(job.clientName)
+    );
+  }
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };
 }
@@ -5692,6 +6183,13 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   if (updated != null) {
     nextJob = updated;
   }
+  raise_sync_table_issue(
+    job.ownerUserId,
+    string.from(job.table),
+    'sync_failed',
+    message,
+    string.from(job.clientName)
+  );
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };
 }
