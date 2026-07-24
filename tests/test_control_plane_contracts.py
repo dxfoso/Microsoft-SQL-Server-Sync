@@ -262,7 +262,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(auto_tick_match)
         auto_tick_body = auto_tick_match.group("body")
         self.assertIn("const allAgents = list_scheduler_agent_rows();", auto_tick_body)
-        self.assertIn("if (automatic_sync_is_paused()) {", auto_tick_body)
+        self.assertIn("const automaticSyncPaused = automatic_sync_is_paused();", auto_tick_body)
         self.assertIn("for (const agent of allAgents) {", auto_tick_body)
         self.assertIn(
             "const hasManualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId).length > 0;",
@@ -272,6 +272,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "claim_periodic_sync_scheduler_for_owner(ownerUserId, hasManualPendingTables)",
             auto_tick_body,
         )
+        self.assertIn(
+            "(automaticSyncPaused || automatic_sync_is_paused_for_owner(ownerUserId))",
+            auto_tick_body,
+        )
+        self.assertIn("!hasManualPendingTables", auto_tick_body)
         self.assertIn("const ownerJobs = queue_due_periodic_sync_jobs_for_owner(ownerUserId, allAgents);", auto_tick_body)
 
         owner_match = re.search(
@@ -311,7 +316,41 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("controlOwnerUserId = '__automatic_sync_control__'", control_body)
         self.assertIn("automaticSyncPaused: paused", control_body)
         self.assertIn("function automatic_sync_is_paused_for_owner", source)
-        self.assertIn("if (automatic_sync_is_paused_for_owner(ownerUserId))", source)
+        self.assertIn(
+            "automaticSyncPaused || automatic_sync_is_paused_for_owner(ownerUserId)",
+            source,
+        )
+
+    def test_paused_automatic_sync_does_not_stop_an_accepted_manual_queue(self):
+        source = read_text("business/control_plane.tru")
+        auto_tick_body = source.split("function auto_sync_tick(", 1)[1].split(
+            "function agent_sync_settings_get(", 1
+        )[0]
+        set_pending_body = source.split(
+            "function set_manual_sync_pending_tables_for_owner(", 1
+        )[1].split("function periodic_sync_scheduled_table_attempts_for_owner(", 1)[0]
+
+        self.assertNotIn(
+            "if (automatic_sync_is_paused()) {\n    return",
+            auto_tick_body,
+        )
+        self.assertIn(
+            "const hasManualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId).length > 0;",
+            auto_tick_body,
+        )
+        self.assertIn(
+            "if ((automaticSyncPaused || automatic_sync_is_paused_for_owner(ownerUserId)) &&",
+            auto_tick_body,
+        )
+        self.assertIn("!hasManualPendingTables", auto_tick_body)
+        self.assertIn(
+            "string.from(marker).trim() == '__automatic_sync_paused__'",
+            set_pending_body,
+        )
+        self.assertIn(
+            "pendingTables = pendingTables.concat(['__automatic_sync_paused__']);",
+            set_pending_body,
+        )
 
     def test_table_issues_stop_all_normal_sync_until_user_resolves_them(self):
         source = read_text("business/control_plane.tru")
