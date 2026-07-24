@@ -31,6 +31,9 @@ void main(List<String> arguments) {
     final winners = coalesceSqlSyncDeltaRows(
       rows: rows,
       primaryKeyColumns: _strings(request['primaryKeyColumns']),
+      logicalIdentityColumns: _strings(
+        request['logicalIdentityColumns'] ?? const <dynamic>[],
+      ),
     );
     stdout.write(jsonEncode(winners));
     return;
@@ -43,6 +46,9 @@ void main(List<String> arguments) {
       .map((column) => _column(Map<String, dynamic>.from(column as Map)))
       .toList(growable: false);
   final primaryKeyColumns = _strings(request['primaryKeyColumns']);
+  final logicalIdentityColumns = _strings(
+    request['logicalIdentityColumns'] ?? const <dynamic>[],
+  );
   final uniqueIndexColumnSets = (request['uniqueIndexColumnSets'] as List? ??
           const [])
       .map((columns) => _strings(columns))
@@ -61,7 +67,7 @@ void main(List<String> arguments) {
       'sql_sync_harness_${DateTime.now().microsecondsSinceEpoch}';
   final sql = StringBuffer();
 
-  if (deletes.isNotEmpty) {
+  if (deletes.isNotEmpty && logicalIdentityColumns.isEmpty) {
     sql.writeln(
       buildTargetDeltaDeleteSql(
         database: database,
@@ -74,7 +80,9 @@ void main(List<String> arguments) {
     );
   }
   final deleteMissing = request['deleteMissing'] == true;
-  if (rows.isNotEmpty || deleteMissing) {
+  if (rows.isNotEmpty ||
+      deleteMissing ||
+      (deletes.isNotEmpty && logicalIdentityColumns.isNotEmpty)) {
     sql.writeln(
       buildTargetSnapshotStageSetupSql(
         stageTableName: stageTableName,
@@ -99,6 +107,8 @@ void main(List<String> arguments) {
         columns: columns,
         primaryKeyColumns: primaryKeyColumns,
         uniqueIndexColumnSets: uniqueIndexColumnSets,
+        logicalIdentityColumns: logicalIdentityColumns,
+        deltaDeleteRows: logicalIdentityColumns.isEmpty ? const [] : deletes,
         deleteMissing: deleteMissing,
         manageTriggers: true,
         insertOnly: false,

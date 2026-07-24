@@ -3721,6 +3721,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final applyStats = _DeltaApplyStats();
     final authoritativeReconcile =
         job.sourceClientName == 'server-authoritative-reconcile';
+    final atomicLogicalMerge =
+        sqlSyncLogicalIdentityColumns(
+          table: _splitQualifiedName(_localTableName(job.table)).table,
+          availableColumns: const <String>['ParentGUID', 'Number'],
+        ).isNotEmpty;
     if (authoritativeReconcile) {
       final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
       final targetTable = _splitQualifiedName(_localTableName(job.table));
@@ -3753,7 +3758,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       syncEpoch: job.syncEpoch,
       checkCancelled: () => _checkSyncJobNotCancelled(job.id),
       onChunk:
-          authoritativeReconcile
+          authoritativeReconcile || atomicLogicalMerge
               ? null
               : (snapshot) async {
                 _checkSyncJobNotCancelled(job.id);
@@ -4292,6 +4297,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
+    final logicalIdentityColumns = sqlSyncLogicalIdentityColumns(
+      table: targetTable.table,
+      availableColumns: syncColumns.map((column) => column.name),
+    );
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     if (replaceTarget && snapshot.isDelta) {
@@ -4325,6 +4334,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   .map((row) => Map<String, dynamic>.from(row))
                   .toList(growable: false),
               primaryKeyColumns: primaryKeyColumns,
+              logicalIdentityColumns: logicalIdentityColumns,
               latestRowByKey: latestDeltaRowByKey,
             )
             : snapshot.rows;
@@ -4342,7 +4352,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     final contentCheckedRows =
-        applyDelta
+        applyDelta && logicalIdentityColumns.isEmpty
             ? await _rowsWhoseContentChanged(
               profile: targetProfile,
               database: targetDatabase,
@@ -4372,6 +4382,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
     final isolatedRejectedRows = <SqlSyncRejectedRow>[];
+    var logicalDeltaApplied = false;
     if (replaceTarget) {
       if (deleteRows.isNotEmpty) {
         throw StateError(
@@ -4434,6 +4445,59 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         0,
         rowCountBefore.value + insertedRows - rowCountAfter.value,
       );
+    } else if (applyDelta && logicalIdentityColumns.isNotEmpty) {
+      final rowCountBefore = await _queryTableRowCount(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+      );
+      if (!rowCountBefore.success) {
+        throw Exception(
+          rowCountBefore.errorText ??
+              'Unable to read the target row count before logical delta reconciliation.',
+        );
+      }
+      final rows = upsertRows
+          .map(
+            (row) => <String, dynamic>{
+              for (final column in syncColumns) column.name: row[column.name],
+            },
+          )
+          .toList(growable: false);
+      final insertedRows = await _applySourceRowsToTarget(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        columns: syncColumns,
+        primaryKeyColumns: primaryKeyColumns,
+        rows: rows,
+        deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>(),
+        logicalIdentityColumns: logicalIdentityColumns,
+        deleteMissing: false,
+        manageTriggers: true,
+        insertOnly: false,
+      );
+      final rowCountAfter = await _queryTableRowCount(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+      );
+      if (!rowCountAfter.success) {
+        throw Exception(
+          rowCountAfter.errorText ??
+              'Unable to read the target row count after logical delta reconciliation.',
+        );
+      }
+      stats.insertedRows += insertedRows;
+      stats.updatedRows += rows.length - insertedRows;
+      stats.deletedRows += math.max(
+        0,
+        rowCountBefore.value + insertedRows - rowCountAfter.value,
+      );
+      logicalDeltaApplied = true;
     } else if (deleteRows.isNotEmpty) {
       isolatedRejectedRows.addAll(
         await applySqlSyncRowsWithIsolation(
@@ -4455,7 +4519,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         ),
       );
     }
-    if (!replaceTarget && upsertRows.isNotEmpty) {
+    if (!replaceTarget && !logicalDeltaApplied && upsertRows.isNotEmpty) {
       final rows = upsertRows
           .map(
             (row) => <String, dynamic>{
@@ -5344,6 +5408,8 @@ END
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
     List<List<String>> uniqueIndexColumnSets = const <List<String>>[],
+    List<String> logicalIdentityColumns = const <String>[],
+    List<Map<String, dynamic>> deltaDeleteRows = const <Map<String, dynamic>>[],
     required List<Map<String, dynamic>> rows,
     bool deleteMissing = true,
     bool manageTriggers = true,
@@ -5405,6 +5471,8 @@ END
           columns: columns,
           primaryKeyColumns: primaryKeyColumns,
           uniqueIndexColumnSets: uniqueIndexColumnSets,
+          logicalIdentityColumns: logicalIdentityColumns,
+          deltaDeleteRows: deltaDeleteRows,
           deleteMissing: deleteMissing,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,

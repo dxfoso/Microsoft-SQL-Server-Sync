@@ -6,6 +6,31 @@ import 'sql_sync_schema.dart';
 // agent-applied writes so they can be excluded from the next outbound delta.
 const sqlSyncChangeTrackingContextHex = '0x53514C53594E43';
 
+/// Returns the stable business identity used when an application replaces a
+/// row by deleting it and inserting the edited value under a new GUID.
+///
+/// Ameen invoice lines (`bi000`) keep their logical position under the invoice
+/// in `ParentGUID + Number`. Treating the generated GUID as the only identity
+/// would union concurrent replacements and duplicate the visible invoice.
+List<String> sqlSyncLogicalIdentityColumns({
+  required String table,
+  required Iterable<String> availableColumns,
+}) {
+  final availableByLowerName = <String, String>{
+    for (final column in availableColumns) column.toLowerCase(): column,
+  };
+  if (table.trim().toLowerCase() != 'bi000') {
+    return const <String>[];
+  }
+  const required = <String>['parentguid', 'number'];
+  if (required.any((column) => !availableByLowerName.containsKey(column))) {
+    return const <String>[];
+  }
+  return required
+      .map((column) => availableByLowerName[column]!)
+      .toList(growable: false);
+}
+
 String buildTargetSnapshotMergeSql({
   required String database,
   required String schema,
@@ -202,6 +227,8 @@ String buildTargetSnapshotStageApplySql({
   required List<SqlSyncColumnDefinition> columns,
   required List<String> primaryKeyColumns,
   List<List<String>> uniqueIndexColumnSets = const <List<String>>[],
+  List<String> logicalIdentityColumns = const <String>[],
+  List<Map<String, dynamic>> deltaDeleteRows = const <Map<String, dynamic>>[],
   int targetMergeApplyBatchSize = 500,
   bool deleteMissing = true,
   bool manageTriggers = true,
@@ -237,6 +264,7 @@ String buildTargetSnapshotStageApplySql({
   final sourceIndexStatements = _buildSourceTempIndexStatements(<List<String>>[
     primaryKeyColumns,
     ...uniqueIndexColumnSets,
+    if (logicalIdentityColumns.isNotEmpty) logicalIdentityColumns,
   ]).replaceAll('#source_rows', stageTarget);
   final identityColumns = insertColumns
       .where((column) => column.isIdentity)
@@ -286,6 +314,23 @@ String buildTargetSnapshotStageApplySql({
   );''');
     }
   }
+  final deltaDeleteStatements = _buildStagedDeltaDeleteStatements(
+    database: database,
+    schema: schema,
+    table: table,
+    columns: columns,
+    primaryKeyColumns: primaryKeyColumns,
+    rows: deltaDeleteRows,
+  );
+  final logicalIdentityStatements = _buildLogicalIdentityReconciliationSql(
+    database: database,
+    schema: schema,
+    table: table,
+    stageTarget: stageTarget,
+    columns: columns,
+    primaryKeyColumns: primaryKeyColumns,
+    logicalIdentityColumns: logicalIdentityColumns,
+  );
   final deleteMissingBlock =
       deleteMissing && !insertOnly
           ? '''
@@ -312,6 +357,8 @@ BEGIN TRY
   $triggerDisableStatement
   $identityInsertOn
   DECLARE @SqlSyncInsertedRows INT = 0;
+  $deltaDeleteStatements
+  $logicalIdentityStatements
   ${uniqueConflictDeleteStatements.toString()}
   ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
@@ -340,6 +387,138 @@ BEGIN
   DROP TABLE $stageTarget;
 END;
 ''';
+}
+
+String _buildStagedDeltaDeleteStatements({
+  required String database,
+  required String schema,
+  required String table,
+  required List<SqlSyncColumnDefinition> columns,
+  required List<String> primaryKeyColumns,
+  required List<Map<String, dynamic>> rows,
+}) {
+  if (rows.isEmpty) {
+    return '';
+  }
+  final definitionsByName = {
+    for (final column in columns) column.name.toLowerCase(): column,
+  };
+  final keyColumns = primaryKeyColumns
+      .map((name) => definitionsByName[name.toLowerCase()])
+      .whereType<SqlSyncColumnDefinition>()
+      .toList(growable: false);
+  if (keyColumns.length != primaryKeyColumns.length) {
+    throw ArgumentError(
+      'Every delta delete key must have a column definition.',
+    );
+  }
+  final columnList = keyColumns
+      .map((column) => quoteIdentifier(column.name))
+      .join(', ');
+  final columnDefinitions = keyColumns
+      .map(
+        (column) =>
+            '${quoteIdentifier(column.name)} ${column.sqlCastType} NULL',
+      )
+      .join(',\n    ');
+  final valueTuples = rows
+      .map(
+        (row) =>
+            '(${keyColumns.map((column) => sourceBatchTargetLiteral(column, row[column.name])).join(', ')})',
+      )
+      .join(',\n      ');
+  final joinClause = matchClauseForColumns(primaryKeyColumns, keyColumns);
+  return '''
+  CREATE TABLE #delta_delete_rows (
+    $columnDefinitions
+  );
+  INSERT INTO #delta_delete_rows ($columnList)
+  VALUES
+      $valueTuples;
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  DELETE target
+  FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
+  INNER JOIN #delta_delete_rows AS source
+    ON $joinClause;
+  DROP TABLE #delta_delete_rows;''';
+}
+
+String _buildLogicalIdentityReconciliationSql({
+  required String database,
+  required String schema,
+  required String table,
+  required String stageTarget,
+  required List<SqlSyncColumnDefinition> columns,
+  required List<String> primaryKeyColumns,
+  required List<String> logicalIdentityColumns,
+}) {
+  if (logicalIdentityColumns.isEmpty) {
+    return '';
+  }
+  if (primaryKeyColumns.length != 1) {
+    throw ArgumentError(
+      'Logical identity reconciliation currently requires one permanent primary key column.',
+    );
+  }
+  final definitionsByName = {
+    for (final column in columns) column.name.toLowerCase(): column,
+  };
+  final primaryKey = definitionsByName[primaryKeyColumns.single.toLowerCase()];
+  if (primaryKey == null || primaryKey.isIdentity) {
+    throw ArgumentError(
+      'Logical identity reconciliation requires a writable non-identity primary key.',
+    );
+  }
+  for (final column in logicalIdentityColumns) {
+    if (!definitionsByName.containsKey(column.toLowerCase())) {
+      throw ArgumentError(
+        'Every logical identity column must have a writable definition.',
+      );
+    }
+  }
+  final primaryKeyName = quoteIdentifier(primaryKey.name);
+  final logicalJoinClause = nullableMatchClauseForColumns(
+    logicalIdentityColumns,
+    columns,
+  );
+  final primaryJoinClause = matchClauseForColumns(primaryKeyColumns, columns);
+  final target =
+      '${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}';
+  return '''
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  UPDATE target
+  SET target.$primaryKeyName = candidate.source_primary_key
+  FROM $target AS target
+  INNER JOIN (
+    SELECT
+      target.$primaryKeyName AS target_primary_key,
+      source.$primaryKeyName AS source_primary_key,
+      ROW_NUMBER() OVER (
+        PARTITION BY source.$primaryKeyName
+        ORDER BY target.$primaryKeyName
+      ) AS logical_row_number
+    FROM $target AS target
+    INNER JOIN $stageTarget AS source
+      ON $logicalJoinClause
+    WHERE NOT ($primaryJoinClause)
+      AND NOT EXISTS (
+        SELECT 1
+        FROM $target AS existing
+        WHERE existing.$primaryKeyName = source.$primaryKeyName
+      )
+  ) AS candidate
+    ON target.$primaryKeyName = candidate.target_primary_key
+   AND candidate.logical_row_number = 1;
+
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  DELETE target
+  FROM $target AS target
+  WHERE EXISTS (
+    SELECT 1
+    FROM $stageTarget AS source
+    WHERE $logicalJoinClause
+      AND NOT ($primaryJoinClause)
+  );''';
 }
 
 String buildTargetSnapshotStageDropSql({required String stageTableName}) {
@@ -457,6 +636,7 @@ String stageTableReference(String stageTableName) =>
 List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
   required List<Map<String, dynamic>> rows,
   required List<String> primaryKeyColumns,
+  List<String> logicalIdentityColumns = const <String>[],
   Map<String, Map<String, dynamic>>? latestRowByKey,
 }) {
   if (rows.isEmpty || primaryKeyColumns.isEmpty) {
@@ -508,7 +688,42 @@ List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
       );
     }
   }
-  return winners;
+  if (logicalIdentityColumns.isEmpty) {
+    return winners;
+  }
+
+  final logicalWinnerByIdentity = <String, int>{};
+  final logicalFirstIndex = <String, int>{};
+  final logicalCandidates = <Map<String, dynamic>>[];
+  for (final row in winners) {
+    final operation = row['__sync_op']?.toString().toUpperCase() ?? '';
+    final values = logicalIdentityColumns
+        .map((column) => row[column])
+        .toList(growable: false);
+    final hasCompleteLogicalIdentity =
+        operation != 'D' && values.every((value) => value != null);
+    final identity =
+        hasCompleteLogicalIdentity
+            ? jsonEncode(values)
+            : 'primary:${jsonEncode(primaryKeyColumns.map((column) => row[column]).toList())}';
+    logicalFirstIndex[identity] ??= logicalCandidates.length;
+    final currentIndex = logicalWinnerByIdentity[identity];
+    logicalCandidates.add(row);
+    final candidateIndex = logicalCandidates.length - 1;
+    if (currentIndex == null ||
+        _isLaterSyncRow(row, logicalCandidates[currentIndex])) {
+      logicalWinnerByIdentity[identity] = candidateIndex;
+    }
+  }
+  final orderedLogicalIdentities = logicalWinnerByIdentity.keys.toList(
+    growable: false,
+  )..sort(
+    (left, right) =>
+        logicalFirstIndex[left]!.compareTo(logicalFirstIndex[right]!),
+  );
+  return orderedLogicalIdentities
+      .map((identity) => logicalCandidates[logicalWinnerByIdentity[identity]!])
+      .toList(growable: false);
 }
 
 Map<String, dynamic>? latestSqlSyncDeltaRow(List<Map<String, dynamic>> rows) {

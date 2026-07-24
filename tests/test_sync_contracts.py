@@ -557,7 +557,14 @@ class SyncContractsTests(unittest.TestCase):
             snapshot_body,
         )
         self.assertIn("deleteMissing: true", apply_body)
-        self.assertIn("if (!replaceTarget && upsertRows.isNotEmpty)", apply_body)
+        self.assertIn(
+            "if (!replaceTarget && !logicalDeltaApplied && upsertRows.isNotEmpty)",
+            apply_body,
+        )
+        self.assertIn(
+            "applyDelta && logicalIdentityColumns.isNotEmpty", apply_body
+        )
+        self.assertIn("deltaDeleteRows:", apply_body)
         self.assertIn("targetFingerprint.checksum != snapshot.checksum", apply_body)
         self.assertIn("'snapshotChecksum': snapshotChecksum.trim()", client_api)
 

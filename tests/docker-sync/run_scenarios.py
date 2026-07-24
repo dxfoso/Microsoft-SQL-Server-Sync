@@ -27,6 +27,13 @@ COLUMNS = [
     {"name": "ChangedAt", "sqlType": "datetime2", "maxLength": 8, "precision": 0, "scale": 3, "isIdentity": False, "isComputed": False},
     {"name": "Payload", "sqlType": "varbinary", "maxLength": 32, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
 ]
+INVOICE_LINE_COLUMNS = [
+    {"name": "GUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "ParentGUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "Number", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "Quantity", "sqlType": "decimal", "maxLength": 9, "precision": 18, "scale": 2, "isIdentity": False, "isComputed": False},
+    {"name": "ArabicText", "sqlType": "nvarchar", "maxLength": 400, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+]
 
 
 def native_tool(name):
@@ -120,6 +127,20 @@ VALUES
         )
         sqlcmd(
             """
+CREATE TABLE dbo.InvoiceLines (
+  GUID uniqueidentifier NOT NULL CONSTRAINT PK_InvoiceLines PRIMARY KEY,
+  ParentGUID uniqueidentifier NOT NULL,
+  Number int NOT NULL,
+  Quantity decimal(18,2) NULL,
+  ArabicText nvarchar(200) NULL
+);
+ALTER TABLE dbo.InvoiceLines ENABLE CHANGE_TRACKING
+  WITH (TRACK_COLUMNS_UPDATED = ON);
+""",
+            database=database,
+        )
+        sqlcmd(
+            """
 CREATE TRIGGER dbo.TR_SyncItems_Protect
 ON dbo.SyncItems
 AFTER UPDATE, DELETE
@@ -144,15 +165,22 @@ def generate_sql(
     deletes=None,
     delete_missing=False,
     unique_index_column_sets=None,
+    table="SyncItems",
+    columns=None,
+    primary_key_columns=None,
+    logical_identity_columns=None,
 ):
+    columns = columns or COLUMNS
+    primary_key_columns = primary_key_columns or ["Id"]
     request = {
         "operation": "apply",
         "database": database,
         "schema": "dbo",
-        "table": "SyncItems",
+        "table": table,
         "stageTableName": f"sync_stage_{uuid.uuid4().hex}",
-        "columns": COLUMNS,
-        "primaryKeyColumns": ["Id"],
+        "columns": columns,
+        "primaryKeyColumns": primary_key_columns,
+        "logicalIdentityColumns": logical_identity_columns or [],
         "uniqueIndexColumnSets": unique_index_column_sets or [],
         "rows": rows or [],
         "deletes": deletes or [],
@@ -178,6 +206,10 @@ def apply(
     deletes=None,
     delete_missing=False,
     unique_index_column_sets=None,
+    table="SyncItems",
+    columns=None,
+    primary_key_columns=None,
+    logical_identity_columns=None,
 ):
     generated = generate_sql(
         database,
@@ -185,6 +217,10 @@ def apply(
         deletes=deletes,
         delete_missing=delete_missing,
         unique_index_column_sets=unique_index_column_sets,
+        table=table,
+        columns=columns,
+        primary_key_columns=primary_key_columns,
+        logical_identity_columns=logical_identity_columns,
     )
     with tempfile.NamedTemporaryFile("w", suffix=".sql", encoding="utf-8", delete=False) as handle:
         handle.write(generated)
@@ -199,11 +235,12 @@ def apply(
         sql_path.unlink(missing_ok=True)
 
 
-def coalesce(rows):
+def coalesce(rows, *, primary_key_columns=None, logical_identity_columns=None):
     request = {
         "operation": "coalesce",
         "rows": rows,
-        "primaryKeyColumns": ["Id"],
+        "primaryKeyColumns": primary_key_columns or ["Id"],
+        "logicalIdentityColumns": logical_identity_columns or [],
     }
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
         json.dump(request, handle, ensure_ascii=False)
@@ -282,6 +319,24 @@ SELECT CONCAT(
 )
 FROM dbo.SyncItems
 ORDER BY Id;
+""",
+        database=database,
+    )
+    return [line.strip() for line in result.stdout.splitlines() if "|" in line]
+
+
+def invoice_line_rows(database):
+    result = sqlcmd(
+        """
+SET NOCOUNT ON;
+SELECT CONCAT(
+  CONVERT(varchar(36), GUID), N'|',
+  CONVERT(varchar(36), ParentGUID), N'|',
+  Number, N'|', CONVERT(varchar(30), Quantity), N'|',
+  CONVERT(varchar(max), CONVERT(varbinary(max), ArabicText), 2)
+)
+FROM dbo.InvoiceLines
+ORDER BY ParentGUID, Number, GUID;
 """,
         database=database,
     )
@@ -449,6 +504,133 @@ def run_scenarios():
     for database in DATABASES:
         apply(database, rows=winners)
     assert_equal(*DATABASES)
+
+    # Ameen edits an invoice line by deleting its GUID and inserting the same
+    # ParentGUID + Number under a new GUID. Concurrent clients therefore need
+    # logical replacement reconciliation, not a union of both generated GUIDs.
+    invoice_guid = "181B8328-0A14-410B-9CF9-79223B0F3015"
+    old_guids = [
+        "3F781CBB-66A5-461A-A92C-8F5EBF77968B",
+        "29CD3432-CC0B-451F-A1E4-B2AFDD272143",
+    ]
+    c1_guids = [
+        "746F387F-C9CC-4162-AC5C-911411664846",
+        "2A1A97F2-7EE7-4B41-A1AD-99585BB55C28",
+    ]
+    c2_guids = [
+        "133DDFF9-9AD6-40C6-A2B4-1DBEF0219F4D",
+        "D6351269-D0CF-47DB-AC30-164DF64EEDAA",
+    ]
+
+    def invoice_rows(guids, quantity, arabic):
+        return [
+            {
+                "GUID": guids[number],
+                "ParentGUID": invoice_guid,
+                "Number": number,
+                "Quantity": str(quantity),
+                "ArabicText": arabic,
+            }
+            for number in range(2)
+        ]
+
+    local_invoice_rows = [
+        invoice_rows(c1_guids, 123, "تعديل العميل الأول"),
+        invoice_rows(c2_guids, 234, "تعديل العميل الثاني"),
+        invoice_rows(old_guids, 1, "القيمة الأصلية"),
+    ]
+    for database, rows_for_client in zip(DATABASES, local_invoice_rows):
+        apply(
+            database,
+            rows=rows_for_client,
+            table="InvoiceLines",
+            columns=INVOICE_LINE_COLUMNS,
+            primary_key_columns=["GUID"],
+        )
+
+    merged_invoice_delta = coalesce(
+        [
+            *[
+                {
+                    "GUID": guid,
+                    "__sync_op": "D",
+                    "__sync_modified_at_utc": "2026-07-24T18:31:00Z",
+                }
+                for guid in old_guids
+            ],
+            *[
+                {
+                    **row_value,
+                    "__sync_modified_at_utc": "2026-07-24T18:31:06.543Z",
+                    "__sync_origin_client": "c1",
+                }
+                for row_value in invoice_rows(c1_guids, 123, "تعديل العميل الأول")
+            ],
+            *[
+                {
+                    **row_value,
+                    "__sync_modified_at_utc": "2026-07-24T18:31:27.920Z",
+                    "__sync_origin_client": "c2",
+                }
+                for row_value in invoice_rows(c2_guids, 234, "تعديل العميل الثاني")
+            ],
+        ],
+        primary_key_columns=["GUID"],
+        logical_identity_columns=["ParentGUID", "Number"],
+    )
+    deletes = [
+        row_value for row_value in merged_invoice_delta
+        if row_value.get("__sync_op") == "D"
+    ]
+    upserts = [
+        row_value for row_value in merged_invoice_delta
+        if row_value.get("__sync_op") != "D"
+    ]
+    if len(deletes) != 2 or len(upserts) != 2:
+        raise AssertionError(
+            f"Invoice logical reconciliation selected invalid winners: {merged_invoice_delta}"
+        )
+    for database in DATABASES:
+        apply(
+            database,
+            rows=upserts,
+            deletes=deletes,
+            table="InvoiceLines",
+            columns=INVOICE_LINE_COLUMNS,
+            primary_key_columns=["GUID"],
+            logical_identity_columns=["ParentGUID", "Number"],
+        )
+    invoice_snapshots = {
+        database: invoice_line_rows(database) for database in DATABASES
+    }
+    if any(len(rows_for_client) != 2 for rows_for_client in invoice_snapshots.values()):
+        raise AssertionError(
+            f"Invoice line replacement produced duplicates: {invoice_snapshots}"
+        )
+    if len({tuple(rows_for_client) for rows_for_client in invoice_snapshots.values()}) != 1:
+        raise AssertionError(
+            f"Invoice line replacement did not converge: {invoice_snapshots}"
+        )
+    expected_arabic_hex = "تعديل العميل الثاني".encode("utf-16-le").hex().upper()
+    if any(
+        "|234.00|" not in row_value or not row_value.endswith(expected_arabic_hex)
+        for row_value in invoice_snapshots[DATABASES[0]]
+    ):
+        raise AssertionError(
+            f"Invoice winner values or Arabic text changed: {invoice_snapshots}"
+        )
+    for database in DATABASES:
+        apply(
+            database,
+            rows=upserts,
+            deletes=deletes,
+            table="InvoiceLines",
+            columns=INVOICE_LINE_COLUMNS,
+            primary_key_columns=["GUID"],
+            logical_identity_columns=["ParentGUID", "Number"],
+        )
+    if invoice_line_rows(DATABASES[0]) != invoice_snapshots[DATABASES[0]]:
+        raise AssertionError("Invoice logical replacement retry was not idempotent.")
 
     exact_unicode = "العربية 🌍 漢字"
     typed_row = row(
@@ -652,6 +834,7 @@ VALUES
             "lossless-float-real-9999999-capture-roundtrip",
             "independent-multi-writer", "offline-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",
+            "invoice-line-logical-update-no-duplicate-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",
             "authoritative-replace-unique-conflict-delete-missing-unicode-retry",
             "rejected-row-rollback-and-recovery", "change-context",

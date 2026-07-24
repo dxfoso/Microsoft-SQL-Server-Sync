@@ -430,6 +430,127 @@ void main() {
     expect(rows.map((row) => row['Id']), ['c1-id', 'c2-id']);
   });
 
+  test('bi000 exposes its stable invoice line identity', () {
+    expect(
+      sqlSyncLogicalIdentityColumns(
+        table: 'BI000',
+        availableColumns: const ['GUID', 'ParentGUID', 'Number', 'Quantity'],
+      ),
+      const ['ParentGUID', 'Number'],
+    );
+    expect(
+      sqlSyncLogicalIdentityColumns(
+        table: 'bu000',
+        availableColumns: const ['GUID', 'ParentGUID', 'Number'],
+      ),
+      isEmpty,
+    );
+  });
+
+  test('invoice replacement rows converge by parent and line number', () {
+    final rows = coalesceSqlSyncDeltaRows(
+      rows: const [
+        {
+          'GUID': 'old-guid',
+          '__sync_op': 'D',
+          '__sync_modified_at_utc': '2026-07-24T18:31:00Z',
+        },
+        {
+          'GUID': 'c1-guid',
+          'ParentGUID': 'invoice-guid',
+          'Number': 0,
+          'Quantity': 123,
+          '__sync_modified_at_utc': '2026-07-24T18:31:06.543Z',
+          '__sync_origin_client': 'c1',
+        },
+        {
+          'GUID': 'c2-guid',
+          'ParentGUID': 'invoice-guid',
+          'Number': 0,
+          'Quantity': 234,
+          '__sync_modified_at_utc': '2026-07-24T18:31:27.920Z',
+          '__sync_origin_client': 'c2',
+        },
+      ],
+      primaryKeyColumns: const ['GUID'],
+      logicalIdentityColumns: const ['ParentGUID', 'Number'],
+    );
+
+    expect(rows, hasLength(2));
+    expect(rows.first['__sync_op'], 'D');
+    expect(rows.last['GUID'], 'c2-guid');
+    expect(rows.last['Quantity'], 234);
+  });
+
+  test('invoice replacement delete, rekey, cleanup and update are atomic', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'bi000',
+      stageTableName: '#stage_bi000',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'GUID',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'ParentGUID',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Number',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Quantity',
+          sqlType: 'decimal',
+          maxLength: 9,
+          precision: 18,
+          scale: 2,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['GUID'],
+      logicalIdentityColumns: const ['ParentGUID', 'Number'],
+      deltaDeleteRows: const [
+        {'GUID': '3F781CBB-66A5-461A-A92C-8F5EBF77968B'},
+      ],
+      deleteMissing: false,
+    );
+
+    final begin = sql.indexOf('BEGIN TRANSACTION;');
+    final explicitDelete = sql.indexOf('CREATE TABLE #delta_delete_rows');
+    final rekey = sql.indexOf(
+      'SET target.[GUID] = candidate.source_primary_key',
+    );
+    final update = sql.lastIndexOf('UPDATE target');
+    final commit = sql.indexOf('COMMIT TRANSACTION;');
+    expect(begin, greaterThanOrEqualTo(0));
+    expect(explicitDelete, greaterThan(begin));
+    expect(rekey, greaterThan(explicitDelete));
+    expect(update, greaterThan(rekey));
+    expect(commit, greaterThan(update));
+    expect(sql, contains('target.[ParentGUID] = source.[ParentGUID]'));
+    expect(sql, contains('target.[Number] = source.[Number]'));
+    expect(sql, contains('DELETE target'));
+  });
+
   test('different GUIDs remain independent across streamed pages', () {
     final latestByKey = <String, Map<String, dynamic>>{};
     final newest = coalesceSqlSyncDeltaRows(
