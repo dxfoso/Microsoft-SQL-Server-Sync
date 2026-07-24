@@ -457,13 +457,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_pendingWindowActionAck = _PendingWindowActionAck(", queue_body)
         self.assertIn("await _flushPendingWindowActionAck();", queue_body)
 
-    def test_snapshot_apply_refreshes_target_fingerprint_after_success(self):
+    def test_delta_apply_skips_full_table_fingerprint_after_success(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         apply_body = agent_page.split(
             "Future<int> _applyDownloadedSnapshotToTarget({", 1
         )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
 
+        self.assertIn("if (!applyDelta) {", apply_body)
         self.assertIn("final targetFingerprints = await _queryTableFingerprints(", apply_body)
+        self.assertIn("bool refreshFingerprint = false", apply_body)
+        self.assertIn("if (refreshFingerprint) {", apply_body)
+        self.assertIn(
+            "refreshFingerprint: !snapshotToApply.isDelta && !authoritativeReconcile",
+            agent_page,
+        )
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
 

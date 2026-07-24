@@ -3842,6 +3842,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     final reconciledTargetRowCount = await _refreshTargetStateAfterRemoteApply(
       job,
+      refreshFingerprint: !snapshotToApply.isDelta && !authoritativeReconcile,
     );
     // The remote job records changed rows; targetRowCount remains local state.
     if (reconciledTargetRowCount < 0) {
@@ -4478,15 +4479,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       localTableName,
       database: targetDatabase,
     );
-    final targetFingerprints = await _queryTableFingerprints(
-      profile: targetProfile,
-      database: targetDatabase,
-      tables: [visibleTableName],
-    );
-    _applyTableFingerprints(
-      database: targetDatabase,
-      fingerprints: targetFingerprints,
-    );
+    var targetFingerprints = const <String, _TableFingerprint>{};
+    if (!applyDelta) {
+      targetFingerprints = await _queryTableFingerprints(
+        profile: targetProfile,
+        database: targetDatabase,
+        tables: [visibleTableName],
+      );
+      _applyTableFingerprints(
+        database: targetDatabase,
+        fingerprints: targetFingerprints,
+      );
+    }
     if (replaceTarget) {
       final targetFingerprint = targetFingerprints[visibleTableName];
       if (snapshot.checksum.trim().isEmpty ||
@@ -4515,7 +4519,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return targetRowCountResult.value;
   }
 
-  Future<int> _refreshTargetStateAfterRemoteApply(RemoteSyncJob job) async {
+  Future<int> _refreshTargetStateAfterRemoteApply(
+    RemoteSyncJob job, {
+    bool refreshFingerprint = false,
+  }) async {
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
     final localTableName = _localTableName(job.table);
     final targetTable = _splitQualifiedName(localTableName);
@@ -4535,15 +4542,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       localTableName,
       database: targetDatabase,
     );
-    final targetFingerprints = await _queryTableFingerprints(
-      profile: targetProfile,
-      database: targetDatabase,
-      tables: [visibleTableName],
-    );
-    _applyTableFingerprints(
-      database: targetDatabase,
-      fingerprints: targetFingerprints,
-    );
+    if (refreshFingerprint) {
+      final targetFingerprints = await _queryTableFingerprints(
+        profile: targetProfile,
+        database: targetDatabase,
+        tables: [visibleTableName],
+      );
+      _applyTableFingerprints(
+        database: targetDatabase,
+        fingerprints: targetFingerprints,
+      );
+    }
     if (_selectedDatabase == targetDatabase) {
       _applyTableRowCounts(
         database: targetDatabase,
