@@ -4895,7 +4895,6 @@ END'''
       final encodedProjection = encodedFields.join(" + '|' +\n  ");
       return '''
 SET NOCOUNT ON;
-USE ${_quoteIdentifier(database)};
 ;WITH encoded_rows AS (
 SELECT
   ROW_NUMBER() OVER (ORDER BY ct.SYS_CHANGE_VERSION, (SELECT 0)) AS row_order,

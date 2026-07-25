@@ -86,6 +86,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("sqlSyncHexRowTerminator", delta_body)
         self.assertIn("CONVERT(varbinary(max), CONVERT(nvarchar(max)", delta_body)
         self.assertNotIn("Change tracking delta returned", delta_body)
+        self.assertNotIn("USE ${_quoteIdentifier(database)};", delta_body)
 
     def test_symmetricds_client_service_is_removed(self):
         self.assertFalse(
