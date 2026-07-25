@@ -1,0 +1,193 @@
+{
+  "name": "mig_20260725_102809",
+  "timestamp": "2026-07-25T10:28:09.147351700+00:00",
+  "objects": [
+    {
+      "object": "SyncRowWinner",
+      "namespace": null,
+      "action": "added",
+      "fields": [
+        {
+          "field": "id",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "64",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "ownerUserId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "table",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "256",
+            "default": null
+          }
+        },
+        {
+          "field": "identityKey",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "64",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "physicalKey",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "64",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "modifiedAtUtc",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "serverReceivedAtUtc",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "serverSequence",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "128",
+            "default": null
+          }
+        },
+        {
+          "field": "originClient",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "128",
+            "default": null
+          }
+        },
+        {
+          "field": "changeVersion",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "40",
+            "default": null
+          }
+        },
+        {
+          "field": "operationId",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "64",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "rowHash",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "operation",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": false,
+            "min": "1",
+            "max": "1",
+            "default": null
+          }
+        },
+        {
+          "field": "revision",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": false,
+            "min": "1",
+            "max": "2147483647",
+            "default": null
+          }
+        },
+        {
+          "field": "updatedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": false,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

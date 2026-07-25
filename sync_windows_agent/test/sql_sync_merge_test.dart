@@ -603,4 +603,32 @@ void main() {
       expect(latest?['__sync_modified_at_utc'], '2026-07-24T18:31:27.920Z');
     },
   );
+
+  test(
+    'server receipt order resolves equal cross-client database timestamps',
+    () {
+      final latest = latestSqlSyncDeltaRow([
+        {
+          'Id': 'same-row',
+          '__sync_modified_at_utc': '2026-07-25T00:00:00.000Z',
+          '__sync_change_version': '9999',
+          '__sync_origin_client': 'c1',
+          '__sync_server_received_at_utc': '2026-07-25T00:00:01.000Z',
+          '__sync_server_sequence': '1',
+          '__sync_operation_id': 'a',
+        },
+        {
+          'Id': 'same-row',
+          '__sync_modified_at_utc': '2026-07-25T00:00:00.000Z',
+          '__sync_change_version': '1',
+          '__sync_origin_client': 'c2',
+          '__sync_server_received_at_utc': '2026-07-25T00:00:02.000Z',
+          '__sync_server_sequence': '2',
+          '__sync_operation_id': 'b',
+        },
+      ]);
+
+      expect(latest?['__sync_origin_client'], 'c2');
+    },
+  );
 }

@@ -1108,6 +1108,34 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIn("delete_sync_job_data_batch()", source)
 
+    def test_latest_change_winner_is_durable_across_batches_and_resettable(self):
+        source = read_text("business/control_plane.tru")
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+        download_body = source.split(
+            "function jobs_multi_writer_download(", 1
+        )[1].split("function jobs_upload_chunk(", 1)[0]
+        reset_body = source.split("function server_saved_data_reset(", 1)[1].split(
+            "function jobs_upload_chunk_start(", 1
+        )[0]
+
+        self.assertIn("class SyncRowWinner {", source)
+        self.assertIn("function sync_row_winner_find_by_id(", source)
+        self.assertIn("db.upsertMany(SyncRowWinner, pendingWinners, ['id'])", upload_body)
+        self.assertIn("db.atomicTransaction(() => {", upload_body)
+        self.assertIn("string.base64Utf8Decode(encodedPayload)", upload_body)
+        self.assertIn("winnerPolicyApplied", upload_body)
+        self.assertIn("acceptedOperationIds", upload_body)
+        self.assertIn("serverReceivedAt", upload_body)
+        self.assertIn("serverSequence", upload_body)
+        self.assertIn("acceptedOperationIds", download_body)
+        self.assertIn("winnerPolicyApplied", download_body)
+        self.assertIn("const durableWinners = db.selectMany(SyncRowWinner", download_body)
+        self.assertIn("operationId: { in: candidateAcceptedOperationIds }", download_body)
+        self.assertIn("delete_sync_row_winner_batch()", reset_body)
+        self.assertIn("syncRowWinnerDeletedCount", reset_body)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -254,6 +254,7 @@ void main() {
 
       expect(heartbeat.windowAction.pending, isTrue);
       expect(heartbeat.windowAction.action, 'minimize');
+      expect(heartbeat.serverClockSynchronized, isFalse);
 
       final ack = await client.acknowledgeWindowAction(
         clientName: 'c1',
@@ -341,6 +342,47 @@ void main() {
       );
     },
   );
+
+  test('heartbeat estimates the server clock offset', () async {
+    final client = AgentControlPlaneClient(
+      client: _DelayedClient(
+        delay: const Duration(milliseconds: 10),
+        responseForName:
+            (name) => {
+              'serverTimeUtc': DateTime.now().toUtc().toIso8601String(),
+            },
+      ),
+      baseUrl: 'https://example.com/call',
+    );
+
+    final heartbeat = await client.heartbeat(
+      clientName: 'c1',
+      machineName: 'machine',
+      historyLimit: 5,
+      autoSyncIntervalMinutes: 15,
+      server: '',
+      database: '',
+      replicationUseWindowsAuth: true,
+      replicationUser: '',
+      replicationPassword: '',
+      serverConnected: true,
+      sqlConnected: true,
+      selectedTable: null,
+      tables: const {},
+      tableRelationships: const [],
+      clientVersion: '1.0.183+187',
+    );
+
+    expect(heartbeat.serverClockSynchronized, isTrue);
+    expect(
+      heartbeat.serverClockOffset.abs(),
+      lessThan(const Duration(seconds: 1)),
+    );
+    expect(
+      heartbeat.heartbeatRoundTrip,
+      greaterThanOrEqualTo(const Duration(milliseconds: 10)),
+    );
+  });
 
   test(
     'downloadSnapshot retries transient 503 manifest failures and succeeds',
@@ -3566,6 +3608,93 @@ void main() {
       ]);
       expect(snapshot.rowCount, 2);
       expect(snapshot.rows, isEmpty);
+    },
+  );
+
+  test(
+    'multi-writer download removes operations rejected by durable server winner',
+    () async {
+      final acceptedId = 'a' * 64;
+      final rejectedId = 'b' * 64;
+      final encoded = base64Encode(
+        utf8.encode(
+          jsonEncode([
+            {'Id': '1', 'Name': 'newest', '__sync_operation_id': acceptedId},
+            {
+              'Id': '1',
+              'Name': 'stale offline value',
+              '__sync_operation_id': rejectedId,
+            },
+          ]),
+        ),
+      );
+      final client = _ScriptedClient(
+        responseForRequest: (name, args, callIndex) {
+          expect(name, 'jobs_multi_writer_download');
+          return (
+            statusCode: 200,
+            body: {
+              'status': 'success',
+              'value': {
+                'done': true,
+                'nextCursor': null,
+                'payloadBase64': encoded,
+                'snapshot': {
+                  'id': 'batch-winner',
+                  'clientName': 'server-merge',
+                  'table': 'db::bi000',
+                  'createdAt': '2026-07-25T10:00:01Z',
+                  'serverReceivedAtUtc': '2026-07-25T10:00:01Z',
+                  'serverSequence': '2026-07-25T10:00:01Z::1',
+                  'serverOriginClient': 'c2',
+                  'winnerPolicyApplied': true,
+                  'acceptedOperationIds': [acceptedId],
+                  'acceptedOperations': [
+                    {
+                      'operationId': acceptedId,
+                      'authoritativeModifiedAtUtc': '2026-07-25T09:59:59.000Z',
+                    },
+                  ],
+                  'rowCount': 1,
+                  'checksum': 'winner-checksum',
+                  'snapshotBytes': 64,
+                  'columns': ['Id', 'Name'],
+                  'rows': const [],
+                  'sourceJobId': 'job-winner',
+                  'clientChangeTrackingVersions': const [],
+                  'isDelta': true,
+                },
+              },
+            },
+          );
+        },
+      );
+      final api = AgentControlPlaneClient(
+        client: client,
+        baseUrl: 'https://example.com/call',
+      );
+
+      final snapshot = await api.downloadMultiWriterDelta(
+        'job-winner',
+        batchId: 'batch-winner',
+        protocolVersion: 3,
+        syncEpoch: 'epoch-test',
+      );
+
+      expect(snapshot.rows, hasLength(1));
+      expect(snapshot.rows.single['Name'], 'newest');
+      expect(
+        snapshot.rows.single['__sync_modified_at_utc'],
+        '2026-07-25T09:59:59.000Z',
+      );
+      expect(
+        snapshot.rows.single['__sync_server_received_at_utc'],
+        '2026-07-25T10:00:01Z',
+      );
+      expect(
+        snapshot.rows.single['__sync_server_sequence'],
+        '2026-07-25T10:00:01Z::1',
+      );
     },
   );
 }

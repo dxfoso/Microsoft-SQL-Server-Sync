@@ -849,7 +849,7 @@ class _ClientsPageState extends State<ClientsPage> {
                         if (conflictPolicy == 'latest_change_wins') ...[
                           const SizedBox(height: 8),
                           const Text(
-                            'When different GUIDs collide on the same unique business key, the server selects the newest database-change timestamp, records the decision, and replaces that table on other clients. Sync remains stopped until verification succeeds.',
+                            'The server keeps a durable winner for every changed row. SQL commit times are normalized to server UTC; server receipt order resolves exact ties. Older offline changes are rejected even when they arrive in a later sync job. Unsafe schema or permission errors still stop for review.',
                             style: TextStyle(
                               color: Color(0xFF93451A),
                               fontSize: 12,

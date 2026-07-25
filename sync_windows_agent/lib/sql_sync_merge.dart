@@ -751,17 +751,38 @@ bool _isLaterSyncRow(
   } else if (candidateTime.isBefore(currentTime)) {
     return false;
   }
-  final candidateVersion =
-      int.tryParse(candidate['__sync_change_version']?.toString() ?? '') ?? -1;
-  final currentVersion =
-      int.tryParse(current['__sync_change_version']?.toString() ?? '') ?? -1;
-  if (candidateVersion != currentVersion) {
-    return candidateVersion > currentVersion;
-  }
   final candidateOrigin =
       candidate['__sync_origin_client']?.toString().toLowerCase() ?? '';
   final currentOrigin =
       current['__sync_origin_client']?.toString().toLowerCase() ?? '';
+  final candidateVersion =
+      int.tryParse(candidate['__sync_change_version']?.toString() ?? '') ?? -1;
+  final currentVersion =
+      int.tryParse(current['__sync_change_version']?.toString() ?? '') ?? -1;
+  if (candidateOrigin == currentOrigin && candidateVersion != currentVersion) {
+    return candidateVersion > currentVersion;
+  }
+  final candidateServerTime = _parseSyncUtcTimestamp(
+    candidate['__sync_server_received_at_utc'],
+  );
+  final currentServerTime = _parseSyncUtcTimestamp(
+    current['__sync_server_received_at_utc'],
+  );
+  if (candidateServerTime == null) {
+    if (currentServerTime != null) return false;
+  } else if (currentServerTime == null ||
+      candidateServerTime.isAfter(currentServerTime)) {
+    return true;
+  } else if (candidateServerTime.isBefore(currentServerTime)) {
+    return false;
+  }
+  final candidateServerSequence =
+      candidate['__sync_server_sequence']?.toString() ?? '';
+  final currentServerSequence =
+      current['__sync_server_sequence']?.toString() ?? '';
+  if (candidateServerSequence != currentServerSequence) {
+    return candidateServerSequence.compareTo(currentServerSequence) > 0;
+  }
   if (candidateOrigin != currentOrigin) {
     return candidateOrigin.compareTo(currentOrigin) > 0;
   }

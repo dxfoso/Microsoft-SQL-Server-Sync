@@ -525,6 +525,23 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("void _prepareSyncProtocolJob(RemoteSyncJob job)", agent_page)
         self.assertIn("const batchSize = 200;", snapshot_body)
 
+    def test_latest_change_uses_server_clock_and_filters_stale_server_rows(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+
+        self.assertIn("serverTimeUtc", client_api)
+        self.assertIn("serverClockOffset", client_api)
+        self.assertIn("_normalizeDatabaseCommitToServerUtc", agent_page)
+        self.assertIn("SYSUTCDATETIME()", agent_page)
+        self.assertIn("__sync_database_modified_at_utc", agent_page)
+        self.assertIn("__sync_server_received_at_utc", client_api)
+        self.assertIn("__sync_server_sequence", client_api)
+        self.assertIn("winnerPolicyApplied", client_api)
+        self.assertIn("acceptedOperationIds.contains", client_api)
+        self.assertIn("__sync_server_received_at_utc", merge)
+        self.assertIn("__sync_server_sequence", merge)
+
     def test_authoritative_reconciliation_replaces_and_verifies_the_target(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")

@@ -191,6 +191,27 @@ class SyncJobDataChunk {
   field createdAt: datetime
 }
 
+// Durable last-writer-wins register. Unlike batch-local coalescing, this
+// survives later sync jobs so an older offline change cannot overwrite a
+// newer operation that the server already accepted.
+class SyncRowWinner {
+  field id: string min=64 max=64
+  field ownerUserId: string min=0 max=64
+  field table: string min=1 max=256
+  field identityKey: string min=64 max=64
+  field physicalKey: string min=64 max=64
+  field modifiedAtUtc: string min=0 max=64
+  field serverReceivedAtUtc: string min=1 max=64
+  field serverSequence: string min=1 max=128
+  field originClient: string min=1 max=128
+  field changeVersion: string min=0 max=40
+  field operationId: string min=64 max=64
+  field rowHash: string min=0 max=64
+  field operation: string min=1 max=1
+  field revision: int min=1 max=2147483647
+  field updatedAt: datetime
+}
+
 class UploadSession {
   field id: string min=1 max=64
   field jobId: string min=1 max=64
@@ -254,6 +275,9 @@ index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
 index SyncJobDataChunk_jobId_ordinal on SyncJobDataChunk(jobId, ordinal)
 index SyncJobDataChunk_batchId_createdAt on SyncJobDataChunk(batchId, createdAt)
 index SyncJobDataChunk_ownerUserId_createdAt on SyncJobDataChunk(ownerUserId, createdAt)
+index SyncRowWinner_ownerUserId_table on SyncRowWinner(ownerUserId, table)
+index SyncRowWinner_ownerUserId_table_physicalKey on SyncRowWinner(ownerUserId, table, physicalKey)
+index SyncRowWinner_ownerUserId_table_operationId on SyncRowWinner(ownerUserId, table, operationId)
 index UploadSession_jobId on UploadSession(jobId)
 index UploadSession_uploadId on UploadSession(uploadId)
 index DownloadSession_jobId on DownloadSession(jobId)
@@ -1990,7 +2014,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       replicationUser: '',
       replicationPassword: '',
       syncEnabled: true,
-      conflictPolicy: 'ask',
+      conflictPolicy: 'latest_change_wins',
       diagnosticRequestId: null,
       diagnosticRequestedAt: null,
       diagnosticRequestedByUserId: null,
@@ -2038,7 +2062,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     historyLimit: 5,
     autoSyncIntervalMinutes: 15,
     syncDataLimitMb: 256,
-    conflictPolicy: 'ask',
+    conflictPolicy: 'latest_change_wins',
     serverConnected: false,
     sqlConnected: false,
     clientVersion: '',
@@ -3448,6 +3472,151 @@ function row_key(row: map<json>, keyColumns: array<string>): string {
   return json.stringify(values);
 }
 
+function sync_row_physical_key(row: map<json>, keyColumns: array<string>): string {
+  let values = [];
+  for (const column of keyColumns) {
+    values = values.concat([row[column]]);
+  }
+  return crypto.hash(json.stringify(values), 'sha256');
+}
+
+function sync_row_identity_key(table: string, row: map<json>, keyColumns: array<string>): string {
+  const physicalKey = sync_row_physical_key(row, keyColumns);
+  const operation = string.from(row.__sync_op ?? 'S').trim().toUpperCase();
+  const localTable = string.from(sync_table_reference(table).table).trim().toLowerCase();
+  let values = [];
+  if ((localTable == 'bi000' || localTable == 'dbo.bi000') &&
+      operation != 'D' &&
+      row.ParentGUID != null &&
+      row.Number != null) {
+    values = ['logical', row.ParentGUID, row.Number];
+  } else {
+    values = ['physical', physicalKey];
+  }
+  return crypto.hash(json.stringify({
+    table: table.trim().toLowerCase(),
+    values
+  }), 'sha256');
+}
+
+function sync_timestamp_compare_ms(left: string, right: string): int {
+  const normalizedLeft = left.trim();
+  const normalizedRight = right.trim();
+  if (normalizedLeft.length == 0 && normalizedRight.length == 0) {
+    return 0;
+  }
+  if (normalizedLeft.length == 0) {
+    return -1;
+  }
+  if (normalizedRight.length == 0) {
+    return 1;
+  }
+  try {
+    const differenceMs = date.diff(normalizedLeft, normalizedRight, 'ms');
+    if (differenceMs > 0) {
+      return 1;
+    }
+    if (differenceMs < 0) {
+      return -1;
+    }
+  } catch (err) {
+    return 0;
+  }
+  return 0;
+}
+
+function sync_row_candidate_is_later(row: map<json>, current: map<json>, serverReceivedAtUtc: string, serverSequence: string, originClient: string): bool {
+  const candidateModifiedAt = sync_row_effective_modified_at(row, serverReceivedAtUtc);
+  const currentModifiedAt = string.from(current.modifiedAtUtc ?? '').trim();
+  if (candidateModifiedAt.length != 0 || currentModifiedAt.length != 0) {
+    if (candidateModifiedAt.length == 0) {
+      return false;
+    }
+    if (currentModifiedAt.length == 0) {
+      return true;
+    }
+    const modifiedAtOrder = sync_timestamp_compare_ms(candidateModifiedAt, currentModifiedAt);
+    if (modifiedAtOrder != 0) {
+      return modifiedAtOrder > 0;
+    }
+  }
+
+  const candidateOrigin = normalize_user_name(originClient);
+  const currentOrigin = normalize_user_name(string.from(current.originClient));
+  const candidateVersion = int.from(row.__sync_change_version ?? -1);
+  const currentVersion = int.from(current.changeVersion ?? -1);
+  if (candidateOrigin == currentOrigin && candidateVersion != currentVersion) {
+    return candidateVersion > currentVersion;
+  }
+
+  const candidateOperation = string.from(row.__sync_op ?? 'S').trim().toUpperCase();
+  const currentOperation = string.from(current.operation ?? 'S').trim().toUpperCase();
+  if (candidateOrigin == currentOrigin &&
+      candidateVersion == currentVersion &&
+      candidateOperation != currentOperation) {
+    // SQL Change Tracking reports a delete+insert replacement under one
+    // version. Preserve the replacement rather than its deleted identity.
+    return candidateOperation != 'D';
+  }
+
+  const currentReceivedAt = string.from(current.serverReceivedAtUtc).trim();
+  const receivedAtOrder = sync_timestamp_compare_ms(serverReceivedAtUtc, currentReceivedAt);
+  if (receivedAtOrder != 0) {
+    return receivedAtOrder > 0;
+  }
+  const currentSequence = string.from(current.serverSequence).trim();
+  if (serverSequence != currentSequence) {
+    return serverSequence > currentSequence;
+  }
+  const candidateOperationId = string.from(row.__sync_operation_id ?? '').trim();
+  return candidateOperationId >= string.from(current.operationId).trim();
+}
+
+function sync_row_effective_modified_at(row: map<json>, serverReceivedAtUtc: string): string {
+  const modifiedAtUtc = string.from(row.__sync_modified_at_utc ?? '').trim();
+  if (modifiedAtUtc.length == 0) {
+    // An operation cannot be committed after the server received it. Missing
+    // timestamps and clocks that are still ahead fall back to receipt time.
+    return serverReceivedAtUtc;
+  }
+  try {
+    if (date.diff(modifiedAtUtc, serverReceivedAtUtc, 'ms') > 0) {
+      return serverReceivedAtUtc;
+    }
+    return modifiedAtUtc;
+  } catch (err) {
+    return serverReceivedAtUtc;
+  }
+}
+
+function sync_row_winner_find_by_id(winners: array<json>, id: string): map<json>? {
+  for (const winner of winners) {
+    if (string.from(winner.id) == id) {
+      return winner;
+    }
+  }
+  return null;
+}
+
+function sync_row_winner_find_by_physical_key(winners: array<json>, physicalKey: string): map<json>? {
+  for (const winner of winners) {
+    if (string.from(winner.physicalKey) == physicalKey) {
+      return winner;
+    }
+  }
+  return null;
+}
+
+function sync_row_winner_replace(winners: array<json>, replacement: map<json>): array<json> {
+  let result = [];
+  for (const winner of winners) {
+    if (string.from(winner.id) != string.from(replacement.id)) {
+      result = result.concat([winner]);
+    }
+  }
+  return result.concat([replacement]);
+}
+
 function string_array_contains(values: array<string>, target: string): bool {
   for (const value of values) {
     if (value == target) {
@@ -3760,19 +3929,34 @@ function latest_change_candidate_for_batch(batchId: string): map<json>? {
   }
   let winner = null;
   let winnerAt = '';
+  let winnerReceivedAt = '';
+  let winnerSequence = '';
   let winnerOperationId = '';
   let winnerClientName = '';
   for (const chunk of batch.receivedChunks ?? []) {
     const changedAt = string.from(chunk.latestModifiedAtUtc ?? '').trim();
+    const receivedAt = string.from(chunk.receivedAt ?? '').trim();
+    const serverSequence = string.from(chunk.serverSequence ?? '').trim();
     const operationId = string.from(chunk.latestOperationId ?? '').trim();
     const clientName = normalize_user_name(chunk.clientName);
-    if (changedAt.length == 0 || clientName.length == 0) {
+    if (clientName.length == 0) {
       continue;
     }
+    const changedAtOrder = sync_timestamp_compare_ms(changedAt, winnerAt);
+    const receivedAtOrder = sync_timestamp_compare_ms(receivedAt, winnerReceivedAt);
     if (winner == null ||
-        changedAt > winnerAt ||
-        (changedAt == winnerAt && operationId > winnerOperationId) ||
-        (changedAt == winnerAt &&
+        changedAtOrder > 0 ||
+        (changedAtOrder == 0 && receivedAtOrder > 0) ||
+        (changedAtOrder == 0 &&
+          receivedAtOrder == 0 &&
+          serverSequence > winnerSequence) ||
+        (changedAtOrder == 0 &&
+          receivedAtOrder == 0 &&
+          serverSequence == winnerSequence &&
+          operationId > winnerOperationId) ||
+        (changedAtOrder == 0 &&
+          receivedAtOrder == 0 &&
+          serverSequence == winnerSequence &&
           operationId == winnerOperationId &&
           clientName > winnerClientName)) {
       winner = {
@@ -3781,6 +3965,8 @@ function latest_change_candidate_for_batch(batchId: string): map<json>? {
         operationId
       };
       winnerAt = changedAt;
+      winnerReceivedAt = receivedAt;
+      winnerSequence = serverSequence;
       winnerOperationId = operationId;
       winnerClientName = clientName;
     }
@@ -4160,6 +4346,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   }
   return {
     ok: true,
+    serverTimeUtc: now_iso(),
     syncSettings: sync_settings_payload(nextAgent),
     tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
     tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),
@@ -5126,6 +5313,22 @@ function delete_sync_job_data_batch(): map<json> {
   };
 }
 
+function delete_sync_row_winner_batch(): map<json> {
+  const rows = db.selectMany(SyncRowWinner, {
+    where: { id: { gte: '' } },
+    orderBy: { field: 'id', dir: 'asc' },
+    fields: ['id'],
+    limit: 100
+  });
+  let ids = [];
+  for (const row of rows) { ids = ids.concat([row.id]); }
+  let deletedCount = 0;
+  if (ids.length != 0) {
+    deletedCount = db.deleteMany(SyncRowWinner, { id: { in: ids } });
+  }
+  return { deletedCount, hasMore: rows.length == 100 };
+}
+
 function delete_upload_session_batch(): map<json> {
   const rows = db.selectMany(UploadSession, {
     where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 50
@@ -5195,6 +5398,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   const deletedStorageObjectCount = int.from(snapshotBatch.deletedStorageObjectCount ?? 0);
   const snapshotDeletedCount = int.from(snapshotBatch.snapshotDeletedCount ?? 0);
   const syncJobDataBatch = delete_sync_job_data_batch();
+  const syncRowWinnerBatch = delete_sync_row_winner_batch();
   const downloadSessionBatch = delete_download_session_batch();
   const uploadSessionBatch = delete_upload_session_batch();
   const syncBatchBatch = delete_sync_batch_batch();
@@ -5204,13 +5408,14 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   // cannot recreate jobs while the reset is draining or after it completes.
   const automaticSyncControl = automatic_sync_control_set(true, token);
   const syncJobDataDeletedCount = int.from(syncJobDataBatch.deletedCount ?? 0);
+  const syncRowWinnerDeletedCount = int.from(syncRowWinnerBatch.deletedCount ?? 0);
   const syncJobDataStorageDeletedCount = int.from(syncJobDataBatch.deletedStorageObjectCount ?? 0);
   const downloadSessionDeletedCount = int.from(downloadSessionBatch.deletedCount ?? 0);
   const uploadSessionDeletedCount = int.from(uploadSessionBatch.deletedCount ?? 0);
   const batchDeletedCount = int.from(syncBatchBatch.deletedCount ?? 0);
   const jobDeletedCount = int.from(syncJobBatch.deletedCount ?? 0);
   const schedulerStateDeletedCount = int.from(schedulerStateBatch.deletedCount ?? 0);
-  const deletedRecordCount = syncJobDataDeletedCount + downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
+  const deletedRecordCount = syncJobDataDeletedCount + syncRowWinnerDeletedCount + downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
   let protocol = sync_protocol_state();
   if (!continueReset) {
     protocol = rotate_sync_epoch();
@@ -5220,7 +5425,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     agentResetCount = reset_all_agent_saved_state();
   }
 
-  const hasMore = snapshotBatch.hasMore == true || syncJobDataBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true;
+  const hasMore = snapshotBatch.hasMore == true || syncJobDataBatch.hasMore == true || syncRowWinnerBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true;
 
   return {
     ok: true,
@@ -5234,6 +5439,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     uploadSessionDeletedCount,
     snapshotDeletedCount,
     syncJobDataDeletedCount,
+    syncRowWinnerDeletedCount,
     batchDeletedCount,
     schedulerStateDeletedCount,
     automaticSyncPaused: automaticSyncControl.automaticSyncPaused == true,
@@ -5391,6 +5597,20 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   }
   const encodedPayload = string.from(payloadBase64 ?? '').trim();
   const hasStoredPayload = encodedPayload.length > 0;
+  if (payloadIsDelta && !hasStoredPayload) {
+    return raw_json_error(426, 'protocol upgrade required: delta payload metadata is missing');
+  }
+  let effectiveIncomingRows = incomingRows;
+  if (hasStoredPayload) {
+    const decodedPayload = json.parse(string.base64Utf8Decode(encodedPayload));
+    if (decodedPayload == null) {
+      return raw_json_error(400, 'multi-writer payload is not valid JSON');
+    }
+    effectiveIncomingRows = decodedPayload;
+    if (effectiveIncomingRows.length != incomingRowCount) {
+      return raw_json_error(400, 'multi-writer payload row count does not match its manifest');
+    }
+  }
   let incomingBytes = json.stringify(incomingRows).length;
   if (hasStoredPayload) {
     incomingBytes = int.from((encodedPayload.length * 3) / 4);
@@ -5414,14 +5634,28 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (batch.columns.length > 0) {
     resolvedColumns = batch.columns.map((value) => string.from(value));
   }
+  if (payloadIsDelta && resolvedKeyColumns.length == 0) {
+    return raw_json_error(409, 'latest-change sync requires permanent primary key columns');
+  }
   const nextOrdinal = batch.revision + 1;
+  const serverReceivedAt = now_iso();
+  const serverSequence = string.concat(
+    string.from(serverReceivedAt),
+    '::',
+    string.from(nextOrdinal),
+    '::',
+    normalizedClientName,
+    '::',
+    normalizedChunkId
+  );
   const receivedChunks = batch.receivedChunks.concat([{
     clientName: normalizedClientName,
     chunkId: normalizedChunkId,
     rowCount: incomingRowCount,
     latestModifiedAtUtc: latestModifiedAtUtc.trim(),
     latestOperationId: latestOperationId.trim(),
-    receivedAt: now_iso()
+    receivedAt: serverReceivedAt,
+    serverSequence
   }]);
   let uploadedClients = batch.uploadedClients;
   if (finalChunk && !sync_batch_has_value(uploadedClients, normalizedClientName)) {
@@ -5452,6 +5686,57 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (hasStoredPayload) {
     storedRows = [];
   }
+  // Every protocol-v3 delta uses one durable row winner. The configurable
+  // conflict policy still controls whether unsafe schema/business conflicts
+  // pause for input, but it must never disable deterministic row ordering.
+  const winnerPolicyApplied = payloadIsDelta;
+  const winnerOwnerUserId = string.from(batch.ownerUserId ?? '').trim();
+  const winnerTable = string.from(batch.table);
+  let candidateWinnerIds = [];
+  let candidatePhysicalKeys = [];
+  if (winnerPolicyApplied) {
+    for (const incomingRow of effectiveIncomingRows) {
+      const candidatePhysicalKey = sync_row_physical_key(incomingRow, resolvedKeyColumns);
+      const candidateIdentityKey = sync_row_identity_key(winnerTable, incomingRow, resolvedKeyColumns);
+      candidatePhysicalKeys = candidatePhysicalKeys.concat([candidatePhysicalKey]);
+      candidateWinnerIds = candidateWinnerIds.concat([
+        crypto.hash(
+          json.stringify([winnerOwnerUserId, winnerTable, candidateIdentityKey]),
+          'sha256'
+        )
+      ]);
+    }
+  }
+  let currentWinners = [];
+  if (candidateWinnerIds.length > 0) {
+    currentWinners = db.selectMany(SyncRowWinner, {
+      where: {
+        ownerUserId: winnerOwnerUserId,
+        table: winnerTable,
+        id: { in: candidateWinnerIds }
+      },
+      orderBy: { field: 'id', dir: 'asc' },
+      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
+      limit: 500
+    });
+  }
+  if (candidatePhysicalKeys.length > 0) {
+    const physicalWinners = db.selectMany(SyncRowWinner, {
+      where: {
+        ownerUserId: winnerOwnerUserId,
+        table: winnerTable,
+        physicalKey: { in: candidatePhysicalKeys }
+      },
+      orderBy: { field: 'id', dir: 'asc' },
+      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
+      limit: 500
+    });
+    for (const physicalWinner of physicalWinners) {
+      if (sync_row_winner_find_by_id(currentWinners, string.from(physicalWinner.id)) == null) {
+        currentWinners = currentWinners.concat([physicalWinner]);
+      }
+    }
+  }
   const chunkRecord = db.insert(SnapshotRecord, {
     id: uuid.v4(),
     clientName: 'server-merge',
@@ -5464,7 +5749,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     snapshotBytes: incomingBytes,
     columns: resolvedColumns,
     rows: storedRows,
-    previewRows: [],
+    previewRows: [{ winnerPolicyApplied }],
     compressedBytes: 0,
     chunkCount: 1,
     encoding: 'json',
@@ -5473,7 +5758,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     sourceJobId: batch.id,
     clientUserId: normalizedClientName,
     ownerUserId: batch.ownerUserId,
-    createdAt: now_iso()
+    createdAt: serverReceivedAt
   });
   if (chunkRecord == null) {
     return raw_json_error(500, 'could not store multi-writer delta chunk');
@@ -5495,7 +5780,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     storageId,
     clientUserId: job.clientUserId,
     ownerUserId: job.ownerUserId,
-    createdAt: now_iso()
+    createdAt: serverReceivedAt
   });
   if (archivedChunk == null) {
     db.delete(SnapshotRecord, { id: chunkRecord.id });
@@ -5504,25 +5789,125 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     }
     return raw_json_error(500, 'could not retain sync job data');
   }
-  const updatedBatch = db.updateMany(SyncBatch, { id: batch.id, revision: batch.revision }, {
-    table: batch.table,
-    revision: batch.revision + 1,
-    ownerUserId: batch.ownerUserId,
-    expectedClients: batch.expectedClients,
-    uploadedClients,
-    receivedChunks,
-    receivedBytes: receivedBytes + incomingBytes,
-    clientChangeTrackingVersions,
-    keyColumns: resolvedKeyColumns,
-    columns: resolvedColumns,
-    rows: [],
-    status: ready ? 'ready' : 'uploading',
-    createdAt: batch.createdAt,
-    updatedAt: now_iso(),
-    protocolVersion: batch.protocolVersion,
-    syncEpoch: batch.syncEpoch
+  const acceptance = db.atomicTransaction(() => {
+    const updatedBatch = db.updateMany(SyncBatch, { id: batch.id, revision: batch.revision }, {
+      table: batch.table,
+      revision: batch.revision + 1,
+      ownerUserId: batch.ownerUserId,
+      expectedClients: batch.expectedClients,
+      uploadedClients,
+      receivedChunks,
+      receivedBytes: receivedBytes + incomingBytes,
+      clientChangeTrackingVersions,
+      keyColumns: resolvedKeyColumns,
+      columns: resolvedColumns,
+      rows: [],
+      status: ready ? 'ready' : 'uploading',
+      createdAt: batch.createdAt,
+      updatedAt: serverReceivedAt,
+      protocolVersion: batch.protocolVersion,
+      syncEpoch: batch.syncEpoch
+    });
+    if (updatedBatch == 0) {
+      return {
+        ok: false,
+        acceptedRowCount: 0
+      };
+    }
+
+    let acceptedOperationIds = [];
+    let acceptedRows = [];
+    let pendingWinners = [];
+    for (const incomingRow of effectiveIncomingRows) {
+      const operationId = string.from(incomingRow.__sync_operation_id ?? '').trim();
+      let accepted = true;
+      if (winnerPolicyApplied) {
+        accepted = operationId.length == 64;
+        const operation = string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase();
+        const physicalKey = sync_row_physical_key(incomingRow, resolvedKeyColumns);
+        let identityKey = sync_row_identity_key(winnerTable, incomingRow, resolvedKeyColumns);
+        if (operation == 'D') {
+          let physicalWinner = sync_row_winner_find_by_physical_key(pendingWinners, physicalKey);
+          if (physicalWinner == null) {
+            physicalWinner = sync_row_winner_find_by_physical_key(currentWinners, physicalKey);
+          }
+          if (physicalWinner != null) {
+            identityKey = string.from(physicalWinner.identityKey);
+          }
+        }
+        const winnerId = crypto.hash(
+          json.stringify([winnerOwnerUserId, winnerTable, identityKey]),
+          'sha256'
+        );
+        let currentWinner = sync_row_winner_find_by_id(pendingWinners, winnerId);
+        if (currentWinner == null) {
+          currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
+        }
+        if (accepted &&
+            currentWinner != null &&
+            string.from(currentWinner.operationId) != operationId &&
+            !sync_row_candidate_is_later(
+              incomingRow,
+              currentWinner,
+              string.from(serverReceivedAt),
+              serverSequence,
+              normalizedClientName
+            )) {
+          accepted = false;
+        }
+        if (accepted && (currentWinner == null || string.from(currentWinner.operationId) != operationId)) {
+          const nextWinner = {
+            id: winnerId,
+            ownerUserId: winnerOwnerUserId,
+            table: winnerTable,
+            identityKey,
+            physicalKey,
+            modifiedAtUtc: sync_row_effective_modified_at(
+              incomingRow,
+              string.from(serverReceivedAt)
+            ),
+            serverReceivedAtUtc: serverReceivedAt,
+            serverSequence,
+            originClient: normalize_user_name(normalizedClientName),
+            changeVersion: string.from(incomingRow.__sync_change_version ?? '').trim(),
+            operationId,
+            rowHash: string.from(incomingRow.__sync_row_hash ?? '').trim(),
+            operation,
+            revision: currentWinner == null ? 1 : int.from(currentWinner.revision) + 1,
+            updatedAt: serverReceivedAt
+          };
+          pendingWinners = sync_row_winner_replace(pendingWinners, nextWinner);
+        }
+      }
+      if (accepted) {
+        acceptedOperationIds = acceptedOperationIds.concat([{
+          operationId,
+          authoritativeModifiedAtUtc: sync_row_effective_modified_at(
+            incomingRow,
+            string.from(serverReceivedAt)
+          )
+        }]);
+        acceptedRows = acceptedRows.concat([incomingRow]);
+      }
+    }
+    if (pendingWinners.length > 0) {
+      db.upsertMany(SyncRowWinner, pendingWinners, ['id']);
+    }
+    const relayRows = hasStoredPayload ? acceptedOperationIds : acceptedRows;
+    db.update(SnapshotRecord, { id: chunkRecord.id }, {
+      rows: relayRows,
+      rowCount: acceptedRows.length
+    });
+    db.update(SyncJobDataChunk, { id: archivedChunk.id }, {
+      rows: acceptedOperationIds,
+      rowCount: acceptedRows.length
+    });
+    return {
+      ok: true,
+      acceptedRowCount: acceptedRows.length
+    };
   });
-  if (updatedBatch == 0) {
+  if (acceptance == null || acceptance.ok != true) {
     db.delete(SnapshotRecord, { id: chunkRecord.id });
     db.delete(SyncJobDataChunk, { id: archivedChunk.id });
     if (storageId.length != 0) {
@@ -5530,9 +5915,19 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     }
     return raw_json_error(409, 'sync batch changed while uploading; retry this chunk');
   }
+  const acceptedRowCount = int.from(acceptance.acceptedRowCount ?? 0);
+  const staleRowCount = incomingRowCount - acceptedRowCount;
   const updatedResult = finalChunk
-    ? jobs_complete(job.id, 'completed', 100, string.concat('Uploaded ', string.from(incomingRowCount), ' changed rows for ', table, '.'), incomingRowCount, null, null, null, null, null, token)
-    : jobs_progress(job.id, 'uploading', 70, string.concat('Uploaded multi-writer chunk for ', table, '.'), incomingRowCount, token);
+    ? jobs_complete(job.id, 'completed', 100, string.concat(
+        'Uploaded ',
+        string.from(acceptedRowCount),
+        ' accepted changed rows for ',
+        table,
+        staleRowCount > 0
+          ? string.concat('; ignored ', string.from(staleRowCount), ' stale operation(s).')
+          : '.'
+      ), acceptedRowCount, null, null, null, null, null, token)
+    : jobs_progress(job.id, 'uploading', 70, string.concat('Uploaded multi-writer chunk for ', table, '.'), acceptedRowCount, token);
   const updatedJob = updatedResult.job ?? job;
   // Clients poll their waiting batch download until the barrier is ready.
   let nextJob = job;
@@ -5550,8 +5945,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   return raw_json_success({
     job: public_job_payload(nextJob),
     batchId,
-    acceptedRows: incomingRowCount,
-    mergedRowCount: incomingRowCount,
+    acceptedRows: acceptedRowCount,
+    staleRowsIgnored: staleRowCount,
+    mergedRowCount: acceptedRowCount,
     uploadedClients,
     expectedClientCount: batch.expectedClients.length,
     ready,
@@ -5597,7 +5993,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       { field: 'createdAt', dir: 'asc' },
       { field: 'id', dir: 'asc' }
     ],
-    fields: ['id', 'sourceJobId', 'clientUserId', 'columns', 'rows', 'rowCount', 'checksum', 'snapshotBytes', 'storageId', 'isDelta', 'createdAt'],
+    fields: ['id', 'sourceJobId', 'clientUserId', 'subscriberClientName', 'columns', 'rows', 'previewRows', 'rowCount', 'checksum', 'snapshotBytes', 'storageId', 'isDelta', 'createdAt'],
     limit: 1,
     cursor
   });
@@ -5605,6 +6001,9 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   let chunkRows = [];
   let chunkPayloadBase64 = '';
   let chunkIsDelta = true;
+  let candidateAcceptedOperationIds = [];
+  let candidateAcceptedOperations = [];
+  let winnerPolicyApplied = false;
   if (batch.receivedChunks.length == 0) {
     chunkIsDelta = false;
     for (const row of batch.rows) {
@@ -5612,6 +6011,10 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     }
   } else {
     for (const storedChunk of storedChunks) {
+      const markerRows = storedChunk.previewRows ?? [];
+      if (markerRows.length > 0 && markerRows[0].winnerPolicyApplied == true) {
+        winnerPolicyApplied = true;
+      }
       const storedPayloadId = string.from(storedChunk.storageId ?? '').trim();
       if (storedChunk.isDelta != true) {
         chunkIsDelta = false;
@@ -5619,9 +6022,49 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       if (storedPayloadId.length != 0) {
         const storedPayload = storage.get(storedPayloadId);
         chunkPayloadBase64 = string.from(storedPayload.content_base64 ?? '').trim();
+        for (const acceptedRow of storedChunk.rows ?? []) {
+          const acceptedOperationId = string.from(acceptedRow.operationId ?? '').trim();
+          if (acceptedOperationId.length != 0) {
+            candidateAcceptedOperationIds = candidateAcceptedOperationIds.concat([acceptedOperationId]);
+            candidateAcceptedOperations = candidateAcceptedOperations.concat([{
+              operationId: acceptedOperationId,
+              authoritativeModifiedAtUtc: string.from(
+                acceptedRow.authoritativeModifiedAtUtc ?? ''
+              ).trim()
+            }]);
+          }
+        }
       } else {
         const storedRows = storedChunk.rows ?? [];
         chunkRows = chunkRows.concat(storedRows);
+      }
+    }
+  }
+  let acceptedOperationIds = candidateAcceptedOperationIds;
+  let acceptedOperations = candidateAcceptedOperations;
+  if (winnerPolicyApplied && candidateAcceptedOperationIds.length > 0) {
+    const durableWinners = db.selectMany(SyncRowWinner, {
+      where: {
+        ownerUserId: string.from(batch.ownerUserId ?? '').trim(),
+        table: string.from(batch.table),
+        operationId: { in: candidateAcceptedOperationIds }
+      },
+      orderBy: { field: 'id', dir: 'asc' },
+      fields: ['operationId', 'modifiedAtUtc'],
+      limit: 500
+    });
+    acceptedOperationIds = [];
+    acceptedOperations = [];
+    for (const durableWinner of durableWinners) {
+      const operationId = string.from(durableWinner.operationId).trim();
+      if (operationId.length != 0) {
+        acceptedOperationIds = acceptedOperationIds.concat([operationId]);
+        acceptedOperations = acceptedOperations.concat([{
+          operationId,
+          authoritativeModifiedAtUtc: string.from(
+            durableWinner.modifiedAtUtc ?? ''
+          ).trim()
+        }]);
       }
     }
   }
@@ -5657,6 +6100,18 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     done,
     nextCursor
   };
+  if (storedChunks.length > 0) {
+    snapshot.serverReceivedAtUtc = string.from(storedChunks[0].createdAt);
+    snapshot.serverSequence = string.concat(
+      string.from(storedChunks[0].createdAt),
+      '::',
+      string.from(storedChunks[0].id)
+    );
+    snapshot.serverOriginClient = string.from(storedChunks[0].subscriberClientName ?? storedChunks[0].clientUserId ?? '');
+    snapshot.winnerPolicyApplied = winnerPolicyApplied;
+    snapshot.acceptedOperationIds = acceptedOperationIds;
+    snapshot.acceptedOperations = acceptedOperations;
+  }
   if (chunkPayloadBase64.length != 0) {
     snapshot.rows = [];
     snapshot.snapshotBytes = int.from(storedChunks[0].snapshotBytes ?? 0);

@@ -504,6 +504,7 @@ class AgentControlPlaneClient {
     required List<Map<String, String>> tableRelationships,
     required String clientVersion,
   }) async {
+    final requestStartedAtUtc = DateTime.now().toUtc();
     final response = await _invokeFunction('agents_heartbeat', {
       'clientName': clientName,
       'machineName': machineName,
@@ -523,11 +524,22 @@ class AgentControlPlaneClient {
           .toList(growable: false),
       'tableRelationships': tableRelationships,
     }, 'sending heartbeat');
+    final responseReceivedAtUtc = DateTime.now().toUtc();
 
     if (response is! Map) {
       throw const AgentControlPlaneException('Unexpected heartbeat payload.');
     }
     final decoded = response;
+    final serverTimeUtc =
+        DateTime.tryParse(decoded['serverTimeUtc']?.toString() ?? '')?.toUtc();
+    final roundTrip = responseReceivedAtUtc.difference(requestStartedAtUtc);
+    final localMidpointUtc = requestStartedAtUtc.add(
+      Duration(microseconds: roundTrip.inMicroseconds ~/ 2),
+    );
+    final serverClockOffset =
+        serverTimeUtc == null
+            ? Duration.zero
+            : serverTimeUtc.difference(localMidpointUtc);
 
     final syncSettings =
         decoded['syncSettings'] is Map
@@ -587,6 +599,9 @@ class AgentControlPlaneClient {
                 'Unexpected heartbeat payload.',
               )
               : const RemoteAgentWindowAction(),
+      serverClockSynchronized: serverTimeUtc != null,
+      serverClockOffset: serverClockOffset,
+      heartbeatRoundTrip: roundTrip,
     );
   }
 
@@ -1162,9 +1177,67 @@ class AgentControlPlaneClient {
         }
         snapshotPayload['rows'] = chunkRows;
       }
-      final snapshot = _parseSnapshotPayload(
+      var snapshot = _parseSnapshotPayload(
         snapshotPayload,
         'Unexpected merged multi-writer download payload.',
+      );
+      final winnerPolicyApplied =
+          snapshotPayload['winnerPolicyApplied'] == true;
+      final acceptedOperationIds =
+          (snapshotPayload['acceptedOperationIds'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((value) => value.toString())
+              .where((value) => value.isNotEmpty)
+              .toSet();
+      final authoritativeModifiedAtByOperation = <String, String>{};
+      for (final value
+          in snapshotPayload['acceptedOperations'] as List<dynamic>? ??
+              const <dynamic>[]) {
+        if (value is! Map) {
+          continue;
+        }
+        final operationId = value['operationId']?.toString() ?? '';
+        final modifiedAtUtc =
+            value['authoritativeModifiedAtUtc']?.toString() ?? '';
+        if (operationId.isNotEmpty && modifiedAtUtc.isNotEmpty) {
+          authoritativeModifiedAtByOperation[operationId] = modifiedAtUtc;
+          acceptedOperationIds.add(operationId);
+        }
+      }
+      final serverReceivedAtUtc =
+          snapshotPayload['serverReceivedAtUtc']?.toString() ?? '';
+      final serverSequence =
+          snapshotPayload['serverSequence']?.toString() ?? '';
+      final serverOriginClient =
+          snapshotPayload['serverOriginClient']?.toString() ?? '';
+      final orderedRows = snapshot.rows
+          .where(
+            (row) =>
+                !winnerPolicyApplied ||
+                acceptedOperationIds.contains(
+                  row['__sync_operation_id']?.trim() ?? '',
+                ),
+          )
+          .map((row) {
+            final operationId = row['__sync_operation_id']?.trim() ?? '';
+            final authoritativeModifiedAtUtc =
+                authoritativeModifiedAtByOperation[operationId];
+            return <String, String?>{
+              ...row,
+              if (authoritativeModifiedAtUtc != null)
+                '__sync_modified_at_utc': authoritativeModifiedAtUtc,
+              if (serverReceivedAtUtc.isNotEmpty)
+                '__sync_server_received_at_utc': serverReceivedAtUtc,
+              if (serverSequence.isNotEmpty)
+                '__sync_server_sequence': serverSequence,
+              if (serverOriginClient.isNotEmpty)
+                '__sync_server_origin_client': serverOriginClient,
+            };
+          })
+          .toList(growable: false);
+      snapshot = snapshot.copyWith(
+        rows: orderedRows,
+        rowCount: orderedRows.length,
       );
       firstSnapshot ??= snapshot;
       mergedRowCount += snapshot.rows.length;
@@ -1477,6 +1550,9 @@ class HeartbeatResult {
     required this.diagnostics,
     required this.clientUpdate,
     required this.windowAction,
+    required this.serverClockSynchronized,
+    required this.serverClockOffset,
+    required this.heartbeatRoundTrip,
   });
 
   final RemoteAgentSyncSettings syncSettings;
@@ -1486,6 +1562,9 @@ class HeartbeatResult {
   final RemoteAgentDiagnostics diagnostics;
   final RemoteAgentClientUpdate clientUpdate;
   final RemoteAgentWindowAction windowAction;
+  final bool serverClockSynchronized;
+  final Duration serverClockOffset;
+  final Duration heartbeatRoundTrip;
 }
 
 class RemoteTableDependency {

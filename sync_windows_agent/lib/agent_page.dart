@@ -152,6 +152,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _checkingServerConnection = false;
   DateTime? _lastServerCheck;
   bool _syncLoopBusy = false;
+  bool _serverClockSynchronized = false;
+  Duration _serverClockOffset = Duration.zero;
+  Duration _heartbeatRoundTrip = Duration.zero;
   bool? _lastTrayProgressActive;
   int? _lastTrayProgressValue;
   String? _lastTrayProgressStatus;
@@ -2642,6 +2645,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return;
       }
 
+      final clockWasSynchronized = _serverClockSynchronized;
+      _serverClockSynchronized = heartbeat.serverClockSynchronized;
+      _serverClockOffset = heartbeat.serverClockOffset;
+      _heartbeatRoundTrip = heartbeat.heartbeatRoundTrip;
+      if (_serverClockSynchronized &&
+          (!clockWasSynchronized ||
+              _serverClockOffset.abs() >= const Duration(seconds: 2))) {
+        logStartupEvent(
+          'Server clock synchronized: offsetMs=${_serverClockOffset.inMilliseconds} rttMs=${_heartbeatRoundTrip.inMilliseconds}. Database commit timestamps will be normalized to server UTC.',
+        );
+      }
+
       final remoteRelationships = _relationshipGraphFromRemoteDependencies(
         heartbeat.tableDependencies,
       );
@@ -4975,7 +4990,18 @@ END''';
     String buildQuery({required bool includeCommitTime}) {
       final commitExpression =
           includeCommitTime
-              ? "COALESCE(CONVERT(nvarchar(33), commit_table.commit_time, 127) + N'Z', N'')"
+              ? """COALESCE(
+  CONVERT(
+    nvarchar(33),
+    DATEADD(
+      MILLISECOND,
+      CONVERT(int, DATEDIFF_BIG(MILLISECOND, SYSDATETIME(), SYSUTCDATETIME())),
+      commit_table.commit_time
+    ),
+    127
+  ) + N'Z',
+  N''
+)"""
               : "N''";
       final commitJoin =
           includeCommitTime
@@ -5041,11 +5067,20 @@ ORDER BY ct.SYS_CHANGE_VERSION;
         );
       }
       final columnOffset = includesCommitTime ? 3 : 2;
+      final databaseModifiedAtUtc =
+          includesCommitTime && parts[2].trim().isNotEmpty ? parts[2] : null;
+      final serverModifiedAtUtc = _normalizeDatabaseCommitToServerUtc(
+        databaseModifiedAtUtc,
+      );
       rows.add({
         '__sync_op': parts.first,
         '__sync_change_version': parts[1],
-        '__sync_modified_at_utc':
-            includesCommitTime && parts[2].trim().isNotEmpty ? parts[2] : null,
+        '__sync_database_modified_at_utc': databaseModifiedAtUtc,
+        '__sync_modified_at_utc': serverModifiedAtUtc,
+        '__sync_clock_offset_ms':
+            _serverClockSynchronized
+                ? _serverClockOffset.inMilliseconds.toString()
+                : null,
         for (var i = 0; i < columns.length; i++)
           columns[i].name: _decodeSourceBatchField(
             parts[i + columnOffset],
@@ -5054,6 +5089,16 @@ ORDER BY ct.SYS_CHANGE_VERSION;
       });
     }
     return rows;
+  }
+
+  String? _normalizeDatabaseCommitToServerUtc(String? rawTimestamp) {
+    final parsed = DateTime.tryParse(rawTimestamp?.trim() ?? '')?.toUtc();
+    if (parsed == null) {
+      return null;
+    }
+    final normalized =
+        _serverClockSynchronized ? parsed.add(_serverClockOffset) : parsed;
+    return normalized.toIso8601String();
   }
 
   Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged({
