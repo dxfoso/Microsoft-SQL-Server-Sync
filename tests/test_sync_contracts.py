@@ -82,7 +82,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("AS current ON", delta_body)
         self.assertNotIn("current.", delta_body)
         self.assertIn(
-            "FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES",
+            "FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER",
             delta_body,
         )
         self.assertIn("decodeSqlServerBase64JsonRows(", delta_body)

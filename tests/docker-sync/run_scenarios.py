@@ -522,7 +522,7 @@ CROSS APPLY (
         CONVERT(nvarchar(40), source_row.Id) AS [m1],
         source_row.Name AS [c0],
         source_row.ArabicText AS [c1]
-      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
+      FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
     )
   ) AS json_bytes
 ) AS encoded_row

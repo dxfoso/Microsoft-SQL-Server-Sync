@@ -395,6 +395,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "advances its Change Tracking checkpoint after commit",
             fail,
         )
+        self.assertIn("const failedBatchId = string.from(job.batchId ?? '').trim();", fail)
+        self.assertIn("Atomic batch failed:", fail)
+        self.assertIn("cleanup_multi_writer_batch_storage(failedBatchId);", fail)
         self.assertIn("function clear_retryable_sync_failure_issues(", source)
         self.assertIn("action: 'retry_sync'", source)
         self.assertIn(
@@ -728,7 +731,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("sqlSyncBase64RowTerminator", agent_page)
         self.assertIn("decodeSqlServerBase64JsonRows(", agent_page)
-        self.assertIn("FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES", agent_page)
+        self.assertIn("FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER", agent_page)
         self.assertNotIn("Change tracking delta returned", agent_page)
         self.assertIn("onChunk: null", agent_page)
         self.assertIn(

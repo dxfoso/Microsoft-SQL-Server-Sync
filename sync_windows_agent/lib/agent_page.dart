@@ -4908,7 +4908,7 @@ CROSS APPLY (
     (
       SELECT
         $jsonProjection
-      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
+      FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
     )
   ) AS json_bytes
 ) AS encoded_row

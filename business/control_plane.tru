@@ -7176,7 +7176,30 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     ownerUserId: job.ownerUserId,
     updatedAt: completedAt
   });
-  if (string.from(job.direction).trim() == 'upload') {
+  const failedBatchId = string.from(job.batchId ?? '').trim();
+  if (failedBatchId.length != 0) {
+    const activeBatchJobs = db.selectMany(SyncJob, {
+      where: {
+        batchId: failedBatchId,
+        status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+      },
+      orderBy: { field: 'createdAt', dir: 'asc' },
+      fields: ['id'],
+      limit: 1000
+    });
+    const activeBatchJobIds = activeBatchJobs.map((batchJob) => string.from(batchJob.id));
+    if (activeBatchJobIds.length != 0) {
+      db.updateMany(SyncJob, { id: { in: activeBatchJobIds } }, {
+        status: 'failed',
+        progress: 100,
+        completedAt,
+        error: string.concat('Atomic batch failed: ', message),
+        message: string.concat('Atomic batch failed: ', message),
+        updatedAt: completedAt
+      });
+    }
+    cleanup_multi_writer_batch_storage(failedBatchId);
+  } else if (string.from(job.direction).trim() == 'upload') {
     const targetJob = find_waiting_download_job(string.from(job.clientName), string.from(job.subscriberClientName), string.from(job.table));
     if (targetJob != null) {
       db.delete(DownloadSession, { jobId: targetJob.id });
