@@ -3120,6 +3120,29 @@ function sync_table_issue_is_blocking(issue: map<json>): bool {
   return status == 'needs_input' || status == 'resolving';
 }
 
+function clear_retryable_sync_failure_issues(ownerUserId: string): void {
+  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    if (string.from(issue.status ?? '').trim() != 'needs_input' ||
+        string.from(issue.reason ?? '').trim() != 'sync_failed' ||
+        sync_owner_table_has_active_jobs(ownerUserId, string.from(issue.table))) {
+      continue;
+    }
+    replace_sync_table_issue(ownerUserId, {
+      table: issue.table,
+      status: 'ready',
+      reason: '',
+      message: 'Previous technical failure is ready for an automatic atomic retry. No Change Tracking baseline was advanced.',
+      clientName: issue.clientName,
+      action: 'retry_sync',
+      sourceClientName: '',
+      targetClientNames: [],
+      detectedAt: issue.detectedAt,
+      updatedAt: now_iso(),
+      resolvedAt: now_iso()
+    });
+  }
+}
+
 function sync_owner_has_blocking_table_issues(ownerUserId: string? = null): bool {
   for (const issue of sync_table_issues_for_owner(ownerUserId)) {
     if (sync_table_issue_is_blocking(issue)) {
@@ -3374,6 +3397,9 @@ function sync_gate_payload_for_owners(ownerUserIds: array<string>): map<json> {
   let issues = [];
   let blockedOwnerUserIds = [];
   for (const ownerUserId of unique_string_values(ownerUserIds)) {
+    // Transport, connectivity, and runtime failures never require a data
+    // authority decision. Make them retryable without advancing baselines.
+    clear_retryable_sync_failure_issues(ownerUserId);
     for (const issue of sync_table_issues_for_owner(ownerUserId)) {
       const publicIssue = {
         ownerUserId,
@@ -7186,13 +7212,11 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   if (updated != null) {
     nextJob = updated;
   }
-  raise_sync_table_issue(
-    job.ownerUserId,
-    string.from(job.table),
-    'sync_failed',
-    message,
-    string.from(job.clientName)
-  );
+  // Unexpected transport/runtime failures are safe to retry because the
+  // client applies a complete table delta in one SQL transaction and only
+  // advances its Change Tracking checkpoint after commit. Data conflicts are
+  // reported through jobs_complete with a conflict kind and still pause for
+  // an explicit user decision.
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };
 }

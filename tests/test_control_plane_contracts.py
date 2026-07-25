@@ -390,7 +390,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function jobs_cancel_active(", 1
         )[0]
         self.assertIn("raise_sync_table_issue(", complete)
-        self.assertIn("raise_sync_table_issue(", fail)
+        self.assertNotIn("raise_sync_table_issue(", fail)
+        self.assertIn(
+            "advances its Change Tracking checkpoint after commit",
+            fail,
+        )
+        self.assertIn("function clear_retryable_sync_failure_issues(", source)
+        self.assertIn("action: 'retry_sync'", source)
+        self.assertIn(
+            "clear_retryable_sync_failure_issues(ownerUserId);",
+            source,
+        )
 
         live_state = source.split("function live_state(", 1)[1].split(
             "function agents_heartbeat(", 1
