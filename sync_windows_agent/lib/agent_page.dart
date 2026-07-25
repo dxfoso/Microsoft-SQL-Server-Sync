@@ -4859,10 +4859,18 @@ SELECT
 LEFT JOIN sys.dm_tran_commit_table AS commit_table
   ON commit_table.commit_ts = ct.SYS_CHANGE_VERSION'''
               : '';
-      final jsonFields = <String>[
-        'ct.SYS_CHANGE_OPERATION AS [m0]',
-        'CONVERT(nvarchar(40), ct.SYS_CHANGE_VERSION) AS [m1]',
-        '$commitExpression AS [m2]',
+      String encodeField(String expression) => '''CASE
+  WHEN ($expression) IS NULL THEN CAST('N' AS varchar(max))
+  ELSE CAST('H' AS varchar(max)) + CONVERT(
+    varchar(max),
+    CONVERT(varbinary(max), CONVERT(nvarchar(max), ($expression))),
+    2
+  )
+END''';
+      final encodedFields = <String>[
+        encodeField('ct.SYS_CHANGE_OPERATION'),
+        encodeField('CONVERT(nvarchar(40), ct.SYS_CHANGE_VERSION)'),
+        encodeField(commitExpression),
       ];
       for (var index = 0; index < columns.length; index++) {
         final column = columns[index];
@@ -4882,36 +4890,19 @@ LEFT JOIN sys.dm_tran_commit_table AS commit_table
   ELSE $valueExpression
 END'''
                 : valueExpression;
-        jsonFields.add('($expression) AS [c$index]');
+        encodedFields.add(encodeField(expression));
       }
-      final jsonProjection = jsonFields.join(',\n      ');
+      final encodedProjection = encodedFields.join(" + '|' +\n  ");
       return '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
-SET QUOTED_IDENTIFIER ON;
 ;WITH encoded_rows AS (
 SELECT
   ROW_NUMBER() OVER (ORDER BY ct.SYS_CHANGE_VERSION, (SELECT 0)) AS row_order,
-  CONVERT(
-    varchar(max),
-    CAST(N'' AS XML).value(
-      'xs:base64Binary(sql:column("encoded_row.json_bytes"))',
-      'varchar(max)'
-    ) + '$sqlSyncBase64RowTerminator'
-  ) AS payload
+  ($encodedProjection) + '$sqlSyncHexRowTerminator' AS payload
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
 LEFT JOIN $source AS existing_row ON $join
 $commitJoin
-CROSS APPLY (
-  SELECT CONVERT(
-    varbinary(max),
-    (
-      SELECT
-        $jsonProjection
-      FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
-    )
-  ) AS json_bytes
-) AS encoded_row
 WHERE ct.SYS_CHANGE_CONTEXT IS NULL
    OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
 ),
@@ -4963,31 +4954,24 @@ OPTION (MAXRECURSION 0);
       }
     }
     final rows = <Map<String, String?>>[];
-    final encodedRows = decodeSqlServerBase64JsonRows(result.stdout.toString());
+    final encodedRows = decodeSqlServerHexRows(result.stdout.toString());
     for (final encodedRow in encodedRows) {
-      if (!encodedRow.containsKey('m0') || !encodedRow.containsKey('m1')) {
-        throw const FormatException(
-          'Change Tracking row metadata is incomplete.',
+      if (encodedRow.length != columns.length + 3) {
+        throw FormatException(
+          'Change Tracking row returned ${encodedRow.length - 3} encoded column field(s) for ${columns.length} column(s).',
         );
-      }
-      for (var index = 0; index < columns.length; index++) {
-        if (!encodedRow.containsKey('c$index')) {
-          throw FormatException(
-            'Change Tracking row is missing encoded column $index of ${columns.length}.',
-          );
-        }
       }
       final databaseModifiedAtUtc =
           includesCommitTime &&
-                  (encodedRow['m2']?.toString().trim().isNotEmpty ?? false)
-              ? encodedRow['m2'].toString()
+                  (encodedRow[2]?.trim().isNotEmpty ?? false)
+              ? encodedRow[2]
               : null;
       final serverModifiedAtUtc = _normalizeDatabaseCommitToServerUtc(
         databaseModifiedAtUtc,
       );
       rows.add({
-        '__sync_op': encodedRow['m0']?.toString(),
-        '__sync_change_version': encodedRow['m1']?.toString(),
+        '__sync_op': encodedRow[0],
+        '__sync_change_version': encodedRow[1],
         '__sync_database_modified_at_utc': databaseModifiedAtUtc,
         '__sync_modified_at_utc': serverModifiedAtUtc,
         '__sync_clock_offset_ms':
@@ -4995,8 +4979,8 @@ OPTION (MAXRECURSION 0);
                 ? _serverClockOffset.inMilliseconds.toString()
                 : null,
         for (var i = 0; i < columns.length; i++)
-          columns[i].name: _decodeJsonTransportField(
-            encodedRow['c$i'],
+          columns[i].name: _decodeHexTransportField(
+            encodedRow[i + 3],
             column: columns[i],
           ),
       });
@@ -5004,14 +4988,14 @@ OPTION (MAXRECURSION 0);
     return rows;
   }
 
-  String? _decodeJsonTransportField(
-    Object? value, {
+  String? _decodeHexTransportField(
+    String? value, {
     required _SqlColumnDefinition column,
   }) {
     if (value == null) {
       return null;
     }
-    final decoded = value.toString();
+    final decoded = value;
     if (!column.usesHexTextTransport) {
       return decoded;
     }

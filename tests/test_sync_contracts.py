@@ -81,12 +81,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("existing_row.", delta_body)
         self.assertNotIn("AS current ON", delta_body)
         self.assertNotIn("current.", delta_body)
-        self.assertIn(
-            "FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER",
-            delta_body,
-        )
-        self.assertIn("decodeSqlServerBase64JsonRows(", delta_body)
-        self.assertIn("sqlSyncBase64RowTerminator", delta_body)
+        self.assertNotIn("FOR JSON PATH", delta_body)
+        self.assertIn("decodeSqlServerHexRows(", delta_body)
+        self.assertIn("sqlSyncHexRowTerminator", delta_body)
+        self.assertIn("CONVERT(varbinary(max), CONVERT(nvarchar(max)", delta_body)
         self.assertNotIn("Change tracking delta returned", delta_body)
 
     def test_symmetricds_client_service_is_removed(self):

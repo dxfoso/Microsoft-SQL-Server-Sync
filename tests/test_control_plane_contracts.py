@@ -729,9 +729,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         output_codec = read_text("sync_windows_agent/lib/sql_cmd_output.dart")
 
-        self.assertIn("sqlSyncBase64RowTerminator", agent_page)
-        self.assertIn("decodeSqlServerBase64JsonRows(", agent_page)
-        self.assertIn("FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER", agent_page)
+        self.assertIn("sqlSyncHexRowTerminator", agent_page)
+        self.assertIn("decodeSqlServerHexRows(", agent_page)
+        self.assertNotIn("FOR JSON PATH", agent_page)
         self.assertNotIn("Change tracking delta returned", agent_page)
         self.assertIn("onChunk: null", agent_page)
         self.assertIn(
@@ -740,7 +740,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertNotIn("applySqlSyncRowsWithIsolation(", agent_page)
         self.assertIn("~SQLSYNC_ROW_END~", output_codec)
-        self.assertIn("base64Decode(encoded)", output_codec)
+        self.assertIn("decodeSqlServerUtf16Hex(token.substring(1))", output_codec)
 
         stale_guard = source.split(
             "function multi_writer_batch_stale(", 1

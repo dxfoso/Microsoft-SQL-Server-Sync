@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import base64
 import json
 import os
 import shutil
@@ -482,7 +481,7 @@ WHERE object_id = OBJECT_ID(N'dbo.TR_SyncItems_Protect');
     if direct_update.returncode == 0:
         raise AssertionError(f"Business trigger did not reject ordinary DML in {database}.")
 
-def assert_base64_json_row_transport(database):
+def assert_hex_row_transport(database):
     control_text = "Arabic \u0627\u0644\u0639\u0631\u0628\u064a\u0629" + chr(31) + "|\\n\r\n\u6f22\u5b57"
     sqlcmd_script(
         """
@@ -503,29 +502,16 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
     result = sqlcmd_script(
         """
 SET NOCOUNT ON;
-SET QUOTED_IDENTIFIER ON;
 ;WITH encoded_rows AS (
 SELECT
-  CONVERT(
-    varchar(max),
-    CAST(N'' AS XML).value(
-      'xs:base64Binary(sql:column("encoded_row.json_bytes"))',
-      'varchar(max)'
-    ) + '~SQLSYNC_ROW_END~'
-  ) AS payload
+  CAST('H' AS varchar(max)) +
+  CONVERT(varchar(max), CONVERT(varbinary(max), CONVERT(nvarchar(max), source_row.Id)), 2) +
+  '|H' +
+  CONVERT(varchar(max), CONVERT(varbinary(max), CONVERT(nvarchar(max), source_row.Name)), 2) +
+  '|H' +
+  CONVERT(varchar(max), CONVERT(varbinary(max), CONVERT(nvarchar(max), source_row.ArabicText)), 2) +
+  '~SQLSYNC_ROW_END~' AS payload
 FROM dbo.SyncItems AS source_row
-CROSS APPLY (
-  SELECT CONVERT(
-    varbinary(max),
-    (
-      SELECT
-        CONVERT(nvarchar(40), source_row.Id) AS [m1],
-        source_row.Name AS [c0],
-        source_row.ArabicText AS [c1]
-      FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
-    )
-  ) AS json_bytes
-) AS encoded_row
 WHERE source_row.Id = 1
 ),
 payload_chunks AS (
@@ -545,13 +531,12 @@ OPTION (MAXRECURSION 0);
     )
     fragments = result.stdout.split("~SQLSYNC_ROW_END~")
     encoded = "".join(fragments[0].split())
-    decoded = json.loads(base64.b64decode(encoded).decode("utf-16-le"))
-    if decoded != {
-        "m1": "1",
-        "c0": control_text,
-        "c1": "\u0628\u062f\u0627\u064a\u0629",
-    }:
-        raise AssertionError(f"Base64 JSON SQL row transport was lossy: {decoded!r}")
+    decoded = [
+        None if token == "N" else bytes.fromhex(token[1:]).decode("utf-16-le")
+        for token in encoded.split("|")
+    ]
+    if decoded != ["1", control_text, "\u0628\u062f\u0627\u064a\u0629"]:
+        raise AssertionError(f"Framed hex SQL row transport was lossy: {decoded!r}")
     sqlcmd(
         """
 SET NOCOUNT ON;
@@ -565,7 +550,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
 
 def run_scenarios():
     reset_databases()
-    assert_base64_json_row_transport(DATABASES[0])
+    assert_hex_row_transport(DATABASES[0])
     for database in DATABASES:
         assert_business_trigger_enabled(database)
 
@@ -932,7 +917,7 @@ VALUES
             "insert", "update", "primary-key-change", "delete",
             "missing-delete", "empty-delta", "newest-commit-conflict",
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
-            "base64-json-control-character-row-transport",
+            "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
             "independent-multi-writer", "offline-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",

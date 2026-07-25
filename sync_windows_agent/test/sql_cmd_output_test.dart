@@ -55,53 +55,58 @@ void main() {
     );
   });
 
-  test('decodes framed Base64 JSON rows without delimiter ambiguity', () {
+  test('decodes framed UTF-16 hex rows without delimiter ambiguity', () {
     final rows = [
-      {
-        'm0': 'U',
-        'm1': '42',
-        'm2': '2026-07-25T19:13:15.123Z',
-        'c0': 'Ø§Ù„Ø¹Ø±Ø¨ÙŠØ© ðŸŒ æ¼¢å­—',
-        'c1': 'contains ${String.fromCharCode(31)} and | and \r\n text',
-        'c2': null,
-      },
-      {
-        'm0': 'D',
-        'm1': '43',
-        'm2': '',
-        'c0': r'literal \n \u001f \\ stays literal',
-        'c1': List.filled(40000, 'X').join(),
-        'c2': 'ðŸ™‚',
-      },
+      <String?>[
+        'U',
+        '42',
+        '2026-07-25T19:13:15.123Z',
+        'العربية 🌍 漢字',
+        'contains ${String.fromCharCode(31)} and | and \r\n text',
+        null,
+      ],
+      <String?>[
+        'D',
+        '43',
+        '',
+        r'literal \n \u001f \\ stays literal',
+        List.filled(40000, 'X').join(),
+        '🙂',
+      ],
     ];
     final output = rows
         .map((row) {
-          final bytes = <int>[];
-          for (final codeUnit in jsonEncode(row).codeUnits) {
-            bytes.add(codeUnit & 0xff);
-            bytes.add(codeUnit >> 8);
-          }
-          final encoded = base64Encode(bytes);
+          final encoded = row.map((value) {
+            if (value == null) return 'N';
+            final hex = value.codeUnits
+                .map(
+                  (codeUnit) =>
+                      '${(codeUnit & 0xff).toRadixString(16).padLeft(2, '0')}'
+                      '${(codeUnit >> 8).toRadixString(16).padLeft(2, '0')}',
+                )
+                .join();
+            return 'H$hex';
+          }).join('|');
           final wrapped = RegExp(
             '.{1,97}',
           ).allMatches(encoded).map((match) => match.group(0)).join('\r\n');
-          return '$wrapped$sqlSyncBase64RowTerminator';
+          return '$wrapped$sqlSyncHexRowTerminator';
         })
         .join('\r\n');
 
-    expect(decodeSqlServerBase64JsonRows(output), rows);
+    expect(decodeSqlServerHexRows(output), rows);
   });
 
-  test('rejects malformed framed Base64 JSON rows', () {
+  test('rejects malformed framed UTF-16 hex rows', () {
     expect(
-      () => decodeSqlServerBase64JsonRows(
-        'not-base64$sqlSyncBase64RowTerminator',
+      () => decodeSqlServerHexRows(
+        'invalid$sqlSyncHexRowTerminator',
       ),
       throwsA(isA<FormatException>()),
     );
     expect(
-      () => decodeSqlServerBase64JsonRows(
-        '${base64Encode([1])}$sqlSyncBase64RowTerminator',
+      () => decodeSqlServerHexRows(
+        'H001$sqlSyncHexRowTerminator',
       ),
       throwsA(isA<FormatException>()),
     );
