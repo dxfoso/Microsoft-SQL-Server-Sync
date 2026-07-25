@@ -711,6 +711,31 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
         self.assertNotIn("_runDirectQueuedTableSync(", agent_page)
 
+    def test_change_tracking_transport_and_table_apply_are_atomic(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        output_codec = read_text("sync_windows_agent/lib/sql_cmd_output.dart")
+
+        self.assertIn("sqlSyncBase64RowTerminator", agent_page)
+        self.assertIn("decodeSqlServerBase64JsonRows(", agent_page)
+        self.assertIn("FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES", agent_page)
+        self.assertNotIn("Change tracking delta returned", agent_page)
+        self.assertIn("onChunk: null", agent_page)
+        self.assertIn(
+            "Buffer the complete table delta before SQL apply",
+            agent_page,
+        )
+        self.assertNotIn("applySqlSyncRowsWithIsolation(", agent_page)
+        self.assertIn("~SQLSYNC_ROW_END~", output_codec)
+        self.assertIn("base64Decode(encoded)", output_codec)
+
+        stale_guard = source.split(
+            "function multi_writer_batch_stale(", 1
+        )[1].split("function auth_login(", 1)[0]
+        self.assertIn("(batch.receivedChunks ?? []).length > 0", stale_guard)
+        self.assertIn("(batch.uploadedClients ?? []).length > 0", stale_guard)
+        self.assertIn("ageMinutes >= 1440", stale_guard)
+
     def test_v2_related_table_expansion_remains_active_without_source_selection(self):
         source = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

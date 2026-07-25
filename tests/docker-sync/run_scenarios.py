@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -77,6 +78,25 @@ def sqlcmd(sql, *, database="master", check=True):
         "-d", database, "-b", "-r", "1", "-f", "65001", "-h", "-1", "-W", "-Q", sql,
     ]
     return run(command, check=check)
+
+def sqlcmd_script(sql, *, database="master", check=True):
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".sql",
+        encoding="utf-8",
+        delete=False,
+    ) as handle:
+        handle.write(sql)
+        sql_path = Path(handle.name)
+    try:
+        command = [
+            SQLCMD, "-C", "-S", "localhost,14333", "-U", "sa", "-P", PASSWORD,
+            "-d", database, "-b", "-r", "1", "-f", "65001", "-h", "-1",
+            "-w", "32767", "-i", str(sql_path),
+        ]
+        return run(command, check=check)
+    finally:
+        sql_path.unlink(missing_ok=True)
 
 
 def wait_for_sql():
@@ -279,7 +299,7 @@ def capture_float_transport_values(database, id_):
     real_column = next(column for column in COLUMNS if column["name"] == "RealValue")
     float_expression = transport_expression(float_column)
     real_expression = transport_expression(real_column)
-    result = sqlcmd(
+    result = sqlcmd_script(
         f"""
 SET NOCOUNT ON;
 SELECT CONCAT({float_expression}, N'|', {real_expression})
@@ -462,9 +482,90 @@ WHERE object_id = OBJECT_ID(N'dbo.TR_SyncItems_Protect');
     if direct_update.returncode == 0:
         raise AssertionError(f"Business trigger did not reject ordinary DML in {database}.")
 
+def assert_base64_json_row_transport(database):
+    control_text = "Arabic \u0627\u0644\u0639\u0631\u0628\u064a\u0629" + chr(31) + "|\\n\r\n\u6f22\u5b57"
+    sqlcmd_script(
+        """
+SET NOCOUNT ON;
+DISABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+UPDATE dbo.SyncItems
+SET Name =
+  N'Arabic ' +
+  NCHAR(1575) + NCHAR(1604) + NCHAR(1593) + NCHAR(1585) +
+  NCHAR(1576) + NCHAR(1610) + NCHAR(1577) +
+  NCHAR(31) + N'|\\n' + NCHAR(13) + NCHAR(10) +
+  NCHAR(28450) + NCHAR(23383)
+WHERE Id = 1;
+ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+""",
+        database=database,
+    )
+    result = sqlcmd_script(
+        """
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+;WITH encoded_rows AS (
+SELECT
+  CONVERT(
+    varchar(max),
+    CAST(N'' AS XML).value(
+      'xs:base64Binary(sql:column("encoded_row.json_bytes"))',
+      'varchar(max)'
+    ) + '~SQLSYNC_ROW_END~'
+  ) AS payload
+FROM dbo.SyncItems AS source_row
+CROSS APPLY (
+  SELECT CONVERT(
+    varbinary(max),
+    (
+      SELECT
+        CONVERT(nvarchar(40), source_row.Id) AS [m1],
+        source_row.Name AS [c0],
+        source_row.ArabicText AS [c1]
+      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
+    )
+  ) AS json_bytes
+) AS encoded_row
+WHERE source_row.Id = 1
+),
+payload_chunks AS (
+  SELECT 1 AS payload_offset, payload
+  FROM encoded_rows
+  UNION ALL
+  SELECT payload_offset + 200, payload
+  FROM payload_chunks
+  WHERE payload_offset + 200 <= LEN(payload)
+)
+SELECT CONVERT(varchar(200), SUBSTRING(payload, payload_offset, 200))
+FROM payload_chunks
+ORDER BY payload_offset
+OPTION (MAXRECURSION 0);
+""",
+        database=database,
+    )
+    fragments = result.stdout.split("~SQLSYNC_ROW_END~")
+    encoded = "".join(fragments[0].split())
+    decoded = json.loads(base64.b64decode(encoded).decode("utf-16-le"))
+    if decoded != {
+        "m1": "1",
+        "c0": control_text,
+        "c1": "\u0628\u062f\u0627\u064a\u0629",
+    }:
+        raise AssertionError(f"Base64 JSON SQL row transport was lossy: {decoded!r}")
+    sqlcmd(
+        """
+SET NOCOUNT ON;
+DISABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+UPDATE dbo.SyncItems SET Name = N'Baseline' WHERE Id = 1;
+ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+""",
+        database=database,
+    )
+
 
 def run_scenarios():
     reset_databases()
+    assert_base64_json_row_transport(DATABASES[0])
     for database in DATABASES:
         assert_business_trigger_enabled(database)
 
@@ -831,6 +932,7 @@ VALUES
             "insert", "update", "primary-key-change", "delete",
             "missing-delete", "empty-delta", "newest-commit-conflict",
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
+            "base64-json-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
             "independent-multi-writer", "offline-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",

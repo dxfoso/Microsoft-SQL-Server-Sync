@@ -9,7 +9,7 @@ Push-Location $repoRoot
 try {
     Push-Location "$repoRoot\sync_windows_agent"
     try {
-        flutter test test/sql_sync_merge_test.dart test/sql_sync_row_isolation_test.dart
+        flutter test test/sql_sync_merge_test.dart test/sql_cmd_output_test.dart
     }
     finally {
         Pop-Location

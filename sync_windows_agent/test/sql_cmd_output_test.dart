@@ -55,6 +55,58 @@ void main() {
     );
   });
 
+  test('decodes framed Base64 JSON rows without delimiter ambiguity', () {
+    final rows = [
+      {
+        'm0': 'U',
+        'm1': '42',
+        'm2': '2026-07-25T19:13:15.123Z',
+        'c0': 'Ø§Ù„Ø¹Ø±Ø¨ÙŠØ© ðŸŒ æ¼¢å­—',
+        'c1': 'contains ${String.fromCharCode(31)} and | and \r\n text',
+        'c2': null,
+      },
+      {
+        'm0': 'D',
+        'm1': '43',
+        'm2': '',
+        'c0': r'literal \n \u001f \\ stays literal',
+        'c1': List.filled(40000, 'X').join(),
+        'c2': 'ðŸ™‚',
+      },
+    ];
+    final output = rows
+        .map((row) {
+          final bytes = <int>[];
+          for (final codeUnit in jsonEncode(row).codeUnits) {
+            bytes.add(codeUnit & 0xff);
+            bytes.add(codeUnit >> 8);
+          }
+          final encoded = base64Encode(bytes);
+          final wrapped = RegExp(
+            '.{1,97}',
+          ).allMatches(encoded).map((match) => match.group(0)).join('\r\n');
+          return '$wrapped$sqlSyncBase64RowTerminator';
+        })
+        .join('\r\n');
+
+    expect(decodeSqlServerBase64JsonRows(output), rows);
+  });
+
+  test('rejects malformed framed Base64 JSON rows', () {
+    expect(
+      () => decodeSqlServerBase64JsonRows(
+        'not-base64$sqlSyncBase64RowTerminator',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => decodeSqlServerBase64JsonRows(
+        '${base64Encode([1])}$sqlSyncBase64RowTerminator',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
   test('always uses an input file for Windows sqlcmd queries', () {
     expect(
       shouldUseSqlCmdInputFile(isWindows: true, query: 'SELECT Nالعربية'),

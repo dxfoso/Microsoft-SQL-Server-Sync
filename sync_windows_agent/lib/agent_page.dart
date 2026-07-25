@@ -14,7 +14,6 @@ import 'client_version.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_sync_merge.dart';
-import 'sql_sync_row_isolation.dart';
 import 'sql_sync_schema.dart';
 import 'sql_cmd_output.dart';
 import 'sync_state.dart';
@@ -3732,15 +3731,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     var streamedTargetRowCount = -1;
-    final latestDeltaRowByKey = <String, Map<String, dynamic>>{};
     final applyStats = _DeltaApplyStats();
     final authoritativeReconcile =
         job.sourceClientName == 'server-authoritative-reconcile';
-    final atomicLogicalMerge =
-        sqlSyncLogicalIdentityColumns(
-          table: _splitQualifiedName(_localTableName(job.table)).table,
-          availableColumns: const <String>['ParentGUID', 'Number'],
-        ).isNotEmpty;
     if (authoritativeReconcile) {
       final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
       final targetTable = _splitQualifiedName(_localTableName(job.table));
@@ -3753,42 +3746,51 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       widget.clientName,
       job.table,
     );
-    // Apply each bounded relay page as it arrives. Keeping the whole delta in
-    // memory can make a valid backlog look like a full snapshot.
     activeJob = await _controlPlaneClient.updateJobProgress(
       job.id,
       status: 'applying',
       progress: 20,
-      message: 'Applying streamed changes to ${_localTableName(job.table)}.',
+      message:
+          'Buffering and atomically applying changes to ${_localTableName(job.table)}.',
       rowCount: 0,
     );
     _applyRemoteJobState(activeJob);
     if (!activeJob.isActive) {
       throw _SyncJobCancelled(job.id);
     }
-    final snapshotToApply = await _controlPlaneClient.downloadMultiWriterDelta(
+    final downloadedSnapshot = await _controlPlaneClient.downloadMultiWriterDelta(
       job.id,
       batchId: job.batchId!,
       protocolVersion: job.protocolVersion,
       syncEpoch: job.syncEpoch,
       checkCancelled: () => _checkSyncJobNotCancelled(job.id),
-      onChunk:
-          authoritativeReconcile || atomicLogicalMerge
-              ? null
-              : (snapshot) async {
-                _checkSyncJobNotCancelled(job.id);
-                streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
-                  job: job,
-                  snapshot: snapshot,
-                  refreshLocalState: false,
-                  latestDeltaRowByKey: latestDeltaRowByKey,
-                  applyStats: applyStats,
-                );
-                _checkSyncJobNotCancelled(job.id);
-              },
+      // Buffer the complete table delta before SQL apply. Committing streamed
+      // pages independently can leave a partial table when a later page fails.
+      onChunk: null,
     );
 
     _checkSyncJobNotCancelled(job.id);
+    final retryRows =
+        authoritativeReconcile
+            ? const <Map<String, String?>>[]
+            : pendingRejectedChanges
+                .where(shouldRetrySyncRejectedChange)
+                .map(
+                  (change) => Map<String, String?>.fromEntries(
+                    change.row.entries.map(
+                      (entry) => MapEntry(entry.key, entry.value?.toString()),
+                    ),
+                  ),
+                )
+                .toList(growable: false);
+    final snapshotToApply =
+        retryRows.isEmpty
+            ? downloadedSnapshot
+            : downloadedSnapshot.copyWith(
+              rowCount: downloadedSnapshot.rows.length + retryRows.length,
+              rows: [...downloadedSnapshot.rows, ...retryRows],
+              isDelta: true,
+            );
 
     if (streamedTargetRowCount < 0) {
       streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
@@ -3799,86 +3801,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     _checkSyncJobNotCancelled(job.id);
-    var pendingAfterApply =
-        authoritativeReconcile
-            ? const <SyncRejectedChange>[]
-            : pendingRejectedChanges;
-    if (authoritativeReconcile) {
-      await _rejectionOutbox.saveTable(
-        widget.clientName,
-        job.table,
-        pendingAfterApply,
-      );
-    } else {
-      final retryablePending = pendingRejectedChanges
-          .where(
-            (change) =>
-                shouldRetrySyncRejectedChange(change) &&
-                !applyStats.seenRowIdentities.contains(change.identity),
-          )
-          .toList(growable: false);
-      final retryStats = _DeltaApplyStats();
-      if (retryablePending.isNotEmpty) {
-        await _applyDownloadedSnapshotToTarget(
-          job: job,
-          snapshot: snapshotToApply.copyWith(
-            rowCount: retryablePending.length,
-            rows: retryablePending
-                .map(
-                  (change) => Map<String, String?>.fromEntries(
-                    change.row.entries.map(
-                      (entry) => MapEntry(entry.key, entry.value?.toString()),
-                    ),
-                  ),
-                )
-                .toList(growable: false),
-            isDelta: true,
-          ),
-          refreshLocalState: false,
-          applyStats: retryStats,
-        );
-      }
-      pendingAfterApply = reconcileSyncRejectedChanges(
-        table: job.table,
-        existing: pendingRejectedChanges,
-        supersededIdentities: applyStats.seenRowIdentities,
-        attempted: retryablePending,
-        retryRejections: retryStats.rejectedRows
-            .map(
-              (rejected) => SyncRejectionObservation(
-                row: rejected.row,
-                error: rejected.error,
-              ),
-            )
-            .toList(growable: false),
-        currentRejections: applyStats.rejectedRows
-            .map(
-              (rejected) => SyncRejectionObservation(
-                row: rejected.row,
-                error: rejected.error,
-              ),
-            )
-            .toList(growable: false),
-        currentKeyColumns: applyStats.rejectedRowKeyColumns,
-      );
-      await _rejectionOutbox.saveTable(
-        widget.clientName,
-        job.table,
-        pendingAfterApply,
-      );
-      applyStats.insertedRows += retryStats.insertedRows;
-      applyStats.updatedRows += retryStats.updatedRows;
-      applyStats.deletedRows += retryStats.deletedRows;
-    }
-    if (pendingAfterApply.isNotEmpty) {
-      final quarantineDetail = formatSqlSyncRejectedRows(
-        rejected: applyStats.rejectedRows,
-        keyColumns: applyStats.rejectedRowKeyColumns,
-      );
-      logStartupEvent(
-        'Retained ${pendingAfterApply.length} quarantined change(s) for ${job.table}: $quarantineDetail',
-      );
-    }
+    // A successful atomic apply also commits every eligible retained retry.
+    // Any SQL error throws before this point and the target transaction rolls
+    // back, so the outbox must only be cleared after success.
+    const pendingAfterApply = <SyncRejectedChange>[];
+    await _rejectionOutbox.saveTable(
+      widget.clientName,
+      job.table,
+      pendingAfterApply,
+    );
     final reconciledTargetRowCount = await _refreshTargetStateAfterRemoteApply(
       job,
       refreshFingerprint: !snapshotToApply.isDelta && !authoritativeReconcile,
@@ -3929,9 +3860,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   )
               ? 'unique_business_key'
               : null,
-      snapshotId: snapshotToApply.id,
-      snapshotCreatedAt: snapshotToApply.createdAt,
-      snapshotBytes: snapshotToApply.snapshotBytes,
+      snapshotId: downloadedSnapshot.id,
+      snapshotCreatedAt: downloadedSnapshot.createdAt,
+      snapshotBytes: downloadedSnapshot.snapshotBytes,
     );
     _applyRemoteJobState(
       activeJob,
@@ -4249,7 +4180,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required RemoteSyncJob job,
     required RemoteSnapshot snapshot,
     bool refreshLocalState = true,
-    Map<String, Map<String, dynamic>>? latestDeltaRowByKey,
     _DeltaApplyStats? applyStats,
     bool replaceTarget = false,
   }) async {
@@ -4350,7 +4280,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   .toList(growable: false),
               primaryKeyColumns: primaryKeyColumns,
               logicalIdentityColumns: logicalIdentityColumns,
-              latestRowByKey: latestDeltaRowByKey,
             )
             : snapshot.rows;
     stats.seenRowIdentities.addAll(
@@ -4396,8 +4325,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final upsertRows = contentCheckedRows
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
-    final isolatedRejectedRows = <SqlSyncRejectedRow>[];
-    var logicalDeltaApplied = false;
     if (replaceTarget) {
       if (deleteRows.isNotEmpty) {
         throw StateError(
@@ -4460,7 +4387,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         0,
         rowCountBefore.value + insertedRows - rowCountAfter.value,
       );
-    } else if (applyDelta && logicalIdentityColumns.isNotEmpty) {
+    } else {
       final rowCountBefore = await _queryTableRowCount(
         profile: targetProfile,
         database: targetDatabase,
@@ -4470,7 +4397,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (!rowCountBefore.success) {
         throw Exception(
           rowCountBefore.errorText ??
-              'Unable to read the target row count before logical delta reconciliation.',
+              'Unable to read the target row count before atomic delta apply.',
         );
       }
       final rows = upsertRows
@@ -4503,7 +4430,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (!rowCountAfter.success) {
         throw Exception(
           rowCountAfter.errorText ??
-              'Unable to read the target row count after logical delta reconciliation.',
+              'Unable to read the target row count after atomic delta apply.',
         );
       }
       stats.insertedRows += insertedRows;
@@ -4512,64 +4439,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         0,
         rowCountBefore.value + insertedRows - rowCountAfter.value,
       );
-      logicalDeltaApplied = true;
-    } else if (deleteRows.isNotEmpty) {
-      isolatedRejectedRows.addAll(
-        await applySqlSyncRowsWithIsolation(
-          rows: deleteRows.cast<Map<String, dynamic>>(),
-          applyBatch: (batch) async {
-            _checkSyncJobNotCancelled(job.id);
-            stats.deletedRows += await _deleteDeltaRowsFromTarget(
-              profile: targetProfile,
-              database: targetDatabase,
-              schema: targetTable.schema,
-              table: targetTable.table,
-              columns: syncColumns,
-              primaryKeyColumns: primaryKeyColumns,
-              rows: batch,
-            );
-            _checkSyncJobNotCancelled(job.id);
-          },
-          shouldIsolateError: _isIsolatableTargetSqlError,
-        ),
-      );
-    }
-    if (!replaceTarget && !logicalDeltaApplied && upsertRows.isNotEmpty) {
-      final rows = upsertRows
-          .map(
-            (row) => <String, dynamic>{
-              for (final column in syncColumns) column.name: row[column.name],
-            },
-          )
-          .toList(growable: false);
-      isolatedRejectedRows.addAll(
-        await applySqlSyncRowsWithIsolation(
-          rows: rows,
-          applyBatch: (batch) async {
-            _checkSyncJobNotCancelled(job.id);
-            final insertedRows = await _applyDeltaRowsToTarget(
-              profile: targetProfile,
-              database: targetDatabase,
-              schema: targetTable.schema,
-              table: targetTable.table,
-              columns: syncColumns,
-              primaryKeyColumns: primaryKeyColumns,
-              rows: batch,
-            );
-            stats.insertedRows += insertedRows;
-            stats.updatedRows += batch.length - insertedRows;
-            _checkSyncJobNotCancelled(job.id);
-          },
-          shouldIsolateError: _isIsolatableTargetSqlError,
-        ),
-      );
-    }
-
-    if (isolatedRejectedRows.isNotEmpty) {
-      stats.rejectedRows.addAll(isolatedRejectedRows);
-      if (stats.rejectedRowKeyColumns.isEmpty) {
-        stats.rejectedRowKeyColumns.addAll(primaryKeyColumns);
-      }
     }
 
     if (!refreshLocalState) {
@@ -4958,8 +4827,6 @@ SELECT
     required List<String> primaryKeyColumns,
     required int previousVersion,
   }) async {
-    const fieldSeparator = 31;
-    const rowSentinel = 29;
     final source =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
     final join = primaryKeyColumns
@@ -4970,23 +4837,6 @@ SELECT
         .join(' AND ');
     final primaryKeySet =
         primaryKeyColumns.map((column) => column.toLowerCase()).toSet();
-    final encoded = columns
-        .map((column) {
-          final isKey = primaryKeySet.contains(column.name.toLowerCase());
-          if (isKey) {
-            final expression = _sourceBatchEncodedColumnExpression(
-              column,
-              columnReference: 'ct.${_quoteIdentifier(column.name)}',
-            );
-            return '($expression) COLLATE DATABASE_DEFAULT';
-          }
-          final expression =
-              '''CASE WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN N'\\N'
-ELSE ${_sourceBatchEncodedColumnExpression(column, columnReference: 'existing_row.${_quoteIdentifier(column.name)}')}
-END''';
-          return '($expression) COLLATE DATABASE_DEFAULT';
-        })
-        .join(' + NCHAR($fieldSeparator) + ');
     String buildQuery({required bool includeCommitTime}) {
       final commitExpression =
           includeCommitTime
@@ -5009,20 +4859,77 @@ END''';
 LEFT JOIN sys.dm_tran_commit_table AS commit_table
   ON commit_table.commit_ts = ct.SYS_CHANGE_VERSION'''
               : '';
+      final jsonFields = <String>[
+        'ct.SYS_CHANGE_OPERATION AS [m0]',
+        'CONVERT(nvarchar(40), ct.SYS_CHANGE_VERSION) AS [m1]',
+        '$commitExpression AS [m2]',
+      ];
+      for (var index = 0; index < columns.length; index++) {
+        final column = columns[index];
+        final isKey = primaryKeySet.contains(column.name.toLowerCase());
+        final columnReference =
+            isKey
+                ? 'ct.${_quoteIdentifier(column.name)}'
+                : 'existing_row.${_quoteIdentifier(column.name)}';
+        final valueExpression = _sourceBatchColumnValueExpression(
+          column,
+          columnReference: columnReference,
+        );
+        final expression =
+            !isKey
+                ? '''CASE
+  WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN NULL
+  ELSE $valueExpression
+END'''
+                : valueExpression;
+        jsonFields.add('($expression) AS [c$index]');
+      }
+      final jsonProjection = jsonFields.join(',\n      ');
       return '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
+SET QUOTED_IDENTIFIER ON;
+;WITH encoded_rows AS (
 SELECT
-  ct.SYS_CHANGE_OPERATION COLLATE DATABASE_DEFAULT + NCHAR($fieldSeparator) +
-  CONVERT(nvarchar(40), ct.SYS_CHANGE_VERSION) + NCHAR($fieldSeparator) +
-  $commitExpression + NCHAR($fieldSeparator) +
-  $encoded + NCHAR($rowSentinel)
+  ROW_NUMBER() OVER (ORDER BY ct.SYS_CHANGE_VERSION, (SELECT 0)) AS row_order,
+  CONVERT(
+    varchar(max),
+    CAST(N'' AS XML).value(
+      'xs:base64Binary(sql:column("encoded_row.json_bytes"))',
+      'varchar(max)'
+    ) + '$sqlSyncBase64RowTerminator'
+  ) AS payload
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
 LEFT JOIN $source AS existing_row ON $join
 $commitJoin
+CROSS APPLY (
+  SELECT CONVERT(
+    varbinary(max),
+    (
+      SELECT
+        $jsonProjection
+      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
+    )
+  ) AS json_bytes
+) AS encoded_row
 WHERE ct.SYS_CHANGE_CONTEXT IS NULL
    OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
-ORDER BY ct.SYS_CHANGE_VERSION;
+),
+payload_chunks AS (
+  SELECT row_order, 1 AS payload_offset, payload
+  FROM encoded_rows
+  UNION ALL
+  SELECT row_order, payload_offset + 4000, payload
+  FROM payload_chunks
+  WHERE payload_offset + 4000 <= LEN(payload)
+)
+SELECT CONVERT(
+  varchar(4000),
+  SUBSTRING(payload, payload_offset, 4000)
+)
+FROM payload_chunks
+ORDER BY row_order, payload_offset
+OPTION (MAXRECURSION 0);
 ''';
     }
 
@@ -5032,6 +4939,7 @@ ORDER BY ct.SYS_CHANGE_VERSION;
       database: database,
       query: buildQuery(includeCommitTime: true),
       timeout: _snapshotSqlCmdTimeout,
+      suppressHeaders: true,
     );
     if (result == null) {
       throw Exception(_sqlCmdUnavailableMessage(profile));
@@ -5045,6 +4953,7 @@ ORDER BY ct.SYS_CHANGE_VERSION;
         database: database,
         query: buildQuery(includeCommitTime: false),
         timeout: _snapshotSqlCmdTimeout,
+        suppressHeaders: true,
       );
       if (result == null) {
         throw Exception(_sqlCmdUnavailableMessage(profile));
@@ -5054,27 +4963,31 @@ ORDER BY ct.SYS_CHANGE_VERSION;
       }
     }
     final rows = <Map<String, String?>>[];
-    for (final line in _dataOutputLines(result.stdout.toString())) {
-      final payload =
-          line.endsWith(String.fromCharCode(rowSentinel))
-              ? line.substring(0, line.length - 1)
-              : line;
-      final parts = payload.split(String.fromCharCode(fieldSeparator));
-      final metadataFieldCount = includesCommitTime ? 3 : 2;
-      if (parts.length != columns.length + metadataFieldCount) {
-        throw Exception(
-          'Change tracking delta returned ${parts.length - metadataFieldCount} column field(s) for ${columns.length} column(s).',
+    final encodedRows = decodeSqlServerBase64JsonRows(result.stdout.toString());
+    for (final encodedRow in encodedRows) {
+      if (!encodedRow.containsKey('m0') || !encodedRow.containsKey('m1')) {
+        throw const FormatException(
+          'Change Tracking row metadata is incomplete.',
         );
       }
-      final columnOffset = includesCommitTime ? 3 : 2;
+      for (var index = 0; index < columns.length; index++) {
+        if (!encodedRow.containsKey('c$index')) {
+          throw FormatException(
+            'Change Tracking row is missing encoded column $index of ${columns.length}.',
+          );
+        }
+      }
       final databaseModifiedAtUtc =
-          includesCommitTime && parts[2].trim().isNotEmpty ? parts[2] : null;
+          includesCommitTime &&
+                  (encodedRow['m2']?.toString().trim().isNotEmpty ?? false)
+              ? encodedRow['m2'].toString()
+              : null;
       final serverModifiedAtUtc = _normalizeDatabaseCommitToServerUtc(
         databaseModifiedAtUtc,
       );
       rows.add({
-        '__sync_op': parts.first,
-        '__sync_change_version': parts[1],
+        '__sync_op': encodedRow['m0']?.toString(),
+        '__sync_change_version': encodedRow['m1']?.toString(),
         '__sync_database_modified_at_utc': databaseModifiedAtUtc,
         '__sync_modified_at_utc': serverModifiedAtUtc,
         '__sync_clock_offset_ms':
@@ -5082,13 +4995,32 @@ ORDER BY ct.SYS_CHANGE_VERSION;
                 ? _serverClockOffset.inMilliseconds.toString()
                 : null,
         for (var i = 0; i < columns.length; i++)
-          columns[i].name: _decodeSourceBatchField(
-            parts[i + columnOffset],
+          columns[i].name: _decodeJsonTransportField(
+            encodedRow['c$i'],
             column: columns[i],
           ),
       });
     }
     return rows;
+  }
+
+  String? _decodeJsonTransportField(
+    Object? value, {
+    required _SqlColumnDefinition column,
+  }) {
+    if (value == null) {
+      return null;
+    }
+    final decoded = value.toString();
+    if (!column.usesHexTextTransport) {
+      return decoded;
+    }
+    if (!decoded.startsWith(r'\U')) {
+      throw const FormatException(
+        'Unicode SQL text did not use the required UTF-16 hex transport.',
+      );
+    }
+    return decodeSqlServerUtf16Hex(decoded.substring(2));
   }
 
   String? _normalizeDatabaseCommitToServerUtc(String? rawTimestamp) {
@@ -5365,86 +5297,6 @@ END
     return decodeSqlServerUtf16Hex(decoded.substring(2));
   }
 
-  Future<int> _applyDeltaRowsToTarget({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String schema,
-    required String table,
-    required List<_SqlColumnDefinition> columns,
-    required List<String> primaryKeyColumns,
-    required List<Map<String, dynamic>> rows,
-  }) async {
-    return _applySourceRowsToTarget(
-      profile: profile,
-      database: database,
-      schema: schema,
-      table: table,
-      columns: columns,
-      primaryKeyColumns: primaryKeyColumns,
-      rows: rows,
-      deleteMissing: false,
-      manageTriggers: true,
-      insertOnly: false,
-    );
-  }
-
-  Future<int> _deleteDeltaRowsFromTarget({
-    required _SqlConnectionProfile profile,
-    required String database,
-    required String schema,
-    required String table,
-    required List<_SqlColumnDefinition> columns,
-    required List<String> primaryKeyColumns,
-    required List<Map<String, dynamic>> rows,
-  }) async {
-    final rowCountBefore = await _queryTableRowCount(
-      profile: profile,
-      database: database,
-      schema: schema,
-      table: table,
-    );
-    if (!rowCountBefore.success) {
-      throw Exception(
-        rowCountBefore.errorText ??
-            'Unable to read the target row count before delete apply.',
-      );
-    }
-    final result = await _runSqlCmdOrThrow(
-      profile: profile,
-      database: database,
-      query: buildTargetDeltaDeleteSql(
-        database: database,
-        schema: schema,
-        table: table,
-        columns: columns,
-        primaryKeyColumns: primaryKeyColumns,
-        rows: rows,
-      ),
-      context: 'target delta delete',
-      timeout: _snapshotSqlCmdTimeout,
-      captureOutputFile: true,
-    );
-    final reported = RegExp(
-      r'__SQL_SYNC_DELETED__=(\d+)',
-    ).firstMatch(result.stdout.toString());
-    if (reported != null) {
-      return int.tryParse(reported.group(1) ?? '') ?? 0;
-    }
-    final rowCountAfter = await _queryTableRowCount(
-      profile: profile,
-      database: database,
-      schema: schema,
-      table: table,
-    );
-    if (!rowCountAfter.success) {
-      throw Exception(
-        rowCountAfter.errorText ??
-            'Unable to read the target row count after delete apply.',
-      );
-    }
-    return math.max(0, rowCountBefore.value - rowCountAfter.value);
-  }
-
   Future<int> _applySourceRowsToTarget({
     required _SqlConnectionProfile profile,
     required String database,
@@ -5613,13 +5465,6 @@ END
       return null;
     }
     return int.parse(match.group(1)!);
-  }
-
-  bool _isIsolatableTargetSqlError(Object error) {
-    final message = error.toString();
-    return message.contains('sqlcmd failed during target ') &&
-        !message.contains('(exit -1)') &&
-        !isSyncIdentityCollision(error);
   }
 
   Future<_StringQueryResult> _queryDatabases({
@@ -6680,6 +6525,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     required String query,
     Duration timeout = _defaultSqlCmdTimeout,
     bool captureOutputFile = false,
+    bool suppressHeaders = false,
   }) async {
     _lastSqlCmdLaunchError = null;
     final rawQuery = query.trim();
@@ -6695,15 +6541,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       '-b',
       '-w',
       '32767',
-      '-y',
-      '0',
-      '-Y',
-      '0',
+      if (!suppressHeaders) ...['-y', '0', '-Y', '0'],
       '-u',
       '-f',
       '65001',
       '-s',
       '|',
+      if (suppressHeaders) ...['-h', '-1'],
     ];
 
     if (profile.useWindowsAuth) {
@@ -9453,8 +9297,6 @@ class _DeltaApplyStats {
   int updatedRows = 0;
   int deletedRows = 0;
   int get appliedRows => insertedRows + updatedRows + deletedRows;
-  final List<SqlSyncRejectedRow> rejectedRows = <SqlSyncRejectedRow>[];
-  final List<String> rejectedRowKeyColumns = <String>[];
   final Set<String> seenRowIdentities = <String>{};
 }
 

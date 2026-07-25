@@ -4050,10 +4050,17 @@ function try_start_latest_change_resolution(job: map<json>, conflictKind: string
 }
 
 function multi_writer_batch_stale(batch: map<json>): bool {
-  // Large tables can take longer than 30 minutes on slow client links. Expire
-  // only batches that have made no upload progress during that period.
+  // Once any client has uploaded data, the batch is a durable in-flight
+  // transaction and must remain resumable until every participant finishes or
+  // an operator explicitly cancels it. Only untouched queues can expire.
+  if (string.from(batch.status).trim() == 'ready' ||
+      (batch.receivedChunks ?? []).length > 0 ||
+      (batch.uploadedClients ?? []).length > 0 ||
+      int.from(batch.receivedBytes ?? 0) > 0) {
+    return false;
+  }
   const ageMinutes = safe_date_diff_minutes_since(string.from(batch.updatedAt));
-  return ageMinutes != null && ageMinutes >= 30;
+  return ageMinutes != null && ageMinutes >= 1440;
 }
 
 function auth_login(name: string, password: string, app: string = 'web'): map<json> {

@@ -81,7 +81,13 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("existing_row.", delta_body)
         self.assertNotIn("AS current ON", delta_body)
         self.assertNotIn("current.", delta_body)
-        self.assertIn("COLLATE DATABASE_DEFAULT", delta_body)
+        self.assertIn(
+            "FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES",
+            delta_body,
+        )
+        self.assertIn("decodeSqlServerBase64JsonRows(", delta_body)
+        self.assertIn("sqlSyncBase64RowTerminator", delta_body)
+        self.assertNotIn("Change tracking delta returned", delta_body)
 
     def test_symmetricds_client_service_is_removed(self):
         self.assertFalse(
@@ -574,14 +580,10 @@ class SyncContractsTests(unittest.TestCase):
             snapshot_body,
         )
         self.assertIn("deleteMissing: true", apply_body)
-        self.assertIn(
-            "if (!replaceTarget && !logicalDeltaApplied && upsertRows.isNotEmpty)",
-            apply_body,
-        )
-        self.assertIn(
-            "applyDelta && logicalIdentityColumns.isNotEmpty", apply_body
-        )
+        self.assertIn("} else {", apply_body)
+        self.assertIn("Unable to read the target row count before atomic delta apply.", apply_body)
         self.assertIn("deltaDeleteRows:", apply_body)
+        self.assertNotIn("applySqlSyncRowsWithIsolation(", apply_body)
         self.assertIn("targetFingerprint.checksum != snapshot.checksum", apply_body)
         self.assertIn("'snapshotChecksum': snapshotChecksum.trim()", client_api)
 
@@ -787,7 +789,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("timeout: _snapshotSqlCmdTimeout,", agent_page)
         self.assertIn("'-y',", agent_page)
         self.assertIn("'0',", agent_page)
-        self.assertNotIn("'-h',", agent_page)
+        self.assertIn("if (suppressHeaders) ...['-h', '-1']", agent_page)
         self.assertIn("List<String> _dataOutputLines(String output)", agent_page)
         self.assertIn("shouldUseSqlCmdInputFile(", agent_page)
         self.assertIn("isWindows: Platform.isWindows,", agent_page)
@@ -1291,26 +1293,23 @@ class SyncContractsTests(unittest.TestCase):
     def test_windows_client_delta_sync_reconciles_changes_and_advances_checkpoint(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
-        isolation = read_text("sync_windows_agent/lib/sql_sync_row_isolation.dart")
 
-        self.assertIn("applySqlSyncRowsWithIsolation", agent_page)
+        self.assertNotIn("applySqlSyncRowsWithIsolation", agent_page)
+        self.assertFalse(
+            (ROOT / "sync_windows_agent/lib/sql_sync_row_isolation.dart").exists()
+        )
         self.assertIn("insertOnly: false", agent_page)
-        self.assertIn("buildTargetDeltaDeleteSql(", agent_page)
         self.assertIn("manageTriggers: true", agent_page)
-        delta_delete_body = merge_helper.split(
-            "String buildTargetDeltaDeleteSql(", 1
-        )[1].split("String stageTableReference", 1)[0]
-        self.assertIn("DISABLE TRIGGER ALL", delta_delete_body)
-        self.assertIn("ENABLE TRIGGER ALL", delta_delete_body)
-        self.assertIn("quarantined change(s)", agent_page)
-        self.assertIn("SyncRejectionKind.permanentBusinessRule", agent_page)
-        self.assertIn("!isSyncIdentityCollision(error)", agent_page)
+        self.assertIn("onChunk: null", agent_page)
+        self.assertIn("Buffer the complete table delta before SQL apply", agent_page)
+        self.assertIn("deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>()", agent_page)
+        self.assertIn("BEGIN TRANSACTION;", merge_helper)
+        self.assertIn("ROLLBACK TRANSACTION;", merge_helper)
+        self.assertIn("SET XACT_ABORT ON;", merge_helper)
         self.assertIn("status: converged ? 'completed' : 'failed'", agent_page)
         self.assertIn("success: converged", agent_page)
-        self.assertIn("!applyStats.seenRowIdentities.contains(change.identity)", agent_page)
         self.assertIn("rowCount: applyStats.appliedRows", agent_page)
-        self.assertIn("stats.updatedRows += batch.length - insertedRows", agent_page)
-        self.assertIn("stats.deletedRows += await _deleteDeltaRowsFromTarget", agent_page)
+        self.assertIn("stats.updatedRows += rows.length - insertedRows", agent_page)
         self.assertIn("ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex", agent_page)
         self.assertIn("changeTrackingVersion: appliedVersion", agent_page)
         self.assertNotIn("Change Tracking checkpoint was not advanced", agent_page)
@@ -1323,9 +1322,6 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("arguments.addAll(['-o', outputFile.path])", agent_page)
         self.assertIn("counted $insertedRows inserted row(s) from target cardinality", agent_page)
         self.assertNotIn("Target insert-only apply did not report its inserted row count", agent_page)
-        self.assertIn("if (rows.length == 1)", isolation)
-        self.assertIn("rows.sublist(0, midpoint)", isolation)
-        self.assertIn("rows.sublist(midpoint)", isolation)
 
     def test_table_policy_upsert_updates_existing_stored_key(self):
         control_plane = read_text("business/control_plane.tru")

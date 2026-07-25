@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+const String sqlSyncBase64RowTerminator = '~SQLSYNC_ROW_END~';
+
 String decodeSqlCmdOutputBytes(List<int> bytes) {
   if (bytes.isEmpty) {
     return '';
@@ -42,6 +44,52 @@ String decodeSqlServerUtf16Hex(String hex) {
     codeUnits.add(lowByte | (highByte << 8));
   }
   return String.fromCharCodes(codeUnits);
+}
+
+List<Map<String, dynamic>> decodeSqlServerBase64JsonRows(
+  String output, {
+  String rowTerminator = sqlSyncBase64RowTerminator,
+}) {
+  if (rowTerminator.isEmpty) {
+    throw ArgumentError('rowTerminator must not be empty.');
+  }
+  final rows = <Map<String, dynamic>>[];
+  final fragments = output.split(rowTerminator);
+  for (final fragment in fragments) {
+    final encoded = fragment
+        .replaceAll('\ufeff', '')
+        .replaceAll(RegExp(r'\s+'), '');
+    if (encoded.isEmpty) {
+      continue;
+    }
+    late final List<int> bytes;
+    try {
+      bytes = base64Decode(encoded);
+    } on FormatException {
+      throw const FormatException(
+        'Invalid Base64 Change Tracking row payload.',
+      );
+    }
+    if (bytes.length.isOdd) {
+      throw const FormatException(
+        'Invalid UTF-16LE Change Tracking row payload.',
+      );
+    }
+    final decoded = jsonDecode(_decodeUtf16Le(Uint8List.fromList(bytes)));
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Change Tracking row payload must be a JSON object.',
+      );
+    }
+    rows.add(
+      Map<String, dynamic>.fromEntries(
+        decoded.entries.map(
+          (entry) => MapEntry(entry.key.toString(), entry.value),
+        ),
+      ),
+    );
+  }
+  return rows;
 }
 
 bool _looksLikeUtf16Le(Uint8List bytes) {
