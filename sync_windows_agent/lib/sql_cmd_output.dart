@@ -54,11 +54,16 @@ List<List<String?>> decodeSqlServerHexRows(
     throw ArgumentError('rowTerminator must not be empty.');
   }
   final rows = <List<String?>>[];
-  final fragments = output.split(rowTerminator);
+  // sqlcmd inserts line breaks between result chunks. A long encoded row can
+  // put that break inside the row terminator itself, so normalize the complete
+  // transport stream before looking for row boundaries. The stream contains
+  // only ASCII hex, field markers, and delimiters; whitespace is never data.
+  final normalizedOutput = output
+      .replaceAll('\ufeff', '')
+      .replaceAll(RegExp(r'\s+'), '');
+  final fragments = normalizedOutput.split(rowTerminator);
   for (final fragment in fragments) {
-    final encodedRow = fragment
-        .replaceAll('\ufeff', '')
-        .replaceAll(RegExp(r'\s+'), '');
+    final encodedRow = fragment;
     if (encodedRow.isEmpty) {
       continue;
     }

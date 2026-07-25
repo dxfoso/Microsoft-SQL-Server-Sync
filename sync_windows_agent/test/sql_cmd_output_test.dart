@@ -87,14 +87,24 @@ void main() {
                 .join();
             return 'H$hex';
           }).join('|');
-          final wrapped = RegExp(
+          final framed = '$encoded$sqlSyncHexRowTerminator';
+          return RegExp(
             '.{1,97}',
-          ).allMatches(encoded).map((match) => match.group(0)).join('\r\n');
-          return '$wrapped$sqlSyncHexRowTerminator';
+          ).allMatches(framed).map((match) => match.group(0)).join('\r\n');
         })
         .join('\r\n');
 
     expect(decodeSqlServerHexRows(output), rows);
+  });
+
+  test('decodes a row when sqlcmd splits the row terminator', () {
+    final splitTerminator =
+        '${sqlSyncHexRowTerminator.substring(0, 7)}\r\n'
+        '${sqlSyncHexRowTerminator.substring(7)}';
+
+    expect(decodeSqlServerHexRows('H5500$splitTerminator'), [
+      ['U'],
+    ]);
   });
 
   test('rejects malformed framed UTF-16 hex rows', () {
