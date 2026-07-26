@@ -37,6 +37,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("bounded_public_job_payloads", body)
         self.assertIn("live_state_agent_rows_for(current, agentLimit)", body)
         self.assertIn("live_state_job_rows_for(current, jobLimit)", body)
+        self.assertIn("const agentRows = live_state_agent_rows_for(current, agentLimit);", body)
+        self.assertNotIn("visible_agent_rows_for(current)", body)
+        self.assertNotIn("refresh_owner_baseline_table_issues(", body)
         self.assertNotIn("syncEngine:", body)
 
     def test_live_state_limits_stay_bounded(self):
@@ -80,6 +83,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         body = match.group("body")
 
         self.assertNotIn("db.selectOne(Agent", body)
+        self.assertIn("list_table_sync_policies_for_scope(agent.ownerUserId)", body)
+        self.assertIn("apply_table_sync_policies_with_policies(", body)
+        self.assertNotIn("apply_table_sync_policies(agent.ownerUserId", body)
         self.assertIn("agent_client_update_payload(agent)", body)
         self.assertIn("agent_window_action_payload(agent)", body)
 

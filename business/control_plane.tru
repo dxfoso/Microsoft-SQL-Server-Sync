@@ -1606,7 +1606,13 @@ function visible_job_rows_for(current: map<json>): array<json> {
 function public_agent_payload(agent: map<json>): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
-    nextTables = apply_table_sync_policies(agent.ownerUserId, bounded_agent_tables(agent.tables, agent.selectedTable), string.from(agent.database));
+    const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
+    nextTables = apply_table_sync_policies_with_policies(
+      agent.ownerUserId,
+      bounded_agent_tables(agent.tables, agent.selectedTable),
+      string.from(agent.database),
+      policies
+    );
   }
   nextTables = normalize_agent_tables_payload(agent, nextTables);
   return {
@@ -4406,21 +4412,22 @@ function live_state(token: string? = null): map<json> {
   }
   const agentLimit = live_state_agent_limit();
   const jobLimit = live_state_job_limit();
+  const agentRows = live_state_agent_rows_for(current, agentLimit);
   const agentPage = bounded_public_agent_payloads(
-    live_state_agent_rows_for(current, agentLimit),
+    agentRows,
     agentLimit
   );
   const jobPage = bounded_public_job_payloads(
     live_state_job_rows_for(current, jobLimit),
     jobLimit
   );
-  const visibleAgents = visible_agent_rows_for(current);
   const visibleOwnerUserIds = unique_string_values(
-    visibleAgents.map((agent) => string.from(agent.ownerUserId))
+    agentRows.map((agent) => string.from(agent.ownerUserId))
   );
-  for (const ownerUserId of visibleOwnerUserIds) {
-    refresh_owner_baseline_table_issues(ownerUserId, visibleAgents);
-  }
+  // Baseline discovery can update issue state and cancel unsafe work, so it
+  // belongs in the manual/automatic scheduler preflight rather than this
+  // high-frequency read endpoint. The UI reads the last durable gate state;
+  // every path that can create jobs refreshes it immediately before queuing.
   const syncGate = sync_gate_payload_for_owners(visibleOwnerUserIds);
   return {
     generatedAt: now_iso(),
