@@ -908,6 +908,7 @@ function table_sync_policy_for_table_with_policies(ownerUserId: string? = null, 
         table: localTable
       },
       orderBy: { field: 'updatedAt', dir: 'desc' },
+      fields: ['ownerUserId', 'database', 'table', 'enabled', 'syncMode', 'updatedAt', 'updatedByClientName'],
       limit: 100
     });
     for (const fallbackPolicy of fallbackPolicies) {
