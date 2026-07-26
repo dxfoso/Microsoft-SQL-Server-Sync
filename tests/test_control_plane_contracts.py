@@ -1010,6 +1010,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("let databaseAgnosticMatch = null;", policy_lookup)
         self.assertIn("if (policyDatabase.length == 0 && databaseAgnosticMatch == null)", policy_lookup)
         self.assertIn("return databaseAgnosticMatch;", policy_lookup)
+        self.assertIn("const fallbackPolicies = db.selectMany(TableSyncPolicy", policy_lookup)
+        self.assertNotIn("database: null", policy_lookup)
 
     def test_protocol_v3_never_unions_full_multi_writer_snapshots(self):
         source = read_text("business/control_plane.tru")

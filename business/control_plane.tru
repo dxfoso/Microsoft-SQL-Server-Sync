@@ -902,11 +902,20 @@ function table_sync_policy_for_table_with_policies(ownerUserId: string? = null, 
     if (exactPolicy != null) {
       return exactPolicy;
     }
-    return db.selectOne(TableSyncPolicy, {
-      ownerUserId: scope,
-      table: localTable,
-      database: null
+    const fallbackPolicies = db.selectMany(TableSyncPolicy, {
+      where: {
+        ownerUserId: scope,
+        table: localTable
+      },
+      orderBy: { field: 'updatedAt', dir: 'desc' },
+      limit: 100
     });
+    for (const fallbackPolicy of fallbackPolicies) {
+      if (table_sync_policy_database_name(fallbackPolicy).length == 0) {
+        return fallbackPolicy;
+      }
+    }
+    return null;
   }
   return db.selectOne(TableSyncPolicy, {
     ownerUserId: scope,
