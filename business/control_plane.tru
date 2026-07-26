@@ -870,6 +870,7 @@ function table_sync_policy_for_table_with_policies(ownerUserId: string? = null, 
     return null;
   }
   if (policies != null) {
+    let databaseAgnosticMatch = null;
     for (const policy of policies) {
       if (string.from(policy.ownerUserId ?? '').trim() != scope) {
         continue;
@@ -877,18 +878,34 @@ function table_sync_policy_for_table_with_policies(ownerUserId: string? = null, 
       if (table_sync_policy_local_name(policy) != localTable) {
         continue;
       }
-      if (databaseName.length != 0 && table_sync_policy_database_name(policy) != databaseName) {
-        continue;
+      const policyDatabase = table_sync_policy_database_name(policy);
+      if (databaseName.length == 0 || policyDatabase == databaseName) {
+        return policy;
       }
-      return policy;
+      // Policies created before database-qualified table keys were introduced
+      // remain valid defaults. Prefer an exact database match when one exists,
+      // otherwise apply the database-agnostic policy to every matching local
+      // table. This is especially important for exclusions: Sync All must not
+      // silently re-enable a table the user explicitly excluded.
+      if (policyDatabase.length == 0 && databaseAgnosticMatch == null) {
+        databaseAgnosticMatch = policy;
+      }
     }
-    return null;
+    return databaseAgnosticMatch;
   }
   if (databaseName.length != 0) {
-    return db.selectOne(TableSyncPolicy, {
+    const exactPolicy = db.selectOne(TableSyncPolicy, {
       ownerUserId: scope,
       database: databaseName,
       table: localTable
+    });
+    if (exactPolicy != null) {
+      return exactPolicy;
+    }
+    return db.selectOne(TableSyncPolicy, {
+      ownerUserId: scope,
+      table: localTable,
+      database: null
     });
   }
   return db.selectOne(TableSyncPolicy, {
@@ -2632,6 +2649,145 @@ function scheduler_table_change_tracking_ready(agent: map<json>, table: string, 
     && trackingStatus != 'not_tracked';
 }
 
+function sync_agents_enabled_for_table(agents: array<json>, table: string, policies: array<json>? = null): array<json> {
+  let participants = [];
+  for (const agent of agents) {
+    const enabledTables = unique_string_values(
+      enabled_sync_tables_for_agent_with_policies(agent, policies).concat(
+        enabled_sync_policy_tables_for_agent(agent, policies)
+      )
+    );
+    if (string_array_contains(enabledTables, table)) {
+      participants = participants.concat([agent]);
+    }
+  }
+  return participants;
+}
+
+// This is the single preflight decision used by manual Sync All, targeted
+// manual sync, and automatic scheduling. A normal delta batch is legal only
+// when every enabled participant owns a valid cursor. If one participant lost
+// its cursor, a full authoritative repair from the unambiguous cursor-owning
+// peer is safer than either silently skipping that participant or uploading
+// its whole non-empty table as inserts.
+function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null): map<json> {
+  const participants = sync_agents_enabled_for_table(agents, table, policies);
+  let caches = tableCaches;
+  if (caches == null) {
+    caches = participants.map((agent) => scheduler_agent_table_state_cache(agent, policies));
+  }
+  let readyAgents = [];
+  let readyFingerprints = [];
+  let allFingerprints = [];
+  let reportedClientCount = 0;
+  for (const agent of participants) {
+    const cache = scheduler_agent_table_state_cache_for_agent(
+      string.from(agent.clientName),
+      caches ?? []
+    );
+    let states = [];
+    if (cache != null && cache.tables != null) {
+      states = cache.tables;
+    }
+    const state = scheduler_agent_table_state(states, table);
+    const fingerprint = sync_table_reported_fingerprint(state);
+    if (fingerprint.length != 0) {
+      reportedClientCount += 1;
+      if (!string_array_contains(allFingerprints, fingerprint)) {
+        allFingerprints = allFingerprints.concat([fingerprint]);
+      }
+    }
+    if (scheduler_table_change_tracking_ready(agent, table, cache)) {
+      readyAgents = readyAgents.concat([agent]);
+      if (fingerprint.length != 0 &&
+          !string_array_contains(readyFingerprints, fingerprint)) {
+        readyFingerprints = readyFingerprints.concat([fingerprint]);
+      }
+    }
+  }
+
+  if (participants.length == 0) {
+    return {
+      mode: 'disabled',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: [],
+      message: 'Table is not enabled for any client.'
+    };
+  }
+  if (readyAgents.length == participants.length) {
+    return {
+      mode: 'delta',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: [],
+      message: 'Every enabled client has a valid Change Tracking baseline.'
+    };
+  }
+  if (participants.length < 2) {
+    return {
+      mode: 'unavailable',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: [],
+      message: 'The only enabled client has not established a Change Tracking baseline yet.'
+    };
+  }
+  if (reportedClientCount != participants.length) {
+    return {
+      mode: 'unavailable',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: [],
+      message: 'Not every enabled client has reported a complete table fingerprint yet.'
+    };
+  }
+  if (readyAgents.length > 0 &&
+      readyFingerprints.length <= 1 &&
+      allFingerprints.length == 1) {
+    const sourceAgent = readyAgents[0];
+    const sourceClientName = string.from(sourceAgent.clientName);
+    return {
+      mode: 'reconcile',
+      table,
+      participants,
+      sourceAgent,
+      targetAgents: participants.filter((agent) =>
+        string.from(agent.clientName) != sourceClientName
+      ),
+      message: 'Every client reports the same data; the valid Change Tracking history will safely repair clients that lost their baseline.'
+    };
+  }
+  if (readyAgents.length == 0 && allFingerprints.length == 1) {
+    const sourceAgent = participants[0];
+    const sourceClientName = string.from(sourceAgent.clientName);
+    return {
+      mode: 'reconcile',
+      table,
+      participants,
+      sourceAgent,
+      targetAgents: participants.filter((agent) =>
+        string.from(agent.clientName) != sourceClientName
+      ),
+      message: 'All clients report identical data; one verified snapshot will establish a shared baseline.'
+    };
+  }
+  return {
+    mode: 'needs_input',
+    table,
+    participants,
+    sourceAgent: null,
+    targetAgents: [],
+    message: readyAgents.length > 0
+      ? 'Clients with valid Change Tracking histories report different table fingerprints while another client has no baseline. Choose the authoritative client.'
+      : 'Enabled clients report different row counts or checksums before a shared Change Tracking baseline exists. Choose the authoritative client.'
+  };
+}
+
 function enabled_sync_policy_tables_for_agent(agent: map<json>, policies: array<json>? = null): array<string> {
   let enabledTables = [];
   let sourcePolicies = policies;
@@ -2809,30 +2965,38 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
       break;
     }
-    let tableAgents = [];
-    for (const agent of ownerAgents) {
-      const enabledTables = unique_string_values(
-        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-        )
-      );
-      if (string_array_contains(enabledTables, table) &&
-          scheduler_table_change_tracking_ready(
-            agent,
-            table,
-            scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches)
-          ) &&
-          !string_array_contains(
-            active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches) ?? [],
-            table
-          )) {
-        tableAgents = tableAgents.concat([agent]);
-      }
-    }
-    if (tableAgents.length == 0) {
+    const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);
+    const tableAgents = plan.participants ?? [];
+    if (tableAgents.length == 0 ||
+        string.from(plan.mode) == 'needs_input' ||
+        string.from(plan.mode) == 'unavailable') {
       continue;
     }
-    const jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
+    let busy = false;
+    for (const agent of tableAgents) {
+      if (string_array_contains(
+        active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches) ?? [],
+        table
+      )) {
+        busy = true;
+      }
+    }
+    if (busy) {
+      continue;
+    }
+    let jobs = [];
+    if (string.from(plan.mode) == 'reconcile' &&
+        plan.sourceAgent != null &&
+        (plan.targetAgents ?? []).length > 0) {
+      jobs = create_authoritative_reconcile_batch(
+        normalizedOwnerUserId,
+        table,
+        plan.sourceAgent,
+        plan.targetAgents
+      );
+    } else if (string.from(plan.mode) == 'delta') {
+      jobs = create_multi_writer_batch(normalizedOwnerUserId, table, tableAgents);
+    }
     if (jobs.length > 0) {
       record_periodic_sync_table_attempt(ownerUserId, table);
       createdJobs = createdJobs.concat(jobs);
@@ -3328,10 +3492,11 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   );
   for (const table of unique_string_values(candidateTables)) {
     const existing = sync_table_issue_from_values(existingIssues, table);
+    const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);
+    const participants = plan.participants ?? [];
     let fingerprints = [];
-    let allUninitialized = true;
     let reportedClientCount = 0;
-    for (const agent of ownerAgents) {
+    for (const agent of participants) {
       const cache = scheduler_agent_table_state_cache_for_agent(
         string.from(agent.clientName),
         tableCaches
@@ -3352,14 +3517,11 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       if (!string_array_contains(fingerprints, fingerprint)) {
         fingerprints = fingerprints.concat([fingerprint]);
       }
-      if (sync_table_reported_change_tracking_version(state) > 0) {
-        allUninitialized = false;
-      }
     }
     if (existing != null &&
         string.from(existing.status ?? '').trim() == 'resolving' &&
         !sync_owner_table_has_active_jobs(ownerUserId, table) &&
-        reportedClientCount == ownerAgents.length &&
+        reportedClientCount == participants.length &&
         fingerprints.length == 1) {
       replace_sync_table_issue(ownerUserId, {
         table,
@@ -3376,18 +3538,13 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       });
       continue;
     }
-    const acceptedDivergence = existing != null &&
-      string.from(existing.action ?? '').trim() == 'accept_baseline';
-    if (!acceptedDivergence &&
-        (existing == null || string.from(existing.status ?? '').trim() == 'ready') &&
-        allUninitialized &&
-        reportedClientCount == ownerAgents.length &&
-        fingerprints.length > 1) {
+    if ((existing == null || string.from(existing.status ?? '').trim() == 'ready') &&
+        string.from(plan.mode) == 'needs_input') {
       raise_sync_table_issue(
         ownerUserId,
         table,
         'baseline_mismatch',
-        'Enabled clients report different row counts or checksums before a shared Change Tracking baseline exists.'
+        string.from(plan.message)
       );
     }
   }
@@ -5110,6 +5267,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   let queuedClientNames = [];
   let skippedOfflineClients = [];
   let skippedBusyTables = [];
+  let sourceResolutionTables = [];
   let deferredTables = [];
   const visibleAgents = visible_agent_rows_for(current);
   const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
@@ -5166,6 +5324,9 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       clientName: agent.clientName,
       tables: active_job_tables_for_client(string.from(agent.clientName))
     }));
+    const tableCaches = onlineAgents.map((agent) =>
+      scheduler_agent_table_state_cache(agent, ownerPolicies)
+    );
     let ownerHasActiveJobs = false;
     for (const cache of activeTableCaches) {
       if (cache.tables.length > 0) {
@@ -5189,18 +5350,15 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
         continue;
       }
-      let tableAgents = [];
-      for (const agent of onlineAgents) {
-        const agentTables = unique_string_values(
-          enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-            enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-          )
-        );
-        if (string_array_contains(agentTables, table)) {
-          tableAgents = tableAgents.concat([agent]);
-        }
-      }
+      const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);
+      const tableAgents = plan.participants ?? [];
       if (tableAgents.length == 0) {
+        continue;
+      }
+      if (string.from(plan.mode) == 'unavailable' ||
+          string.from(plan.mode) == 'needs_input') {
+        ownerDeferredTables = ownerDeferredTables.concat([table]);
+        deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
         continue;
       }
       let busy = false;
@@ -5216,7 +5374,22 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       if (busy) {
         continue;
       }
-      const jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
+      let jobs = [];
+      if (string.from(plan.mode) == 'reconcile' &&
+          plan.sourceAgent != null &&
+          (plan.targetAgents ?? []).length > 0) {
+        jobs = create_authoritative_reconcile_batch(
+          ownerUserId,
+          table,
+          plan.sourceAgent,
+          plan.targetAgents
+        );
+        sourceResolutionTables = sourceResolutionTables.concat([
+          string.concat(ownerUserId, '::', table)
+        ]);
+      } else if (string.from(plan.mode) == 'delta') {
+        jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
+      }
       if (jobs.length > 0) {
         createdJobs = createdJobs.concat(jobs);
         queuedClientNames = queuedClientNames.concat(tableAgents.map((agent) => string.from(agent.clientName)));
@@ -5233,7 +5406,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     queuedClientCount: unique_string_values(queuedClientNames).length,
     skippedOfflineClients: unique_string_values(skippedOfflineClients),
     skippedBusyTables: unique_string_values(skippedBusyTables),
-    skippedSourceResolutionTables: [],
+    skippedSourceResolutionTables: unique_string_values(sourceResolutionTables),
     deferredTables: unique_string_values(deferredTables),
     message: createdJobs.length == 0 && skippedOfflineClients.length > 0
       ? 'Sync deferred without advancing Change Tracking because every enabled client must be online for protocol v3.'
@@ -6627,20 +6800,43 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
   }
   const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
   const requestedTables = expand_sync_job_tables_for_owner(ownerId, unique_string_values(tables));
-  let createdJobs = [];
+  const tableCaches = ownerAgents.map((agent) =>
+    scheduler_agent_table_state_cache(agent, ownerPolicies)
+  );
+  let tablePlans = [];
   for (const table of requestedTables) {
-    let tableAgents = [];
-    for (const agent of ownerAgents) {
-      const enabledTables = unique_string_values(
-        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-        )
-      );
-      if (string_array_contains(enabledTables, table)) {
-        tableAgents = tableAgents.concat([agent]);
-      }
+    const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);
+    if ((plan.participants ?? []).length == 0) {
+      return raw_json_error(409, string.concat('sync table is not enabled: ', table));
     }
-    const nextJobs = create_multi_writer_batch(ownerId, table, tableAgents);
+    if (string.from(plan.mode) == 'needs_input') {
+      raise_sync_table_issue(ownerId, table, 'baseline_mismatch', string.from(plan.message));
+      return raw_json_error(409, string.from(plan.message));
+    }
+    if (string.from(plan.mode) == 'unavailable') {
+      return raw_json_error(409, string.from(plan.message));
+    }
+    tablePlans = tablePlans.concat([plan]);
+  }
+  let createdJobs = [];
+  for (const plan of tablePlans) {
+    let nextJobs = [];
+    if (string.from(plan.mode) == 'reconcile' &&
+        plan.sourceAgent != null &&
+        (plan.targetAgents ?? []).length > 0) {
+      nextJobs = create_authoritative_reconcile_batch(
+        ownerId,
+        string.from(plan.table),
+        plan.sourceAgent,
+        plan.targetAgents
+      );
+    } else if (string.from(plan.mode) == 'delta') {
+      nextJobs = create_multi_writer_batch(
+        ownerId,
+        string.from(plan.table),
+        plan.participants ?? []
+      );
+    }
     if (nextJobs.length > 0) {
       createdJobs = createdJobs.concat(nextJobs);
     }

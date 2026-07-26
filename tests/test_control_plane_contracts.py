@@ -289,7 +289,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);", owner_body)
         self.assertNotIn("list_completed_scheduler_job_rows(ownerUserId)", owner_body)
         self.assertIn("effective_agent_online(agent)", owner_body)
-        self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", owner_body)
+        self.assertIn("sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches)", owner_body)
+        self.assertIn("create_multi_writer_batch(normalizedOwnerUserId, table, tableAgents)", owner_body)
+        self.assertIn("create_authoritative_reconcile_batch(", owner_body)
         self.assertIn("const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));", owner_body)
         self.assertIn("const sourceAgents = allAgents ?? list_scheduler_agent_rows();", owner_body)
         self.assertIn("for (const agent of ownerAgents) {", owner_body)
@@ -680,7 +682,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("compatibleKey =", agent_page)
         self.assertNotIn("dbo.$localTable", agent_page)
 
-    def test_jobs_create_queues_protocol_v2_for_enabled_owner_clients(self):
+    def test_jobs_create_uses_shared_baseline_preflight_for_enabled_owner_clients(self):
         source = read_text("business/control_plane.tru")
         jobs_create = source.split("function jobs_create(", 1)[1].split(
             "function jobs_bootstrap(", 1
@@ -691,7 +693,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
             source,
         )
         self.assertIn("agent_sync_enabled(targetAgent)", source)
-        self.assertIn("const nextJobs = create_multi_writer_batch(ownerId, table, tableAgents);", source)
+        self.assertIn(
+            "const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);",
+            jobs_create,
+        )
+        self.assertIn("nextJobs = create_multi_writer_batch(", jobs_create)
+        self.assertIn("nextJobs = create_authoritative_reconcile_batch(", jobs_create)
         self.assertIn(
             "function jobs_progress(jobId: string, status: string = 'running', progress: int, message: string, rowCount: int, token: string? = null): map<json> {",
             source,
@@ -954,7 +961,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("mode: 'protocol-v3'", source)
         self.assertIn("if (effective_agent_online(agent))", source)
         self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", source)
-        self.assertIn("if (string_array_contains(agentTables, table))", source)
+        self.assertIn(
+            "const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);",
+            source,
+        )
+        self.assertIn("create_authoritative_reconcile_batch(", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("return raw_json_error(410, 'sync job is no longer active');", source)
         stale_guard = source.split(
@@ -973,6 +984,32 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("onlineAgents.length != ownerAgents.length", source)
         self.assertIn("Sync deferred without advancing Change Tracking", source)
         self.assertIn("skippedOfflineClients", source)
+
+    def test_shared_baseline_preflight_never_queues_a_partial_delta_batch(self):
+        source = read_text("business/control_plane.tru")
+        planner = source.split(
+            "function sync_table_baseline_plan(", 1
+        )[1].split("function enabled_sync_policy_tables_for_agent(", 1)[0]
+
+        self.assertIn("readyAgents.length == participants.length", planner)
+        self.assertIn("mode: 'delta'", planner)
+        self.assertIn("mode: 'reconcile'", planner)
+        self.assertIn("mode: 'needs_input'", planner)
+        self.assertIn("mode: 'unavailable'", planner)
+        self.assertIn("reportedClientCount != participants.length", planner)
+        self.assertIn("readyFingerprints.length <= 1", planner)
+        self.assertGreaterEqual(planner.count("allFingerprints.length == 1"), 2)
+        self.assertIn("allFingerprints.length == 1", planner)
+
+    def test_database_agnostic_policy_remains_a_safe_fallback(self):
+        source = read_text("business/control_plane.tru")
+        policy_lookup = source.split(
+            "function table_sync_policy_for_table_with_policies(", 1
+        )[1].split("function find_table_sync_policy(", 1)[0]
+
+        self.assertIn("let databaseAgnosticMatch = null;", policy_lookup)
+        self.assertIn("if (policyDatabase.length == 0 && databaseAgnosticMatch == null)", policy_lookup)
+        self.assertIn("return databaseAgnosticMatch;", policy_lookup)
 
     def test_protocol_v3_never_unions_full_multi_writer_snapshots(self):
         source = read_text("business/control_plane.tru")

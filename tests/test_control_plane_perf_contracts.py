@@ -48,7 +48,9 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("const activeTableCaches = onlineAgents.map", jobs_body)
         self.assertEqual(jobs_body.count("active_job_tables_for_client("), 1)
         self.assertIn("active_job_tables_from_cache", jobs_body)
-        self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", jobs_body)
+        self.assertIn("const tableCaches = onlineAgents.map", jobs_body)
+        self.assertIn("sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches)", jobs_body)
+        self.assertIn("create_multi_writer_batch(", jobs_body)
 
 
 if __name__ == "__main__":
