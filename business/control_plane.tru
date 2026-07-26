@@ -2408,20 +2408,36 @@ function sync_data_storage_status(token: string? = null): map<json> {
 
 function active_jobs_for_client(clientName: string): array<json> {
   const rows = db.selectMany(SyncJob, {
-    where: { clientName },
+    where: {
+      clientName,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
     orderBy: { field: 'updatedAt', dir: 'desc' },
     fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
-    limit: 1000
+    limit: 250
   });
   if (rows == null) {
     return [];
   }
-  const readyMultiWriterBatches = db.selectMany(SyncBatch, {
-    where: { status: 'ready' },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id'],
-    limit: 1000
-  }).map((batch) => string.from(batch.id));
+  let activeBatchIds = [];
+  for (const row of rows) {
+    const batchId = string.from(row.batchId ?? '').trim();
+    if (batchId.length != 0 && !string_array_contains(activeBatchIds, batchId)) {
+      activeBatchIds = activeBatchIds.concat([batchId]);
+    }
+  }
+  let readyMultiWriterBatches = [];
+  if (activeBatchIds.length != 0) {
+    readyMultiWriterBatches = db.selectMany(SyncBatch, {
+      where: {
+        id: { in: activeBatchIds },
+        status: 'ready'
+      },
+      orderBy: { field: 'updatedAt', dir: 'desc' },
+      fields: ['id'],
+      limit: 250
+    }).map((batch) => string.from(batch.id));
+  }
   let jobs = [];
   let seenJobKeys = [];
   for (const job of rows) {

@@ -83,6 +83,20 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         )
         self.assertLess(gate_position, refresh_position)
 
+    def test_heartbeat_job_dispatch_filters_history_in_database(self):
+        control_plane = read_text("business/control_plane.tru")
+        active_jobs_body = control_plane.split(
+            "function active_jobs_for_client(", 1
+        )[1].split("function unique_string_values", 1)[0]
+
+        self.assertIn(
+            "status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }",
+            active_jobs_body,
+        )
+        self.assertIn("limit: 250", active_jobs_body)
+        self.assertIn("id: { in: activeBatchIds }", active_jobs_body)
+        self.assertNotIn("limit: 1000", active_jobs_body)
+
 
 if __name__ == "__main__":
     unittest.main()
