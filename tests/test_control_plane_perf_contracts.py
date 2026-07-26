@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import unittest
 
 
@@ -10,6 +11,10 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlanePerfContractsTests(unittest.TestCase):
+    def test_server_request_budget_covers_atomic_bulk_preflight(self):
+        config = json.loads(read_text("business/tru.json"))
+        self.assertGreaterEqual(config["settings"]["requestTimeoutMs"], 30_000)
+
     def test_generic_agent_list_excludes_large_diagnostics_payload(self):
         control_plane = read_text("business/control_plane.tru")
         list_agent_rows_body = control_plane.split("function list_agent_rows(): array<json> {", 1)[1].split(

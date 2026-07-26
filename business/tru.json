@@ -13,7 +13,7 @@
         },
         "specPollMs": 1000,
         "specCachePath": ".tru_spec_cache.sqlite",
-        "requestTimeoutMs": 10000,
+        "requestTimeoutMs": 30000,
         "callConcurrency": 64
     },
     "db": {
