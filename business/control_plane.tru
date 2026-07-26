@@ -2910,6 +2910,12 @@ function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, poli
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  // A blocked owner can only continue after an explicit table decision.
+  // Avoid repeating the full multi-table baseline scan on every cron tick:
+  // it cannot change the decision, and under load it delays client heartbeats.
+  if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId)) {
+    return [];
+  }
   refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents);
   if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId)) {
     return [];

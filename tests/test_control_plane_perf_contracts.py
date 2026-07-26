@@ -69,6 +69,20 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertEqual(refresh_body.count("cancel_owner_sync_jobs_for_input("), 1)
         self.assertNotIn("raise_sync_table_issue(", refresh_body)
 
+    def test_blocked_periodic_owner_skips_redundant_baseline_scan(self):
+        control_plane = read_text("business/control_plane.tru")
+        scheduler_body = control_plane.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
+
+        gate_position = scheduler_body.index(
+            "if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId))"
+        )
+        refresh_position = scheduler_body.index(
+            "refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents)"
+        )
+        self.assertLess(gate_position, refresh_position)
+
 
 if __name__ == "__main__":
     unittest.main()
