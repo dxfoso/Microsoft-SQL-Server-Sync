@@ -3362,18 +3362,11 @@ function sync_table_issue_from_values(issues: array<json>, table: string): map<j
   return null;
 }
 
-function sync_table_issue_for_owner(ownerUserId: string, table: string): map<json>? {
-  return sync_table_issue_from_values(
-    sync_table_issues_for_owner(ownerUserId),
-    table
-  );
-}
-
-function replace_sync_table_issue(ownerUserId: string, nextIssue: map<json>): map<json> {
+function replace_sync_table_issue_in_values(issues: array<json>, nextIssue: map<json>): array<json> {
   const table = string.from(nextIssue.table).trim();
   let nextIssues = [];
   let replaced = false;
-  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+  for (const issue of issues) {
     if (string.from(issue.table ?? '').trim() == table) {
       nextIssues = nextIssues.concat([nextIssue]);
       replaced = true;
@@ -3384,6 +3377,21 @@ function replace_sync_table_issue(ownerUserId: string, nextIssue: map<json>): ma
   if (!replaced) {
     nextIssues = nextIssues.concat([nextIssue]);
   }
+  return nextIssues;
+}
+
+function sync_table_issue_for_owner(ownerUserId: string, table: string): map<json>? {
+  return sync_table_issue_from_values(
+    sync_table_issues_for_owner(ownerUserId),
+    table
+  );
+}
+
+function replace_sync_table_issue(ownerUserId: string, nextIssue: map<json>): map<json> {
+  const nextIssues = replace_sync_table_issue_in_values(
+    sync_table_issues_for_owner(ownerUserId),
+    nextIssue
+  );
   save_sync_table_issues_for_owner(ownerUserId, nextIssues);
   return nextIssue;
 }
@@ -3506,8 +3514,11 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   const tableCaches = ownerAgents.map((agent) =>
     scheduler_agent_table_state_cache(agent, ownerPolicies)
   );
+  let nextIssues = existingIssues;
+  let issuesChanged = false;
+  let introducedBlockingIssue = false;
   for (const table of unique_string_values(candidateTables)) {
-    const existing = sync_table_issue_from_values(existingIssues, table);
+    const existing = sync_table_issue_from_values(nextIssues, table);
     const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);
     const participants = plan.participants ?? [];
     let fingerprints = [];
@@ -3539,7 +3550,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         !sync_owner_table_has_active_jobs(ownerUserId, table) &&
         reportedClientCount == participants.length &&
         fingerprints.length == 1) {
-      replace_sync_table_issue(ownerUserId, {
+      nextIssues = replace_sync_table_issue_in_values(nextIssues, {
         table,
         status: 'ready',
         reason: '',
@@ -3552,17 +3563,43 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         updatedAt: now_iso(),
         resolvedAt: now_iso()
       });
+      issuesChanged = true;
       continue;
     }
     if ((existing == null || string.from(existing.status ?? '').trim() == 'ready') &&
         string.from(plan.mode) == 'needs_input') {
-      raise_sync_table_issue(
-        ownerUserId,
+      let detectedAt = now_iso();
+      if (existing != null && existing.detectedAt != null) {
+        detectedAt = existing.detectedAt;
+      }
+      nextIssues = replace_sync_table_issue_in_values(nextIssues, {
         table,
-        'baseline_mismatch',
-        string.from(plan.message)
-      );
+        status: 'needs_input',
+        reason: 'baseline_mismatch',
+        message: truncate_text(string.from(plan.message), 4000),
+        clientName: '',
+        action: '',
+        sourceClientName: '',
+        targetClientNames: [],
+        detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: null
+      });
+      issuesChanged = true;
+      introducedBlockingIssue = true;
     }
+  }
+  // A Sync All preflight can discover many divergent tables at once. Persist
+  // the complete decision set in one write and cancel active work once, so
+  // the atomic safety gate remains comfortably below the HTTP request limit.
+  if (issuesChanged) {
+    save_sync_table_issues_for_owner(ownerUserId, nextIssues);
+  }
+  if (introducedBlockingIssue) {
+    cancel_owner_sync_jobs_for_input(
+      ownerUserId,
+      'Sync stopped: one or more tables need a user decision.'
+    );
   }
 }
 

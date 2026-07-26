@@ -52,6 +52,18 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches)", jobs_body)
         self.assertIn("create_multi_writer_batch(", jobs_body)
 
+    def test_baseline_issue_refresh_persists_and_cancels_once_per_owner(self):
+        control_plane = read_text("business/control_plane.tru")
+        refresh_body = control_plane.split(
+            "function refresh_owner_baseline_table_issues(", 1
+        )[1].split("function sync_gate_payload_for_owners", 1)[0]
+
+        self.assertIn("let nextIssues = existingIssues;", refresh_body)
+        self.assertIn("replace_sync_table_issue_in_values", refresh_body)
+        self.assertEqual(refresh_body.count("save_sync_table_issues_for_owner("), 1)
+        self.assertEqual(refresh_body.count("cancel_owner_sync_jobs_for_input("), 1)
+        self.assertNotIn("raise_sync_table_issue(", refresh_body)
+
 
 if __name__ == "__main__":
     unittest.main()
