@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import 'startup_log.dart';
 import 'sync_state.dart';
 
 const int kSyncProtocolVersion = 3;
@@ -219,30 +220,72 @@ class AgentControlPlaneClient {
     String phase, {
     Duration? timeout,
   }) async {
+    final stopwatch = Stopwatch()..start();
+    logAgentDiagnostic(
+      'control_plane.request.started',
+      level: AgentLogLevel.debug,
+      context: {
+        'function': functionName,
+        'phase': phase,
+        'timeoutMs': (timeout ?? _controlPlaneRequestTimeout).inMilliseconds,
+        'authenticated': _authToken?.isNotEmpty == true,
+      },
+    );
     final payloadArgs = <String, dynamic>{...args};
     if (_authToken != null &&
         _authToken!.isNotEmpty &&
         functionName != 'auth_login') {
       payloadArgs['token'] = _authToken;
     }
-    final response = await _sendRequest(
-      _client.post(
-        _uriCall(),
-        headers: _headers(json: true),
-        body: jsonEncode({'name': functionName, 'args': payloadArgs}),
-      ),
-      phase,
-      timeout: timeout,
-    );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _exceptionFromResponse(response);
+    try {
+      final response = await _sendRequest(
+        _client.post(
+          _uriCall(),
+          headers: _headers(json: true),
+          body: jsonEncode({'name': functionName, 'args': payloadArgs}),
+        ),
+        phase,
+        timeout: timeout,
+      );
+      stopwatch.stop();
+      logAgentDiagnostic(
+        'control_plane.request.completed',
+        level:
+            response.statusCode >= 200 && response.statusCode < 300
+                ? AgentLogLevel.debug
+                : AgentLogLevel.warning,
+        context: {
+          'function': functionName,
+          'phase': phase,
+          'statusCode': response.statusCode,
+          'responseBytes': response.bodyBytes.length,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+        },
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw _exceptionFromResponse(response);
+      }
+      return _unwrapApiResponse(
+        _decodeJsonOrThrow(
+          response.body,
+          'Unexpected payload returned from $phase.',
+        ),
+      );
+    } catch (error, stackTrace) {
+      stopwatch.stop();
+      logAgentDiagnostic(
+        'control_plane.request.failed',
+        level: AgentLogLevel.error,
+        context: {
+          'function': functionName,
+          'phase': phase,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+        },
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    return _unwrapApiResponse(
-      _decodeJsonOrThrow(
-        response.body,
-        'Unexpected payload returned from $phase.',
-      ),
-    );
   }
 
   void setAuthToken(String? token) {

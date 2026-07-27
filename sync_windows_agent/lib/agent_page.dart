@@ -633,7 +633,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       _updateSyncEnabledTable(table, enabled);
       _refreshAutoRequiredTables();
-    } catch (error) {
+    } catch (error, stackTrace) {
+      logAgentDiagnostic(
+        'sync_policy.update.failed',
+        level: AgentLogLevel.error,
+        context: {
+          'clientName': widget.clientName,
+          'table': syncKey,
+          'enabled': enabled,
+        },
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) {
         return;
       }
@@ -1314,7 +1325,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       _refreshTableDataDialog();
       unawaited(_syncWithControlPlane());
-    } catch (error) {
+    } catch (error, stackTrace) {
+      logAgentDiagnostic(
+        'sql.row_counts.refresh.failed',
+        level: AgentLogLevel.error,
+        context: {
+          'clientName': widget.clientName,
+          'database': database,
+          'tableCount': tables.length,
+        },
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) {
         return;
       }
@@ -2639,6 +2661,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         tableRelationships: _tableRelationshipsPayload(),
         clientVersion: _agentAppVersion,
       );
+      logAgentDiagnostic(
+        'heartbeat.received',
+        level: AgentLogLevel.debug,
+        context: {
+          'clientName': widget.clientName,
+          'jobCount': heartbeat.jobs.length,
+          'activeJobCount': heartbeat.jobs.where((job) => job.isActive).length,
+          'diagnosticsPending': heartbeat.diagnostics.pending,
+          'windowActionPending': heartbeat.windowAction.pending,
+          'clientUpdatePending': heartbeat.clientUpdate.pending,
+          'serverClockSynchronized': heartbeat.serverClockSynchronized,
+          'roundTripMs': heartbeat.heartbeatRoundTrip.inMilliseconds,
+          'clockOffsetMs': heartbeat.serverClockOffset.inMilliseconds,
+        },
+      );
 
       if (!mounted) {
         return;
@@ -2718,7 +2755,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       // Keep heartbeat delivery independent from long SQL snapshot/apply work.
       // A large sync must not make the control plane mark this client offline.
       unawaited(_processPendingJobs());
-    } catch (error) {
+    } catch (error, stackTrace) {
+      logAgentDiagnostic(
+        'heartbeat.failed',
+        level: AgentLogLevel.error,
+        context: {
+          'clientName': widget.clientName,
+          'serverConnected': _serverConnected,
+          'sqlConnected': _selectedDatabase != null,
+        },
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) {
         return;
       }
@@ -2741,6 +2789,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Future<void> _uploadRequestedDiagnostics(
     RemoteAgentDiagnostics diagnostics,
   ) async {
+    final captureStopwatch = Stopwatch()..start();
+    logAgentDiagnostic(
+      'diagnostics.capture.started',
+      context: {
+        'clientName': widget.clientName,
+        'requestId': diagnostics.requestId ?? 'manual',
+        'activeJobCount': _activeJobs.length,
+      },
+    );
     final payload = await _buildDiagnosticsPayload();
     final failedTableCount =
         _syncState.tables.values
@@ -2757,8 +2814,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       summary: summary,
       payload: payload,
     );
-    logStartupEvent(
-      'Uploaded diagnostics for ${widget.clientName} request ${diagnostics.requestId ?? 'manual'}.',
+    captureStopwatch.stop();
+    logAgentDiagnostic(
+      'diagnostics.capture.uploaded',
+      context: {
+        'clientName': widget.clientName,
+        'requestId': diagnostics.requestId ?? 'manual',
+        'payloadChars': payload.length,
+        'elapsedMs': captureStopwatch.elapsedMilliseconds,
+      },
+      message:
+          'Uploaded requested diagnostics including the complete retained client log.',
     );
   }
 
@@ -2776,7 +2842,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     unawaited(
       _uploadRequestedDiagnostics(diagnostics)
           .catchError((Object error, StackTrace stackTrace) {
-            logStartupEvent('Diagnostics upload failed: $error');
+            logAgentDiagnostic(
+              'diagnostics.capture.failed',
+              level: AgentLogLevel.error,
+              context: {
+                'clientName': widget.clientName,
+                'requestId': requestId,
+              },
+              error: error,
+              stackTrace: stackTrace,
+            );
             if (requestId.isNotEmpty &&
                 _diagnosticsUploadRequestId == requestId) {
               _diagnosticsUploadRequestId = null;
@@ -3024,6 +3099,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'activeJobs': activeJobs,
       'failedTables': failedTables,
       'tableSummaries': tableSummaries,
+      'clientLog': {
+        'format': 'json-lines',
+        'retention': 'current file plus one rotated segment',
+        'redacted': true,
+        'completeRetainedLog': true,
+      },
       'startupLogTail': _readStartupLogTail(),
     };
 
@@ -3076,7 +3157,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     reduced['startupLogTail'] = _truncateUploadText(
       reduced['startupLogTail'],
-      maxChars: 4000,
+      maxChars: 40000,
     );
     _compactChangeTrackingDatabasesForUpload(reduced, maxDatabases: 8);
     encoded = encode(reduced);
@@ -3099,7 +3180,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     minimal['startupLogTail'] = _truncateUploadText(
       minimal['startupLogTail'],
-      maxChars: 2000,
+      maxChars: 40000,
     );
     _compactChangeTrackingDatabasesForUpload(minimal, maxDatabases: 3);
     encoded = encode(minimal);
@@ -3124,8 +3205,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       ),
       'startupLogTail': _truncateUploadText(
         payload['startupLogTail'],
-        maxChars: 1000,
+        maxChars: 40000,
       ),
+      'clientLog': payload['clientLog'],
       'payloadReduced': true,
     };
     return encode(emergency);
@@ -3321,24 +3403,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return compact;
   }
 
-  String _readStartupLogTail() {
-    try {
-      final executableDirectory = File(Platform.resolvedExecutable).parent;
-      final logFile = File(
-        '${executableDirectory.path}${Platform.pathSeparator}sync_windows_agent_startup.log',
-      );
-      if (!logFile.existsSync()) {
-        return '';
-      }
-      final content = logFile.readAsStringSync();
-      if (content.length <= 12000) {
-        return content;
-      }
-      return content.substring(content.length - 12000);
-    } catch (_) {
-      return '';
-    }
-  }
+  String _readStartupLogTail() => readRetainedAgentLog();
 
   Future<void> _processPendingJobs() async {
     if (_processingPendingJobsBusy) {
@@ -3351,32 +3416,88 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           .where((job) => job.isActive)
           .toList(growable: false);
       final orderedPendingJobs = _sortPendingJobsByDependencies(pendingJobs);
+      if (orderedPendingJobs.isNotEmpty) {
+        logAgentDiagnostic(
+          'sync.queue.processing',
+          level: AgentLogLevel.debug,
+          context: {
+            'jobCount': orderedPendingJobs.length,
+            'jobIds': orderedPendingJobs.map((job) => job.id).toList(),
+            'tables': orderedPendingJobs.map((job) => job.table).toList(),
+          },
+        );
+      }
       for (final job in orderedPendingJobs) {
         if (_processingJobIds.contains(job.id)) {
           continue;
         }
         _processingJobIds.add(job.id);
         _updateTraySyncIndicator();
+        final jobStopwatch = Stopwatch()..start();
+        logAgentDiagnostic(
+          'sync.job.processing.started',
+          context: {
+            'jobId': job.id,
+            'batchId': job.batchId,
+            'table': job.table,
+            'direction': job.direction,
+            'status': job.status,
+            'progress': job.progress,
+            'protocolVersion': job.protocolVersion,
+            'sourceClientName': job.sourceClientName,
+            'subscriberClientName': job.subscriberClientName,
+          },
+        );
         try {
           _prepareSyncProtocolJob(job);
           await _processSnapshotJob(job);
         } on _SyncJobCancelled catch (error) {
-          logStartupEvent(error.toString());
+          logAgentDiagnostic(
+            'sync.job.processing.cancelled',
+            level: AgentLogLevel.warning,
+            context: {
+              'jobId': job.id,
+              'batchId': job.batchId,
+              'table': job.table,
+              'elapsedMs': jobStopwatch.elapsedMilliseconds,
+            },
+            error: error,
+          );
         } catch (error, stackTrace) {
           final errorMessage = error.toString();
           if (_isRetryableSyncJobError(error)) {
-            logStartupEvent(
-              'Remote job ${job.id} paused for retry after temporary connectivity failure: $errorMessage',
+            logAgentDiagnostic(
+              'sync.job.processing.retryable_failure',
+              level: AgentLogLevel.warning,
+              context: {
+                'jobId': job.id,
+                'batchId': job.batchId,
+                'table': job.table,
+                'direction': job.direction,
+                'elapsedMs': jobStopwatch.elapsedMilliseconds,
+              },
+              error: error,
+              stackTrace: stackTrace,
             );
-            logStartupEvent(stackTrace.toString());
             // Keep the server job active. The next successful heartbeat will
             // fetch it again and resume the operation without losing progress.
             break;
           }
-          logStartupEvent(
-            'Remote job ${job.id} failed during snapshot processing: $errorMessage',
+          logAgentDiagnostic(
+            'sync.job.processing.failed',
+            level: AgentLogLevel.error,
+            context: {
+              'jobId': job.id,
+              'batchId': job.batchId,
+              'table': job.table,
+              'direction': job.direction,
+              'elapsedMs': jobStopwatch.elapsedMilliseconds,
+            },
+            message:
+                'Remote job ${job.id} failed during snapshot processing: $errorMessage',
+            error: error,
+            stackTrace: stackTrace,
           );
-          logStartupEvent(stackTrace.toString());
           await _markRemoteJobFailed(job, error);
           final failedJob = RemoteSyncJob(
             id: job.id,
@@ -3416,6 +3537,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             unawaited(_refreshLocalRowCounts());
           }
         } finally {
+          jobStopwatch.stop();
+          logAgentDiagnostic(
+            'sync.job.processing.finished',
+            level: AgentLogLevel.debug,
+            context: {
+              'jobId': job.id,
+              'batchId': job.batchId,
+              'table': job.table,
+              'direction': job.direction,
+              'elapsedMs': jobStopwatch.elapsedMilliseconds,
+            },
+          );
           _processingJobIds.remove(job.id);
           _cancelledProcessingJobIds.remove(job.id);
           _updateTraySyncIndicator();
@@ -3588,6 +3721,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {
     _checkSyncJobNotCancelled(job.id);
+    final uploadStopwatch = Stopwatch()..start();
+    logAgentDiagnostic(
+      'sync.upload.started',
+      context: {
+        'jobId': job.id,
+        'batchId': job.batchId,
+        'table': job.table,
+        'protocolVersion': job.protocolVersion,
+        'syncEpoch': job.syncEpoch,
+      },
+    );
     var activeJob = await _controlPlaneClient.startJob(
       job.id,
       status: 'snapshotting',
@@ -3603,6 +3747,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final snapshot = await _createRelaySnapshotForJob(job);
+    logAgentDiagnostic(
+      'sync.snapshot.created',
+      context: {
+        'jobId': job.id,
+        'batchId': job.batchId,
+        'table': job.table,
+        'rowCount': snapshot.rowCount,
+        'payloadChars': snapshot.snapshotJson.length,
+        'isDelta': snapshot.isDelta,
+        'checksum': snapshot.checksum,
+        'changeTrackingVersion': snapshot.changeTrackingVersion,
+        'elapsedMs': uploadStopwatch.elapsedMilliseconds,
+      },
+    );
     _checkSyncJobNotCancelled(job.id);
 
     activeJob = await _controlPlaneClient.updateJobProgress(
@@ -3632,6 +3790,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final latestOperationId =
         latestChange?['__sync_operation_id']?.toString() ?? '';
     RemoteSyncJob? uploadedJob;
+    var uploadedChunkCount = 0;
     if (rows.isEmpty) {
       _checkSyncJobNotCancelled(job.id);
       uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
@@ -3652,6 +3811,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         latestModifiedAtUtc: latestModifiedAtUtc,
         latestOperationId: latestOperationId,
       );
+      uploadedChunkCount = 1;
       _checkSyncJobNotCancelled(job.id);
     } else {
       for (var offset = 0; offset < rows.length;) {
@@ -3685,6 +3845,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           latestModifiedAtUtc: latestModifiedAtUtc,
           latestOperationId: latestOperationId,
         );
+        uploadedChunkCount += 1;
+        logAgentDiagnostic(
+          'sync.upload.chunk.completed',
+          level: AgentLogLevel.debug,
+          context: {
+            'jobId': job.id,
+            'batchId': job.batchId,
+            'table': job.table,
+            'chunkIndex': uploadedChunkCount - 1,
+            'rowOffset': offset,
+            'rowEnd': end,
+            'rowCount': end - offset,
+            'payloadBase64Chars': payloadBase64.length,
+            'finalChunk': isFinalChunk,
+          },
+        );
         _checkSyncJobNotCancelled(job.id);
         offset = end;
       }
@@ -3695,6 +3871,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       success: true,
       overrideMessage:
           'Uploaded ${snapshot.rowCount} ${snapshot.isDelta ? 'changed' : 'bootstrap'} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
+    );
+    uploadStopwatch.stop();
+    logAgentDiagnostic(
+      'sync.upload.completed',
+      context: {
+        'jobId': job.id,
+        'batchId': job.batchId,
+        'table': job.table,
+        'rowCount': snapshot.rowCount,
+        'chunkCount': uploadedChunkCount,
+        'isDelta': snapshot.isDelta,
+        'checksum': snapshot.checksum,
+        'changeTrackingVersion': snapshot.changeTrackingVersion,
+        'elapsedMs': uploadStopwatch.elapsedMilliseconds,
+      },
     );
     final uploadedVersion = snapshot.changeTrackingVersion;
     if (uploadedVersion != null && uploadedVersion >= 0) {
@@ -3721,6 +3912,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {
     _checkSyncJobNotCancelled(job.id);
+    final downloadStopwatch = Stopwatch()..start();
+    logAgentDiagnostic(
+      'sync.download.started',
+      context: {
+        'jobId': job.id,
+        'batchId': job.batchId,
+        'table': job.table,
+        'protocolVersion': job.protocolVersion,
+        'syncEpoch': job.syncEpoch,
+        'sourceClientName': job.sourceClientName,
+      },
+    );
     var activeJob = await _controlPlaneClient.startJob(
       job.id,
       status: 'downloading',
@@ -3770,6 +3973,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       // pages independently can leave a partial table when a later page fails.
       onChunk: null,
     );
+    logAgentDiagnostic(
+      'sync.download.buffered',
+      context: {
+        'jobId': job.id,
+        'batchId': job.batchId,
+        'table': job.table,
+        'snapshotId': downloadedSnapshot.id,
+        'rowCount': downloadedSnapshot.rows.length,
+        'columnCount': downloadedSnapshot.columns.length,
+        'snapshotBytes': downloadedSnapshot.snapshotBytes,
+        'isDelta': downloadedSnapshot.isDelta,
+        'authoritativeReconcile': authoritativeReconcile,
+        'elapsedMs': downloadStopwatch.elapsedMilliseconds,
+      },
+    );
 
     _checkSyncJobNotCancelled(job.id);
     final retryRows =
@@ -3795,11 +4013,37 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             );
 
     if (streamedTargetRowCount < 0) {
+      logAgentDiagnostic(
+        'sync.apply.started',
+        context: {
+          'jobId': job.id,
+          'batchId': job.batchId,
+          'table': job.table,
+          'rowCount': snapshotToApply.rows.length,
+          'retryRowCount': retryRows.length,
+          'replaceTarget': authoritativeReconcile,
+          'isDelta': snapshotToApply.isDelta,
+        },
+      );
       streamedTargetRowCount = await _applyDownloadedSnapshotToTarget(
         job: job,
         snapshot: snapshotToApply,
         applyStats: applyStats,
         replaceTarget: authoritativeReconcile,
+      );
+      logAgentDiagnostic(
+        'sync.apply.committed',
+        context: {
+          'jobId': job.id,
+          'batchId': job.batchId,
+          'table': job.table,
+          'targetRowCount': streamedTargetRowCount,
+          'appliedRows': applyStats.appliedRows,
+          'insertedRows': applyStats.insertedRows,
+          'updatedRows': applyStats.updatedRows,
+          'deletedRows': applyStats.deletedRows,
+          'elapsedMs': downloadStopwatch.elapsedMilliseconds,
+        },
       );
     }
     _checkSyncJobNotCancelled(job.id);
@@ -3872,6 +4116,23 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       success: converged,
       overrideMessage:
           'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${pendingAfterApply.length} quarantined.',
+    );
+    downloadStopwatch.stop();
+    logAgentDiagnostic(
+      'sync.download.completed',
+      context: {
+        'jobId': job.id,
+        'batchId': job.batchId,
+        'table': job.table,
+        'snapshotId': downloadedSnapshot.id,
+        'appliedRows': applyStats.appliedRows,
+        'insertedRows': applyStats.insertedRows,
+        'updatedRows': applyStats.updatedRows,
+        'deletedRows': applyStats.deletedRows,
+        'rejectedRows': pendingAfterApply.length,
+        'targetRowCount': reconciledTargetRowCount,
+        'elapsedMs': downloadStopwatch.elapsedMilliseconds,
+      },
     );
     final appliedVersion =
         authoritativeAppliedVersion ??
@@ -4963,8 +5224,7 @@ OPTION (MAXRECURSION 0);
         );
       }
       final databaseModifiedAtUtc =
-          includesCommitTime &&
-                  (encodedRow[2]?.trim().isNotEmpty ?? false)
+          includesCommitTime && (encodedRow[2]?.trim().isNotEmpty ?? false)
               ? encodedRow[2]
               : null;
       final serverModifiedAtUtc = _normalizeDatabaseCommitToServerUtc(
@@ -6514,9 +6774,30 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }) async {
     _lastSqlCmdLaunchError = null;
     final rawQuery = query.trim();
+    final sqlStopwatch = Stopwatch()..start();
     final useInputFile = shouldUseSqlCmdInputFile(
       isWindows: Platform.isWindows,
       query: rawQuery,
+    );
+    final queryOperation =
+        RegExp(r'^[A-Za-z]+').firstMatch(rawQuery)?.group(0)?.toUpperCase() ??
+        'UNKNOWN';
+    logAgentDiagnostic(
+      'sqlcmd.started',
+      level: AgentLogLevel.debug,
+      context: {
+        'server': profile.server,
+        'database': database ?? '',
+        'authentication':
+            profile.useWindowsAuth ? 'windows' : 'sql-authentication',
+        'queryOperation': queryOperation,
+        'queryChars': rawQuery.length,
+        'queryFingerprint': rawQuery.hashCode.toUnsigned(32).toRadixString(16),
+        'timeoutMs': timeout.inMilliseconds,
+        'usesInputFile': useInputFile,
+        'captureOutputFile': captureOutputFile,
+        'suppressHeaders': suppressHeaders,
+      },
     );
     final arguments = <String>[
       '-S',
@@ -6541,6 +6822,16 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       if (profile.user.isEmpty || profile.password.isEmpty) {
         _lastSqlCmdLaunchError =
             'SQL authentication is incomplete. Enter a SQL username and password, or use Windows authentication.';
+        logAgentDiagnostic(
+          'sqlcmd.configuration_error',
+          level: AgentLogLevel.error,
+          context: {
+            'server': profile.server,
+            'database': database ?? '',
+            'elapsedMs': sqlStopwatch.elapsedMilliseconds,
+          },
+          error: _lastSqlCmdLaunchError,
+        );
         return null;
       }
       arguments.insertAll(0, ['-U', profile.user, '-P', profile.password]);
@@ -6615,6 +6906,24 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         final stderrBytes = await stderrFuture;
         final timeoutText =
             'sqlcmd timed out after ${_formatDurationForLog(timeout)}.';
+        sqlStopwatch.stop();
+        logAgentDiagnostic(
+          'sqlcmd.timed_out',
+          level: AgentLogLevel.error,
+          context: {
+            'server': profile.server,
+            'database': database ?? '',
+            'processId': process.pid,
+            'queryOperation': queryOperation,
+            'queryFingerprint': rawQuery.hashCode
+                .toUnsigned(32)
+                .toRadixString(16),
+            'stdoutBytes': stdoutBytes.length,
+            'stderrBytes': stderrBytes.length,
+            'elapsedMs': sqlStopwatch.elapsedMilliseconds,
+          },
+          error: timeoutText,
+        );
         return ProcessResult(
           process.pid,
           -1,
@@ -6627,23 +6936,59 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       }
       final stdoutBytes = await stdoutFuture;
       final stderrBytes = await stderrFuture;
-      return ProcessResult(
-        process.pid,
-        exitCode,
-        await capturedOutput(stdoutBytes),
-        decodeSqlCmdOutputBytes(stderrBytes),
+      final stdoutText = await capturedOutput(stdoutBytes);
+      final stderrText = decodeSqlCmdOutputBytes(stderrBytes);
+      sqlStopwatch.stop();
+      logAgentDiagnostic(
+        'sqlcmd.completed',
+        level: exitCode == 0 ? AgentLogLevel.debug : AgentLogLevel.error,
+        context: {
+          'server': profile.server,
+          'database': database ?? '',
+          'processId': process.pid,
+          'exitCode': exitCode,
+          'queryOperation': queryOperation,
+          'queryFingerprint': rawQuery.hashCode
+              .toUnsigned(32)
+              .toRadixString(16),
+          'stdoutChars': stdoutText.length,
+          'stderrChars': stderrText.length,
+          'elapsedMs': sqlStopwatch.elapsedMilliseconds,
+        },
+        error: exitCode == 0 ? null : stderrText,
       );
+      return ProcessResult(process.pid, exitCode, stdoutText, stderrText);
     } on ProcessException catch (error) {
       _lastSqlCmdLaunchError =
           'Unable to start sqlcmd from "$executable": ${error.message}';
-      logStartupEvent(_lastSqlCmdLaunchError!);
+      sqlStopwatch.stop();
+      logAgentDiagnostic(
+        'sqlcmd.launch_failed',
+        level: AgentLogLevel.error,
+        context: {
+          'server': profile.server,
+          'database': database ?? '',
+          'executable': executable,
+          'queryOperation': queryOperation,
+          'queryFingerprint': rawQuery.hashCode
+              .toUnsigned(32)
+              .toRadixString(16),
+          'elapsedMs': sqlStopwatch.elapsedMilliseconds,
+        },
+        error: error,
+      );
       return null;
     } finally {
       if (commandDirectory != null) {
         try {
           await commandDirectory.delete(recursive: true);
-        } catch (_) {
-          // Best effort cleanup for a temporary sqlcmd input file.
+        } catch (error) {
+          logAgentDiagnostic(
+            'sqlcmd.temp_cleanup_failed',
+            level: AgentLogLevel.warning,
+            context: {'database': database ?? ''},
+            error: error,
+          );
         }
       }
     }

@@ -70,6 +70,27 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_discoverAndEnableChangedTables()", agent_page)
         self.assertIn("changeTrackingStatus", read_text("sync_windows_agent/lib/sync_state.dart"))
 
+    def test_requested_client_logs_are_detailed_complete_and_redacted(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        startup_log = read_text("sync_windows_agent/lib/startup_log.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+
+        self.assertIn("void logAgentDiagnostic(", startup_log)
+        self.assertIn("String redactAgentLogText(", startup_log)
+        self.assertIn("_maxRetainedAgentLogChars = 40 * 1024", startup_log)
+        self.assertIn("current file plus one rotated segment", agent_page)
+        self.assertIn("'completeRetainedLog': true", agent_page)
+        self.assertIn("'startupLogTail': _readStartupLogTail()", agent_page)
+        self.assertIn("readRetainedAgentLog()", agent_page)
+        self.assertIn("'control_plane.request.completed'", client_api)
+        self.assertIn("'sync.job.processing.started'", agent_page)
+        self.assertIn("'sync.upload.chunk.completed'", agent_page)
+        self.assertIn("'sync.apply.committed'", agent_page)
+        self.assertIn("'sqlcmd.completed'", agent_page)
+        self.assertIn("'Get Logs'", dashboard)
+        self.assertIn("'View Logs'", dashboard)
+
     def test_change_tracking_delta_query_avoids_reserved_current_alias(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 

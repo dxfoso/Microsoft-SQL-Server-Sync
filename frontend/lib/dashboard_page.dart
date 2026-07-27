@@ -2954,7 +2954,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         context: context,
         builder: (context) {
           return AlertDialog(
-            title: Text('Diagnostics: ${agent.clientName}'),
+            title: Text('Logs and diagnostics: ${agent.clientName}'),
             content: SizedBox(
               width: 760,
               height: 560,
@@ -6422,11 +6422,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           Icons.health_and_safety_outlined,
                           size: 16,
                         ),
-                label: Text(
-                  diagnostics.pending
-                      ? 'Diagnostics Requested'
-                      : 'Request Diagnostics',
-                ),
+                label: Text(diagnostics.pending ? 'Getting Logs…' : 'Get Logs'),
               ),
               FilledButton.tonalIcon(
                 onPressed:
@@ -6451,7 +6447,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         ? () => unawaited(_openDiagnosticsDialog(agent))
                         : null,
                 icon: const Icon(Icons.description_outlined, size: 16),
-                label: const Text('View Diagnostics'),
+                label: const Text('View Logs'),
               ),
             ],
           ),
