@@ -4308,13 +4308,26 @@ function try_start_latest_change_resolution(job: map<json>, conflictKind: string
 }
 
 function multi_writer_batch_stale(batch: map<json>): bool {
-  // Once any client has uploaded data, the batch is a durable in-flight
-  // transaction and must remain resumable until every participant finishes or
-  // an operator explicitly cancels it. Only untouched queues can expire.
+  // Once any client starts processing or uploads data, the batch is a durable
+  // in-flight transaction and must remain resumable until every participant
+  // finishes or an operator explicitly cancels it. Only untouched queues can
+  // expire.
   if (string.from(batch.status).trim() == 'ready' ||
       (batch.receivedChunks ?? []).length > 0 ||
       (batch.uploadedClients ?? []).length > 0 ||
       int.from(batch.receivedBytes ?? 0) > 0) {
+    return false;
+  }
+  const processingJobs = db.selectMany(SyncJob, {
+    where: {
+      batchId: string.from(batch.id),
+      status: { in: ['running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id'],
+    limit: 1
+  });
+  if (processingJobs.length > 0) {
     return false;
   }
   const ageMinutes = safe_date_diff_minutes_since(string.from(batch.updatedAt));

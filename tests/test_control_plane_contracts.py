@@ -979,6 +979,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("function ", 1)[0]
         self.assertIn("batch.updatedAt", stale_guard)
         self.assertNotIn("batch.createdAt", stale_guard)
+        self.assertIn("status: { in: ['running', 'snapshotting', 'uploading', 'downloading', 'applying'] }", stale_guard)
+        self.assertIn("if (processingJobs.length > 0)", stale_guard)
         self.assertIn("let queuedTablesForOwner = 0;", source)
         self.assertIn(
             "remaining manual tables will drain in bounded scheduler waves",
