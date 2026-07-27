@@ -75,6 +75,7 @@ class AdminLiveState {
     required this.syncGate,
     required this.agents,
     required this.jobs,
+    required this.clientActivities,
   });
 
   final String generatedAt;
@@ -82,6 +83,7 @@ class AdminLiveState {
   final AdminSyncGate syncGate;
   final List<AdminAgent> agents;
   final List<AdminJob> jobs;
+  final List<AdminClientActivity> clientActivities;
 
   factory AdminLiveState.fromJson(Map<String, dynamic> json) {
     return AdminLiveState(
@@ -101,6 +103,45 @@ class AdminLiveState {
             (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false),
+      clientActivities: (json['clientActivities'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AdminClientActivity.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AdminClientActivity {
+  const AdminClientActivity({
+    required this.clientName,
+    required this.table,
+    required this.direction,
+    required this.status,
+    required this.message,
+    required this.batchId,
+    required this.updatedAt,
+  });
+
+  final String clientName;
+  final String table;
+  final String direction;
+  final String status;
+  final String message;
+  final String batchId;
+  final String updatedAt;
+
+  factory AdminClientActivity.fromJson(Map<String, dynamic> json) {
+    return AdminClientActivity(
+      clientName: json['clientName'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      direction: json['direction'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+      message: json['message'] as String? ?? '',
+      batchId: json['batchId'] as String? ?? '',
+      updatedAt: json['updatedAt'] as String? ?? '',
     );
   }
 }

@@ -59,6 +59,8 @@ void main(List<String> arguments) {
   final rows = (request['rows'] as List? ?? const [])
       .map((row) => Map<String, dynamic>.from(row as Map))
       .toList(growable: false);
+  final protectLocalChangesAfterVersion =
+      (request['protectLocalChangesAfterVersion'] as num?)?.toInt();
   final database = request['database'].toString();
   final schema = request['schema']?.toString() ?? 'dbo';
   final table = request['table'].toString();
@@ -67,7 +69,9 @@ void main(List<String> arguments) {
       'sql_sync_harness_${DateTime.now().microsecondsSinceEpoch}';
   final sql = StringBuffer();
 
-  if (deletes.isNotEmpty && logicalIdentityColumns.isEmpty) {
+  if (deletes.isNotEmpty &&
+      logicalIdentityColumns.isEmpty &&
+      protectLocalChangesAfterVersion == null) {
     sql.writeln(
       buildTargetDeltaDeleteSql(
         database: database,
@@ -82,7 +86,9 @@ void main(List<String> arguments) {
   final deleteMissing = request['deleteMissing'] == true;
   if (rows.isNotEmpty ||
       deleteMissing ||
-      (deletes.isNotEmpty && logicalIdentityColumns.isNotEmpty)) {
+      (deletes.isNotEmpty &&
+          (logicalIdentityColumns.isNotEmpty ||
+              protectLocalChangesAfterVersion != null))) {
     sql.writeln(
       buildTargetSnapshotStageSetupSql(
         stageTableName: stageTableName,
@@ -108,7 +114,12 @@ void main(List<String> arguments) {
         primaryKeyColumns: primaryKeyColumns,
         uniqueIndexColumnSets: uniqueIndexColumnSets,
         logicalIdentityColumns: logicalIdentityColumns,
-        deltaDeleteRows: logicalIdentityColumns.isEmpty ? const [] : deletes,
+        deltaDeleteRows:
+            logicalIdentityColumns.isEmpty &&
+                    protectLocalChangesAfterVersion == null
+                ? const []
+                : deletes,
+        protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
         deleteMissing: deleteMissing,
         manageTriggers: true,
         insertOnly: false,

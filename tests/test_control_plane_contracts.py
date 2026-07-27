@@ -56,6 +56,23 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertEqual(limits["agent"], 100)
         self.assertLessEqual(limits["job"], 50)
 
+    def test_live_state_exposes_bounded_active_client_activity(self):
+        source = read_text("business/control_plane.tru")
+        helper = source.split(
+            "function live_state_client_activity_rows_for(", 1
+        )[1].split("function public_client_activity_payloads(", 1)[0]
+        live_state = source.split("function live_state(", 1)[1].split(
+            "function agents_heartbeat(", 1
+        )[0]
+
+        self.assertIn(
+            "status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }",
+            helper,
+        )
+        self.assertIn("limit: 250", helper)
+        self.assertIn("clientActivities,", live_state)
+        self.assertIn("live_state_client_activity_rows_for(current)", live_state)
+
     def test_agent_rows_include_dashboard_fields_without_diagnostic_payload(self):
         source = read_text("business/control_plane.tru")
         match = re.search(

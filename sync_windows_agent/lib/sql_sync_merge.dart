@@ -229,6 +229,7 @@ String buildTargetSnapshotStageApplySql({
   List<List<String>> uniqueIndexColumnSets = const <List<String>>[],
   List<String> logicalIdentityColumns = const <String>[],
   List<Map<String, dynamic>> deltaDeleteRows = const <Map<String, dynamic>>[],
+  int? protectLocalChangesAfterVersion,
   int targetMergeApplyBatchSize = 500,
   bool deleteMissing = true,
   bool manageTriggers = true,
@@ -321,7 +322,25 @@ String buildTargetSnapshotStageApplySql({
     columns: columns,
     primaryKeyColumns: primaryKeyColumns,
     rows: deltaDeleteRows,
+    filterProtectedKeys: protectLocalChangesAfterVersion != null,
   );
+  final postUploadProtectionStatements =
+      protectLocalChangesAfterVersion == null
+          ? ''
+          : _buildPostUploadProtectionStatements(
+            database: database,
+            schema: schema,
+            table: table,
+            stageTarget: stageTarget,
+            columns: columns,
+            primaryKeyColumns: primaryKeyColumns,
+            deltaDeleteRows: deltaDeleteRows,
+            changeTrackingVersion: protectLocalChangesAfterVersion,
+          );
+  final transactionIsolation =
+      protectLocalChangesAfterVersion == null
+          ? ''
+          : 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;';
   final logicalIdentityStatements = _buildLogicalIdentityReconciliationSql(
     database: database,
     schema: schema,
@@ -351,9 +370,14 @@ String buildTargetSnapshotStageApplySql({
   return '''
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
+$transactionIsolation
 BEGIN TRY
   $sourceIndexStatements
   BEGIN TRANSACTION;
+  DECLARE @SqlSyncProtectedRows INT = 0;
+  DECLARE @SqlSyncProtectedUpsertRows INT = 0;
+  DECLARE @SqlSyncProtectedDeleteRows INT = 0;
+  $postUploadProtectionStatements
   $triggerDisableStatement
   $identityInsertOn
   DECLARE @SqlSyncInsertedRows INT = 0;
@@ -368,6 +392,9 @@ BEGIN TRY
   $triggerEnableStatement
   COMMIT TRANSACTION;
   SELECT N'__SQL_SYNC_INSERTED__=' + CONVERT(NVARCHAR(20), @SqlSyncInsertedRows);
+  SELECT N'__SQL_SYNC_PROTECTED__=' + CONVERT(NVARCHAR(20), @SqlSyncProtectedRows);
+  SELECT N'__SQL_SYNC_PROTECTED_UPSERTS__=' + CONVERT(NVARCHAR(20), @SqlSyncProtectedUpsertRows);
+  SELECT N'__SQL_SYNC_PROTECTED_DELETES__=' + CONVERT(NVARCHAR(20), @SqlSyncProtectedDeleteRows);
 END TRY
 BEGIN CATCH
   DECLARE @SqlSyncStageErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
@@ -396,6 +423,7 @@ String _buildStagedDeltaDeleteStatements({
   required List<SqlSyncColumnDefinition> columns,
   required List<String> primaryKeyColumns,
   required List<Map<String, dynamic>> rows,
+  bool filterProtectedKeys = false,
 }) {
   if (rows.isEmpty) {
     return '';
@@ -428,6 +456,15 @@ String _buildStagedDeltaDeleteStatements({
       )
       .join(',\n      ');
   final joinClause = matchClauseForColumns(primaryKeyColumns, keyColumns);
+  final protectedKeyFilter =
+      filterProtectedKeys
+          ? '''
+  DELETE source
+  FROM #delta_delete_rows AS source
+  INNER JOIN #sqlsync_protected_keys AS target
+    ON $joinClause;
+  SET @SqlSyncProtectedDeleteRows += @@ROWCOUNT;'''
+          : '';
   return '''
   CREATE TABLE #delta_delete_rows (
     $columnDefinitions
@@ -435,12 +472,128 @@ String _buildStagedDeltaDeleteStatements({
   INSERT INTO #delta_delete_rows ($columnList)
   VALUES
       $valueTuples;
+  $protectedKeyFilter
   WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
   DELETE target
   FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
   INNER JOIN #delta_delete_rows AS source
     ON $joinClause;
   DROP TABLE #delta_delete_rows;''';
+}
+
+String _buildPostUploadProtectionStatements({
+  required String database,
+  required String schema,
+  required String table,
+  required String stageTarget,
+  required List<SqlSyncColumnDefinition> columns,
+  required List<String> primaryKeyColumns,
+  required List<Map<String, dynamic>> deltaDeleteRows,
+  required int changeTrackingVersion,
+}) {
+  if (changeTrackingVersion < 0) {
+    throw ArgumentError.value(
+      changeTrackingVersion,
+      'changeTrackingVersion',
+      'Post-upload protection requires a non-negative Change Tracking version.',
+    );
+  }
+  final definitionsByName = {
+    for (final column in columns) column.name.toLowerCase(): column,
+  };
+  final keyColumns = primaryKeyColumns
+      .map((name) => definitionsByName[name.toLowerCase()])
+      .whereType<SqlSyncColumnDefinition>()
+      .toList(growable: false);
+  if (keyColumns.length != primaryKeyColumns.length) {
+    throw ArgumentError(
+      'Every protected incoming row key must have a column definition.',
+    );
+  }
+  final keyColumnList = keyColumns
+      .map((column) => quoteIdentifier(column.name))
+      .join(', ');
+  final keyColumnDefinitions = keyColumns
+      .map(
+        (column) =>
+            '${quoteIdentifier(column.name)} ${column.sqlCastType} NOT NULL',
+      )
+      .join(',\n    ');
+  final stageKeyProjection = keyColumns
+      .map((column) => 'source.${quoteIdentifier(column.name)}')
+      .join(', ');
+  final incomingToTargetJoin = keyColumns
+      .map(
+        (column) =>
+            'target.${quoteIdentifier(column.name)} = incoming.${quoteIdentifier(column.name)}',
+      )
+      .join(' AND ');
+  final incomingToTrackingJoin = keyColumns
+      .map(
+        (column) =>
+            'ct.${quoteIdentifier(column.name)} = incoming.${quoteIdentifier(column.name)}',
+      )
+      .join(' AND ');
+  final protectedToStageJoin = keyColumns
+      .map(
+        (column) =>
+            'protected.${quoteIdentifier(column.name)} = source.${quoteIdentifier(column.name)}',
+      )
+      .join(' AND ');
+  final incomingKeyProjection = keyColumns
+      .map((column) => 'incoming.${quoteIdentifier(column.name)}')
+      .join(', ');
+  final incomingKeyGroup = keyColumns
+      .map((column) => 'incoming.${quoteIdentifier(column.name)}')
+      .join(', ');
+  final firstKey = quoteIdentifier(keyColumns.first.name);
+  final target =
+      '${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}';
+  final deleteKeyInsert =
+      deltaDeleteRows.isEmpty
+          ? ''
+          : '''
+  INSERT INTO #sqlsync_incoming_keys ($keyColumnList)
+  VALUES
+      ${deltaDeleteRows.map((row) => '(${keyColumns.map((column) => sourceBatchTargetLiteral(column, row[column.name])).join(', ')})').join(',\n      ')};''';
+  return '''
+  CREATE TABLE #sqlsync_incoming_keys (
+    $keyColumnDefinitions
+  );
+  INSERT INTO #sqlsync_incoming_keys ($keyColumnList)
+  SELECT DISTINCT $stageKeyProjection
+  FROM $stageTarget AS source;
+  $deleteKeyInsert
+
+  -- Hold key/range locks until commit. A user write that starts after this
+  -- point waits and is therefore a post-download change for the next cycle.
+  DECLARE @SqlSyncLockedRows BIGINT = 0;
+  SELECT @SqlSyncLockedRows = COUNT_BIG(target.$firstKey)
+  FROM #sqlsync_incoming_keys AS incoming
+  LEFT JOIN $target AS target WITH (UPDLOCK, HOLDLOCK)
+    ON $incomingToTargetJoin;
+
+  CREATE TABLE #sqlsync_protected_keys (
+    $keyColumnDefinitions
+  );
+  INSERT INTO #sqlsync_protected_keys ($keyColumnList)
+  SELECT $incomingKeyProjection
+  FROM #sqlsync_incoming_keys AS incoming
+  INNER JOIN CHANGETABLE(CHANGES $target, $changeTrackingVersion) AS ct
+    ON $incomingToTrackingJoin
+  WHERE ct.SYS_CHANGE_CONTEXT IS NULL
+     OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
+  GROUP BY $incomingKeyGroup;
+  SET @SqlSyncProtectedRows = @@ROWCOUNT;
+
+  -- Remove only incoming rows whose permanent key was edited locally after
+  -- this client uploaded. Unrelated local rows are never scanned or changed.
+  DELETE source
+  FROM $stageTarget AS source
+  INNER JOIN #sqlsync_protected_keys AS protected
+    ON $protectedToStageJoin;
+  SET @SqlSyncProtectedUpsertRows = @@ROWCOUNT;
+  DROP TABLE #sqlsync_incoming_keys;''';
 }
 
 String _buildLogicalIdentityReconciliationSql({

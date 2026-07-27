@@ -1439,7 +1439,13 @@ class _ClientsPageState extends State<ClientsPage> {
   DataRow _buildClientDataRow(AdminAgent agent) {
     final selected = agent.clientName == _selectedClientName;
     final jobs = _jobsFor(agent);
-    final activityStatus = _clientActivityStatus(agent, jobs);
+    final activityStatus = _clientActivityStatus(
+      agent,
+      jobs,
+      serverActivities: (_state?.clientActivities ??
+              const <AdminClientActivity>[])
+          .where((activity) => activity.clientName == agent.clientName),
+    );
     return DataRow(
       selected: selected,
       cells: [
@@ -1485,7 +1491,12 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
-  String _clientActivityStatus(AdminAgent agent, List<AdminJob> jobs) {
+  String _clientActivityStatus(
+    AdminAgent agent,
+    List<AdminJob> jobs, {
+    Iterable<AdminClientActivity> serverActivities =
+        const <AdminClientActivity>[],
+  }) {
     if (!agent.isOnline) return 'Offline';
     if ((_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).any(
       (issue) =>
@@ -1497,13 +1508,12 @@ class _ClientsPageState extends State<ClientsPage> {
     if (!agent.serverConnected) return 'Server offline';
     if (!agent.sqlConnected) return 'SQL offline';
 
-    final currentStatuses =
-        jobs
-            .where(
-              (job) => job.isActive || job.status.toLowerCase() == 'waiting',
-            )
-            .map((job) => job.status.toLowerCase())
-            .toSet();
+    final currentStatuses = <String>{
+      ...jobs
+          .where((job) => job.isActive || job.status.toLowerCase() == 'waiting')
+          .map((job) => job.status.toLowerCase()),
+      ...serverActivities.map((activity) => activity.status.toLowerCase()),
+    };
     for (final phase in const [
       'applying',
       'downloading',

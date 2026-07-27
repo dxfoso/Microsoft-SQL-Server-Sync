@@ -112,6 +112,66 @@ void main() {
   });
 
   test(
+    'staged delta protects only incoming keys changed locally after upload',
+    () {
+      final sql = buildTargetSnapshotStageApplySql(
+        database: 'db',
+        schema: 'dbo',
+        table: 'items',
+        stageTableName: '#stage_items',
+        columns: const [
+          SqlSyncColumnDefinition(
+            name: 'Id',
+            sqlType: 'int',
+            maxLength: 4,
+            precision: 10,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'Value',
+            sqlType: 'nvarchar',
+            maxLength: 100,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+        ],
+        primaryKeyColumns: const ['Id'],
+        deltaDeleteRows: const [
+          {'Id': 9},
+        ],
+        protectLocalChangesAfterVersion: 42,
+        deleteMissing: false,
+      );
+
+      expect(sql, contains('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;'));
+      expect(sql, contains('CREATE TABLE #sqlsync_incoming_keys'));
+      expect(
+        sql,
+        contains(
+          'LEFT JOIN [db].[dbo].[items] AS target WITH (UPDLOCK, HOLDLOCK)',
+        ),
+      );
+      expect(
+        sql,
+        contains('CHANGETABLE(CHANGES [db].[dbo].[items], 42) AS ct'),
+      );
+      expect(sql, contains('ct.SYS_CHANGE_CONTEXT <> 0x53514C53594E43'));
+      expect(
+        sql,
+        contains('DELETE source\n  FROM tempdb.dbo.[#stage_items] AS source'),
+      );
+      expect(sql, contains('INNER JOIN #sqlsync_protected_keys AS target'));
+      expect(sql, contains('__SQL_SYNC_PROTECTED__='));
+      expect(sql, contains('__SQL_SYNC_PROTECTED_UPSERTS__='));
+      expect(sql, contains('__SQL_SYNC_PROTECTED_DELETES__='));
+    },
+  );
+
+  test(
     'authoritative replacement removes a conflicting old identity before insert',
     () {
       final sql = buildTargetSnapshotStageApplySql(

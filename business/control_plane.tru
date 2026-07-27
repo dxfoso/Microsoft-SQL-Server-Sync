@@ -1996,6 +1996,49 @@ function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
   return rows;
 }
 
+function live_state_client_activity_rows_for(current: map<json>): array<json> {
+  let where = {
+    status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+  };
+  if (is_client_user(current)) {
+    where = {
+      clientUserId: current.id,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    };
+  }
+  if (is_owner_user(current)) {
+    where = {
+      ownerUserId: current.id,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    };
+  }
+  const rows = db.selectMany(SyncJob, {
+    where,
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'table', 'direction', 'status', 'message', 'batchId', 'updatedAt'],
+    limit: 250
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function public_client_activity_payloads(rows: array<json>): array<json> {
+  return rows.map((row) => {
+    return {
+      id: row.id,
+      clientName: row.clientName,
+      table: row.table,
+      direction: row.direction,
+      status: row.status,
+      message: row.message,
+      batchId: row.batchId,
+      updatedAt: row.updatedAt
+    };
+  });
+}
+
 function bounded_public_agent_payloads(rows: array<json>, limit: int): map<json> {
   let items = [];
   let seen = 0;
@@ -4493,6 +4536,9 @@ function live_state(token: string? = null): map<json> {
     live_state_job_rows_for(current, jobLimit),
     jobLimit
   );
+  const clientActivities = public_client_activity_payloads(
+    live_state_client_activity_rows_for(current)
+  );
   const visibleOwnerUserIds = unique_string_values(
     agentRows.map((agent) => string.from(agent.ownerUserId))
   );
@@ -4507,6 +4553,7 @@ function live_state(token: string? = null): map<json> {
     syncGate,
     agents: agentPage.items,
     jobs: jobPage.items,
+    clientActivities,
     limits: {
       agents: agentLimit,
       jobs: jobLimit

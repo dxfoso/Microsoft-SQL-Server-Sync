@@ -4042,6 +4042,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           'insertedRows': applyStats.insertedRows,
           'updatedRows': applyStats.updatedRows,
           'deletedRows': applyStats.deletedRows,
+          'protectedRows': applyStats.protectedRows,
           'elapsedMs': downloadStopwatch.elapsedMilliseconds,
         },
       );
@@ -4115,7 +4116,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       appendHistory: true,
       success: converged,
       overrideMessage:
-          'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${pendingAfterApply.length} quarantined.',
+          'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${applyStats.protectedRows} post-upload local change${applyStats.protectedRows == 1 ? '' : 's'} protected; ${pendingAfterApply.length} quarantined.',
     );
     downloadStopwatch.stop();
     logAgentDiagnostic(
@@ -4129,6 +4130,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'insertedRows': applyStats.insertedRows,
         'updatedRows': applyStats.updatedRows,
         'deletedRows': applyStats.deletedRows,
+        'protectedRows': applyStats.protectedRows,
+        'protectedUpsertRows': applyStats.protectedUpsertRows,
+        'protectedDeleteRows': applyStats.protectedDeleteRows,
         'rejectedRows': pendingAfterApply.length,
         'targetRowCount': reconciledTargetRowCount,
         'elapsedMs': downloadStopwatch.elapsedMilliseconds,
@@ -4511,6 +4515,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
+    final postUploadChangeTrackingVersion =
+        applyDelta ? snapshot.changeTrackingVersions[widget.clientName] : null;
     if (replaceTarget && snapshot.isDelta) {
       throw StateError(
         'Authoritative reconciliation requires a complete source snapshot.',
@@ -4619,7 +4625,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         schema: targetTable.schema,
         table: targetTable.table,
       );
-      final insertedRows = await _applySourceRowsToTarget(
+      final applyResult = await _applySourceRowsToTarget(
         profile: targetProfile,
         database: targetDatabase,
         schema: targetTable.schema,
@@ -4644,11 +4650,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               'Unable to read the target row count after authoritative reconciliation.',
         );
       }
-      stats.insertedRows += insertedRows;
-      stats.updatedRows += rows.length - insertedRows;
+      stats.insertedRows += applyResult.insertedRows;
+      stats.updatedRows += rows.length - applyResult.insertedRows;
       stats.deletedRows += math.max(
         0,
-        rowCountBefore.value + insertedRows - rowCountAfter.value,
+        rowCountBefore.value + applyResult.insertedRows - rowCountAfter.value,
       );
     } else {
       final rowCountBefore = await _queryTableRowCount(
@@ -4670,7 +4676,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             },
           )
           .toList(growable: false);
-      final insertedRows = await _applySourceRowsToTarget(
+      final applyResult = await _applySourceRowsToTarget(
         profile: targetProfile,
         database: targetDatabase,
         schema: targetTable.schema,
@@ -4680,6 +4686,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         rows: rows,
         deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>(),
         logicalIdentityColumns: logicalIdentityColumns,
+        protectLocalChangesAfterVersion: postUploadChangeTrackingVersion,
         deleteMissing: false,
         manageTriggers: true,
         insertOnly: false,
@@ -4696,12 +4703,36 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               'Unable to read the target row count after atomic delta apply.',
         );
       }
-      stats.insertedRows += insertedRows;
-      stats.updatedRows += rows.length - insertedRows;
+      stats.insertedRows += applyResult.insertedRows;
+      stats.updatedRows += math.max(
+        0,
+        rows.length -
+            applyResult.protectedUpsertRows -
+            applyResult.insertedRows,
+      );
       stats.deletedRows += math.max(
         0,
-        rowCountBefore.value + insertedRows - rowCountAfter.value,
+        rowCountBefore.value + applyResult.insertedRows - rowCountAfter.value,
       );
+      stats.protectedUpsertRows += applyResult.protectedUpsertRows;
+      stats.protectedDeleteRows += applyResult.protectedDeleteRows;
+      if (applyResult.protectedRows > 0) {
+        logAgentDiagnostic(
+          'sync.apply.post_upload_changes_protected',
+          level: AgentLogLevel.warning,
+          context: {
+            'jobId': job.id,
+            'batchId': job.batchId,
+            'table': job.table,
+            'changeTrackingVersion': postUploadChangeTrackingVersion,
+            'protectedRows': applyResult.protectedRows,
+            'protectedUpsertRows': applyResult.protectedUpsertRows,
+            'protectedDeleteRows': applyResult.protectedDeleteRows,
+          },
+          message:
+              'Deferred ${applyResult.protectedRows} incoming row change(s) because the same local primary key changed after upload. The local change remains queued for the next sync.',
+        );
+      }
     }
 
     if (!refreshLocalState) {
@@ -5542,7 +5573,7 @@ END
     return decodeSqlServerUtf16Hex(decoded.substring(2));
   }
 
-  Future<int> _applySourceRowsToTarget({
+  Future<_TargetApplyResult> _applySourceRowsToTarget({
     required _SqlConnectionProfile profile,
     required String database,
     required String schema,
@@ -5552,6 +5583,7 @@ END
     List<List<String>> uniqueIndexColumnSets = const <List<String>>[],
     List<String> logicalIdentityColumns = const <String>[],
     List<Map<String, dynamic>> deltaDeleteRows = const <Map<String, dynamic>>[],
+    int? protectLocalChangesAfterVersion,
     required List<Map<String, dynamic>> rows,
     bool deleteMissing = true,
     bool manageTriggers = true,
@@ -5615,6 +5647,7 @@ END
           uniqueIndexColumnSets: uniqueIndexColumnSets,
           logicalIdentityColumns: logicalIdentityColumns,
           deltaDeleteRows: deltaDeleteRows,
+          protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
           deleteMissing: deleteMissing,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,
@@ -5626,8 +5659,28 @@ END
       final reportedInsertedRows = _insertedRowCountFromSqlOutput(
         applyResult.stdout.toString(),
       );
+      final protectedRows =
+          _sqlSyncCountFromOutput(applyResult.stdout.toString(), 'PROTECTED') ??
+          0;
+      final protectedUpsertRows =
+          _sqlSyncCountFromOutput(
+            applyResult.stdout.toString(),
+            'PROTECTED_UPSERTS',
+          ) ??
+          0;
+      final protectedDeleteRows =
+          _sqlSyncCountFromOutput(
+            applyResult.stdout.toString(),
+            'PROTECTED_DELETES',
+          ) ??
+          0;
       if (reportedInsertedRows != null) {
-        return reportedInsertedRows;
+        return _TargetApplyResult(
+          insertedRows: reportedInsertedRows,
+          protectedRows: protectedRows,
+          protectedUpsertRows: protectedUpsertRows,
+          protectedDeleteRows: protectedDeleteRows,
+        );
       }
       final rowCountAfter = await _queryTableRowCount(
         profile: profile,
@@ -5648,7 +5701,12 @@ END
       logStartupEvent(
         'sqlcmd omitted the target apply result marker for $database.$schema.$table; counted $insertedRows inserted row(s) from target cardinality.',
       );
-      return insertedRows;
+      return _TargetApplyResult(
+        insertedRows: insertedRows,
+        protectedRows: protectedRows,
+        protectedUpsertRows: protectedUpsertRows,
+        protectedDeleteRows: protectedDeleteRows,
+      );
     } finally {
       await _dropTargetSnapshotStage(
         profile: profile,
@@ -5705,7 +5763,13 @@ END
   }
 
   int? _insertedRowCountFromSqlOutput(String output) {
-    final match = RegExp(r'__SQL_SYNC_INSERTED__=(\d+)').firstMatch(output);
+    return _sqlSyncCountFromOutput(output, 'INSERTED');
+  }
+
+  int? _sqlSyncCountFromOutput(String output, String marker) {
+    final match = RegExp(
+      '__SQL_SYNC_${RegExp.escape(marker)}__=(\\d+)',
+    ).firstMatch(output);
     if (match == null) {
       return null;
     }
@@ -9626,8 +9690,25 @@ class _DeltaApplyStats {
   int insertedRows = 0;
   int updatedRows = 0;
   int deletedRows = 0;
+  int protectedUpsertRows = 0;
+  int protectedDeleteRows = 0;
   int get appliedRows => insertedRows + updatedRows + deletedRows;
+  int get protectedRows => protectedUpsertRows + protectedDeleteRows;
   final Set<String> seenRowIdentities = <String>{};
+}
+
+class _TargetApplyResult {
+  const _TargetApplyResult({
+    required this.insertedRows,
+    this.protectedRows = 0,
+    this.protectedUpsertRows = 0,
+    this.protectedDeleteRows = 0,
+  });
+
+  final int insertedRows;
+  final int protectedRows;
+  final int protectedUpsertRows;
+  final int protectedDeleteRows;
 }
 
 class _StringQueryResult {

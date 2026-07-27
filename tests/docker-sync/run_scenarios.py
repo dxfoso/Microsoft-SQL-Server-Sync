@@ -214,6 +214,7 @@ def generate_sql(
     columns=None,
     primary_key_columns=None,
     logical_identity_columns=None,
+    protect_local_changes_after_version=None,
 ):
     columns = columns or COLUMNS
     primary_key_columns = primary_key_columns or ["Id"]
@@ -231,6 +232,8 @@ def generate_sql(
         "deletes": deletes or [],
         "deleteMissing": delete_missing,
     }
+    if protect_local_changes_after_version is not None:
+        request["protectLocalChangesAfterVersion"] = protect_local_changes_after_version
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
         json.dump(request, handle, ensure_ascii=False)
         request_path = Path(handle.name)
@@ -255,6 +258,7 @@ def apply(
     columns=None,
     primary_key_columns=None,
     logical_identity_columns=None,
+    protect_local_changes_after_version=None,
 ):
     generated = generate_sql(
         database,
@@ -266,6 +270,7 @@ def apply(
         columns=columns,
         primary_key_columns=primary_key_columns,
         logical_identity_columns=logical_identity_columns,
+        protect_local_changes_after_version=protect_local_changes_after_version,
     )
     with tempfile.NamedTemporaryFile("w", suffix=".sql", encoding="utf-8", delete=False) as handle:
         handle.write(generated)
@@ -370,6 +375,89 @@ ORDER BY Id;
         database=database,
     )
     return [line.strip() for line in result.stdout.splitlines() if "|" in line]
+
+
+def scalar_int(database, sql):
+    result = sqlcmd(f"SET NOCOUNT ON; {sql}", database=database)
+    values = [line.strip() for line in result.stdout.splitlines() if line.strip().isdigit()]
+    if not values:
+        raise AssertionError(f"Expected an integer result from SQL: {result.stdout}")
+    return int(values[-1])
+
+
+def assert_post_upload_overlap_protection(database):
+    sqlcmd(
+        """
+DISABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+INSERT dbo.SyncItems
+  (Id, Code, Name, ArabicText, Quantity, Amount, ChangedAt, Payload)
+VALUES
+  (9000, N'GUARD-9000', N'Before upload', N'local', 1, 1.00, SYSUTCDATETIME(), 0x01),
+  (9001, N'GUARD-9001', N'Before upload', N'baseline', 1, 1.00, SYSUTCDATETIME(), 0x01),
+  (9002, N'GUARD-9002', N'Unrelated before upload', N'baseline', 1, 1.00, SYSUTCDATETIME(), 0x01);
+ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+""",
+        database=database,
+    )
+    baseline = scalar_int(database, "SELECT CHANGE_TRACKING_CURRENT_VERSION();")
+    sqlcmd(
+        """
+DISABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+UPDATE dbo.SyncItems SET Name = N'Local after upload' WHERE Id = 9000;
+UPDATE dbo.SyncItems SET Name = N'Unrelated local after upload' WHERE Id = 9002;
+ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+""",
+        database=database,
+    )
+    output = apply(
+        database,
+        rows=[
+            row(9000, "GUARD-9000", "Remote incoming must be deferred"),
+            row(9001, "GUARD-9001", "Remote incoming applied"),
+        ],
+        protect_local_changes_after_version=baseline,
+    )
+    if "__SQL_SYNC_PROTECTED__=1" not in output:
+        raise AssertionError(f"Expected one protected incoming key: {output}")
+    result = sqlcmd(
+        """
+SET NOCOUNT ON;
+SELECT CONCAT(Id, N'|', Name)
+FROM dbo.SyncItems
+WHERE Id IN (9000, 9001, 9002)
+ORDER BY Id;
+""",
+        database=database,
+    )
+    values = [line.strip() for line in result.stdout.splitlines() if "|" in line]
+    expected = [
+        "9000|Local after upload",
+        "9001|Remote incoming applied",
+        "9002|Unrelated local after upload",
+    ]
+    if values != expected:
+        raise AssertionError(f"Post-upload overlap protection failed: {values}")
+    user_context_rows = scalar_int(
+        database,
+        f"""
+SELECT COUNT(*)
+FROM CHANGETABLE(CHANGES dbo.SyncItems, {baseline}) AS ct
+WHERE ct.Id IN (9000, 9002)
+  AND (ct.SYS_CHANGE_CONTEXT IS NULL OR ct.SYS_CHANGE_CONTEXT <> 0x53514C53594E43);
+""",
+    )
+    if user_context_rows != 2:
+        raise AssertionError(
+            f"Expected protected and unrelated user changes to remain outbound; count={user_context_rows}"
+        )
+    sqlcmd(
+        """
+DISABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+DELETE dbo.SyncItems WHERE Id IN (9000, 9001, 9002);
+ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+""",
+        database=database,
+    )
 
 
 def invoice_line_rows(database):
@@ -937,6 +1025,9 @@ VALUES
         apply(database, rows=[recovery_row])
     assert_equal(*DATABASES)
 
+    assert_post_upload_overlap_protection(DATABASES[0])
+    assert_equal(*DATABASES)
+
     assert_context_filtered(DATABASES[0])
     print(json.dumps({
         "ok": True,
@@ -953,6 +1044,7 @@ VALUES
             "large-1200-row-batch", "idempotent-retry",
             "authoritative-replace-unique-conflict-delete-missing-unicode-retry",
             "rejected-row-rollback-and-recovery", "change-context",
+            "post-upload-overlap-row-protection",
             "business-trigger-bypass-and-restore",
         ],
         "finalRowCount": len(table_rows(DATABASES[0])),
