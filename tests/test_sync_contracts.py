@@ -620,6 +620,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("status: 'uploading',", upload_body)
         self.assertIn("progress: 35,", upload_body)
         self.assertIn("await _controlPlaneClient.uploadMultiWriterDelta(", upload_body)
+        self.assertIn("const maxDeltaPayloadBytes = 128000;", upload_body)
+        self.assertIn("math.min(offset + 100, rows.length)", upload_body)
         self.assertNotIn("await _controlPlaneClient.uploadSnapshot(", upload_body)
         self.assertIn("_applyRemoteJobState(", upload_body)
         self.assertIn("appendHistory: true,", upload_body)

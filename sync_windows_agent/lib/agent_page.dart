@@ -3617,8 +3617,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       throw _SyncJobCancelled(job.id);
     }
 
-    // Bound serialized payload size; SQL rows can contain large text.
-    const maxDeltaPayloadBytes = 500000;
+    // Keep each control-plane call well below the backend's memory-pressure
+    // threshold. TRU/Wasm JSON conversion temporarily amplifies encoded
+    // payloads, especially for wide SQL tables.
+    const maxDeltaPayloadBytes = 128000;
     final rows = _snapshotRows(snapshot.snapshotJson);
     final columns = _snapshotColumns(snapshot.snapshotJson);
     final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
@@ -3654,7 +3656,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     } else {
       for (var offset = 0; offset < rows.length;) {
         _checkSyncJobNotCancelled(job.id);
-        var end = math.min(offset + 500, rows.length);
+        var end = math.min(offset + 100, rows.length);
         while (end > offset + 1 &&
             utf8.encode(jsonEncode(rows.sublist(offset, end))).length >
                 maxDeltaPayloadBytes) {
