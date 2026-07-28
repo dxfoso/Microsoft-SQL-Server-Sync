@@ -2741,9 +2741,13 @@ function sync_agents_enabled_for_table(agents: array<json>, table: string, polic
   let participants = [];
   for (const agent of agents) {
     let enabledTables = [];
-    const cache = tableCaches == null
-      ? null
-      : scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
+    let cache = null;
+    if (tableCaches != null) {
+      cache = scheduler_agent_table_state_cache_for_agent(
+        string.from(agent.clientName),
+        tableCaches
+      );
+    }
     if (cache != null && cache.enabledTables != null) {
       enabledTables = cache.enabledTables;
     } else {
