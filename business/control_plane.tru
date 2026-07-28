@@ -3129,9 +3129,10 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
           string.from(agent.clientName),
           tableCaches
         );
-        const enabledTables = cache == null || cache.enabledTables == null
-          ? []
-          : cache.enabledTables;
+        let enabledTables = [];
+        if (cache != null && cache.enabledTables != null) {
+          enabledTables = cache.enabledTables;
+        }
         if (string_array_contains(enabledTables, table)) {
           stillEnabled = true;
         }
