@@ -138,7 +138,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("replicationUseWindowsAuth: bool = true", source)
         self.assertIn("replicationUser: string = ''", source)
         self.assertIn("replicationPassword: string = ''", source)
-        self.assertIn("field replicationPassword: string = '' min=0 max=256", agent_schema)
+        self.assertIn("field replicationPassword: string? min=0 max=256", agent_schema)
         self.assertIn("clientUpdate: agent_client_update_payload(nextAgent)", source)
         self.assertNotIn("symmetricDsStatus", source)
         self.assertNotIn("agent_symmetricds_status_post", source)

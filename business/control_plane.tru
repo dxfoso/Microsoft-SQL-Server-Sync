@@ -35,7 +35,7 @@ class Agent {
   field database: string min=0 max=256
   field replicationUseWindowsAuth: bool
   field replicationUser: string min=0 max=256
-  field replicationPassword: string = '' min=0 max=256
+  field replicationPassword: string? min=0 max=256
   field syncEnabled: bool?
   field isOnline: bool
   field historyLimit: int min=1 max=100
