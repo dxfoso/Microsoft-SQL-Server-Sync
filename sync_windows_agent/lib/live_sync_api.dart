@@ -18,6 +18,7 @@ const int _snapshotTransferChunkSizeBytes = 100 * 1024;
 const int _defaultSnapshotTransferMaxAttempts = 10;
 const Duration _defaultSnapshotTransferRequestTimeout = Duration(minutes: 10);
 const Duration _defaultControlPlaneRequestTimeout = Duration(seconds: 10);
+const Duration _defaultHeartbeatRequestTimeout = Duration(seconds: 30);
 const Duration _defaultDiagnosticsUploadRequestTimeout = Duration(minutes: 2);
 const List<Duration> _defaultSnapshotTransferRetryDelays = <Duration>[
   Duration(seconds: 1),
@@ -82,6 +83,7 @@ class AgentControlPlaneClient {
     http.Client? client,
     String? baseUrl,
     Duration controlPlaneRequestTimeout = _defaultControlPlaneRequestTimeout,
+    Duration heartbeatRequestTimeout = _defaultHeartbeatRequestTimeout,
     Duration diagnosticsUploadRequestTimeout =
         _defaultDiagnosticsUploadRequestTimeout,
     int? snapshotTransferMaxAttempts,
@@ -90,6 +92,7 @@ class AgentControlPlaneClient {
   }) : _client = client ?? http.Client(),
        _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultControlPlaneUrl),
        _controlPlaneRequestTimeout = controlPlaneRequestTimeout,
+       _heartbeatRequestTimeout = heartbeatRequestTimeout,
        _diagnosticsUploadRequestTimeout = diagnosticsUploadRequestTimeout,
        _snapshotTransferMaxAttempts =
            (snapshotTransferMaxAttempts ??
@@ -113,6 +116,7 @@ class AgentControlPlaneClient {
   final http.Client _client;
   final String _baseUrl;
   final Duration _controlPlaneRequestTimeout;
+  final Duration _heartbeatRequestTimeout;
   final Duration _diagnosticsUploadRequestTimeout;
   final int _snapshotTransferMaxAttempts;
   final Duration _snapshotTransferRequestTimeout;
@@ -548,25 +552,30 @@ class AgentControlPlaneClient {
     required String clientVersion,
   }) async {
     final requestStartedAtUtc = DateTime.now().toUtc();
-    final response = await _invokeFunction('agents_heartbeat', {
-      'clientName': clientName,
-      'machineName': machineName,
-      'historyLimit': historyLimit,
-      'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
-      'server': server,
-      'database': database,
-      'replicationUseWindowsAuth': replicationUseWindowsAuth,
-      'replicationUser': replicationUser,
-      'replicationPassword': replicationPassword,
-      'serverConnected': serverConnected,
-      'sqlConnected': sqlConnected,
-      'selectedTable': selectedTable,
-      'clientVersion': clientVersion,
-      'tables': tables.entries
-          .map((entry) => {'table': entry.key, ...entry.value.toJson()})
-          .toList(growable: false),
-      'tableRelationships': tableRelationships,
-    }, 'sending heartbeat');
+    final response = await _invokeFunction(
+      'agents_heartbeat',
+      {
+        'clientName': clientName,
+        'machineName': machineName,
+        'historyLimit': historyLimit,
+        'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
+        'server': server,
+        'database': database,
+        'replicationUseWindowsAuth': replicationUseWindowsAuth,
+        'replicationUser': replicationUser,
+        'replicationPassword': replicationPassword,
+        'serverConnected': serverConnected,
+        'sqlConnected': sqlConnected,
+        'selectedTable': selectedTable,
+        'clientVersion': clientVersion,
+        'tables': tables.entries
+            .map((entry) => {'table': entry.key, ...entry.value.toJson()})
+            .toList(growable: false),
+        'tableRelationships': tableRelationships,
+      },
+      'sending heartbeat',
+      timeout: _heartbeatRequestTimeout,
+    );
     final responseReceivedAtUtc = DateTime.now().toUtc();
 
     if (response is! Map) {
@@ -1582,6 +1591,17 @@ class AgentControlPlaneClient {
       statusCode: response.statusCode,
     );
   }
+}
+
+bool isTemporaryControlPlaneUnavailable(Object error) {
+  return error is AgentControlPlaneException && error.statusCode == 503;
+}
+
+bool serverConnectedAfterHeartbeatFailure({
+  required bool wasConnected,
+  required Object error,
+}) {
+  return isTemporaryControlPlaneUnavailable(error) ? wasConnected : false;
 }
 
 class HeartbeatResult {

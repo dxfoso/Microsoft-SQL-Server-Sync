@@ -2549,7 +2549,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   bool _isTemporaryControlPlaneUnavailable(Object error) {
-    return error is AgentControlPlaneException && error.statusCode == 503;
+    return isTemporaryControlPlaneUnavailable(error);
   }
 
   bool _isRetryableSyncJobError(Object error) {
@@ -2772,8 +2772,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       final temporaryControlPlaneUnavailable =
           _isTemporaryControlPlaneUnavailable(error);
+      final nextServerConnected = serverConnectedAfterHeartbeatFailure(
+        wasConnected: _serverConnected,
+        error: error,
+      );
       setState(() {
-        _serverConnected = false;
+        _serverConnected = nextServerConnected;
         _checkingServerConnection = false;
         _lastServerCheck = DateTime.now();
         _errorMessage =

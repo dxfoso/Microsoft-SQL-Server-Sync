@@ -202,6 +202,71 @@ void main() {
   });
 
   test(
+    'heartbeat uses its longer timeout than regular control plane calls',
+    () async {
+      final client = AgentControlPlaneClient(
+        client: _DelayedClient(
+          delay: const Duration(milliseconds: 100),
+          responseForName: (name) {
+            expect(name, 'agents_heartbeat');
+            return <String, Object?>{};
+          },
+        ),
+        baseUrl: 'https://example.com/call',
+        controlPlaneRequestTimeout: const Duration(milliseconds: 50),
+        heartbeatRequestTimeout: const Duration(milliseconds: 200),
+      );
+
+      final heartbeat = await client.heartbeat(
+        clientName: 'c1',
+        machineName: 'machine',
+        historyLimit: 5,
+        autoSyncIntervalMinutes: 15,
+        server: '',
+        database: '',
+        replicationUseWindowsAuth: true,
+        replicationUser: '',
+        replicationPassword: '',
+        serverConnected: true,
+        sqlConnected: true,
+        selectedTable: null,
+        tables: const {},
+        tableRelationships: const [],
+        clientVersion: '1.0.192+196',
+      );
+
+      expect(heartbeat.jobs, isEmpty);
+    },
+  );
+
+  test('transient heartbeat failure preserves prior connected state', () {
+    const timeout = AgentControlPlaneException(
+      'Control plane request timed out.',
+      statusCode: 503,
+    );
+    const unauthorized = AgentControlPlaneException(
+      'Permission denied.',
+      statusCode: 401,
+    );
+
+    expect(
+      serverConnectedAfterHeartbeatFailure(wasConnected: true, error: timeout),
+      isTrue,
+    );
+    expect(
+      serverConnectedAfterHeartbeatFailure(wasConnected: false, error: timeout),
+      isFalse,
+    );
+    expect(
+      serverConnectedAfterHeartbeatFailure(
+        wasConnected: true,
+        error: unauthorized,
+      ),
+      isFalse,
+    );
+  });
+
+  test(
     'heartbeat parses pending window actions and acknowledges them through the dedicated call',
     () async {
       final client = AgentControlPlaneClient(

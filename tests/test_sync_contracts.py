@@ -373,6 +373,7 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_sync_loop_suppresses_temporary_control_plane_errors_but_records_hard_failures(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        live_sync_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         heartbeat_body = agent_page.split("Future<void> _syncWithControlPlane() async {", 1)[
             1
         ].split("Future<void> _uploadRequestedDiagnostics(", 1)[0]
@@ -385,7 +386,19 @@ class SyncContractsTests(unittest.TestCase):
             "_isTemporaryControlPlaneUnavailable(error);",
             heartbeat_body,
         )
-        self.assertIn("_serverConnected = false;", heartbeat_body)
+        self.assertIn(
+            "serverConnectedAfterHeartbeatFailure(",
+            heartbeat_body,
+        )
+        self.assertIn("_serverConnected = nextServerConnected;", heartbeat_body)
+        self.assertIn(
+            "const Duration _defaultHeartbeatRequestTimeout = Duration(seconds: 30);",
+            live_sync_api,
+        )
+        self.assertIn(
+            "timeout: _heartbeatRequestTimeout",
+            live_sync_api,
+        )
         self.assertIn("_checkingServerConnection = false;", heartbeat_body)
         self.assertIn("_lastServerCheck = DateTime.now();", heartbeat_body)
         self.assertIn(

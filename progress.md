@@ -1,1 +1,1 @@
-65% - row-scoped protection and accurate Waiting status pass full local and three-client SQL Server tests; deployment is next.
+65% - false Offline fix passes 141 client, 270 contract, supervisor, and 22 three-client SQL Server scenarios; deployment is next.
