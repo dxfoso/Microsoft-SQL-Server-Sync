@@ -16,6 +16,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertFalse((ROOT / "business/migration/mig_20260628_232845.json").exists())
         self.assertFalse((ROOT / "business/migration/mig_20260630_181319.json").exists())
 
+    def test_deployment_backend_image_runs_validated_as_non_root(self):
+        dockerfile = read_text("Dockerfile.backend")
+
+        self.assertIn("FROM docker.io/library/debian:bullseye-slim AS runtime", dockerfile)
+        self.assertIn("useradd --system --uid 10001 --home-dir /app", dockerfile)
+        self.assertIn(
+            "RUN TRU_VALIDATE_ONLY=1 TRU_CONFIG_PATH=/app/business/tru.json "
+            "tru_server /app/business",
+            dockerfile,
+        )
+        self.assertIn("RUN chown -R 10001:10001 /app", dockerfile)
+        self.assertIn("USER 10001:10001", dockerfile)
+
     def test_windows_agent_uses_snapshot_transport_only(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
