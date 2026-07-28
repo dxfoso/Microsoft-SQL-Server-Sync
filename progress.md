@@ -1,1 +1,1 @@
-45% - Last-hour failure traced to scheduler memory churn and SQL collation mismatch; fixes are implemented and contract tests pass, with full SQL/client verification and deployment in progress.
+85% - Server scheduler is stable and deployed; all local suites plus the mismatched-collation proof pass, with Windows client 1.0.194+198 publication and final c1/c2 retry remaining.

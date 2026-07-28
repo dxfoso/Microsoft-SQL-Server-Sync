@@ -522,24 +522,21 @@ String _buildPostUploadProtectionStatements({
   final stageKeyProjection = keyColumns
       .map((column) => 'source.${quoteIdentifier(column.name)}')
       .join(', ');
-  final incomingToTargetJoin = keyColumns
-      .map(
-        (column) =>
-            'target.${quoteIdentifier(column.name)} = incoming.${quoteIdentifier(column.name)}',
-      )
-      .join(' AND ');
-  final incomingToTrackingJoin = keyColumns
-      .map(
-        (column) =>
-            'ct.${quoteIdentifier(column.name)} = incoming.${quoteIdentifier(column.name)}',
-      )
-      .join(' AND ');
-  final protectedToStageJoin = keyColumns
-      .map(
-        (column) =>
-            'protected.${quoteIdentifier(column.name)} = source.${quoteIdentifier(column.name)}',
-      )
-      .join(' AND ');
+  final incomingToTargetJoin = _matchClauseForAliases(
+    keyColumns,
+    leftAlias: 'target',
+    rightAlias: 'incoming',
+  );
+  final incomingToTrackingJoin = _matchClauseForAliases(
+    keyColumns,
+    leftAlias: 'ct',
+    rightAlias: 'incoming',
+  );
+  final protectedToStageJoin = _matchClauseForAliases(
+    keyColumns,
+    leftAlias: 'protected',
+    rightAlias: 'source',
+  );
   final incomingKeyProjection = keyColumns
       .map((column) => 'incoming.${quoteIdentifier(column.name)}')
       .join(', ');
@@ -1152,6 +1149,25 @@ String nullableMatchClauseForColumns(
           targetExpression = '$targetExpression COLLATE DATABASE_DEFAULT';
         }
         return '(($sourceExpression IS NULL AND target.$quotedColumn IS NULL) OR $targetExpression = $sourceExpression)';
+      })
+      .join(' AND ');
+}
+
+String _matchClauseForAliases(
+  List<SqlSyncColumnDefinition> columns, {
+  required String leftAlias,
+  required String rightAlias,
+}) {
+  return columns
+      .map((column) {
+        final quotedColumn = quoteIdentifier(column.name);
+        var leftExpression = '$leftAlias.$quotedColumn';
+        var rightExpression = '$rightAlias.$quotedColumn';
+        if (column.isTextLike) {
+          leftExpression = '$leftExpression COLLATE DATABASE_DEFAULT';
+          rightExpression = '$rightExpression COLLATE DATABASE_DEFAULT';
+        }
+        return '$leftExpression = $rightExpression';
       })
       .join(' AND ');
 }

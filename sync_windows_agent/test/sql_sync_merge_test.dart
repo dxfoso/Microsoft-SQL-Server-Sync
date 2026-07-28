@@ -177,6 +177,51 @@ void main() {
     },
   );
 
+  test('post-upload protection collates every text key join', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'Connections',
+      stageTableName: '#stage_connections',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'Code',
+          sqlType: 'nvarchar',
+          maxLength: 40,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['Code'],
+      protectLocalChangesAfterVersion: 42,
+      deleteMissing: false,
+    );
+
+    expect(
+      sql,
+      contains(
+        'target.[Code] COLLATE DATABASE_DEFAULT = '
+        'incoming.[Code] COLLATE DATABASE_DEFAULT',
+      ),
+    );
+    expect(
+      sql,
+      contains(
+        'ct.[Code] COLLATE DATABASE_DEFAULT = '
+        'incoming.[Code] COLLATE DATABASE_DEFAULT',
+      ),
+    );
+    expect(
+      sql,
+      contains(
+        'protected.[Code] COLLATE DATABASE_DEFAULT = '
+        'source.[Code] COLLATE DATABASE_DEFAULT',
+      ),
+    );
+  });
+
   test(
     'authoritative replacement removes a conflicting old identity before insert',
     () {
