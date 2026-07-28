@@ -42,6 +42,12 @@ backend:
   enabled: true
   replicas: 1
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/backend:dev
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
   secretName: sql-sync-backend
   service:
     port: 9001

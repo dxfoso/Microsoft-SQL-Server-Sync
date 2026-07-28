@@ -25,6 +25,26 @@ class ChartContractsTests(unittest.TestCase):
         self.assertNotIn("TRU_ADMIN_REQUIRE_KEY", backend_deployment)
         self.assertNotIn("TRU_ADMIN_KEY", backend_deployment)
 
+    def test_backend_volume_is_writable_by_the_non_root_runtime(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        backend_deployment = (
+            ROOT / "templates" / "backend-deployment.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("podSecurityContext:", values_yaml)
+        self.assertIn("runAsUser: 10001", values_yaml)
+        self.assertIn("runAsGroup: 10001", values_yaml)
+        self.assertIn("fsGroup: 10001", values_yaml)
+        self.assertIn("fsGroupChangePolicy: OnRootMismatch", values_yaml)
+        self.assertIn(
+            "toYaml .Values.backend.podSecurityContext",
+            backend_deployment,
+        )
+        self.assertIn("name: backend-data-permissions", backend_deployment)
+        self.assertIn("chown -R 10001:10001 /app/data", backend_deployment)
+        self.assertIn("runAsNonRoot: false", backend_deployment)
+        self.assertIn("runAsUser: 0", backend_deployment)
+
     def test_backend_secret_only_manages_postgres_url(self):
         backend_secret = (ROOT / "templates" / "backend-secret.yaml").read_text(
             encoding="utf-8"
