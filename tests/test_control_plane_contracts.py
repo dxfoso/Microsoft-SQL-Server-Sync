@@ -205,6 +205,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(ack_match)
         ack_body = ack_match.group("body")
 
+        self.assertIn("if (agent.clientUpdateRequestId != null) {", ack_body)
+        self.assertIn(
+            "resolvedRequestId = string.from(agent.clientUpdateRequestId).trim();",
+            ack_body,
+        )
+        self.assertNotIn("string.from(requestId)", ack_body)
         self.assertIn("clientUpdateLastRequestId: resolvedRequestIdOrNull,", ack_body)
         self.assertIn("clientUpdateLastAcknowledgedAt: now_iso(),", ack_body)
         self.assertIn("clientUpdateStatus: truncate_text(status.trim(), 32),", ack_body)
@@ -662,11 +668,31 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIsNotNone(ack_match)
         ack_body = ack_match.group("body")
 
+        self.assertIn("if (agent.windowActionRequestId != null) {", ack_body)
+        self.assertIn(
+            "resolvedRequestId = string.from(agent.windowActionRequestId).trim();",
+            ack_body,
+        )
+        self.assertNotIn("string.from(requestId)", ack_body)
         self.assertIn("windowActionLastRequestId: resolvedRequestIdOrNull,", ack_body)
         self.assertIn("windowActionLastAcknowledgedAt: now_iso(),", ack_body)
         self.assertIn("windowActionName: nextAction,", ack_body)
         self.assertIn("windowActionStatus: truncate_text(status.trim(), 32),", ack_body)
         self.assertIn("windowActionMessage: truncate_text(message, 4000),", ack_body)
+
+        upload_match = re.search(
+            r"function agent_diagnostics_upload\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(upload_match)
+        upload_body = upload_match.group("body")
+        self.assertIn("if (agent.diagnosticRequestId != null) {", upload_body)
+        self.assertIn(
+            "resolvedRequestId = string.from(agent.diagnosticRequestId).trim();",
+            upload_body,
+        )
+        self.assertNotIn("string.from(requestId)", upload_body)
 
     def test_ensure_agent_repairs_stale_rows_before_recreating_them(self):
         source = read_text("business/control_plane.tru")

@@ -5195,11 +5195,11 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
     targetClientUserId = targetUser.id;
   }
   const agent = ensure_agent(resolvedClientName, targetClientUserId, targetOwnerUserId);
+  // `requestId` is reserved by the TRU call envelope and can be replaced by
+  // the execution request id at runtime. A client can only acknowledge the
+  // single current request stored on its Agent row, so persist that id.
   let resolvedRequestId = '';
-  if (requestId != null) {
-    resolvedRequestId = string.from(requestId).trim();
-  }
-  if (resolvedRequestId.length == 0 && agent.clientUpdateRequestId != null) {
+  if (agent.clientUpdateRequestId != null) {
     resolvedRequestId = string.from(agent.clientUpdateRequestId).trim();
   }
   let resolvedRequestIdOrNull = null;
@@ -5317,11 +5317,10 @@ function agent_window_action_ack(clientName: string? = null, requestId: string? 
     targetClientUserId = targetUser.id;
   }
   const agent = ensure_agent(resolvedClientName, targetClientUserId, targetOwnerUserId);
+  // See agent_client_update_ack: use the current persisted request because
+  // the TRU envelope reserves the `requestId` argument name.
   let resolvedRequestId = '';
-  if (requestId != null) {
-    resolvedRequestId = string.from(requestId).trim();
-  }
-  if (resolvedRequestId.length == 0 && agent.windowActionRequestId != null) {
+  if (agent.windowActionRequestId != null) {
     resolvedRequestId = string.from(agent.windowActionRequestId).trim();
   }
   let resolvedRequestIdOrNull = null;
@@ -5380,11 +5379,10 @@ function agent_diagnostics_upload(clientName: string? = null, requestId: string?
     targetClientUserId = targetUser.id;
   }
   const agent = ensure_agent(resolvedClientName, targetClientUserId, targetOwnerUserId);
+  // See agent_client_update_ack: use the current persisted request because
+  // the TRU envelope reserves the `requestId` argument name.
   let resolvedRequestId = '';
-  if (requestId != null) {
-    resolvedRequestId = string.from(requestId).trim();
-  }
-  if (resolvedRequestId.length == 0 && agent.diagnosticRequestId != null) {
+  if (agent.diagnosticRequestId != null) {
     resolvedRequestId = string.from(agent.diagnosticRequestId).trim();
   }
   let resolvedRequestIdOrNull = null;
