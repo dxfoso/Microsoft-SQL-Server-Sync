@@ -133,10 +133,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
     def test_agent_heartbeat_persists_replication_connection_settings(self):
         source = read_text("business/control_plane.tru")
+        agent_schema = source.split("class Agent {", 1)[1].split("}", 1)[0]
 
         self.assertIn("replicationUseWindowsAuth: bool = true", source)
         self.assertIn("replicationUser: string = ''", source)
         self.assertIn("replicationPassword: string = ''", source)
+        self.assertIn("field replicationPassword: string = '' min=0 max=256", agent_schema)
         self.assertIn("clientUpdate: agent_client_update_payload(nextAgent)", source)
         self.assertNotIn("symmetricDsStatus", source)
         self.assertNotIn("agent_symmetricds_status_post", source)
