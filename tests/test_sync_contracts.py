@@ -21,6 +21,13 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("FROM docker.io/library/rust:1.89-bullseye AS builder", dockerfile)
         self.assertIn("FROM docker.io/library/debian:bullseye-slim AS runtime", dockerfile)
+        self.assertEqual(
+            dockerfile.count(
+                "id=tru-backend-target-rust189-bullseye,"
+                "target=/app/server/target,sharing=locked"
+            ),
+            2,
+        )
         self.assertIn("useradd --system --uid 10001 --home-dir /app", dockerfile)
         self.assertIn(
             "RUN TRU_VALIDATE_ONLY=1 TRU_CONFIG_PATH=/app/business/tru.json "

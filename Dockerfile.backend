@@ -9,13 +9,13 @@ COPY backend/server/Cargo.toml backend/server/Cargo.lock ./server/
 RUN mkdir -p server/src && echo "fn main() {}" > server/src/main.rs
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-  --mount=type=cache,target=/app/server/target,sharing=locked \
+  --mount=type=cache,id=tru-backend-target-rust189-bullseye,target=/app/server/target,sharing=locked \
   cargo build --manifest-path server/Cargo.toml --release --bin tru_server
 
 COPY backend/server/src ./server/src
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-  --mount=type=cache,target=/app/server/target,sharing=locked \
+  --mount=type=cache,id=tru-backend-target-rust189-bullseye,target=/app/server/target,sharing=locked \
   cargo build --manifest-path server/Cargo.toml --release --bin tru_server && \
   install -D /app/server/target/release/tru_server /tmp/tru_server
 
