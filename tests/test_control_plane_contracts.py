@@ -716,8 +716,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
 
         self.assertIn(
-            "const targetAgent = db.selectOne(Agent, { clientName: resolvedClientName });",
-            source,
+            "const targetAgent = find_agent_row_by_name(ownerAgents, resolvedClientName);",
+            jobs_create,
         )
         self.assertIn("agent_sync_enabled(targetAgent)", source)
         self.assertIn(

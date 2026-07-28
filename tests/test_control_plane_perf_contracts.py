@@ -69,6 +69,37 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertEqual(refresh_body.count("cancel_owner_sync_jobs_for_input("), 1)
         self.assertNotIn("raise_sync_table_issue(", refresh_body)
 
+    def test_manual_job_creation_reuses_preloaded_baseline_inputs(self):
+        control_plane = read_text("business/control_plane.tru")
+        jobs_body = control_plane.split(
+            "function jobs_create(", 1
+        )[1].split("function jobs_bootstrap", 1)[0]
+
+        self.assertIn("const schedulerAgents = list_scheduler_agent_rows();", jobs_body)
+        self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerId);", jobs_body)
+        self.assertIn(
+            "refresh_owner_baseline_table_issues(ownerId, schedulerAgents, ownerPolicies)",
+            jobs_body,
+        )
+        self.assertIn(
+            "const targetAgent = find_agent_row_by_name(ownerAgents, resolvedClientName);",
+            jobs_body,
+        )
+        self.assertNotIn("db.selectOne(Agent", jobs_body)
+
+    def test_change_tracking_preflight_does_not_rebuild_supplied_table_cache(self):
+        control_plane = read_text("business/control_plane.tru")
+        ready_body = control_plane.split(
+            "function scheduler_table_change_tracking_ready(", 1
+        )[1].split("function sync_agents_enabled_for_table", 1)[0]
+
+        cache_branch = ready_body.split(
+            "if (tableCache != null && tableCache.tables != null)", 1
+        )[1]
+        self.assertIn("states = tableCache.tables;", cache_branch)
+        self.assertIn("} else {", cache_branch)
+        self.assertIn("states = scheduler_agent_table_states(agent);", cache_branch)
+
     def test_blocked_periodic_owner_skips_redundant_baseline_scan(self):
         control_plane = read_text("business/control_plane.tru")
         scheduler_body = control_plane.split(

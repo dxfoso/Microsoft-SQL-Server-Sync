@@ -2704,9 +2704,11 @@ function scheduler_agent_table_state_cache_for_agent(clientName: string, caches:
 }
 
 function scheduler_table_change_tracking_ready(agent: map<json>, table: string, tableCache: map<json>? = null): bool {
-  let states = scheduler_agent_table_states(agent);
+  let states = [];
   if (tableCache != null && tableCache.tables != null) {
     states = tableCache.tables;
+  } else {
+    states = scheduler_agent_table_states(agent);
   }
   const state = scheduler_agent_table_state(states, table);
   if (state == null || state.changeTrackingVersion == null || state.changeTrackingOwner == null) {
@@ -3556,9 +3558,9 @@ function sync_table_reported_change_tracking_version(tableState: map<json>? = nu
   return int.from(tableState.changeTrackingVersion);
 }
 
-function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<json>? = null): void {
+function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<json>? = null, policies: array<json>? = null): void {
   const sourceAgents = agents ?? list_scheduler_agent_rows();
-  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  const ownerPolicies = policies ?? list_table_sync_policies_for_scope(ownerUserId);
   const existingIssues = sync_table_issues_for_owner(ownerUserId);
   let ownerAgents = [];
   let candidateTables = [];
@@ -6911,20 +6913,22 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     return raw_json_error(404, 'client not found');
   }
   const ownerId = owner_namespace_for_user(clientUser);
-  refresh_owner_baseline_table_issues(ownerId);
+  const schedulerAgents = list_scheduler_agent_rows();
+  const ownerAgents = schedulerAgents.filter((agent) =>
+    string.from(agent.ownerUserId) == ownerId && agent_sync_enabled(agent)
+  );
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
+  refresh_owner_baseline_table_issues(ownerId, schedulerAgents, ownerPolicies);
   if (sync_owner_has_blocking_table_issues(ownerId)) {
     return raw_json_error(409, 'Sync is stopped because one or more tables need a user decision.');
   }
-  const targetAgent = db.selectOne(Agent, { clientName: resolvedClientName });
+  const targetAgent = find_agent_row_by_name(ownerAgents, resolvedClientName);
   if (targetAgent == null) {
     return raw_json_error(404, 'client not found');
   }
   if (!agent_sync_enabled(targetAgent)) {
     return raw_json_error(409, 'client synchronization is disabled');
   }
-  const ownerAgents = list_scheduler_agent_rows().filter((agent) =>
-    string.from(agent.ownerUserId) == ownerId && agent_sync_enabled(agent)
-  );
   let offlineClients = [];
   for (const agent of ownerAgents) {
     if (!effective_agent_online(agent)) {
@@ -6934,7 +6938,6 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
   if (ownerAgents.length == 0 || offlineClients.length != 0) {
     return raw_json_error(409, 'every enabled client must be online before a protocol-v3 batch can start');
   }
-  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
   const requestedTables = expand_sync_job_tables_for_owner(ownerId, unique_string_values(tables));
   const tableCaches = ownerAgents.map((agent) =>
     scheduler_agent_table_state_cache(agent, ownerPolicies)
