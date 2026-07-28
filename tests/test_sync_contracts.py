@@ -19,6 +19,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_deployment_backend_image_runs_validated_as_non_root(self):
         dockerfile = read_text("Dockerfile.backend")
 
+        self.assertIn("FROM docker.io/library/rust:1.89-bullseye AS builder", dockerfile)
         self.assertIn("FROM docker.io/library/debian:bullseye-slim AS runtime", dockerfile)
         self.assertIn("useradd --system --uid 10001 --home-dir /app", dockerfile)
         self.assertIn(
