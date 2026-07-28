@@ -1122,10 +1122,11 @@ String matchClauseForColumns(
   return matchColumns
       .map((column) {
         final quotedColumn = quoteIdentifier(column);
-        final sourceExpression = 'source.$quotedColumn';
+        var sourceExpression = 'source.$quotedColumn';
         var targetExpression = 'target.$quotedColumn';
         final definition = definitionsByName[column.toLowerCase()];
         if (definition != null && definition.isTextLike) {
+          sourceExpression = '$sourceExpression COLLATE DATABASE_DEFAULT';
           targetExpression = '$targetExpression COLLATE DATABASE_DEFAULT';
         }
         return '$sourceExpression IS NOT NULL AND $targetExpression = $sourceExpression';
@@ -1143,10 +1144,11 @@ String nullableMatchClauseForColumns(
   return matchColumns
       .map((column) {
         final quotedColumn = quoteIdentifier(column);
-        final sourceExpression = 'source.$quotedColumn';
+        var sourceExpression = 'source.$quotedColumn';
         var targetExpression = 'target.$quotedColumn';
         final definition = definitionsByName[column.toLowerCase()];
         if (definition != null && definition.isTextLike) {
+          sourceExpression = '$sourceExpression COLLATE DATABASE_DEFAULT';
           targetExpression = '$targetExpression COLLATE DATABASE_DEFAULT';
         }
         return '(($sourceExpression IS NULL AND target.$quotedColumn IS NULL) OR $targetExpression = $sourceExpression)';

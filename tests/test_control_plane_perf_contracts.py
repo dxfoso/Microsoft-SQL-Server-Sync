@@ -114,6 +114,52 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         )
         self.assertLess(gate_position, refresh_position)
 
+    def test_scheduler_reuses_enabled_table_caches_across_baseline_wave(self):
+        control_plane = read_text("business/control_plane.tru")
+        cache_body = control_plane.split(
+            "function scheduler_agent_table_state_cache(", 1
+        )[1].split("function scheduler_agent_table_state_cache_for_agent", 1)[0]
+        participants_body = control_plane.split(
+            "function sync_agents_enabled_for_table(", 1
+        )[1].split("function sync_table_baseline_plan", 1)[0]
+        refresh_body = control_plane.split(
+            "function refresh_owner_baseline_table_issues(", 1
+        )[1].split("function sync_gate_payload_for_owners", 1)[0]
+        scheduler_body = control_plane.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
+
+        self.assertIn("enabledTables", cache_body)
+        self.assertIn("cache.enabledTables", participants_body)
+        self.assertIn(
+            "sync_agents_enabled_for_table(agents, table, policies, caches)",
+            control_plane,
+        )
+        self.assertIn("candidateTables = candidateTables.concat(cache.enabledTables ?? []);", refresh_body)
+        self.assertIn("tableCache.enabledTables", control_plane)
+        self.assertIn("cache.enabledTables", scheduler_body)
+        due_body = control_plane.split(
+            "function due_periodic_sync_tables_for_agent_with_policies(", 1
+        )[1].split("function queue_due_periodic_sync_jobs_for_owner", 1)[0]
+        cache_branch = due_body.split(
+            "if (tableCache != null && tableCache.tables != null)", 1
+        )[1]
+        self.assertIn("cachedTables = tableCache.tables;", cache_branch)
+        self.assertIn("} else {", cache_branch)
+        self.assertIn("cachedTables = scheduler_agent_table_states(agent, policies);", cache_branch)
+
+    def test_scheduler_cron_sessions_are_bounded_and_revoked(self):
+        control_plane = read_text("business/control_plane.tru")
+        cronjob = read_text("deployment/chart/templates/auto-scheduler-cronjob.yaml")
+        login_body = control_plane.split(
+            "function auth_login(", 1
+        )[1].split("function auth_me", 1)[0]
+
+        self.assertIn("session.app == 'scheduler'", control_plane)
+        self.assertIn("db.deleteMany(Session, { app: 'scheduler' });", login_body)
+        self.assertIn('"app": "scheduler"', cronjob)
+        self.assertIn('"name": "auth_logout"', cronjob)
+
     def test_heartbeat_job_dispatch_filters_history_in_database(self):
         control_plane = read_text("business/control_plane.tru")
         active_jobs_body = control_plane.split(

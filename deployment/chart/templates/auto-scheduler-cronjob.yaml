@@ -76,7 +76,7 @@ spec:
                       "args": {
                           "name": os.environ["ADMIN_NAME"],
                           "password": os.environ["ADMIN_PASSWORD"],
-                          "app": "web",
+                          "app": "scheduler",
                       },
                   })
                   token = login.get("value", {}).get("token")
@@ -84,7 +84,10 @@ spec:
                       print(json.dumps(login, sort_keys=True))
                       raise SystemExit(1)
 
-                  result = call({"name": "auto_sync_tick", "args": {"token": token}})
+                  try:
+                      result = call({"name": "auto_sync_tick", "args": {"token": token}})
+                  finally:
+                      call({"name": "auth_logout", "args": {"token": token}})
                   print(json.dumps(result, sort_keys=True))
                   if result.get("status") != "success":
                       raise SystemExit(1)

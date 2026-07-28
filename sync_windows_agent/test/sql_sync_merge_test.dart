@@ -84,7 +84,13 @@ void main() {
     final clause = matchClauseForColumns(const ['Code'], columns);
 
     expect(clause, contains('target.[Code] COLLATE DATABASE_DEFAULT'));
-    expect(clause, contains('source.[Code] IS NOT NULL'));
+    expect(clause, contains('source.[Code] COLLATE DATABASE_DEFAULT IS NOT NULL'));
+    expect(
+      clause,
+      contains(
+        'target.[Code] COLLATE DATABASE_DEFAULT = source.[Code] COLLATE DATABASE_DEFAULT',
+      ),
+    );
   });
 
   test('staged delta apply does not delete rows absent from delta', () {

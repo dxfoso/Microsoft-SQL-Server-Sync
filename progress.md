@@ -1,1 +1,1 @@
-65% - false Offline fix passes 141 client, 270 contract, supervisor, and 22 three-client SQL Server scenarios; deployment is next.
+45% - Last-hour failure traced to scheduler memory churn and SQL collation mismatch; fixes are implemented and contract tests pass, with full SQL/client verification and deployment in progress.

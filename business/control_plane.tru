@@ -1264,7 +1264,7 @@ function find_active_session_by_token(token: string? = null): map<json>? {
     return null;
   }
   if (
-    (session.app == 'web' || session.app == 'windows') &&
+    (session.app == 'web' || session.app == 'windows' || session.app == 'scheduler') &&
     (session.revokedAt == null || session.revokedAt.trim().length == 0)
   ) {
     return session;
@@ -2688,9 +2688,20 @@ function scheduler_agent_table_state(agentTables: array<json>, table: string): m
 }
 
 function scheduler_agent_table_state_cache(agent: map<json>, policies: array<json>? = null): map<json> {
+  const tables = scheduler_agent_table_states(agent, policies);
+  let enabledTables = [];
+  for (const tableState of tables) {
+    if (tableState.enabled == true && tableState.table != null) {
+      enabledTables = enabledTables.concat([string.from(tableState.table)]);
+    }
+  }
+  enabledTables = unique_string_values(
+    enabledTables.concat(enabled_sync_policy_tables_for_agent(agent, policies))
+  );
   return {
     clientName: agent.clientName,
-    tables: scheduler_agent_table_states(agent, policies)
+    tables,
+    enabledTables
   };
 }
 
@@ -2726,14 +2737,22 @@ function scheduler_table_change_tracking_ready(agent: map<json>, table: string, 
     && trackingStatus != 'not_tracked';
 }
 
-function sync_agents_enabled_for_table(agents: array<json>, table: string, policies: array<json>? = null): array<json> {
+function sync_agents_enabled_for_table(agents: array<json>, table: string, policies: array<json>? = null, tableCaches: array<json>? = null): array<json> {
   let participants = [];
   for (const agent of agents) {
-    const enabledTables = unique_string_values(
-      enabled_sync_tables_for_agent_with_policies(agent, policies).concat(
-        enabled_sync_policy_tables_for_agent(agent, policies)
-      )
-    );
+    let enabledTables = [];
+    const cache = tableCaches == null
+      ? null
+      : scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
+    if (cache != null && cache.enabledTables != null) {
+      enabledTables = cache.enabledTables;
+    } else {
+      enabledTables = unique_string_values(
+        enabled_sync_tables_for_agent_with_policies(agent, policies).concat(
+          enabled_sync_policy_tables_for_agent(agent, policies)
+        )
+      );
+    }
     if (string_array_contains(enabledTables, table)) {
       participants = participants.concat([agent]);
     }
@@ -2748,11 +2767,11 @@ function sync_agents_enabled_for_table(agents: array<json>, table: string, polic
 // peer is safer than either silently skipping that participant or uploading
 // its whole non-empty table as inserts.
 function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null): map<json> {
-  const participants = sync_agents_enabled_for_table(agents, table, policies);
   let caches = tableCaches;
   if (caches == null) {
-    caches = participants.map((agent) => scheduler_agent_table_state_cache(agent, policies));
+    caches = agents.map((agent) => scheduler_agent_table_state_cache(agent, policies));
   }
+  const participants = sync_agents_enabled_for_table(agents, table, policies, caches);
   let readyAgents = [];
   let readyFingerprints = [];
   let allFingerprints = [];
@@ -2922,10 +2941,17 @@ function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
 }
 
 function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null, tableCache: map<json>? = null, maxCount: int? = null): array<string> {
-  const enabledTables = unique_string_values(enabled_sync_tables_for_agent_with_policies(agent, policies).concat(enabled_sync_policy_tables_for_agent(agent, policies)));
-  let cachedTables = scheduler_agent_table_states(agent, policies);
+  let enabledTables = [];
+  if (tableCache != null && tableCache.enabledTables != null) {
+    enabledTables = tableCache.enabledTables;
+  } else {
+    enabledTables = unique_string_values(enabled_sync_tables_for_agent_with_policies(agent, policies).concat(enabled_sync_policy_tables_for_agent(agent, policies)));
+  }
+  let cachedTables = [];
   if (tableCache != null && tableCache.tables != null) {
     cachedTables = tableCache.tables;
+  } else {
+    cachedTables = scheduler_agent_table_states(agent, policies);
   }
   let dueTableLimit = 0;
   if (maxCount != null && maxCount > 0) {
@@ -3095,11 +3121,13 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       }
       let stillEnabled = false;
       for (const agent of ownerAgents) {
-        const enabledTables = unique_string_values(
-          enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-            enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-          )
+        const cache = scheduler_agent_table_state_cache_for_agent(
+          string.from(agent.clientName),
+          tableCaches
         );
+        const enabledTables = cache == null || cache.enabledTables == null
+          ? []
+          : cache.enabledTables;
         if (string_array_contains(enabledTables, table)) {
           stillEnabled = true;
         }
@@ -3563,17 +3591,11 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   const ownerPolicies = policies ?? list_table_sync_policies_for_scope(ownerUserId);
   const existingIssues = sync_table_issues_for_owner(ownerUserId);
   let ownerAgents = [];
-  let candidateTables = [];
   for (const agent of sourceAgents) {
     if (string.from(agent.ownerUserId) != ownerUserId || !agent_sync_enabled(agent)) {
       continue;
     }
     ownerAgents = ownerAgents.concat([agent]);
-    candidateTables = candidateTables.concat(
-      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-      )
-    );
   }
   if (ownerAgents.length < 2) {
     return;
@@ -3581,6 +3603,10 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   const tableCaches = ownerAgents.map((agent) =>
     scheduler_agent_table_state_cache(agent, ownerPolicies)
   );
+  let candidateTables = [];
+  for (const cache of tableCaches) {
+    candidateTables = candidateTables.concat(cache.enabledTables ?? []);
+  }
   let nextIssues = existingIssues;
   let issuesChanged = false;
   let introducedBlockingIssue = false;
@@ -4392,6 +4418,11 @@ function auth_login(name: string, password: string, app: string = 'web'): map<js
   }
   if (user.password != password) {
     return raw_json_error(401, 'invalid password');
+  }
+  // The CronJob authenticates once per tick. Keep that internal session class
+  // bounded so minute-level scheduling cannot grow the durable session table.
+  if (app == 'scheduler') {
+    db.deleteMany(Session, { app: 'scheduler' });
   }
   return create_session_for_user(user, app);
 }
