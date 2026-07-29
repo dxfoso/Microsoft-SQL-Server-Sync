@@ -16,7 +16,9 @@ class HeartbeatContractsTests(unittest.TestCase):
             "function auto_sync_tick(", 1
         )[0]
 
-        self.assertIn("function heartbeat_persist_interval_minutes", control_plane)
+        self.assertIn("function heartbeat_persist_interval_ms", control_plane)
+        self.assertIn("function agent_online_timeout_ms", control_plane)
+        self.assertIn("return 60 * 1000;", control_plane)
         self.assertIn("function heartbeat_write_due", control_plane)
         self.assertIn("function lightweight_agent_heartbeat_state_changed", control_plane)
         self.assertIn(
@@ -33,6 +35,20 @@ class HeartbeatContractsTests(unittest.TestCase):
         )
         self.assertIn("const lightweightHeartbeatChanged = lightweight_agent_heartbeat_state_changed(", heartbeat_body)
         self.assertIn("lastHeartbeat: now_iso(),", heartbeat_body)
+
+    def test_public_client_status_is_server_owned_and_ready_is_terminal(self):
+        control_plane = read_text("business/control_plane.tru")
+        frontend_models = read_text("frontend/lib/models.dart")
+        clients_page = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("function client_runtime_status_payload(", control_plane)
+        self.assertIn("status: runtimeStatus", control_plane)
+        self.assertIn("status: { in: ['queued', 'waiting', 'running'", control_plane)
+        self.assertIn("code: 'catching_up'", control_plane)
+        self.assertIn("code: 'ready'", control_plane)
+        self.assertIn("ready: true", control_plane)
+        self.assertIn("runtimeStatusLabel", frontend_models)
+        self.assertIn("agent.runtimeStatusLabel.trim()", clients_page)
 
 
 if __name__ == "__main__":

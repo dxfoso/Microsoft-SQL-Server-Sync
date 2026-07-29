@@ -3892,7 +3892,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       },
     );
     final uploadedVersion = snapshot.changeTrackingVersion;
-    if (uploadedVersion != null && uploadedVersion >= 0) {
+    final preserveChangeTrackingBaseline =
+        job.sourceClientName == 'server-partial-delta-v3';
+    if (!preserveChangeTrackingBaseline &&
+        uploadedVersion != null &&
+        uploadedVersion >= 0) {
       final current =
           _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
       _updateSyncTableState(
@@ -4142,9 +4146,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'elapsedMs': downloadStopwatch.elapsedMilliseconds,
       },
     );
+    final preserveChangeTrackingBaseline =
+        job.sourceClientName == 'server-partial-merge';
     final appliedVersion =
-        authoritativeAppliedVersion ??
-        snapshotToApply.changeTrackingVersions[widget.clientName];
+        preserveChangeTrackingBaseline
+            ? null
+            : authoritativeAppliedVersion ??
+                snapshotToApply.changeTrackingVersions[widget.clientName];
     if (appliedVersion != null && appliedVersion >= 0) {
       final current =
           _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);

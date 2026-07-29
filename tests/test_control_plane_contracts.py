@@ -323,7 +323,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("list_completed_scheduler_job_rows(ownerUserId)", owner_body)
         self.assertIn("effective_agent_online(agent)", owner_body)
         self.assertIn("sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches)", owner_body)
-        self.assertIn("create_multi_writer_batch(normalizedOwnerUserId, table, tableAgents)", owner_body)
+        self.assertIn("create_multi_writer_batch(", owner_body)
+        self.assertIn("preserveChangeTrackingBaselines", owner_body)
+        self.assertIn("mark_offline_sync_debt(", owner_body)
         self.assertIn("create_authoritative_reconcile_batch(", owner_body)
         self.assertIn("const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));", owner_body)
         self.assertIn("const sourceAgents = allAgents ?? list_scheduler_agent_rows();", owner_body)
@@ -541,7 +543,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);",
             owner_scheduler,
         )
-        self.assertIn("let dueTables = manualPendingTables;", owner_scheduler)
+        self.assertIn("due_offline_catchup_tables(", owner_scheduler)
         self.assertIn("if (manualPendingTables.length == 0) {", owner_scheduler)
         self.assertIn("periodic_sync_table_due_after_attempt(", owner_scheduler)
         self.assertIn(
@@ -747,7 +749,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIn("agent_sync_enabled(targetAgent)", source)
         self.assertIn(
-            "const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);",
+            "const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);",
             jobs_create,
         )
         self.assertIn("nextJobs = create_multi_writer_batch(", jobs_create)
@@ -756,8 +758,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function jobs_progress(jobId: string, status: string = 'running', progress: int, message: string, rowCount: int, token: string? = null): map<json> {",
             source,
         )
-        self.assertNotIn("sourceClientName", jobs_create)
-        self.assertIn("every enabled client must be online", source)
+        self.assertIn("preserveChangeTrackingBaselines", jobs_create)
+        self.assertIn("mark_offline_sync_debt(", jobs_create)
+        self.assertIn("'the requested client is offline'", jobs_create)
         self.assertIn("field syncMode: string min=1 max=32", source)
         self.assertNotIn("mergeRole", source)
         self.assertNotIn("publicationName", source)
@@ -1013,7 +1016,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("mode: 'protocol-v3'", source)
         self.assertIn("if (effective_agent_online(agent))", source)
-        self.assertIn("create_multi_writer_batch(ownerUserId, table, tableAgents)", source)
+        self.assertIn("create_multi_writer_batch(", source)
         self.assertIn(
             "const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);",
             source,
@@ -1033,14 +1036,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "remaining manual tables will drain in bounded scheduler waves",
             source,
         )
-        self.assertIn("Periodic sync uses the same all-client protocol-v3 barrier", source)
-        self.assertIn("every registered client uploads first, then every client downloads", source)
+        self.assertIn("Online peers continue syncing while another enabled client is offline", source)
+        self.assertIn("'server-partial-delta-v3'", source)
+        self.assertIn("'server-partial-merge'", source)
         self.assertIn("ownerAgents.length != allOwnerAgents.length", source)
         self.assertIn("onlineAgents.length != ownerAgents.length", source)
-        self.assertIn("Sync deferred without advancing Change Tracking", source)
+        self.assertIn("Change Tracking cursors are preserved until offline clients catch up", source)
         self.assertIn("skippedOfflineClients", source)
 
-    def test_shared_baseline_preflight_never_queues_a_partial_delta_batch(self):
+    def test_shared_baseline_preflight_keeps_delta_and_reconcile_modes_explicit(self):
         source = read_text("business/control_plane.tru")
         planner = source.split(
             "function sync_table_baseline_plan(", 1
@@ -1055,6 +1059,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("readyFingerprints.length <= 1", planner)
         self.assertGreaterEqual(planner.count("allFingerprints.length == 1"), 2)
         self.assertIn("allFingerprints.length == 1", planner)
+
+    def test_partial_batches_preserve_cursors_until_offline_clients_catch_up(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("class OfflineSyncDebt", source)
+        self.assertIn("function mark_offline_sync_debt(", source)
+        self.assertIn("function due_offline_catchup_tables(", source)
+        self.assertIn("function clear_offline_sync_debt(", source)
+        self.assertIn("sync_batch_all_jobs_completed(completedBatchId)", source)
+        self.assertIn("sourceClientName: preserveChangeTrackingBaselines ? 'server-partial-merge'", source)
+        self.assertIn(
+            "authoritative baseline reconciliation waits until every enabled client is online",
+            source,
+        )
+        self.assertIn("job.sourceClientName == 'server-partial-delta-v3'", agent_page)
+        self.assertIn("job.sourceClientName == 'server-partial-merge'", agent_page)
+        self.assertIn("final preserveChangeTrackingBaseline =", agent_page)
+        self.assertIn("final appliedVersion =", agent_page)
 
     def test_database_agnostic_policy_remains_a_safe_fallback(self):
         source = read_text("business/control_plane.tru")
@@ -1080,7 +1103,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertNotIn("multi_writer_agents_have_fingerprint_mismatch", batch_body)
         self.assertNotIn("'server-anti-entropy'", source)
-        self.assertIn("'server-delta-v3' : 'server-bootstrap-v3'", source)
+        self.assertIn("'server-delta-v3'", source)
+        self.assertIn("'server-bootstrap-v3'", source)
         self.assertIn("protocol-v3 batches accept deltas only unless this is an explicit single-client bootstrap", source)
         self.assertIn("explicitSingleClientBootstrap", source)
         self.assertIn("field protocolVersion: int? min=3 max=3", source)
@@ -1108,7 +1132,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)",
             source,
         )
-        self.assertIn("every enabled client must be online", source)
+        self.assertIn("preserveChangeTrackingBaselines", source)
+        self.assertIn("function mark_offline_sync_debt(", source)
+        self.assertIn("function due_offline_catchup_tables(", source)
 
     def test_explicit_bootstrap_is_single_enabled_client_and_retry_safe(self):
         source = read_text("business/control_plane.tru")

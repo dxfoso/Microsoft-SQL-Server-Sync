@@ -256,6 +256,10 @@ class AdminAgent {
     required this.diagnostics,
     required this.clientUpdate,
     required this.tables,
+    this.runtimeStatusCode = '',
+    this.runtimeStatusLabel = '',
+    this.runtimeReady = false,
+    this.heartbeatAgeSeconds,
   });
 
   final String clientName;
@@ -274,12 +278,20 @@ class AdminAgent {
   final bool sqlConnected;
   final String clientVersion;
   final String lastHeartbeat;
+  final String runtimeStatusCode;
+  final String runtimeStatusLabel;
+  final bool runtimeReady;
+  final int? heartbeatAgeSeconds;
   final String? selectedTable;
   final AdminAgentDiagnostics diagnostics;
   final AdminAgentClientUpdate clientUpdate;
   final List<AdminTableState> tables;
 
   factory AdminAgent.fromJson(Map<String, dynamic> json) {
+    final status =
+        json['status'] is Map
+            ? Map<String, dynamic>.from(json['status'] as Map)
+            : const <String, dynamic>{};
     return AdminAgent(
       clientName: json['clientName'] as String? ?? '',
       clientUserId: json['clientUserId'] as String?,
@@ -298,6 +310,10 @@ class AdminAgent {
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       clientVersion: json['clientVersion'] as String? ?? '',
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
+      runtimeStatusCode: status['code'] as String? ?? '',
+      runtimeStatusLabel: status['label'] as String? ?? '',
+      runtimeReady: status['ready'] as bool? ?? false,
+      heartbeatAgeSeconds: (status['heartbeatAgeSeconds'] as num?)?.round(),
       selectedTable: json['selectedTable'] as String?,
       diagnostics:
           json['diagnostics'] is Map

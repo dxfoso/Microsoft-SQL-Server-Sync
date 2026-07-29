@@ -141,6 +141,18 @@ class SyncBatch {
   field syncEpoch: string? min=0 max=64
 }
 
+// Records that a client missed at least one partial online-only batch. The
+// participating clients deliberately preserve their Change Tracking cursors,
+// so the first later full batch safely carries the complete missed range.
+class OfflineSyncDebt {
+  field id: string min=1 max=64
+  field ownerUserId: string min=0 max=64
+  field clientName: string min=1 max=128
+  field table: string min=1 max=256
+  field createdAt: datetime
+  field updatedAt: datetime
+}
+
 // One durable row fences every job and cursor to the current reset epoch.
 class SyncProtocolState {
   field id: string min=1 max=32
@@ -268,6 +280,7 @@ index SyncJob_createdAt on SyncJob(createdAt)
 index SyncJob_batchId on SyncJob(batchId)
 index SyncBatch_id on SyncBatch(id)
 index SyncBatch_ownerUserId_table on SyncBatch(ownerUserId, table)
+index OfflineSyncDebt_ownerUserId_clientName_table on OfflineSyncDebt(ownerUserId, clientName, table)
 index SyncProtocolState_id on SyncProtocolState(id)
 index SnapshotRecord_id on SnapshotRecord(id)
 index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
@@ -451,8 +464,10 @@ function sync_job_text(value: string? = null, maxLength: int = 256): string {
   return truncate_text(string.from(value ?? ''), maxLength);
 }
 
-function agent_online_timeout_minutes(agent: map<json>): int {
-  return 15;
+function agent_online_timeout_ms(agent: map<json>): int {
+  // The Windows agent polls every 15 seconds. Four missed heartbeats is enough
+  // to classify it offline without turning a short network wobble into churn.
+  return 60 * 1000;
 }
 
 function safe_date_diff_minutes_since(rawTimestamp: string? = null): int? {
@@ -467,8 +482,20 @@ function safe_date_diff_minutes_since(rawTimestamp: string? = null): int? {
   }
 }
 
-function heartbeat_persist_interval_minutes(): int {
-  return 1;
+function safe_date_diff_ms_since(rawTimestamp: string? = null): int? {
+  const timestamp = string.from(rawTimestamp ?? '').trim();
+  if (timestamp.length == 0 || timestamp == '--') {
+    return null;
+  }
+  try {
+    return date.diff(date.now(), timestamp, 'ms');
+  } catch (err) {
+    return null;
+  }
+}
+
+function heartbeat_persist_interval_ms(): int {
+  return 10 * 1000;
 }
 
 function heartbeat_write_due(agent: map<json>): bool {
@@ -476,11 +503,11 @@ function heartbeat_write_due(agent: map<json>): bool {
   if (lastHeartbeat.length == 0) {
     return true;
   }
-  const elapsedMinutes = safe_date_diff_minutes_since(lastHeartbeat);
-  if (elapsedMinutes == null) {
+  const elapsedMs = safe_date_diff_ms_since(lastHeartbeat);
+  if (elapsedMs == null) {
     return true;
   }
-  return elapsedMinutes >= heartbeat_persist_interval_minutes();
+  return elapsedMs >= heartbeat_persist_interval_ms();
 }
 
 function lightweight_agent_heartbeat_state_changed(agent: map<json>, machineName: string, historyLimit: int, server: string, database: string, replicationUseWindowsAuth: bool, replicationUser: string, replicationPassword: string, serverConnected: bool, sqlConnected: bool, selectedTable: string? = null, clientVersion: string = ''): bool {
@@ -538,8 +565,8 @@ function effective_agent_online(agent: map<json>): bool {
   if (heartbeat.length == 0) {
     return false;
   }
-  const ageMinutes = safe_date_diff_minutes_since(heartbeat);
-  return ageMinutes != null && ageMinutes <= agent_online_timeout_minutes(agent);
+  const ageMs = safe_date_diff_ms_since(heartbeat);
+  return ageMs != null && ageMs <= agent_online_timeout_ms(agent);
 }
 
 function agent_sync_enabled(agent: map<json>): bool {
@@ -556,8 +583,8 @@ function agent_command_delivery_online(agent: map<json>): bool {
   if (heartbeat.length == 0) {
     return false;
   }
-  const ageMinutes = safe_date_diff_minutes_since(heartbeat);
-  return ageMinutes != null && ageMinutes <= agent_online_timeout_minutes(agent);
+  const ageMs = safe_date_diff_ms_since(heartbeat);
+  return ageMs != null && ageMs <= agent_online_timeout_ms(agent);
 }
 
 function default_admin_username(): string {
@@ -1603,6 +1630,95 @@ function visible_job_rows_for(current: map<json>): array<json> {
   return jobs;
 }
 
+function client_has_offline_sync_debt(agent: map<json>): bool {
+  const rows = db.selectMany(OfflineSyncDebt, {
+    where: {
+      ownerUserId: string.from(agent.ownerUserId),
+      clientName: string.from(agent.clientName)
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id'],
+    limit: 1
+  });
+  return rows != null && rows.length > 0;
+}
+
+function client_runtime_status_payload(agent: map<json>): map<json> {
+  const heartbeatAgeMs = safe_date_diff_ms_since(string.from(agent.lastHeartbeat ?? ''));
+  let heartbeatAgeSeconds = null;
+  if (heartbeatAgeMs != null && heartbeatAgeMs >= 0) {
+    heartbeatAgeSeconds = int.from(heartbeatAgeMs / 1000);
+  }
+  if (!effective_agent_online(agent)) {
+    return {
+      code: 'offline',
+      label: 'Offline',
+      ready: false,
+      heartbeatAgeSeconds
+    };
+  }
+  if (!agent_sync_enabled(agent)) {
+    return {
+      code: 'disabled',
+      label: 'Sync disabled',
+      ready: false,
+      heartbeatAgeSeconds
+    };
+  }
+  if (agent_client_update_payload(agent).pending == true) {
+    return {
+      code: 'updating',
+      label: 'Updating',
+      ready: false,
+      heartbeatAgeSeconds
+    };
+  }
+
+  const activeJobs = db.selectMany(SyncJob, {
+    where: {
+      clientName: string.from(agent.clientName),
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['status'],
+    limit: 100
+  });
+  const priorities = ['applying', 'downloading', 'uploading', 'snapshotting', 'running', 'waiting', 'queued'];
+  for (const phase of priorities) {
+    for (const job of activeJobs ?? []) {
+      if (string.from(job.status).trim().toLowerCase() != phase) {
+        continue;
+      }
+      let label = 'Syncing';
+      if (phase == 'applying') { label = 'Applying'; }
+      if (phase == 'downloading') { label = 'Downloading'; }
+      if (phase == 'uploading' || phase == 'snapshotting') { label = 'Uploading'; }
+      if (phase == 'waiting') { label = 'Waiting'; }
+      if (phase == 'queued') { label = 'Queued'; }
+      return {
+        code: phase,
+        label,
+        ready: false,
+        heartbeatAgeSeconds
+      };
+    }
+  }
+  if (client_has_offline_sync_debt(agent)) {
+    return {
+      code: 'catching_up',
+      label: 'Catching up',
+      ready: false,
+      heartbeatAgeSeconds
+    };
+  }
+  return {
+    code: 'ready',
+    label: 'Ready',
+    ready: true,
+    heartbeatAgeSeconds
+  };
+}
+
 function public_agent_payload(agent: map<json>): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
@@ -1615,6 +1731,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     );
   }
   nextTables = normalize_agent_tables_payload(agent, nextTables);
+  const runtimeStatus = client_runtime_status_payload(agent);
   return {
     clientName: agent.clientName,
     machineName: agent.machineName,
@@ -1630,6 +1747,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     sqlConnected: agent.sqlConnected,
     clientVersion: agent.clientVersion ?? '',
     lastHeartbeat: agent.lastHeartbeat,
+    status: runtimeStatus,
     selectedTable: agent.selectedTable,
     diagnostics: agent_diagnostics_payload(agent),
     clientUpdate: agent_client_update_payload(agent),
@@ -3025,12 +3143,14 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       ownerAgents = ownerAgents.concat([agent]);
     }
   }
-  // Protocol v3 has one outbound Change Tracking cursor per enabled
-  // client/table. Do not advance it while an enabled peer is offline;
-  // explicitly disabled clients are outside the synchronization set.
-  if (ownerAgents.length == 0 || ownerAgents.length != allOwnerAgents.length) {
+  if (ownerAgents.length == 0) {
     return [];
   }
+  // Online peers continue syncing while another enabled client is offline.
+  // Partial batches are tagged so their local Change Tracking cursors remain
+  // unchanged; the first later all-client batch therefore carries the entire
+  // missed range to the returning client.
+  const preserveChangeTrackingBaselines = ownerAgents.length != allOwnerAgents.length;
 
   // Clients execute table jobs sequentially. Do not refill this owner's queue
   // until the current bounded group has fully crossed upload and download.
@@ -3049,7 +3169,9 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
   const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
-  let dueTables = manualPendingTables;
+  let dueTables = unique_string_values(
+    manualPendingTables.concat(due_offline_catchup_tables(normalizedOwnerUserId, ownerAgents))
+  );
   if (manualPendingTables.length == 0) {
     for (const agent of ownerAgents) {
       const cache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
@@ -3101,6 +3223,9 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     if (string.from(plan.mode) == 'reconcile' &&
         plan.sourceAgent != null &&
         (plan.targetAgents ?? []).length > 0) {
+      if (preserveChangeTrackingBaselines) {
+        continue;
+      }
       jobs = create_authoritative_reconcile_batch(
         normalizedOwnerUserId,
         table,
@@ -3108,9 +3233,24 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         plan.targetAgents
       );
     } else if (string.from(plan.mode) == 'delta') {
-      jobs = create_multi_writer_batch(normalizedOwnerUserId, table, tableAgents);
+      jobs = create_multi_writer_batch(
+        normalizedOwnerUserId,
+        table,
+        tableAgents,
+        '',
+        preserveChangeTrackingBaselines
+      );
     }
     if (jobs.length > 0) {
+      if (preserveChangeTrackingBaselines) {
+        mark_offline_sync_debt(
+          normalizedOwnerUserId,
+          table,
+          allOwnerAgents,
+          ownerAgents,
+          ownerPolicies
+        );
+      }
       record_periodic_sync_table_attempt(ownerUserId, table);
       createdJobs = createdJobs.concat(jobs);
       queuedTables = queuedTables.concat([table]);
@@ -3960,6 +4100,109 @@ function string_array_contains(values: array<string>, target: string): bool {
   return false;
 }
 
+function offline_sync_debt_rows_for_owner(ownerUserId: string): array<json> {
+  const rows = db.selectMany(OfflineSyncDebt, {
+    where: { ownerUserId },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id', 'ownerUserId', 'clientName', 'table', 'createdAt', 'updatedAt'],
+    limit: 1000
+  });
+  return rows ?? [];
+}
+
+function find_offline_sync_debt(rows: array<json>, clientName: string, table: string): map<json>? {
+  for (const row of rows) {
+    if (string.from(row.clientName) == clientName &&
+        string.from(row.table) == table) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function mark_offline_sync_debt(ownerUserId: string, table: string, allAgents: array<json>, onlineAgents: array<json>, policies: array<json>): int {
+  let onlineClientNames = [];
+  for (const agent of onlineAgents) {
+    onlineClientNames = onlineClientNames.concat([string.from(agent.clientName)]);
+  }
+  let newDebts = [];
+  const existingDebts = offline_sync_debt_rows_for_owner(ownerUserId);
+  for (const agent of allAgents) {
+    const clientName = string.from(agent.clientName);
+    if (string_array_contains(onlineClientNames, clientName)) {
+      continue;
+    }
+    const enabledTables = enabled_sync_tables_for_agent_with_policies(agent, policies).concat(
+      enabled_sync_policy_tables_for_agent(agent, policies)
+    );
+    if (!string_array_contains(unique_string_values(enabledTables), table)) {
+      continue;
+    }
+    const existing = find_offline_sync_debt(existingDebts, clientName, table);
+    if (existing == null) {
+      newDebts = newDebts.concat([{
+        id: uuid.v4(),
+        ownerUserId,
+        clientName,
+        table,
+        createdAt: now_iso(),
+        updatedAt: now_iso()
+      }]);
+    }
+  }
+  if (newDebts.length == 0) {
+    return 0;
+  }
+  db.insertMany(OfflineSyncDebt, newDebts);
+  return newDebts.length;
+}
+
+function due_offline_catchup_tables(ownerUserId: string, onlineAgents: array<json>): array<string> {
+  let onlineClientNames = [];
+  for (const agent of onlineAgents) {
+    onlineClientNames = onlineClientNames.concat([string.from(agent.clientName)]);
+  }
+  let tables = [];
+  for (const debt of offline_sync_debt_rows_for_owner(ownerUserId)) {
+    if (string_array_contains(onlineClientNames, string.from(debt.clientName))) {
+      tables = tables.concat([string.from(debt.table)]);
+    }
+  }
+  return unique_string_values(tables);
+}
+
+function clear_offline_sync_debt(ownerUserId: string, table: string): int {
+  const rows = db.selectMany(OfflineSyncDebt, {
+    where: { ownerUserId, table },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id'],
+    limit: 1000
+  });
+  const ids = (rows ?? []).map((row) => string.from(row.id));
+  if (ids.length == 0) {
+    return 0;
+  }
+  return db.deleteMany(OfflineSyncDebt, { id: { in: ids } });
+}
+
+function sync_batch_all_jobs_completed(batchId: string): bool {
+  const rows = db.selectMany(SyncJob, {
+    where: { batchId },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['status'],
+    limit: 1000
+  });
+  if (rows == null || rows.length == 0) {
+    return false;
+  }
+  for (const row of rows) {
+    if (string.from(row.status).trim().toLowerCase() != 'completed') {
+      return false;
+    }
+  }
+  return true;
+}
+
 function merge_rows_by_key(existingRows: array<json>, incomingRows: array<json>, keyColumns: array<string>): array<json> {
   if (incomingRows.length == 0) {
     return existingRows;
@@ -4032,7 +4275,7 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = ''): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
@@ -4040,7 +4283,11 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     rows = rows.concat([{
       id: uuid.v4(),
       clientName,
-      sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v3' : 'server-bootstrap-v3',
+      sourceClientName: bootstrapSourceClientName.length != 0
+        ? 'server-bootstrap-v3'
+        : preserveChangeTrackingBaselines
+          ? 'server-partial-delta-v3'
+          : 'server-delta-v3',
       subscriberClientName: '',
       table,
       direction: 'upload',
@@ -4071,7 +4318,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     }, {
       id: uuid.v4(),
       clientName,
-      sourceClientName: 'server-merge',
+      sourceClientName: preserveChangeTrackingBaselines ? 'server-partial-merge' : 'server-merge',
       subscriberClientName: clientName,
       table,
       direction: 'download',
@@ -4102,7 +4349,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
   return rows;
 }
 
-function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = ''): array<json> {
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false): array<json> {
   if (agents.length == 0) {
     return [];
   }
@@ -4139,7 +4386,8 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     agents,
     ownerUserId,
     protocol,
-    bootstrapSourceClientName
+    bootstrapSourceClientName,
+    preserveChangeTrackingBaselines
   ));
 }
 
@@ -5466,7 +5714,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     if (ownerAgents.length == 0) {
       continue;
     }
-    if (onlineAgents.length == 0 || onlineAgents.length != ownerAgents.length) {
+    if (onlineAgents.length == 0) {
       let blockedTables = [];
       for (const agent of ownerAgents) {
         blockedTables = blockedTables.concat(
@@ -5482,6 +5730,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       set_manual_sync_pending_tables_for_owner(ownerUserId, blockedTables);
       continue;
     }
+    const preserveChangeTrackingBaselines = onlineAgents.length != ownerAgents.length;
     let enabledTables = [];
     for (const agent of onlineAgents) {
       enabledTables = enabledTables.concat(
@@ -5550,6 +5799,11 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       if (string.from(plan.mode) == 'reconcile' &&
           plan.sourceAgent != null &&
           (plan.targetAgents ?? []).length > 0) {
+        if (preserveChangeTrackingBaselines) {
+          ownerDeferredTables = ownerDeferredTables.concat([table]);
+          deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
+          continue;
+        }
         jobs = create_authoritative_reconcile_batch(
           ownerUserId,
           table,
@@ -5560,9 +5814,24 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
           string.concat(ownerUserId, '::', table)
         ]);
       } else if (string.from(plan.mode) == 'delta') {
-        jobs = create_multi_writer_batch(ownerUserId, table, tableAgents);
+        jobs = create_multi_writer_batch(
+          ownerUserId,
+          table,
+          tableAgents,
+          '',
+          preserveChangeTrackingBaselines
+        );
       }
       if (jobs.length > 0) {
+        if (preserveChangeTrackingBaselines) {
+          mark_offline_sync_debt(
+            ownerUserId,
+            table,
+            ownerAgents,
+            onlineAgents,
+            ownerPolicies
+          );
+        }
         createdJobs = createdJobs.concat(jobs);
         queuedClientNames = queuedClientNames.concat(tableAgents.map((agent) => string.from(agent.clientName)));
         queuedTablesForOwner += 1;
@@ -5581,10 +5850,12 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     skippedSourceResolutionTables: unique_string_values(sourceResolutionTables),
     deferredTables: unique_string_values(deferredTables),
     message: createdJobs.length == 0 && skippedOfflineClients.length > 0
-      ? 'Sync deferred without advancing Change Tracking because every enabled client must be online for protocol v3.'
+      ? 'No online peer group had an eligible table to sync; offline clients will catch up automatically after reconnecting.'
       : deferredTables.length > 0
         ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
-        : 'Sync queued for all eligible tables.'
+        : skippedOfflineClients.length > 0
+          ? 'Sync queued for online clients; Change Tracking cursors are preserved until offline clients catch up.'
+          : 'Sync queued for all eligible tables.'
   };
 }
 
@@ -5751,6 +6022,16 @@ function delete_periodic_sync_state_batch(): map<json> {
   return { deletedCount, hasMore: rows.length == 50 };
 }
 
+function delete_offline_sync_debt_batch(): map<json> {
+  const rows = db.selectMany(OfflineSyncDebt, {
+    where: { id: { gte: '' } }, orderBy: { field: 'id', dir: 'asc' }, fields: ['id'], limit: 50
+  });
+  const ids = rows.map((row) => string.from(row.id));
+  let deletedCount = 0;
+  if (ids.length != 0) { deletedCount = db.deleteMany(OfflineSyncDebt, { id: { in: ids } }); }
+  return { deletedCount, hasMore: rows.length == 50 };
+}
+
 function server_saved_data_reset(resetAgents: bool = true, continueReset: bool = false, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -5782,6 +6063,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   const syncBatchBatch = delete_sync_batch_batch();
   const syncJobBatch = delete_sync_job_batch();
   const schedulerStateBatch = delete_periodic_sync_state_batch();
+  const offlineSyncDebtBatch = delete_offline_sync_debt_batch();
   // Preserve a pause marker after deleting scheduler state so automatic ticks
   // cannot recreate jobs while the reset is draining or after it completes.
   const automaticSyncControl = automatic_sync_control_set(true, token);
@@ -5793,7 +6075,8 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
   const batchDeletedCount = int.from(syncBatchBatch.deletedCount ?? 0);
   const jobDeletedCount = int.from(syncJobBatch.deletedCount ?? 0);
   const schedulerStateDeletedCount = int.from(schedulerStateBatch.deletedCount ?? 0);
-  const deletedRecordCount = syncJobDataDeletedCount + syncRowWinnerDeletedCount + downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount;
+  const offlineSyncDebtDeletedCount = int.from(offlineSyncDebtBatch.deletedCount ?? 0);
+  const deletedRecordCount = syncJobDataDeletedCount + syncRowWinnerDeletedCount + downloadSessionDeletedCount + uploadSessionDeletedCount + snapshotDeletedCount + batchDeletedCount + jobDeletedCount + schedulerStateDeletedCount + offlineSyncDebtDeletedCount;
   let protocol = sync_protocol_state();
   if (!continueReset) {
     protocol = rotate_sync_epoch();
@@ -5803,7 +6086,7 @@ function server_saved_data_reset(resetAgents: bool = true, continueReset: bool =
     agentResetCount = reset_all_agent_saved_state();
   }
 
-  const hasMore = snapshotBatch.hasMore == true || syncJobDataBatch.hasMore == true || syncRowWinnerBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true;
+  const hasMore = snapshotBatch.hasMore == true || syncJobDataBatch.hasMore == true || syncRowWinnerBatch.hasMore == true || downloadSessionBatch.hasMore == true || uploadSessionBatch.hasMore == true || syncBatchBatch.hasMore == true || syncJobBatch.hasMore == true || schedulerStateBatch.hasMore == true || offlineSyncDebtBatch.hasMore == true;
 
   return {
     ok: true,
@@ -6964,21 +7247,28 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     return raw_json_error(409, 'client synchronization is disabled');
   }
   let offlineClients = [];
+  let onlineAgents = [];
   for (const agent of ownerAgents) {
     if (!effective_agent_online(agent)) {
       offlineClients = offlineClients.concat([string.from(agent.clientName)]);
+    } else {
+      onlineAgents = onlineAgents.concat([agent]);
     }
   }
-  if (ownerAgents.length == 0 || offlineClients.length != 0) {
-    return raw_json_error(409, 'every enabled client must be online before a protocol-v3 batch can start');
+  if (!effective_agent_online(targetAgent)) {
+    return raw_json_error(409, 'the requested client is offline');
   }
+  if (onlineAgents.length == 0) {
+    return raw_json_error(409, 'no enabled client is online');
+  }
+  const preserveChangeTrackingBaselines = onlineAgents.length != ownerAgents.length;
   const requestedTables = expand_sync_job_tables_for_owner(ownerId, unique_string_values(tables));
-  const tableCaches = ownerAgents.map((agent) =>
+  const tableCaches = onlineAgents.map((agent) =>
     scheduler_agent_table_state_cache(agent, ownerPolicies)
   );
   let tablePlans = [];
   for (const table of requestedTables) {
-    const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);
+    const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);
     if ((plan.participants ?? []).length == 0) {
       return raw_json_error(409, string.concat('sync table is not enabled: ', table));
     }
@@ -6997,6 +7287,12 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     if (string.from(plan.mode) == 'reconcile' &&
         plan.sourceAgent != null &&
         (plan.targetAgents ?? []).length > 0) {
+      if (preserveChangeTrackingBaselines) {
+        return raw_json_error(
+          409,
+          'authoritative baseline reconciliation waits until every enabled client is online'
+        );
+      }
       nextJobs = create_authoritative_reconcile_batch(
         ownerId,
         string.from(plan.table),
@@ -7007,10 +7303,21 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
       nextJobs = create_multi_writer_batch(
         ownerId,
         string.from(plan.table),
-        plan.participants ?? []
+        plan.participants ?? [],
+        '',
+        preserveChangeTrackingBaselines
       );
     }
     if (nextJobs.length > 0) {
+      if (preserveChangeTrackingBaselines) {
+        mark_offline_sync_debt(
+          ownerId,
+          string.from(plan.table),
+          ownerAgents,
+          onlineAgents,
+          ownerPolicies
+        );
+      }
       createdJobs = createdJobs.concat(nextJobs);
     }
   }
@@ -7496,6 +7803,25 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
       string.from(job.clientName)
     );
     try_start_latest_change_resolution(job, conflictKind);
+  }
+  const completedBatchId = string.from(job.batchId ?? '').trim();
+  if (status.trim().toLowerCase() == 'completed' &&
+      string.from(job.direction).trim() == 'download' &&
+      string.from(job.sourceClientName).trim() == 'server-merge' &&
+      completedBatchId.length != 0 &&
+      sync_batch_all_jobs_completed(completedBatchId)) {
+    const clearedDebtCount = clear_offline_sync_debt(
+      string.from(job.ownerUserId),
+      string.from(job.table)
+    );
+    if (clearedDebtCount > 0) {
+      log.info('offline client catch-up completed', {
+        ownerUserId: job.ownerUserId,
+        table: job.table,
+        batchId: completedBatchId,
+        clearedDebtCount
+      });
+    }
   }
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };

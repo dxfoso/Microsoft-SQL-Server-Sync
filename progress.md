@@ -1,1 +1,1 @@
-85% - Server scheduler is stable and deployed; all local suites plus the mismatched-collation proof pass, with Windows client 1.0.194+198 publication and final c1/c2 retry remaining.
+90% - Accurate status and offline-safe catch-up pass TRU, 277 contracts, 158 Flutter tests, analyzers, production image validation, and all 22 three-client SQL Server scenarios; deployment is next.

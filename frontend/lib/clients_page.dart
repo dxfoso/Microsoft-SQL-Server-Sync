@@ -1507,6 +1507,9 @@ class _ClientsPageState extends State<ClientsPage> {
     if (agent.clientUpdate.pending) return 'Updating';
     if (!agent.serverConnected) return 'Server offline';
     if (!agent.sqlConnected) return 'SQL offline';
+    if (agent.runtimeStatusLabel.trim().isNotEmpty) {
+      return agent.runtimeStatusLabel.trim();
+    }
 
     final currentStatuses = <String>{
       ...jobs
@@ -1547,6 +1550,7 @@ class _ClientsPageState extends State<ClientsPage> {
         return const Color(0xFF2563EB);
       case 'downloading':
       case 'applying':
+      case 'catching up':
         return const Color(0xFFB54708);
       case 'waiting':
       case 'queued':

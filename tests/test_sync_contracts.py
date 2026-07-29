@@ -302,7 +302,9 @@ class SyncContractsTests(unittest.TestCase):
             control_plane,
         )
         self.assertIn("function jobs_bootstrap(clientName: string, tables: array<string>", control_plane)
-        self.assertIn("sourceClientName: bootstrapSourceClientName.length == 0 ? 'server-delta-v3' : 'server-bootstrap-v3'", control_plane)
+        self.assertIn("'server-delta-v3'", control_plane)
+        self.assertIn("'server-bootstrap-v3'", control_plane)
+        self.assertIn("'server-partial-delta-v3'", control_plane)
         self.assertNotIn("mergeRole", control_plane)
         self.assertNotIn("publicationName", control_plane)
         self.assertIn("field syncMode: string min=1 max=32", control_plane)
