@@ -8,6 +8,20 @@ const int kMinAutoSyncIntervalMinutes = 1;
 const int kMaxAutoSyncIntervalMinutes = 1440;
 const Object _syncTableStateUnset = Object();
 
+String? automaticDatabaseTargetForClient({
+  required String clientName,
+  String? accountUsername,
+  String? accountName,
+}) {
+  final identities = <String?>[accountUsername, accountName, clientName];
+  for (final identity in identities) {
+    if (identity?.trim().toLowerCase() == 'velvet factory') {
+      return 'AmnDb048';
+    }
+  }
+  return null;
+}
+
 String? resolveSavedDatabaseSelection({
   required String? saved,
   required List<String> available,

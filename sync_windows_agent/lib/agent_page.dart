@@ -121,6 +121,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const Duration _automaticChangeDiscoveryInterval = Duration(
     seconds: 30,
   );
+  static const Duration _automaticDatabaseTargetCheckInterval = Duration(
+    seconds: 30,
+  );
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
   static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);
   static const int _heartbeatTablePayloadLimit = 150;
@@ -136,6 +139,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Timer? _syncPollTimer;
   Timer? _clientUpdateCheckTimer;
   Timer? _automaticChangeDiscoveryTimer;
+  Timer? _automaticDatabaseTargetCheckTimer;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -161,6 +165,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _diagnosticsUploadRequestId;
   bool _rowCountsRefreshing = false;
   bool _automaticChangeDiscoveryBusy = false;
+  bool _automaticDatabaseTargetCheckBusy = false;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
@@ -222,6 +227,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _automaticChangeDiscoveryInterval,
       (_) => unawaited(_discoverAndEnableChangedTables()),
     );
+    _automaticDatabaseTargetCheckTimer = Timer.periodic(
+      _automaticDatabaseTargetCheckInterval,
+      (_) => unawaited(_checkAutomaticDatabaseTarget()),
+    );
     if (widget.autoLoadOnStart) {
       logStartupEvent('AgentDashboardPage autoLoadOnStart scheduled');
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -229,7 +238,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           return;
         }
         logStartupEvent('AgentDashboardPage autoLoadOnStart refresh');
-        unawaited(_refreshConnection(loadTables: true));
+        unawaited(
+          _refreshConnection(
+            loadTables: true,
+          ).whenComplete(() => _checkAutomaticDatabaseTarget()),
+        );
       });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -249,6 +262,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _syncPollTimer?.cancel();
     _clientUpdateCheckTimer?.cancel();
     _automaticChangeDiscoveryTimer?.cancel();
+    _automaticDatabaseTargetCheckTimer?.cancel();
     _controlPlaneClient.dispose();
     _serverController.dispose();
     _userController.dispose();
@@ -848,6 +862,73 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _refreshConnection({bool loadTables = true}) async {
     await _loadDatabases(profile: _activeProfile(), loadTables: loadTables);
+  }
+
+  String? _automaticDatabaseTarget() {
+    return automaticDatabaseTargetForClient(
+      clientName: widget.clientName,
+      accountUsername: widget.authenticatedAccountUsername,
+      accountName: widget.authenticatedAccountName,
+    );
+  }
+
+  Future<void> _checkAutomaticDatabaseTarget() async {
+    final target = _automaticDatabaseTarget();
+    if (!mounted ||
+        target == null ||
+        _automaticDatabaseTargetCheckBusy ||
+        _selectedDatabase?.toLowerCase() == target.toLowerCase()) {
+      return;
+    }
+
+    _automaticDatabaseTargetCheckBusy = true;
+    try {
+      final profile = await _resolveSqlConnectionProfile(_activeProfile());
+      if (!mounted) {
+        return;
+      }
+      final probe = await _runSqlCmd(
+        profile: profile,
+        database: target,
+        query: 'SET NOCOUNT ON; SELECT DB_NAME();',
+        timeout: const Duration(seconds: 20),
+      );
+      if (!mounted || probe == null || probe.exitCode != 0) {
+        return;
+      }
+
+      final discovered = await _queryDatabases(profile: profile);
+      if (!mounted) {
+        return;
+      }
+      final canonicalTarget =
+          discovered.success
+              ? discovered.values.cast<String?>().firstWhere(
+                (database) => database?.toLowerCase() == target.toLowerCase(),
+                orElse: () => target,
+              )
+              : target;
+      final nextDatabases =
+          discovered.success
+              ? discovered.values
+              : <String>[
+                ..._databases.where(
+                  (database) => database.toLowerCase() != target.toLowerCase(),
+                ),
+                target,
+              ];
+
+      setState(() {
+        _databases = nextDatabases;
+      });
+      logStartupEvent(
+        'Automatic database target is available; selecting $canonicalTarget.',
+      );
+      await _selectDatabase(canonicalTarget ?? target);
+      unawaited(_syncWithControlPlane());
+    } finally {
+      _automaticDatabaseTargetCheckBusy = false;
+    }
   }
 
   Future<void> _loadDatabases({
