@@ -1942,7 +1942,12 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
   }
   const ownerUserId = owner_namespace_for_user(current);
   let normalizedTables = [];
-  for (const table of tables.take(600)) {
+  let inspectedTableCount = 0;
+  for (const table of tables) {
+    if (inspectedTableCount >= 600) {
+      break;
+    }
+    inspectedTableCount = inspectedTableCount + 1;
     const normalizedTable = string.from(table).trim();
     if (normalizedTable.length == 0 || string_array_contains(normalizedTables, normalizedTable)) {
       continue;

@@ -18,7 +18,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("function table_dependency_policy_set(", 1)[0]
 
         self.assertIn("tables: array<string>", body)
-        self.assertIn("for (const table of tables.take(600))", body)
+        self.assertIn("let inspectedTableCount = 0;", body)
+        self.assertIn("for (const table of tables)", body)
+        self.assertIn("if (inspectedTableCount >= 600)", body)
+        self.assertIn(
+            "inspectedTableCount = inspectedTableCount + 1;",
+            body,
+        )
+        self.assertNotIn(".take(", body)
         self.assertIn("find_table_sync_policy(ownerUserId, normalizedTable)", body)
         self.assertIn("if (policy == null)", body)
         self.assertIn("upsert_table_sync_policy(", body)
