@@ -1011,9 +1011,130 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     unawaited(_syncWithControlPlane());
     unawaited(
-      _queryChangeTrackingDiagnostics().whenComplete(
-        () => _discoverAndEnableChangedTables(),
-      ),
+      _queryChangeTrackingDiagnostics()
+          .then((_) => _autoEnrollEligibleTables(database))
+          .whenComplete(() => _discoverAndEnableChangedTables()),
+    );
+  }
+
+  Future<void> _autoEnrollEligibleTables(
+    String database, {
+    Iterable<String>? candidates,
+  }) async {
+    if (!mounted || database.trim().isEmpty || _isSystemDatabase(database)) {
+      return;
+    }
+    final candidateKeys = candidates?.map((value) => value.trim()).toSet();
+    final eligibleTables = _syncState.tables.entries
+      .where(
+        (entry) =>
+            _syncKeyMatchesDatabase(entry.key, database) &&
+            entry.value.changeTrackingStatus == 'enabled' &&
+            (candidateKeys == null || candidateKeys.contains(entry.key)),
+      )
+      .map((entry) => entry.key)
+      .toSet()
+      .toList(growable: false)..sort();
+    if (eligibleTables.isEmpty) {
+      return;
+    }
+
+    try {
+      final policies = await _controlPlaneClient.autoEnrollTableSyncPolicies(
+        tables: eligibleTables,
+      );
+      if (!mounted) {
+        return;
+      }
+      final newlyEnabled = _applyRemoteTablePolicies(policies);
+      logStartupEvent(
+        'Automatic first-time table enrollment evaluated ${eligibleTables.length} eligible table(s); ${newlyEnabled.length} became enabled locally.',
+      );
+      if (newlyEnabled.isNotEmpty) {
+        unawaited(_syncWithControlPlane());
+      }
+    } catch (error, stackTrace) {
+      logAgentDiagnostic(
+        'sync_policy.auto_enroll.failed',
+        level: AgentLogLevel.error,
+        context: {
+          'clientName': widget.clientName,
+          'database': database,
+          'eligibleTableCount': eligibleTables.length,
+        },
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _discoverNewTablesForAutomaticEnrollment(String database) async {
+    final discovery = await _queryTables(
+      profile: _activeProfile(),
+      database: database,
+    );
+    if (!mounted || !discovery.success) {
+      return;
+    }
+    final knownKeys =
+        _syncState.tables.keys.map((key) => key.trim().toLowerCase()).toSet();
+    final newTables = discovery.values
+        .where(
+          (table) =>
+              !knownKeys.contains(
+                _syncTableKey(table, database: database).toLowerCase(),
+              ),
+        )
+        .toList(growable: false);
+    if (newTables.isEmpty) {
+      return;
+    }
+
+    _ensureSyncTablesLoaded(newTables);
+    final newSyncKeys = newTables
+        .map((table) => _syncTableKey(table, database: database))
+        .toList(growable: false);
+    final rowCounts = await _queryTableRowCounts(
+      profile: _activeProfile(),
+      database: database,
+      tables: newTables,
+    );
+    if (!mounted) {
+      return;
+    }
+    _applyTableRowCounts(database: database, rowCounts: rowCounts);
+
+    final relationships = await _queryTableRelationships(
+      profile: _activeProfile(),
+      database: database,
+      tables: discovery.values,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _localRelatedSyncTables = relationships;
+      _relatedSyncTables = _mergeRelationshipGraphs([
+        relationships,
+        _relationshipGraphFromRemoteDependencies(_remoteTableDependencies),
+      ]);
+      _refreshVisibleTablesForSelectedDatabaseInState();
+    });
+    _refreshAutoRequiredTables();
+
+    final automaticEnable = await _ensureChangeTrackingEnabledForDatabase(
+      database: database,
+      tables: newTables,
+    );
+    if (!mounted) {
+      return;
+    }
+    _applyChangeTrackingDiagnosticsToState([
+      {'automaticEnable': automaticEnable},
+    ]);
+    await _autoEnrollEligibleTables(database, candidates: newSyncKeys);
+    logStartupEvent(
+      'Automatically discovered ${newTables.length} new SQL table(s) in $database.',
     );
   }
 
@@ -1026,18 +1147,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
 
-    final states = <String, SyncTableState>{};
-    for (final entry in _syncState.tables.entries) {
-      if (_syncKeyMatchesDatabase(entry.key, database)) {
-        states[_localTableName(entry.key)] = entry.value;
-      }
-    }
-    if (states.isEmpty) {
-      return;
-    }
-
     _automaticChangeDiscoveryBusy = true;
     try {
+      await _discoverNewTablesForAutomaticEnrollment(database);
+      if (!mounted) {
+        return;
+      }
+      final states = <String, SyncTableState>{};
+      for (final entry in _syncState.tables.entries) {
+        if (_syncKeyMatchesDatabase(entry.key, database)) {
+          states[_localTableName(entry.key)] = entry.value;
+        }
+      }
+      if (states.isEmpty) {
+        return;
+      }
       final query = buildAutomaticChangeDiscoveryQuery(
         database: database,
         tableBaselines: states.map(
@@ -1133,6 +1257,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                     ? 'Automatic sync requires a primary key.'
                     : probe.status == 'not_tracked'
                     ? 'Change Tracking is not enabled for this table.'
+                    : probe.status == 'unsupported'
+                    ? 'Automatic sync skipped an unsupported table schema.'
                     : 'Table is unavailable for automatic sync.',
           );
           stateChanged = true;
@@ -6259,6 +6385,21 @@ ELSE IF NOT EXISTS (
 )
 BEGIN
   SELECT N'table', N'${_escapeSqlLiteral(objectName)}', N'no_primary_key', N'Change Tracking requires a primary key.';
+END
+ELSE IF EXISTS (
+  SELECT 1
+  FROM sys.columns AS c
+  INNER JOIN sys.types AS column_type
+    ON column_type.user_type_id = c.user_type_id
+  WHERE c.object_id = OBJECT_ID(N'${_escapeSqlLiteral(objectName)}', N'U')
+    AND c.is_computed = 0
+    AND column_type.name IN (
+      N'image', N'text', N'ntext', N'sql_variant', N'hierarchyid',
+      N'geometry', N'geography', N'cursor', N'table'
+    )
+)
+BEGIN
+  SELECT N'table', N'${_escapeSqlLiteral(objectName)}', N'unsupported', N'Table contains a column type that cannot be synchronized safely.';
 END
 ELSE IF EXISTS (
   SELECT 1

@@ -112,6 +112,19 @@ BEGIN
     WHERE object_id = @object_id AND is_primary_key = 1
   )
     INSERT #results VALUES (@display, @current, @minimum, N'no_primary_key');
+  ELSE IF EXISTS (
+    SELECT 1
+    FROM sys.columns AS c
+    INNER JOIN sys.types AS column_type
+      ON column_type.user_type_id = c.user_type_id
+    WHERE c.object_id = @object_id
+      AND c.is_computed = 0
+      AND column_type.name IN (
+        N'image', N'text', N'ntext', N'sql_variant', N'hierarchyid',
+        N'geometry', N'geography', N'cursor', N'table'
+      )
+  )
+    INSERT #results VALUES (@display, @current, @minimum, N'unsupported');
   ELSE IF NOT EXISTS (
     SELECT 1 FROM sys.change_tracking_tables WHERE object_id = @object_id
   )

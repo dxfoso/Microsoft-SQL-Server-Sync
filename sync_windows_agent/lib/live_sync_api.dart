@@ -757,6 +757,29 @@ class AgentControlPlaneClient {
     );
   }
 
+  Future<List<RemoteTableSyncPolicy>> autoEnrollTableSyncPolicies({
+    required List<String> tables,
+  }) async {
+    final response = await _invokeFunction(
+      'table_sync_policy_auto_enroll',
+      {'tables': tables},
+      'automatically enrolling discovered table sync policies',
+    );
+    if (response is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected automatic table enrollment payload.',
+      );
+    }
+    return _mapListOrThrow(
+      response['policies'],
+      (item) => _parseRemoteTableSyncPolicyPayload(
+        item,
+        'Unexpected automatic table enrollment payload.',
+      ),
+      'Unexpected automatic table enrollment payload.',
+    );
+  }
+
   Future<List<RemoteSyncJob>> createJobs({
     required String clientName,
     required List<String> tables,

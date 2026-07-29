@@ -2762,6 +2762,52 @@ void main() {
     );
   });
 
+  test(
+    'autoEnrollTableSyncPolicies sends one bounded policy request and parses existing opt-outs',
+    () async {
+      final client = _ScriptedClient(
+        responseForRequest: (name, args, callIndex) {
+          expect(name, 'table_sync_policy_auto_enroll');
+          expect(args['tables'], ['velvet::mt000', 'velvet::mt001']);
+          return (
+            statusCode: 200,
+            body: {
+              'status': 'success',
+              'value': {
+                'policies': [
+                  {
+                    'table': 'velvet::mt000',
+                    'enabled': true,
+                    'updatedAt': '2026-07-29T20:00:00Z',
+                    'updatedByClientName': 'home',
+                  },
+                  {
+                    'table': 'velvet::mt001',
+                    'enabled': false,
+                    'updatedAt': '2026-07-29T20:01:00Z',
+                    'updatedByClientName': 'owner',
+                  },
+                ],
+              },
+            },
+          );
+        },
+      );
+      final api = AgentControlPlaneClient(
+        client: client,
+        baseUrl: 'https://example.com/call',
+      );
+
+      final policies = await api.autoEnrollTableSyncPolicies(
+        tables: const ['velvet::mt000', 'velvet::mt001'],
+      );
+
+      expect(policies, hasLength(2));
+      expect(policies.first.enabled, isTrue);
+      expect(policies.last.enabled, isFalse);
+    },
+  );
+
   test('startJob rejects malformed job payloads', () async {
     final client = _DelayedClient(
       delay: Duration.zero,

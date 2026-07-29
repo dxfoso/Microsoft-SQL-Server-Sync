@@ -1932,6 +1932,47 @@ function table_sync_policy_set(table: string, enabled: bool, cascadeRelated: boo
   return { ok: true, policy: table_sync_policy_payload(policy) };
 }
 
+function table_sync_policy_auto_enroll(tables: array<string>, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_client_user(current) && !is_owner_user(current) && !is_admin_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const ownerUserId = owner_namespace_for_user(current);
+  let normalizedTables = [];
+  for (const table of tables.take(600)) {
+    const normalizedTable = string.from(table).trim();
+    if (normalizedTable.length == 0 || string_array_contains(normalizedTables, normalizedTable)) {
+      continue;
+    }
+    normalizedTables = normalizedTables.concat([normalizedTable]);
+  }
+  let policies = [];
+  let createdTables = [];
+  for (const normalizedTable of normalizedTables) {
+    let policy = find_table_sync_policy(ownerUserId, normalizedTable);
+    if (policy == null) {
+      policy = upsert_table_sync_policy(
+        ownerUserId,
+        normalizedTable,
+        true,
+        current.username
+      );
+      createdTables = createdTables.concat([normalizedTable]);
+    }
+    policies = policies.concat([table_sync_policy_payload(policy)]);
+  }
+  return {
+    ok: true,
+    policies,
+    createdTables,
+    evaluatedTableCount: normalizedTables.length,
+    createdTableCount: createdTables.length
+  };
+}
+
 function table_dependency_policy_set(table: string, relatedTable: string, relationshipType: string = 'business', database: string = '', clientName: string? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {

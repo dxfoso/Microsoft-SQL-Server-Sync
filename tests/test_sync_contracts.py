@@ -10,6 +10,49 @@ def read_text(relative_path: str) -> str:
 
 
 class SyncContractsTests(unittest.TestCase):
+    def test_first_time_eligible_tables_are_enrolled_automatically(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        discovery = read_text(
+            "sync_windows_agent/lib/automatic_change_discovery.dart"
+        )
+
+        self.assertIn(
+            ".then((_) => _autoEnrollEligibleTables(database))",
+            agent_page,
+        )
+        auto_enroll = agent_page.split(
+            "Future<void> _autoEnrollEligibleTables(", 1
+        )[1].split(
+            "Future<void> _discoverNewTablesForAutomaticEnrollment(", 1
+        )[0]
+        self.assertIn("changeTrackingStatus == 'enabled'", auto_enroll)
+        self.assertIn("autoEnrollTableSyncPolicies(", auto_enroll)
+        self.assertIn("_applyRemoteTablePolicies(policies)", auto_enroll)
+        periodic_discovery = agent_page.split(
+            "Future<void> _discoverNewTablesForAutomaticEnrollment(", 1
+        )[1].split("Future<void> _discoverAndEnableChangedTables(", 1)[0]
+        self.assertIn("_queryTables(", periodic_discovery)
+        self.assertIn("_ensureSyncTablesLoaded(newTables)", periodic_discovery)
+        self.assertIn(
+            "_ensureChangeTrackingEnabledForDatabase(",
+            periodic_discovery,
+        )
+        self.assertIn(
+            "_autoEnrollEligibleTables(database, candidates: newSyncKeys)",
+            periodic_discovery,
+        )
+        changed_discovery = agent_page.split(
+            "Future<void> _discoverAndEnableChangedTables(", 1
+        )[1].split("Future<void> _selectDatabase(", 1)[0]
+        self.assertIn(
+            "await _discoverNewTablesForAutomaticEnrollment(database)",
+            changed_discovery,
+        )
+        self.assertIn("'table_sync_policy_auto_enroll'", api)
+        self.assertIn("N'unsupported'", discovery)
+        self.assertIn("column_type.name IN", discovery)
+
     def test_legacy_sync_migration_records_are_removed(self):
         self.assertFalse((ROOT / "business/migration/mig_20260619_221054.json").exists())
         self.assertFalse((ROOT / "business/migration/mig_20260626_151213.json").exists())
@@ -87,7 +130,15 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_isSystemDatabase", agent_page)
         self.assertIn("System databases are not modified automatically.", agent_page)
         self.assertIn("_buildChangeTrackingBadge", agent_page)
-        self.assertIn("_queryChangeTrackingDiagnostics().whenComplete(", agent_page)
+        self.assertIn("_queryChangeTrackingDiagnostics()", agent_page)
+        self.assertIn(
+            ".then((_) => _autoEnrollEligibleTables(database))",
+            agent_page,
+        )
+        self.assertIn(
+            ".whenComplete(() => _discoverAndEnableChangedTables())",
+            agent_page,
+        )
         self.assertIn("_discoverAndEnableChangedTables()", agent_page)
         self.assertIn("changeTrackingStatus", read_text("sync_windows_agent/lib/sync_state.dart"))
 

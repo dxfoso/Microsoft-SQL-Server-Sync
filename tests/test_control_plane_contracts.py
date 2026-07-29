@@ -11,6 +11,20 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
+    def test_first_time_table_auto_enrollment_preserves_explicit_opt_outs(self):
+        source = read_text("business/control_plane.tru")
+        body = source.split(
+            "function table_sync_policy_auto_enroll(", 1
+        )[1].split("function table_dependency_policy_set(", 1)[0]
+
+        self.assertIn("tables: array<string>", body)
+        self.assertIn("for (const table of tables.take(600))", body)
+        self.assertIn("find_table_sync_policy(ownerUserId, normalizedTable)", body)
+        self.assertIn("if (policy == null)", body)
+        self.assertIn("upsert_table_sync_policy(", body)
+        self.assertNotIn("upsert_table_sync_policy(\n        ownerUserId,\n        normalizedTable,\n        false", body)
+        self.assertIn("createdTables", body)
+
     def test_public_jobs_expose_authoritative_changed_row_count(self):
         source = read_text("business/control_plane.tru")
         public_payload = source.split("function public_job_payload(", 1)[1].split(
