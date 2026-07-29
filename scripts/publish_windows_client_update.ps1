@@ -332,8 +332,8 @@ if (-not $SkipBuild) {
     }
     Write-Host 'Building Windows portable client...'
     & (Join-Path -Path $RepoRoot -ChildPath 'build_portable.ps1') @buildArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code $LASTEXITCODE`: Building Windows portable client..."
+    if (-not $?) {
+        throw 'Building Windows portable client failed.'
     }
 }
 
