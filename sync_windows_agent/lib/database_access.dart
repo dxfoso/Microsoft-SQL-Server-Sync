@@ -224,8 +224,11 @@ $commands
     foreach (\$candidate in \$candidates) {
       ('--- Probe ' + \$command.Database + ' on ' + \$candidate + ' ---') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
       \$probeQuery = "SET NOCOUNT ON; SELECT N'SYNC_GRANT_PROBE|' + REPLACE(COALESCE(CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')), N''), N'|', N'/') + N'|' + REPLACE(COALESCE(SUSER_SNAME(), N''), N'|', N'/') + N'|' + CONVERT(nvarchar(1), COALESCE(IS_SRVROLEMEMBER(N'sysadmin'), 0)) + N'|' + CASE WHEN DB_ID(N'" + \$command.DatabaseSqlLiteral + "') IS NULL THEN N'0' ELSE N'1' END;"
+      \$savedErrorActionPreference = \$ErrorActionPreference
+      \$ErrorActionPreference = 'Continue'
       \$probeOutput = & $executableLiteral -S \$candidate -d master -E -C -b -u -h -1 -W -Q \$probeQuery 2>&1
       \$probeExitCode = \$LASTEXITCODE
+      \$ErrorActionPreference = \$savedErrorActionPreference
       \$probeOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
       if (\$probeExitCode -ne 0) {
         continue
@@ -250,8 +253,11 @@ $commands
       continue
     }
     ('=== ' + \$command.Database + ' ===') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    \$savedErrorActionPreference = \$ErrorActionPreference
+    \$ErrorActionPreference = 'Continue'
     \$sqlOutput = & $executableLiteral -S \$selectedServer -E -C -b -u -f 65001 -i \$command.ScriptPath 2>&1
     \$sqlExitCode = \$LASTEXITCODE
+    \$ErrorActionPreference = \$savedErrorActionPreference
     \$sqlOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
     ('Result: exit ' + \$sqlExitCode) | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
     ('SYNC_GRANT_RESULT|' + \$command.Database + '|' + \$selectedResolvedServer + '|' + \$sqlExitCode) | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append

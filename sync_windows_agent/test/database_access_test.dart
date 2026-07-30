@@ -152,6 +152,11 @@ void main() {
     expect(script, contains("IS_SRVROLEMEMBER(N'sysadmin')"));
     expect(script, contains('Instance Names\\SQL'));
     expect(script, contains(r'foreach ($candidate in $candidates)'));
+    expect(script, contains(r"$ErrorActionPreference = 'Continue'"));
+    expect(
+      script,
+      contains(r'$ErrorActionPreference = $savedErrorActionPreference'),
+    );
     expect(script, contains('SYNC_GRANT_NOT_FOUND|'));
     expect(script, contains('SYNC_GRANT_RESULT|'));
     expect(script, contains(r'-i $command.ScriptPath'));
