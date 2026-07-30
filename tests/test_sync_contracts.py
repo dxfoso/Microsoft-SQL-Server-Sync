@@ -1328,6 +1328,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("CREATE LOGIN", database_access)
         self.assertIn("sp_addrolemember", database_access)
         self.assertIn("GRANT ALTER TO", database_access)
+        self.assertIn("GRANT VIEW CHANGE TRACKING ON SCHEMA::", database_access)
         self.assertNotIn("GRANT VIEW CHANGE TRACKING TO", database_access)
         self.assertIn("-Verb RunAs", database_access)
         self.assertNotIn("-Credential", database_access)

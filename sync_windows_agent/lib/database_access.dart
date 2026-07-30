@@ -19,6 +19,7 @@ String buildWindowsDatabaseAccessGrantSql({
 }) {
   final databaseIdentifier = database.replaceAll(']', ']]');
   final loginIdentifier = login.replaceAll(']', ']]');
+  final dynamicLoginIdentifier = loginIdentifier.replaceAll("'", "''");
   final loginLiteral = login.replaceAll("'", "''");
   return '''USE [master];
 
@@ -40,6 +41,23 @@ IF ISNULL(IS_ROLEMEMBER(N'db_datawriter', N'$loginLiteral'), 0) <> 1
 
 GRANT CONNECT TO [$loginIdentifier];
 GRANT ALTER TO [$loginIdentifier];
+
+DECLARE @viewChangeTrackingSql nvarchar(max);
+SET @viewChangeTrackingSql = N'';
+SELECT @viewChangeTrackingSql = @viewChangeTrackingSql
+    + N'GRANT VIEW CHANGE TRACKING ON SCHEMA::'
+    + QUOTENAME(user_schemas.name)
+    + N' TO [$dynamicLoginIdentifier];'
+    + CHAR(13) + CHAR(10)
+FROM (
+    SELECT DISTINCT schemas.name
+    FROM sys.schemas AS schemas
+    INNER JOIN sys.tables AS tables
+        ON tables.schema_id = schemas.schema_id
+    WHERE tables.is_ms_shipped = 0
+) AS user_schemas;
+IF LEN(@viewChangeTrackingSql) > 0
+    EXEC sp_executesql @viewChangeTrackingSql;
 GO
 ''';
 }

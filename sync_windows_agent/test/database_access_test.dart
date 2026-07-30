@@ -30,7 +30,11 @@ void main() {
     expect(sql, contains("EXEC sp_addrolemember N'db_datawriter'"));
     expect(sql, contains(r'GRANT CONNECT TO [DESKTOP-6MQFNA3\MY-PC]'));
     expect(sql, contains(r'GRANT ALTER TO [DESKTOP-6MQFNA3\MY-PC]'));
-    expect(sql, isNot(contains('VIEW CHANGE TRACKING')));
+    expect(sql, contains("N'GRANT VIEW CHANGE TRACKING ON SCHEMA::'"));
+    expect(sql, contains(r'TO [DESKTOP-6MQFNA3\MY-PC]'));
+    expect(sql, contains('INNER JOIN sys.tables AS tables'));
+    expect(sql, contains('WHERE tables.is_ms_shipped = 0'));
+    expect(sql, isNot(contains('GRANT VIEW CHANGE TRACKING TO')));
     expect(sql, isNot(contains("SERVERPROPERTY('ProductVersion')")));
     expect(sql, isNot(contains('ALTER ROLE')));
   });
@@ -44,7 +48,8 @@ void main() {
     expect(sql, contains("USE [db]]'one];"));
     expect(sql, contains("SUSER_ID(N'PC\\user]''one')"));
     expect(sql, contains("CREATE LOGIN [PC\\user]]'one]"));
-    expect(sql, isNot(contains('VIEW CHANGE TRACKING')));
+    expect(sql, contains("TO [PC\\user]]''one]"));
+    expect(sql, isNot(contains('GRANT VIEW CHANGE TRACKING TO')));
   });
 
   test('discovers every non-system database and its access state', () {
