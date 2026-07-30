@@ -45,6 +45,43 @@ GO
 ''';
 }
 
+String buildDatabaseAccessDiscoverySql() {
+  return r'''
+SET NOCOUNT ON;
+SELECT
+  name,
+  COALESCE(CONVERT(varchar(1), HAS_DBACCESS(name)), '0'),
+  state_desc
+FROM sys.databases
+WHERE database_id > 4
+ORDER BY name;
+''';
+}
+
+List<DatabaseAccessStatus> parseDatabaseAccessDiscoveryRows(
+  Iterable<List<String>> rows,
+) {
+  final statuses = <DatabaseAccessStatus>[];
+  final seen = <String>{};
+  for (final row in rows) {
+    if (row.length < 3) {
+      continue;
+    }
+    final database = row[0].trim();
+    if (database.isEmpty || !seen.add(database.toLowerCase())) {
+      continue;
+    }
+    statuses.add(
+      DatabaseAccessStatus(
+        database: database,
+        hasAccess: row[1].trim() == '1',
+        state: row[2].trim(),
+      ),
+    );
+  }
+  return statuses;
+}
+
 String powerShellSingleQuotedLiteral(String value) {
   return "'${value.replaceAll("'", "''")}'";
 }
@@ -103,4 +140,16 @@ class DatabaseAccessIssue {
   final String database;
   final String login;
   final String details;
+}
+
+class DatabaseAccessStatus {
+  const DatabaseAccessStatus({
+    required this.database,
+    required this.hasAccess,
+    required this.state,
+  });
+
+  final String database;
+  final bool hasAccess;
+  final String state;
 }

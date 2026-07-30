@@ -16,11 +16,11 @@ void main() {
 
   test('builds a SQL Server 2008 compatible access grant script', () {
     final sql = buildWindowsDatabaseAccessGrantSql(
-      database: 'AmnDb048',
+      database: 'CustomerLedger',
       login: r'DESKTOP-6MQFNA3\MY-PC',
     );
 
-    expect(sql, contains('USE [AmnDb048];'));
+    expect(sql, contains('USE [CustomerLedger];'));
     expect(
       sql,
       contains(r'CREATE LOGIN [DESKTOP-6MQFNA3\MY-PC] FROM WINDOWS;'),
@@ -46,6 +46,26 @@ void main() {
     expect(sql, contains("USE [db]]'one];"));
     expect(sql, contains("SUSER_ID(N'PC\\user]''one')"));
     expect(sql, contains("CREATE LOGIN [PC\\user]]'one]"));
+  });
+
+  test('discovers every non-system database and its access state', () {
+    final sql = buildDatabaseAccessDiscoverySql();
+    final statuses = parseDatabaseAccessDiscoveryRows([
+      ['ConfigStore', '1', 'ONLINE'],
+      ['CustomerLedger', '0', 'ONLINE'],
+      ['ArchiveStore', '0', 'OFFLINE'],
+    ]);
+
+    expect(sql, contains('HAS_DBACCESS(name)'));
+    expect(sql, contains('database_id > 4'));
+    expect(statuses.map((status) => status.database), [
+      'ConfigStore',
+      'CustomerLedger',
+      'ArchiveStore',
+    ]);
+    expect(statuses.first.hasAccess, isTrue);
+    expect(statuses[1].hasAccess, isFalse);
+    expect(statuses.last.state, 'OFFLINE');
   });
 
   test('builds an elevated helper without exposing credentials', () {

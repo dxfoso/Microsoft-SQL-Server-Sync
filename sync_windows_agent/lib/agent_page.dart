@@ -162,9 +162,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _diagnosticsUploadRequestId;
   bool _rowCountsRefreshing = false;
   bool _automaticChangeDiscoveryBusy = false;
-  bool _databaseAccessCheckBusy = false;
   bool _databaseAccessGrantBusy = false;
   bool _databaseAccessDialogVisible = false;
+  List<DatabaseAccessStatus> _databaseAccessStatuses = const [];
   DatabaseAccessIssue? _databaseAccessIssue;
   String? _databaseAccessGrantError;
   List<RemoteSyncJob> _activeJobs = const [];
@@ -235,11 +235,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           return;
         }
         logStartupEvent('AgentDashboardPage autoLoadOnStart refresh');
-        unawaited(
-          _refreshConnection(
-            loadTables: true,
-          ).whenComplete(() => _checkAutomaticDatabaseTarget(showDialog: true)),
-        );
+        unawaited(_refreshConnection(loadTables: true));
       });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -862,113 +858,52 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     await _loadDatabases(profile: _activeProfile(), loadTables: loadTables);
   }
 
-  String? _automaticDatabaseTarget() {
-    return automaticDatabaseTargetForClient(
-      clientName: widget.clientName,
-      accountUsername: widget.authenticatedAccountUsername,
-      accountName: widget.authenticatedAccountName,
+  List<DatabaseAccessIssue> _discoveredDatabaseAccessIssues() {
+    final login = windowsDatabaseLogin(
+      domainOrMachine:
+          Platform.environment['USERDOMAIN'] ?? Platform.localHostname,
+      username: Platform.environment['USERNAME'] ?? '',
     );
+    final server = _serverController.text.trim();
+    return _databaseAccessStatuses
+        .where((status) => !status.hasAccess)
+        .map(
+          (status) => DatabaseAccessIssue(
+            server: server,
+            database: status.database,
+            login: login,
+            details:
+                status.state.toUpperCase() == 'ONLINE'
+                    ? 'The database exists, but Windows account $login does not have access.'
+                    : 'The database exists in SQL Server state ${status.state}; access cannot be verified until it is online.',
+          ),
+        )
+        .toList(growable: false);
   }
 
-  Future<bool> _checkAutomaticDatabaseTarget({bool showDialog = false}) async {
-    final target = _automaticDatabaseTarget();
-    if (!mounted || target == null || _databaseAccessCheckBusy) {
-      return false;
-    }
-    if (_selectedDatabase?.toLowerCase() == target.toLowerCase()) {
-      if (_databaseAccessIssue != null) {
-        setState(() {
-          _databaseAccessIssue = null;
-          _databaseAccessGrantError = null;
-        });
-      }
-      return true;
-    }
+  List<DatabaseAccessIssue> _grantableDatabaseAccessIssues() {
+    final onlineDatabases =
+        _databaseAccessStatuses
+            .where(
+              (status) =>
+                  !status.hasAccess && status.state.toUpperCase() == 'ONLINE',
+            )
+            .map((status) => status.database.toLowerCase())
+            .toSet();
+    return _discoveredDatabaseAccessIssues()
+        .where(
+          (issue) => onlineDatabases.contains(issue.database.toLowerCase()),
+        )
+        .toList(growable: false);
+  }
 
-    _databaseAccessCheckBusy = true;
-    try {
-      final profile = await _resolveSqlConnectionProfile(_activeProfile());
-      if (!mounted) {
-        return false;
+  DatabaseAccessIssue? _databaseAccessIssueFor(String database) {
+    for (final issue in _discoveredDatabaseAccessIssues()) {
+      if (issue.database.toLowerCase() == database.toLowerCase()) {
+        return issue;
       }
-      final probe = await _runSqlCmd(
-        profile: profile,
-        database: target,
-        query: 'SET NOCOUNT ON; SELECT DB_NAME();',
-        timeout: const Duration(seconds: 20),
-      );
-      if (!mounted || probe == null || probe.exitCode != 0) {
-        if (!mounted) {
-          return false;
-        }
-        final login = windowsDatabaseLogin(
-          domainOrMachine:
-              Platform.environment['USERDOMAIN'] ?? Platform.localHostname,
-          username: Platform.environment['USERNAME'] ?? '',
-        );
-        final details =
-            probe == null
-                ? _sqlCmdUnavailableMessage(profile)
-                : _sqlCmdFailed('opening database $target', probe);
-        final issue = DatabaseAccessIssue(
-          server: profile.server,
-          database: target,
-          login: login,
-          details: details,
-        );
-        setState(() {
-          _databaseAccessIssue = issue;
-          _databaseAccessGrantError = null;
-        });
-        logAgentDiagnostic(
-          'database.access_required',
-          level: AgentLogLevel.warning,
-          context: {
-            'server': issue.server,
-            'database': issue.database,
-            'login': issue.login,
-          },
-          error: details,
-        );
-        if (showDialog) {
-          unawaited(_showDatabaseAccessDialog());
-        }
-        return false;
-      }
-
-      final discovered = await _queryDatabases(profile: profile);
-      if (!mounted) {
-        return false;
-      }
-      final discoveredDatabases =
-          discovered.success ? discovered.values : _databases;
-      final canonicalTarget =
-          discoveredDatabases.cast<String?>().firstWhere(
-            (database) => database?.toLowerCase() == target.toLowerCase(),
-            orElse: () => target,
-          ) ??
-          target;
-      final nextDatabases = <String>[...discoveredDatabases];
-      if (!nextDatabases.any(
-        (database) => database.toLowerCase() == target.toLowerCase(),
-      )) {
-        nextDatabases.add(target);
-      }
-
-      setState(() {
-        _databases = nextDatabases;
-        _databaseAccessIssue = null;
-        _databaseAccessGrantError = null;
-      });
-      logStartupEvent(
-        'Automatic database target is available; selecting $canonicalTarget.',
-      );
-      await _selectDatabase(canonicalTarget);
-      unawaited(_syncWithControlPlane());
-      return true;
-    } finally {
-      _databaseAccessCheckBusy = false;
     }
+    return null;
   }
 
   String _databaseAccessGrantSql(DatabaseAccessIssue issue) {
@@ -978,9 +913,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  Future<void> _copyDatabaseAccessGrantSql(DatabaseAccessIssue issue) async {
+  String _databaseAccessGrantSqlForIssues(
+    Iterable<DatabaseAccessIssue> issues,
+  ) {
+    return issues.map(_databaseAccessGrantSql).join('\n');
+  }
+
+  Future<void> _copyDatabaseAccessGrantSql(
+    DatabaseAccessIssue issue, {
+    List<DatabaseAccessIssue>? requestedIssues,
+  }) async {
+    final issues = requestedIssues ?? <DatabaseAccessIssue>[issue];
     await Clipboard.setData(
-      ClipboardData(text: _databaseAccessGrantSql(issue)),
+      ClipboardData(text: _databaseAccessGrantSqlForIssues(issues)),
     );
     if (!mounted) {
       return;
@@ -993,8 +938,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<({bool success, String message})> _grantDatabaseAccessWithWindowsUac(
-    DatabaseAccessIssue issue,
-  ) async {
+    DatabaseAccessIssue issue, {
+    List<DatabaseAccessIssue>? requestedIssues,
+  }) async {
+    final grantIssues = requestedIssues ?? <DatabaseAccessIssue>[issue];
     if (_databaseAccessGrantBusy) {
       return (
         success: false,
@@ -1039,7 +986,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         '${grantDirectory.path}${Platform.pathSeparator}grant-access-elevated.ps1',
       );
       await sqlScript.writeAsString(
-        _databaseAccessGrantSql(issue),
+        _databaseAccessGrantSqlForIssues(grantIssues),
         encoding: utf8,
         flush: true,
       );
@@ -1061,6 +1008,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         context: {
           'server': issue.server,
           'database': issue.database,
+          'databases': grantIssues.map((item) => item.database).toList(),
+          'databaseCount': grantIssues.length,
           'login': issue.login,
           'method': 'windows_uac',
         },
@@ -1106,6 +1055,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           context: {
             'server': issue.server,
             'database': issue.database,
+            'databases': grantIssues.map((item) => item.database).toList(),
+            'databaseCount': grantIssues.length,
             'login': issue.login,
             'method': 'windows_uac',
             'exitCode': processResult.exitCode,
@@ -1119,11 +1070,29 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return (success: false, message: message);
       }
 
-      final connected = await _checkAutomaticDatabaseTarget();
-      if (!connected) {
+      await _loadDatabases(
+        profile: _activeProfile(),
+        loadTables: true,
+        preserveSelection: true,
+      );
+      if (!mounted) {
+        return (
+          success: false,
+          message:
+              'The permission request finished after the client window was closed.',
+        );
+      }
+      final remaining = grantIssues
+          .where(
+            (requested) => _databaseAccessIssueFor(requested.database) != null,
+          )
+          .map((requested) => requested.database)
+          .toList(growable: false);
+      if (remaining.isNotEmpty) {
         final message =
-            _databaseAccessIssue?.details ??
-            'The permission command completed, but ${issue.database} still cannot be opened. The approved Windows administrator may not be a SQL Server administrator.';
+            'The permission command completed, but access could not be verified '
+            'for ${remaining.join(', ')}. The approved Windows administrator '
+            'may not be a SQL Server administrator.';
         setState(() {
           _databaseAccessGrantError = message;
         });
@@ -1133,6 +1102,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           context: {
             'server': issue.server,
             'database': issue.database,
+            'databases': grantIssues.map((item) => item.database).toList(),
+            'remainingDatabases': remaining,
             'login': issue.login,
             'method': 'windows_uac',
             'elapsedMs': grantStopwatch.elapsedMilliseconds,
@@ -1147,6 +1118,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         context: {
           'server': issue.server,
           'database': issue.database,
+          'databases': grantIssues.map((item) => item.database).toList(),
+          'databaseCount': grantIssues.length,
           'login': issue.login,
           'method': 'windows_uac',
           'elapsedMs': grantStopwatch.elapsedMilliseconds,
@@ -1154,7 +1127,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       return (
         success: true,
-        message: '${issue.database} is connected and ready.',
+        message:
+            grantIssues.length == 1
+                ? '${issue.database} is connected and ready.'
+                : 'Access was granted to ${grantIssues.length} databases.',
       );
     } on ProcessException catch (error) {
       final message =
@@ -1219,7 +1195,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _grantDatabaseAccessFromNotice(DatabaseAccessIssue issue) async {
-    final result = await _grantDatabaseAccessWithWindowsUac(issue);
+    final grantableIssues = _grantableDatabaseAccessIssues();
+    if (grantableIssues.isEmpty) {
+      await _showDatabaseAccessDialog();
+      return;
+    }
+    final result = await _grantDatabaseAccessWithWindowsUac(
+      grantableIssues.first,
+      requestedIssues: grantableIssues,
+    );
     if (!mounted) {
       return;
     }
@@ -1233,10 +1217,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<void> _showDatabaseAccessDialog() async {
-    final initialIssue = _databaseAccessIssue;
-    if (!mounted || initialIssue == null || _databaseAccessDialogVisible) {
+    final initialIssues = _discoveredDatabaseAccessIssues();
+    if (!mounted || initialIssues.isEmpty || _databaseAccessDialogVisible) {
       return;
     }
+    final initialIssue = initialIssues.first;
+    final selectedDatabaseKeys =
+        _grantableDatabaseAccessIssues()
+            .map((issue) => issue.database.toLowerCase())
+            .toSet();
 
     _databaseAccessDialogVisible = true;
     var retrying = false;
@@ -1248,27 +1237,49 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         builder: (dialogContext) {
           return StatefulBuilder(
             builder: (context, setDialogState) {
-              final issue = _databaseAccessIssue ?? initialIssue;
+              final issues = _discoveredDatabaseAccessIssues();
+              final visibleIssues = issues.isEmpty ? initialIssues : issues;
+              final grantableIssues = _grantableDatabaseAccessIssues();
+              final selectedIssues = grantableIssues
+                  .where(
+                    (item) => selectedDatabaseKeys.contains(
+                      item.database.toLowerCase(),
+                    ),
+                  )
+                  .toList(growable: false);
+              final issue =
+                  grantableIssues.isNotEmpty
+                      ? grantableIssues.first
+                      : visibleIssues.first;
               return AlertDialog(
-                title: const Text('Database access required'),
+                title: Text(
+                  visibleIssues.length == 1
+                      ? 'Database access required'
+                      : '${visibleIssues.length} databases need attention',
+                ),
                 content: SizedBox(
-                  width: 520,
+                  width: 580,
                   child: SingleChildScrollView(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'SQL Sync Agent cannot open ${issue.database} on '
-                          '${issue.server} using Windows account '
-                          '${issue.login}.',
+                          'SQL Sync Agent discovered these databases on '
+                          '${initialIssue.server}. The Windows account '
+                          '${initialIssue.login} cannot currently open them.',
                         ),
                         const SizedBox(height: 12),
-                        const Text(
-                          'Select Grant access and approve the standard Windows '
-                          'administrator prompt. The client will use that '
-                          'administrator only for this permission change and '
-                          'will not request or store a password.',
+                        Text(
+                          grantableIssues.isEmpty
+                              ? 'No listed database is currently online and '
+                                  'eligible for an access grant. Bring it online '
+                                  'in SQL Server, then select Refresh.'
+                              : 'Choose the databases, select Grant selected, '
+                                  'and approve the '
+                                  'standard Windows administrator prompt once. '
+                                  'The client does not request or store an '
+                                  'administrator password.',
                         ),
                         if (grantError != null &&
                             grantError!.trim().isNotEmpty) ...[
@@ -1295,18 +1306,94 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                         const SizedBox(height: 12),
                         Container(
                           width: double.infinity,
-                          padding: const EdgeInsets.all(12),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFF8FAFC),
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: const Color(0xFFD0D5DD)),
                           ),
-                          child: SelectableText(
-                            issue.details,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                            ),
+                          child: Column(
+                            children: visibleIssues
+                                .map(
+                                  (item) => Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (grantableIssues.any(
+                                          (grantable) =>
+                                              grantable.database
+                                                  .toLowerCase() ==
+                                              item.database.toLowerCase(),
+                                        ))
+                                          Checkbox(
+                                            value: selectedDatabaseKeys
+                                                .contains(
+                                                  item.database.toLowerCase(),
+                                                ),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            onChanged:
+                                                retrying || granting
+                                                    ? null
+                                                    : (selected) {
+                                                      setDialogState(() {
+                                                        final key =
+                                                            item.database
+                                                                .toLowerCase();
+                                                        if (selected ?? false) {
+                                                          selectedDatabaseKeys
+                                                              .add(key);
+                                                        } else {
+                                                          selectedDatabaseKeys
+                                                              .remove(key);
+                                                        }
+                                                      });
+                                                    },
+                                          )
+                                        else
+                                          const Padding(
+                                            padding: EdgeInsets.all(9),
+                                            child: Icon(
+                                              Icons.cloud_off_rounded,
+                                              size: 18,
+                                              color: Color(0xFF667085),
+                                            ),
+                                          ),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              SelectableText(
+                                                item.database,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                item.details,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Color(0xFF475467),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                                .toList(growable: false),
                           ),
                         ),
                       ],
@@ -1316,12 +1403,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 actions: [
                   TextButton.icon(
                     onPressed:
-                        retrying || granting
+                        retrying || granting || selectedIssues.isEmpty
                             ? null
-                            : () =>
-                                unawaited(_copyDatabaseAccessGrantSql(issue)),
+                            : () => unawaited(
+                              _copyDatabaseAccessGrantSql(
+                                issue,
+                                requestedIssues: selectedIssues,
+                              ),
+                            ),
                     icon: const Icon(Icons.copy_rounded, size: 17),
-                    label: const Text('Copy permission script'),
+                    label: const Text('Copy grant scripts'),
                   ),
                   TextButton(
                     onPressed:
@@ -1338,12 +1429,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                               setDialogState(() {
                                 retrying = true;
                               });
-                              final connected =
-                                  await _checkAutomaticDatabaseTarget();
+                              await _loadDatabases(
+                                profile: _activeProfile(),
+                                loadTables: true,
+                                preserveSelection: true,
+                              );
                               if (!mounted || !dialogContext.mounted) {
                                 return;
                               }
-                              if (connected) {
+                              if (_discoveredDatabaseAccessIssues().isEmpty) {
                                 Navigator.of(dialogContext).pop();
                                 return;
                               }
@@ -1362,11 +1456,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                               ),
                             )
                             : const Icon(Icons.refresh_rounded, size: 17),
-                    label: Text(retrying ? 'Checking…' : 'Retry'),
+                    label: Text(retrying ? 'Checking…' : 'Refresh'),
                   ),
                   FilledButton.icon(
                     onPressed:
-                        retrying || granting
+                        retrying || granting || selectedIssues.isEmpty
                             ? null
                             : () async {
                               setDialogState(() {
@@ -1376,6 +1470,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                               final result =
                                   await _grantDatabaseAccessWithWindowsUac(
                                     issue,
+                                    requestedIssues: selectedIssues,
                                   );
                               if (!mounted || !dialogContext.mounted) {
                                 return;
@@ -1407,7 +1502,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                               size: 17,
                             ),
                     label: Text(
-                      granting ? 'Waiting for Windows…' : 'Grant access',
+                      granting ? 'Waiting for Windows…' : 'Grant selected',
                     ),
                   ),
                 ],
@@ -1462,18 +1557,31 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _errorMessage = result.errorText;
         _selectedDatabase = null;
         _databases = const [];
+        _databaseAccessStatuses = const [];
+        _databaseAccessIssue = null;
       });
       return;
     }
 
+    final statuses = result.statuses;
+    final allDatabases = statuses
+        .map((status) => status.database)
+        .toList(growable: false);
+    final accessibleDatabases = statuses
+        .where((status) => status.hasAccess)
+        .map((status) => status.database)
+        .toList(growable: false);
     final selectedDatabase = resolveSavedDatabaseSelection(
       saved: preserveSelection ? _selectedDatabase : null,
-      available: result.values,
-      defaultDatabase: _preferredDatabase(result.values),
+      available: accessibleDatabases,
+      defaultDatabase: _preferredDatabase(accessibleDatabases),
     );
 
     setState(() {
-      _databases = result.values;
+      _databaseAccessStatuses = statuses;
+      _databases = allDatabases;
+      final issues = _discoveredDatabaseAccessIssues();
+      _databaseAccessIssue = issues.isEmpty ? null : issues.first;
       _selectedDatabase = selectedDatabase;
       if (selectedDatabase != previousDatabase) {
         _selectedTable = null;
@@ -1490,6 +1598,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         database: selectedDatabase,
         autoLoadRows: true,
       );
+    }
+    if (mounted && _databaseAccessIssue != null) {
+      unawaited(_showDatabaseAccessDialog());
     }
   }
 
@@ -1861,8 +1972,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
-  Future<void> _selectDatabase(String database) async {
-    if (database == _selectedDatabase) {
+  Future<void> _selectDatabase(String database, {bool force = false}) async {
+    if (!force && database == _selectedDatabase) {
       return;
     }
 
@@ -1881,6 +1992,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _relatedSyncTables = const {};
     });
     widget.onDatabaseChanged(database);
+
+    final accessIssue = _databaseAccessIssueFor(database);
+    if (accessIssue != null) {
+      setState(() {
+        _databaseAccessIssue = accessIssue;
+        _errorMessage =
+            '${accessIssue.database} requires SQL Server access before its tables can be loaded.';
+      });
+      unawaited(_showDatabaseAccessDialog());
+      return;
+    }
 
     await _loadTables(
       profile: _activeProfile(),
@@ -3788,6 +3910,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'databaseCount': _databases.length,
         'tableCount': _tables.length,
         'databaseAccessGrantBusy': _databaseAccessGrantBusy,
+        'databaseAccessRequiredCount':
+            _databaseAccessStatuses.where((status) => !status.hasAccess).length,
+        'databaseAccessDiscovery': _databaseAccessStatuses
+            .map(
+              (status) => {
+                'database': status.database,
+                'hasAccess': status.hasAccess,
+                'state': status.state,
+              },
+            )
+            .toList(growable: false),
         if (_databaseAccessGrantError != null)
           'databaseAccessGrantError': _databaseAccessGrantError,
         if (_databaseAccessIssue != null)
@@ -3982,6 +4115,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'tableCount': sql['tableCount'],
       'databaseAccessGrantBusy': sql['databaseAccessGrantBusy'],
       'databaseAccessGrantError': sql['databaseAccessGrantError'],
+      'databaseAccessRequiredCount': sql['databaseAccessRequiredCount'],
+      'databaseAccessDiscovery': sql['databaseAccessDiscovery'],
       'databaseAccessIssue': sql['databaseAccessIssue'],
       'changeTracking':
           sql['changeTracking'] is Map
@@ -6498,50 +6633,55 @@ END
     return int.parse(match.group(1)!);
   }
 
-  Future<_StringQueryResult> _queryDatabases({
+  Future<_DatabaseCatalogQueryResult> _queryDatabases({
     required _SqlConnectionProfile profile,
   }) async {
     if (profile.server.isEmpty) {
-      return _StringQueryResult(
+      return _DatabaseCatalogQueryResult(
         success: false,
-        values: const [],
+        statuses: const [],
         errorText:
             'Enter a SQL Server instance name or leave it blank to auto-detect this PC.',
       );
     }
 
-    final sql = 'SET NOCOUNT ON; SELECT name FROM sys.databases ORDER BY name;';
     final processResult = await _runSqlCmd(
       profile: profile,
       database: 'master',
-      query: sql,
+      query: buildDatabaseAccessDiscoverySql(),
     );
     if (processResult == null) {
-      return _StringQueryResult(
+      return _DatabaseCatalogQueryResult(
         success: false,
-        values: const [],
+        statuses: const [],
         errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
     if (processResult.exitCode != 0) {
-      return _StringQueryResult(
+      return _DatabaseCatalogQueryResult(
         success: false,
-        values: const [],
+        statuses: const [],
         errorText: _sqlCmdFailed('database discovery', processResult),
       );
     }
 
-    final values = _parseSingleColumnOutput(processResult.stdout.toString());
-    if (values.isEmpty) {
-      return _StringQueryResult(
+    final statuses = parseDatabaseAccessDiscoveryRows(
+      _dataOutputLines(processResult.stdout.toString()).map(_splitRowValues),
+    );
+    if (statuses.isEmpty) {
+      return _DatabaseCatalogQueryResult(
         success: false,
-        values: const [],
+        statuses: const [],
         errorText:
-            'No databases returned. Verify server access and permissions.',
+            'No user databases returned. Verify the SQL Server instance and permissions.',
       );
     }
 
-    return _StringQueryResult(success: true, values: values, errorText: null);
+    return _DatabaseCatalogQueryResult(
+      success: true,
+      statuses: statuses,
+      errorText: null,
+    );
   }
 
   Future<_StringQueryResult> _queryTables({
@@ -8277,10 +8417,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                                 profile: dialogProfile,
                                 loadTables: true,
                                 preserveSelection: false,
-                              ).whenComplete(
-                                () => _checkAutomaticDatabaseTarget(
-                                  showDialog: true,
-                                ),
                               ),
                             );
                           },
@@ -8302,10 +8438,14 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     if (issue == null) {
       return const SizedBox.shrink();
     }
+    final issues = _discoveredDatabaseAccessIssues();
+    final grantableIssues = _grantableDatabaseAccessIssues();
+    final databaseNames = issues.map((item) => item.database).join(', ');
 
     final message = Text(
-      '${issue.database} needs SQL Server permission for ${issue.login}. '
-      'Its tables will appear here after access is granted.',
+      '${issues.length} ${issues.length == 1 ? 'database needs' : 'databases need'} '
+      'attention for ${issue.login}: $databaseNames. Their tables will appear '
+      'after access is available.',
       style: const TextStyle(
         color: Color(0xFF7A2E0E),
         fontWeight: FontWeight.w700,
@@ -8318,20 +8458,35 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       children: [
         TextButton.icon(
           onPressed:
-              _databaseAccessCheckBusy
+              grantableIssues.isEmpty
                   ? null
-                  : () => unawaited(_copyDatabaseAccessGrantSql(issue)),
+                  : () => unawaited(
+                    _copyDatabaseAccessGrantSql(
+                      grantableIssues.first,
+                      requestedIssues: grantableIssues,
+                    ),
+                  ),
           icon: const Icon(Icons.copy_rounded, size: 16),
           label: const Text('Copy SQL'),
         ),
+        TextButton.icon(
+          onPressed:
+              _databaseAccessGrantBusy
+                  ? null
+                  : () => unawaited(_showDatabaseAccessDialog()),
+          icon: const Icon(Icons.list_alt_rounded, size: 17),
+          label: const Text('Review list'),
+        ),
         FilledButton.tonalIcon(
           onPressed:
-              _databaseAccessCheckBusy || _databaseAccessGrantBusy
+              _databaseAccessGrantBusy || grantableIssues.isEmpty
                   ? null
                   : () => unawaited(_grantDatabaseAccessFromNotice(issue)),
           icon: const Icon(Icons.admin_panel_settings_outlined, size: 17),
           label: Text(
-            _databaseAccessGrantBusy ? 'Waiting for Windows…' : 'Grant access',
+            _databaseAccessGrantBusy
+                ? 'Waiting for Windows…'
+                : 'Grant all access',
           ),
         ),
       ],
@@ -8422,7 +8577,11 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     );
   }
 
-  String _databaseDropdownLabel(String database) => database;
+  String _databaseDropdownLabel(String database) {
+    return _databaseAccessIssueFor(database) == null
+        ? database
+        : '$database — Access required';
+  }
 
   Widget _buildSyncTablesHeader() {
     final title = Text(
@@ -10560,6 +10719,18 @@ class _StringQueryResult {
 
   final bool success;
   final List<String> values;
+  final String? errorText;
+}
+
+class _DatabaseCatalogQueryResult {
+  const _DatabaseCatalogQueryResult({
+    required this.success,
+    required this.statuses,
+    required this.errorText,
+  });
+
+  final bool success;
+  final List<DatabaseAccessStatus> statuses;
   final String? errorText;
 }
 

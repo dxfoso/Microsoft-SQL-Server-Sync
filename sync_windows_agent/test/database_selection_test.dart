@@ -2,24 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sync_windows_agent/sync_state.dart';
 
 void main() {
-  test('velvet factory keeps AmnDb048 as its automatic database target', () {
-    expect(
-      automaticDatabaseTargetForClient(clientName: 'velvet factory'),
-      'AmnDb048',
-    );
-    expect(
-      automaticDatabaseTargetForClient(
-        clientName: 'Local Agent',
-        accountUsername: ' Velvet Factory ',
-      ),
-      'AmnDb048',
-    );
-  });
-
-  test('other clients do not receive a forced automatic database target', () {
-    expect(automaticDatabaseTargetForClient(clientName: 'velvet home'), isNull);
-  });
-
   test('restores the saved database when it is still available', () {
     expect(
       resolveSavedDatabaseSelection(
