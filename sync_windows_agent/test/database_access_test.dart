@@ -51,21 +51,43 @@ void main() {
   test('discovers every non-system database and its access state', () {
     final sql = buildDatabaseAccessDiscoverySql();
     final statuses = parseDatabaseAccessDiscoveryRows([
-      ['ConfigStore', '1', 'ONLINE'],
-      ['CustomerLedger', '0', 'ONLINE'],
-      ['ArchiveStore', '0', 'OFFLINE'],
+      ['ConfigStore', 'ONLINE'],
+      ['CustomerLedger', 'ONLINE'],
+      ['ArchiveStore', 'OFFLINE'],
     ]);
 
-    expect(sql, contains('HAS_DBACCESS(name)'));
+    expect(sql, isNot(contains('HAS_DBACCESS')));
     expect(sql, contains('database_id > 4'));
     expect(statuses.map((status) => status.database), [
       'ConfigStore',
       'CustomerLedger',
       'ArchiveStore',
     ]);
-    expect(statuses.first.hasAccess, isTrue);
+    expect(statuses.first.hasAccess, isFalse);
     expect(statuses[1].hasAccess, isFalse);
     expect(statuses.last.state, 'OFFLINE');
+    expect(statuses.first.accessProblem, 'not_checked');
+  });
+
+  test('distinguishes access grants from broken database attachments', () {
+    expect(
+      classifyDatabaseAccessProblem(
+        "Msg 4060 Cannot open database requested by the login. Msg 18456 Login failed.",
+      ),
+      'access_required',
+    );
+    expect(
+      classifyDatabaseAccessProblem(
+        'Msg 5120 Unable to open the physical file. Operating system error 2.',
+      ),
+      'database_unavailable',
+    );
+    expect(
+      classifyDatabaseAccessProblem(
+        'File activation failure. Cannot open database requested by the login.',
+      ),
+      'database_unavailable',
+    );
   });
 
   test('builds an elevated helper without exposing credentials', () {

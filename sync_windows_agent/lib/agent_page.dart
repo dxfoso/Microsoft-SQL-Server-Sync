@@ -873,8 +873,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             database: status.database,
             login: login,
             details:
-                status.state.toUpperCase() == 'ONLINE'
+                status.accessProblem == 'access_required'
                     ? 'The database exists, but Windows account $login does not have access.'
+                    : status.accessProblem == 'database_unavailable'
+                    ? 'SQL Server discovered this database but could not open it. Repair its database files or attachment before granting access.'
                     : 'The database exists in SQL Server state ${status.state}; access cannot be verified until it is online.',
           ),
         )
@@ -882,17 +884,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   List<DatabaseAccessIssue> _grantableDatabaseAccessIssues() {
-    final onlineDatabases =
+    final grantableDatabases =
         _databaseAccessStatuses
             .where(
               (status) =>
-                  !status.hasAccess && status.state.toUpperCase() == 'ONLINE',
+                  !status.hasAccess &&
+                  status.accessProblem == 'access_required',
             )
             .map((status) => status.database.toLowerCase())
             .toSet();
     return _discoveredDatabaseAccessIssues()
         .where(
-          (issue) => onlineDatabases.contains(issue.database.toLowerCase()),
+          (issue) => grantableDatabases.contains(issue.database.toLowerCase()),
         )
         .toList(growable: false);
   }
@@ -3918,6 +3921,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 'database': status.database,
                 'hasAccess': status.hasAccess,
                 'state': status.state,
+                'accessProblem': status.accessProblem,
               },
             )
             .toList(growable: false),
@@ -6665,16 +6669,64 @@ END
       );
     }
 
-    final statuses = parseDatabaseAccessDiscoveryRows(
+    final catalog = parseDatabaseAccessDiscoveryRows(
       _dataOutputLines(processResult.stdout.toString()).map(_splitRowValues),
     );
-    if (statuses.isEmpty) {
+    if (catalog.isEmpty) {
       return _DatabaseCatalogQueryResult(
         success: false,
         statuses: const [],
         errorText:
             'No user databases returned. Verify the SQL Server instance and permissions.',
       );
+    }
+
+    final statuses = <DatabaseAccessStatus>[];
+    const probeBatchSize = 4;
+    for (var offset = 0; offset < catalog.length; offset += probeBatchSize) {
+      final end =
+          (offset + probeBatchSize < catalog.length)
+              ? offset + probeBatchSize
+              : catalog.length;
+      final batch = catalog.sublist(offset, end);
+      final batchStatuses = await Future.wait(
+        batch.map((status) async {
+          if (status.state.toUpperCase() != 'ONLINE') {
+            return DatabaseAccessStatus(
+              database: status.database,
+              hasAccess: false,
+              state: status.state,
+              accessProblem: 'state_unavailable',
+            );
+          }
+          final probe = await _runSqlCmd(
+            profile: profile,
+            database: status.database,
+            query: 'SET NOCOUNT ON; SELECT DB_NAME();',
+            timeout: const Duration(seconds: 15),
+          );
+          if (probe != null && probe.exitCode == 0) {
+            return DatabaseAccessStatus(
+              database: status.database,
+              hasAccess: true,
+              state: status.state,
+              accessProblem: '',
+            );
+          }
+          final errorText =
+              probe == null
+                  ? _sqlCmdUnavailableMessage(profile)
+                  : _sqlCmdFailed('opening database ${status.database}', probe);
+          return DatabaseAccessStatus(
+            database: status.database,
+            hasAccess: false,
+            state: status.state,
+            accessProblem: classifyDatabaseAccessProblem(errorText),
+            accessError: errorText,
+          );
+        }),
+      );
+      statuses.addAll(batchStatuses);
     }
 
     return _DatabaseCatalogQueryResult(

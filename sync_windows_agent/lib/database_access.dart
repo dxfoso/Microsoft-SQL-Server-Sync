@@ -50,7 +50,6 @@ String buildDatabaseAccessDiscoverySql() {
 SET NOCOUNT ON;
 SELECT
   name,
-  COALESCE(CONVERT(varchar(1), HAS_DBACCESS(name)), '0'),
   state_desc
 FROM sys.databases
 WHERE database_id > 4
@@ -64,7 +63,7 @@ List<DatabaseAccessStatus> parseDatabaseAccessDiscoveryRows(
   final statuses = <DatabaseAccessStatus>[];
   final seen = <String>{};
   for (final row in rows) {
-    if (row.length < 3) {
+    if (row.length < 2) {
       continue;
     }
     final database = row[0].trim();
@@ -74,12 +73,32 @@ List<DatabaseAccessStatus> parseDatabaseAccessDiscoveryRows(
     statuses.add(
       DatabaseAccessStatus(
         database: database,
-        hasAccess: row[1].trim() == '1',
-        state: row[2].trim(),
+        hasAccess: false,
+        state: row[1].trim(),
+        accessProblem: 'not_checked',
       ),
     );
   }
   return statuses;
+}
+
+String classifyDatabaseAccessProblem(String errorText) {
+  final normalized = errorText.toLowerCase();
+  final databaseUnavailable =
+      normalized.contains('msg 5120') ||
+      normalized.contains('msg 5173') ||
+      normalized.contains('msg 945') ||
+      normalized.contains('msg 926') ||
+      normalized.contains('operating system error') ||
+      normalized.contains('file activation failure');
+  if (databaseUnavailable) {
+    return 'database_unavailable';
+  }
+  final permissionDenied =
+      normalized.contains('msg 4060') ||
+      normalized.contains('msg 18456') ||
+      normalized.contains('cannot open database');
+  return permissionDenied ? 'access_required' : 'database_unavailable';
 }
 
 String powerShellSingleQuotedLiteral(String value) {
@@ -147,9 +166,13 @@ class DatabaseAccessStatus {
     required this.database,
     required this.hasAccess,
     required this.state,
+    required this.accessProblem,
+    this.accessError = '',
   });
 
   final String database;
   final bool hasAccess;
   final String state;
+  final String accessProblem;
+  final String accessError;
 }
