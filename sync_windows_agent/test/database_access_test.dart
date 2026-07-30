@@ -148,11 +148,56 @@ void main() {
     );
 
     expect(script, contains(r'foreach ($command in $commands)'));
+    expect(script, contains('SYNC_GRANT_CONTEXT|'));
+    expect(script, contains("IS_SRVROLEMEMBER(N'sysadmin')"));
+    expect(script, contains('SYNC_GRANT_BLOCKED|'));
     expect(script, contains(r'-i $command.ScriptPath'));
     expect(script, contains("'MissingStore'"));
     expect(script, contains("'CustomerLedger'"));
     expect(script, contains(r'$allSucceeded = $false'));
     expect(script, contains('Result: exit '));
+  });
+
+  test('parses the elevated SQL Server authorization context', () {
+    final context = parseElevatedDatabaseAccessContext(
+      'other output\r\n'
+      r'SYNC_GRANT_CONTEXT|DESKTOP-6MQFNA3\SQLEXPRESS|'
+      'DESKTOP-6MQFNA3\\Administrator|0\r\n',
+    );
+
+    expect(context, isNotNull);
+    expect(context!.server, r'DESKTOP-6MQFNA3\SQLEXPRESS');
+    expect(context.identity, r'DESKTOP-6MQFNA3\Administrator');
+    expect(context.isSysadmin, isFalse);
+  });
+
+  test('explains when Windows elevation is not SQL authorization', () {
+    final message = databaseAccessGrantFailureMessage(
+      requestedServer: r'.\SQLEXPRESS',
+      databases: const ['AmnDb028', 'AmnDb048'],
+      sqlOutput:
+          r'SYNC_GRANT_CONTEXT|DESKTOP-6MQFNA3\SQLEXPRESS|'
+          'DESKTOP-6MQFNA3\\Administrator|0',
+    );
+
+    expect(message, contains('Windows approved the request as'));
+    expect(message, contains('not a SQL Server administrator'));
+    expect(message, contains('does not automatically grant SQL Server'));
+    expect(message, contains('AmnDb028, AmnDb048'));
+  });
+
+  test('explains a database on a different SQL Server instance', () {
+    final message = databaseAccessGrantFailureMessage(
+      requestedServer: r'.\SQLEXPRESS',
+      databases: const ['AmnDb048'],
+      sqlOutput:
+          'SYNC_GRANT_CONTEXT|DESKTOP-6MQFNA3\\SQLEXPRESS|'
+          'DESKTOP-6MQFNA3\\SqlAdmin|1\r\n'
+          "Msg 911 Database 'AmnDb048' does not exist.",
+    );
+
+    expect(message, contains('does not exist on that SQL Server instance'));
+    expect(message, contains('verify that the Server name'));
   });
 
   test('builds a standard Windows UAC launcher and escapes paths', () {

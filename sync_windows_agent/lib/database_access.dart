@@ -191,6 +191,27 @@ $commands
   )
   \$allSucceeded = \$true
   Remove-Item -LiteralPath $outputLiteral -Force -ErrorAction SilentlyContinue
+  \$contextQuery = "SET NOCOUNT ON; SELECT N'SYNC_GRANT_CONTEXT|' + REPLACE(COALESCE(CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')), N''), N'|', N'/') + N'|' + REPLACE(COALESCE(SUSER_SNAME(), N''), N'|', N'/') + N'|' + CONVERT(nvarchar(1), COALESCE(IS_SRVROLEMEMBER(N'sysadmin'), 0));"
+  \$contextOutput = & $executableLiteral -S $serverLiteral -d master -E -C -b -u -h -1 -W -Q \$contextQuery 2>&1
+  \$contextExitCode = \$LASTEXITCODE
+  \$contextOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+  if (\$contextExitCode -ne 0) {
+    ('SQL authorization preflight failed with exit ' + \$contextExitCode + '.') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    exit \$contextExitCode
+  }
+  \$contextLine = \$contextOutput |
+    ForEach-Object { \$_.ToString().Trim() } |
+    Where-Object { \$_.StartsWith('SYNC_GRANT_CONTEXT|') } |
+    Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace(\$contextLine)) {
+    'SQL authorization preflight returned no identity information.' | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    exit 4
+  }
+  \$contextFields = \$contextLine.Split('|')
+  if (\$contextFields.Count -lt 4 -or \$contextFields[3].Trim() -ne '1') {
+    'SYNC_GRANT_BLOCKED|The approved Windows account is not a SQL Server sysadmin.' | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    exit 5
+  }
   foreach (\$command in \$commands) {
     ('=== ' + \$command.Database + ' ===') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
     \$sqlOutput = & $executableLiteral -S $serverLiteral -E -C -b -u -f 65001 -i \$command.ScriptPath 2>&1
@@ -210,6 +231,55 @@ $commands
   exit 1
 }
 ''';
+}
+
+ElevatedDatabaseAccessContext? parseElevatedDatabaseAccessContext(
+  String output,
+) {
+  for (final rawLine in output.split(RegExp(r'\r?\n'))) {
+    final line = rawLine.trim();
+    if (!line.startsWith('SYNC_GRANT_CONTEXT|')) {
+      continue;
+    }
+    final fields = line.split('|');
+    if (fields.length < 4) {
+      continue;
+    }
+    return ElevatedDatabaseAccessContext(
+      server: fields[1].trim(),
+      identity: fields[2].trim(),
+      isSysadmin: fields[3].trim() == '1',
+    );
+  }
+  return null;
+}
+
+String databaseAccessGrantFailureMessage({
+  required String requestedServer,
+  required Iterable<String> databases,
+  required String sqlOutput,
+}) {
+  final names = databases.where((value) => value.trim().isNotEmpty).join(', ');
+  final context = parseElevatedDatabaseAccessContext(sqlOutput);
+  if (context != null && !context.isSysadmin) {
+    return 'Windows approved the request as ${context.identity}, but that '
+        'account is not a SQL Server administrator on ${context.server}. '
+        'Windows administrator permission does not automatically grant SQL '
+        'Server permission.\n\n'
+        'Use an account that is already a SQL Server sysadmin, or ask the SQL '
+        'Server administrator to run Copy grant scripts for $names.';
+  }
+  final normalized = sqlOutput.toLowerCase();
+  if (context?.isSysadmin == true &&
+      (normalized.contains('msg 911') ||
+          normalized.contains('does not exist'))) {
+    return 'The approved SQL Server administrator connected to '
+        '${context!.server}, but $names does not exist on that SQL Server '
+        'instance. In SQL Server Management Studio, verify that the Server '
+        'name containing the database matches $requestedServer.';
+  }
+  return 'Access was not granted to $names on $requestedServer.'
+      '${sqlOutput.trim().isEmpty ? '' : '\n\n$sqlOutput'}';
 }
 
 String buildWindowsUacLauncherPowerShell({required String helperScriptPath}) {
@@ -266,4 +336,16 @@ class DatabaseAccessStatus {
   final String state;
   final String accessProblem;
   final String accessError;
+}
+
+class ElevatedDatabaseAccessContext {
+  const ElevatedDatabaseAccessContext({
+    required this.server,
+    required this.identity,
+    required this.isSysadmin,
+  });
+
+  final String server;
+  final String identity;
+  final bool isSysadmin;
 }

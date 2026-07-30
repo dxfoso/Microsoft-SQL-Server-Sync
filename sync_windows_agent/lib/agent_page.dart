@@ -1113,10 +1113,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         final summary = <String>[
           if (granted.isNotEmpty)
             'Access granted successfully: ${granted.join(', ')}.',
-          'Access was not granted: ${remaining.join(', ')}.',
-          'The database may not exist on ${issue.server}, or the approved '
-              'Windows administrator may not be a SQL Server administrator.',
-          if (sqlOutput.isNotEmpty) sqlOutput,
+          databaseAccessGrantFailureMessage(
+            requestedServer: issue.server,
+            databases: remaining,
+            sqlOutput: sqlOutput,
+          ),
           if (launcherError.isNotEmpty) launcherError,
         ];
         final message = summary.join('\n\n');
@@ -1295,9 +1296,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'SQL Sync Agent discovered these databases on '
-                          '${initialIssue.server}. The Windows account '
-                          '${initialIssue.login} cannot currently open them.',
+                          'SQL Sync Agent needs these databases for the saved '
+                          'sync tables on ${initialIssue.server}. The Windows '
+                          'account ${initialIssue.login} cannot currently open '
+                          'them.',
                         ),
                         const SizedBox(height: 12),
                         Text(
