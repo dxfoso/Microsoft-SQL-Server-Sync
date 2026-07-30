@@ -163,8 +163,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _rowCountsRefreshing = false;
   bool _automaticChangeDiscoveryBusy = false;
   bool _databaseAccessCheckBusy = false;
+  bool _databaseAccessGrantBusy = false;
   bool _databaseAccessDialogVisible = false;
   DatabaseAccessIssue? _databaseAccessIssue;
+  String? _databaseAccessGrantError;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
@@ -838,6 +840,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (oldWidget.clientName != widget.clientName) {
       _syncState = widget.initialSyncState;
       _databaseAccessIssue = null;
+      _databaseAccessGrantError = null;
       unawaited(_syncWithControlPlane());
     }
   }
@@ -876,6 +879,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (_databaseAccessIssue != null) {
         setState(() {
           _databaseAccessIssue = null;
+          _databaseAccessGrantError = null;
         });
       }
       return true;
@@ -914,6 +918,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         );
         setState(() {
           _databaseAccessIssue = issue;
+          _databaseAccessGrantError = null;
         });
         logAgentDiagnostic(
           'database.access_required',
@@ -953,6 +958,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       setState(() {
         _databases = nextDatabases;
         _databaseAccessIssue = null;
+        _databaseAccessGrantError = null;
       });
       logStartupEvent(
         'Automatic database target is available; selecting $canonicalTarget.',
@@ -986,6 +992,246 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  Future<({bool success, String message})> _grantDatabaseAccessWithWindowsUac(
+    DatabaseAccessIssue issue,
+  ) async {
+    if (_databaseAccessGrantBusy) {
+      return (
+        success: false,
+        message: 'An administrator permission request is already running.',
+      );
+    }
+    if (!Platform.isWindows) {
+      return (
+        success: false,
+        message:
+            'Automatic permission grants are available only in the Windows client.',
+      );
+    }
+
+    setState(() {
+      _databaseAccessGrantBusy = true;
+      _databaseAccessGrantError = null;
+    });
+    Directory? grantDirectory;
+    try {
+      final sqlCmdExecutable = _sqlCmdExecutable();
+      if (sqlCmdExecutable.toLowerCase() != 'sqlcmd' &&
+          !File(sqlCmdExecutable).existsSync()) {
+        const message =
+            'sqlcmd was not found. Repair the SQL Server client tools installation and try again.';
+        setState(() {
+          _databaseAccessGrantError = message;
+        });
+        return (success: false, message: message);
+      }
+
+      grantDirectory = await Directory.systemTemp.createTemp(
+        'sync_agent_database_access_',
+      );
+      final sqlScript = File(
+        '${grantDirectory.path}${Platform.pathSeparator}grant-access.sql',
+      );
+      final outputFile = File(
+        '${grantDirectory.path}${Platform.pathSeparator}grant-output.txt',
+      );
+      final helperScript = File(
+        '${grantDirectory.path}${Platform.pathSeparator}grant-access-elevated.ps1',
+      );
+      await sqlScript.writeAsString(
+        _databaseAccessGrantSql(issue),
+        encoding: utf8,
+        flush: true,
+      );
+      final helperContents = buildElevatedDatabaseAccessHelperPowerShell(
+        sqlCmdExecutable: sqlCmdExecutable,
+        server: issue.server,
+        sqlScriptPath: sqlScript.path,
+        outputPath: outputFile.path,
+      );
+      await helperScript.writeAsBytes(<int>[
+        0xEF,
+        0xBB,
+        0xBF,
+        ...utf8.encode(helperContents),
+      ], flush: true);
+
+      logAgentDiagnostic(
+        'database.access_grant.started',
+        context: {
+          'server': issue.server,
+          'database': issue.database,
+          'login': issue.login,
+          'method': 'windows_uac',
+        },
+      );
+      final grantStopwatch = Stopwatch()..start();
+      final processResult = await Process.run('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        buildWindowsUacLauncherPowerShell(helperScriptPath: helperScript.path),
+      ], runInShell: false);
+      grantStopwatch.stop();
+      if (!mounted) {
+        return (
+          success: false,
+          message:
+              'The permission request finished after the client window was closed.',
+        );
+      }
+      var sqlOutput = '';
+      if (await outputFile.exists()) {
+        sqlOutput =
+            decodeSqlCmdOutputBytes(await outputFile.readAsBytes()).trim();
+      }
+      final launcherError = processResult.stderr.toString().trim();
+      if (processResult.exitCode != 0) {
+        final cancelled = processResult.exitCode == 1223;
+        final details = <String>[
+          if (cancelled)
+            'Windows administrator permission was cancelled or denied.',
+          if (sqlOutput.isNotEmpty) sqlOutput,
+          if (launcherError.isNotEmpty) launcherError,
+        ].join('\n');
+        final message =
+            details.isEmpty
+                ? 'The elevated SQL permission command failed with exit code ${processResult.exitCode}.'
+                : details;
+        logAgentDiagnostic(
+          'database.access_grant.failed',
+          level: AgentLogLevel.error,
+          context: {
+            'server': issue.server,
+            'database': issue.database,
+            'login': issue.login,
+            'method': 'windows_uac',
+            'exitCode': processResult.exitCode,
+            'elapsedMs': grantStopwatch.elapsedMilliseconds,
+          },
+          error: message,
+        );
+        setState(() {
+          _databaseAccessGrantError = message;
+        });
+        return (success: false, message: message);
+      }
+
+      final connected = await _checkAutomaticDatabaseTarget();
+      if (!connected) {
+        final message =
+            _databaseAccessIssue?.details ??
+            'The permission command completed, but ${issue.database} still cannot be opened. The approved Windows administrator may not be a SQL Server administrator.';
+        setState(() {
+          _databaseAccessGrantError = message;
+        });
+        logAgentDiagnostic(
+          'database.access_grant.verification_failed',
+          level: AgentLogLevel.error,
+          context: {
+            'server': issue.server,
+            'database': issue.database,
+            'login': issue.login,
+            'method': 'windows_uac',
+            'elapsedMs': grantStopwatch.elapsedMilliseconds,
+          },
+          error: message,
+        );
+        return (success: false, message: message);
+      }
+
+      logAgentDiagnostic(
+        'database.access_grant.completed',
+        context: {
+          'server': issue.server,
+          'database': issue.database,
+          'login': issue.login,
+          'method': 'windows_uac',
+          'elapsedMs': grantStopwatch.elapsedMilliseconds,
+        },
+      );
+      return (
+        success: true,
+        message: '${issue.database} is connected and ready.',
+      );
+    } on ProcessException catch (error) {
+      final message =
+          'Unable to open the Windows administrator permission prompt: ${error.message}';
+      if (mounted) {
+        setState(() {
+          _databaseAccessGrantError = message;
+        });
+      }
+      logAgentDiagnostic(
+        'database.access_grant.launch_failed',
+        level: AgentLogLevel.error,
+        context: {
+          'server': issue.server,
+          'database': issue.database,
+          'login': issue.login,
+          'method': 'windows_uac',
+        },
+        error: error,
+      );
+      return (success: false, message: message);
+    } catch (error, stackTrace) {
+      final message =
+          'The Windows administrator permission request could not be completed: $error';
+      if (mounted) {
+        setState(() {
+          _databaseAccessGrantError = message;
+        });
+      }
+      logAgentDiagnostic(
+        'database.access_grant.unexpected_failure',
+        level: AgentLogLevel.error,
+        context: {
+          'server': issue.server,
+          'database': issue.database,
+          'login': issue.login,
+          'method': 'windows_uac',
+        },
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return (success: false, message: message);
+    } finally {
+      if (grantDirectory != null) {
+        try {
+          await grantDirectory.delete(recursive: true);
+        } catch (error) {
+          logAgentDiagnostic(
+            'database.access_grant.temp_cleanup_failed',
+            level: AgentLogLevel.warning,
+            context: {'database': issue.database},
+            error: error,
+          );
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _databaseAccessGrantBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _grantDatabaseAccessFromNotice(DatabaseAccessIssue issue) async {
+    final result = await _grantDatabaseAccessWithWindowsUac(issue);
+    if (!mounted) {
+      return;
+    }
+    if (result.success) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.message)));
+      return;
+    }
+    await _showDatabaseAccessDialog();
+  }
+
   Future<void> _showDatabaseAccessDialog() async {
     final initialIssue = _databaseAccessIssue;
     if (!mounted || initialIssue == null || _databaseAccessDialogVisible) {
@@ -994,6 +1240,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _databaseAccessDialogVisible = true;
     var retrying = false;
+    var granting = false;
+    var grantError = _databaseAccessGrantError;
     try {
       await showDialog<void>(
         context: context,
@@ -1017,10 +1265,33 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                         ),
                         const SizedBox(height: 12),
                         const Text(
-                          'A SQL Server administrator must grant this account '
-                          'access. The client will not request or store an '
-                          'administrator password.',
+                          'Select Grant access and approve the standard Windows '
+                          'administrator prompt. The client will use that '
+                          'administrator only for this permission change and '
+                          'will not request or store a password.',
                         ),
+                        if (grantError != null &&
+                            grantError!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF1F0),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: const Color(0xFFFFB4AB),
+                              ),
+                            ),
+                            child: SelectableText(
+                              grantError!,
+                              style: const TextStyle(
+                                color: Color(0xFF8A1C13),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         Container(
                           width: double.infinity,
@@ -1045,7 +1316,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 actions: [
                   TextButton.icon(
                     onPressed:
-                        retrying
+                        retrying || granting
                             ? null
                             : () =>
                                 unawaited(_copyDatabaseAccessGrantSql(issue)),
@@ -1054,14 +1325,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   ),
                   TextButton(
                     onPressed:
-                        retrying
+                        retrying || granting
                             ? null
                             : () => Navigator.of(dialogContext).pop(),
                     child: const Text('Continue'),
                   ),
                   FilledButton.icon(
                     onPressed:
-                        retrying
+                        retrying || granting
                             ? null
                             : () async {
                               setDialogState(() {
@@ -1092,6 +1363,52 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                             )
                             : const Icon(Icons.refresh_rounded, size: 17),
                     label: Text(retrying ? 'Checking…' : 'Retry'),
+                  ),
+                  FilledButton.icon(
+                    onPressed:
+                        retrying || granting
+                            ? null
+                            : () async {
+                              setDialogState(() {
+                                granting = true;
+                                grantError = null;
+                              });
+                              final result =
+                                  await _grantDatabaseAccessWithWindowsUac(
+                                    issue,
+                                  );
+                              if (!mounted || !dialogContext.mounted) {
+                                return;
+                              }
+                              if (result.success) {
+                                Navigator.of(dialogContext).pop();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(result.message)),
+                                );
+                                return;
+                              }
+                              setDialogState(() {
+                                granting = false;
+                                grantError = result.message;
+                              });
+                            },
+                    icon:
+                        granting
+                            ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                            : const Icon(
+                              Icons.admin_panel_settings_rounded,
+                              size: 17,
+                            ),
+                    label: Text(
+                      granting ? 'Waiting for Windows…' : 'Grant access',
+                    ),
                   ),
                 ],
               );
@@ -3470,6 +3787,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             _selectedTable == null ? null : _syncTableKey(_selectedTable!),
         'databaseCount': _databases.length,
         'tableCount': _tables.length,
+        'databaseAccessGrantBusy': _databaseAccessGrantBusy,
+        if (_databaseAccessGrantError != null)
+          'databaseAccessGrantError': _databaseAccessGrantError,
         if (_databaseAccessIssue != null)
           'databaseAccessIssue': {
             'server': _databaseAccessIssue!.server,
@@ -3660,6 +3980,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'selectedTable': sql['selectedTable'],
       'databaseCount': sql['databaseCount'],
       'tableCount': sql['tableCount'],
+      'databaseAccessGrantBusy': sql['databaseAccessGrantBusy'],
+      'databaseAccessGrantError': sql['databaseAccessGrantError'],
       'databaseAccessIssue': sql['databaseAccessIssue'],
       'changeTracking':
           sql['changeTracking'] is Map
@@ -7944,6 +8266,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                               _rowOffset = 0;
                               _errorMessage = null;
                               _databaseAccessIssue = null;
+                              _databaseAccessGrantError = null;
                             });
 
                             widget.onServerChanged(dialogProfile.server);
@@ -8003,11 +8326,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         ),
         FilledButton.tonalIcon(
           onPressed:
-              _databaseAccessCheckBusy
+              _databaseAccessCheckBusy || _databaseAccessGrantBusy
                   ? null
-                  : () => unawaited(_showDatabaseAccessDialog()),
+                  : () => unawaited(_grantDatabaseAccessFromNotice(issue)),
           icon: const Icon(Icons.admin_panel_settings_outlined, size: 17),
-          label: const Text('Review access'),
+          label: Text(
+            _databaseAccessGrantBusy ? 'Waiting for Windows…' : 'Grant access',
+          ),
         ),
       ],
     );

@@ -45,6 +45,52 @@ GO
 ''';
 }
 
+String powerShellSingleQuotedLiteral(String value) {
+  return "'${value.replaceAll("'", "''")}'";
+}
+
+String buildElevatedDatabaseAccessHelperPowerShell({
+  required String sqlCmdExecutable,
+  required String server,
+  required String sqlScriptPath,
+  required String outputPath,
+}) {
+  final executableLiteral = powerShellSingleQuotedLiteral(sqlCmdExecutable);
+  final serverLiteral = powerShellSingleQuotedLiteral(server);
+  final scriptLiteral = powerShellSingleQuotedLiteral(sqlScriptPath);
+  final outputLiteral = powerShellSingleQuotedLiteral(outputPath);
+  return '''\$ErrorActionPreference = 'Stop'
+try {
+    \$sqlOutput = & $executableLiteral -S $serverLiteral -E -C -b -u -f 65001 -i $scriptLiteral 2>&1
+    \$sqlExitCode = \$LASTEXITCODE
+    \$sqlOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode
+    if (\$sqlExitCode -ne 0) {
+        exit \$sqlExitCode
+    }
+    exit 0
+} catch {
+    \$_ | Out-String | Out-File -LiteralPath $outputLiteral -Encoding Unicode
+    exit 1
+}
+''';
+}
+
+String buildWindowsUacLauncherPowerShell({required String helperScriptPath}) {
+  final helperLiteral = powerShellSingleQuotedLiteral(helperScriptPath);
+  return '''\$ErrorActionPreference = 'Stop'
+try {
+    \$helperPath = $helperLiteral
+    \$escapedHelperPath = \$helperPath.Replace('"', '`"')
+    \$arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + \$escapedHelperPath + '"'
+    \$elevated = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList \$arguments -Wait -PassThru
+    exit \$elevated.ExitCode
+} catch {
+    [Console]::Error.WriteLine(\$_.Exception.Message)
+    exit 1223
+}
+''';
+}
+
 class DatabaseAccessIssue {
   const DatabaseAccessIssue({
     required this.server,

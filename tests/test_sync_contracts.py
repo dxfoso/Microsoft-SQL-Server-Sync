@@ -1310,7 +1310,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_checkAutomaticDatabaseTarget(showDialog: true)", agent_page)
         self.assertIn("Database access required", agent_page)
         self.assertIn("Copy permission script", agent_page)
-        self.assertIn("Review access", agent_page)
+        self.assertIn("Grant access", agent_page)
+        self.assertIn("database.access_grant.completed", agent_page)
+        self.assertIn("buildWindowsUacLauncherPowerShell(", agent_page)
         self.assertIn("'databaseAccessIssue':", agent_page)
         self.assertNotIn("_automaticDatabaseTargetCheckInterval", agent_page)
         self.assertNotIn("_automaticDatabaseTargetCheckTimer", agent_page)
@@ -1318,6 +1320,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("sp_addrolemember", database_access)
         self.assertIn("GRANT ALTER TO", database_access)
         self.assertIn("GRANT VIEW CHANGE TRACKING TO", database_access)
+        self.assertIn("-Verb RunAs", database_access)
+        self.assertNotIn("-Credential", database_access)
         self.assertNotIn("ALTER ROLE", database_access)
 
     def test_windows_client_update_manifest_ignores_localhost_overrides(self):
