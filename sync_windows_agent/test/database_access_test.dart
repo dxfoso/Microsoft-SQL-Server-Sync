@@ -130,6 +130,31 @@ void main() {
     expect(script, isNot(contains('-P')));
   });
 
+  test('batch helper continues after an individual database failure', () {
+    final script = buildElevatedDatabaseAccessBatchHelperPowerShell(
+      sqlCmdExecutable: r'C:\Program Files\SQL Tools\SQLCMD.EXE',
+      server: r'.\SQLEXPRESS',
+      scripts: const [
+        DatabaseAccessGrantScript(
+          database: 'MissingStore',
+          sqlScriptPath: r'C:\Temp\grant-0.sql',
+        ),
+        DatabaseAccessGrantScript(
+          database: 'CustomerLedger',
+          sqlScriptPath: r'C:\Temp\grant-1.sql',
+        ),
+      ],
+      outputPath: r'C:\Temp\grant-output.txt',
+    );
+
+    expect(script, contains(r'foreach ($command in $commands)'));
+    expect(script, contains(r'-i $command.ScriptPath'));
+    expect(script, contains("'MissingStore'"));
+    expect(script, contains("'CustomerLedger'"));
+    expect(script, contains(r'$allSucceeded = $false'));
+    expect(script, contains('Result: exit '));
+  });
+
   test('builds a standard Windows UAC launcher and escapes paths', () {
     final script = buildWindowsUacLauncherPowerShell(
       helperScriptPath: r"C:\Users\O'Brien\App Data\grant.ps1",
@@ -154,6 +179,21 @@ void main() {
       ),
       buildWindowsUacLauncherPowerShell(
         helperScriptPath: r"C:\Users\O'Brien\App Data\grant.ps1",
+      ),
+      buildElevatedDatabaseAccessBatchHelperPowerShell(
+        sqlCmdExecutable: r"C:\Program Files\O'Brien Tools\SQLCMD.EXE",
+        server: r'.\SQLEXPRESS',
+        scripts: const [
+          DatabaseAccessGrantScript(
+            database: "O'Brien DB",
+            sqlScriptPath: r"C:\Users\O'Brien\App Data\grant-0.sql",
+          ),
+          DatabaseAccessGrantScript(
+            database: 'Second DB',
+            sqlScriptPath: r"C:\Users\O'Brien\App Data\grant-1.sql",
+          ),
+        ],
+        outputPath: r"C:\Users\O'Brien\App Data\grant-output.txt",
       ),
     ];
 

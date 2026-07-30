@@ -979,24 +979,35 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       grantDirectory = await Directory.systemTemp.createTemp(
         'sync_agent_database_access_',
       );
-      final sqlScript = File(
-        '${grantDirectory.path}${Platform.pathSeparator}grant-access.sql',
-      );
       final outputFile = File(
         '${grantDirectory.path}${Platform.pathSeparator}grant-output.txt',
       );
       final helperScript = File(
         '${grantDirectory.path}${Platform.pathSeparator}grant-access-elevated.ps1',
       );
-      await sqlScript.writeAsString(
-        _databaseAccessGrantSqlForIssues(grantIssues),
-        encoding: utf8,
-        flush: true,
-      );
-      final helperContents = buildElevatedDatabaseAccessHelperPowerShell(
+      final grantScripts = <DatabaseAccessGrantScript>[];
+      for (var index = 0; index < grantIssues.length; index += 1) {
+        final grantIssue = grantIssues[index];
+        final sqlScript = File(
+          '${grantDirectory.path}${Platform.pathSeparator}'
+          'grant-access-$index.sql',
+        );
+        await sqlScript.writeAsString(
+          _databaseAccessGrantSql(grantIssue),
+          encoding: utf8,
+          flush: true,
+        );
+        grantScripts.add(
+          DatabaseAccessGrantScript(
+            database: grantIssue.database,
+            sqlScriptPath: sqlScript.path,
+          ),
+        );
+      }
+      final helperContents = buildElevatedDatabaseAccessBatchHelperPowerShell(
         sqlCmdExecutable: sqlCmdExecutable,
         server: issue.server,
-        sqlScriptPath: sqlScript.path,
+        scripts: grantScripts,
         outputPath: outputFile.path,
       );
       await helperScript.writeAsBytes(<int>[
@@ -1040,18 +1051,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             decodeSqlCmdOutputBytes(await outputFile.readAsBytes()).trim();
       }
       final launcherError = processResult.stderr.toString().trim();
-      if (processResult.exitCode != 0) {
-        final cancelled = processResult.exitCode == 1223;
+      final cancelled = processResult.exitCode == 1223;
+      if (cancelled) {
         final details = <String>[
-          if (cancelled)
-            'Windows administrator permission was cancelled or denied.',
+          'Windows administrator permission was cancelled or denied.',
           if (sqlOutput.isNotEmpty) sqlOutput,
           if (launcherError.isNotEmpty) launcherError,
         ].join('\n');
-        final message =
-            details.isEmpty
-                ? 'The elevated SQL permission command failed with exit code ${processResult.exitCode}.'
-                : details;
+        final message = details;
         logAgentDiagnostic(
           'database.access_grant.failed',
           level: AgentLogLevel.error,
@@ -1091,11 +1098,28 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           )
           .map((requested) => requested.database)
           .toList(growable: false);
+      final granted = grantIssues
+          .where(
+            (requested) =>
+                !remaining.any(
+                  (database) =>
+                      database.toLowerCase() ==
+                      requested.database.toLowerCase(),
+                ),
+          )
+          .map((requested) => requested.database)
+          .toList(growable: false);
       if (remaining.isNotEmpty) {
-        final message =
-            'The permission command completed, but access could not be verified '
-            'for ${remaining.join(', ')}. The approved Windows administrator '
-            'may not be a SQL Server administrator.';
+        final summary = <String>[
+          if (granted.isNotEmpty)
+            'Access granted successfully: ${granted.join(', ')}.',
+          'Access was not granted: ${remaining.join(', ')}.',
+          'The database may not exist on ${issue.server}, or the approved '
+              'Windows administrator may not be a SQL Server administrator.',
+          if (sqlOutput.isNotEmpty) sqlOutput,
+          if (launcherError.isNotEmpty) launcherError,
+        ];
+        final message = summary.join('\n\n');
         setState(() {
           _databaseAccessGrantError = message;
         });
@@ -1106,9 +1130,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             'server': issue.server,
             'database': issue.database,
             'databases': grantIssues.map((item) => item.database).toList(),
+            'grantedDatabases': granted,
             'remainingDatabases': remaining,
             'login': issue.login,
             'method': 'windows_uac',
+            'helperExitCode': processResult.exitCode,
             'elapsedMs': grantStopwatch.elapsedMilliseconds,
           },
           error: message,
@@ -1125,6 +1151,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           'databaseCount': grantIssues.length,
           'login': issue.login,
           'method': 'windows_uac',
+          'helperExitCode': processResult.exitCode,
           'elapsedMs': grantStopwatch.elapsedMilliseconds,
         },
       );

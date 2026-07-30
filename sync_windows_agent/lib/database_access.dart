@@ -166,6 +166,52 @@ try {
 ''';
 }
 
+String buildElevatedDatabaseAccessBatchHelperPowerShell({
+  required String sqlCmdExecutable,
+  required String server,
+  required List<DatabaseAccessGrantScript> scripts,
+  required String outputPath,
+}) {
+  final executableLiteral = powerShellSingleQuotedLiteral(sqlCmdExecutable);
+  final serverLiteral = powerShellSingleQuotedLiteral(server);
+  final outputLiteral = powerShellSingleQuotedLiteral(outputPath);
+  final commands = scripts
+      .map(
+        (script) =>
+            "    [PSCustomObject]@{ Database = "
+            "${powerShellSingleQuotedLiteral(script.database)}; "
+            "ScriptPath = "
+            "${powerShellSingleQuotedLiteral(script.sqlScriptPath)} }",
+      )
+      .join(",\n");
+  return '''\$ErrorActionPreference = 'Stop'
+try {
+  \$commands = @(
+$commands
+  )
+  \$allSucceeded = \$true
+  Remove-Item -LiteralPath $outputLiteral -Force -ErrorAction SilentlyContinue
+  foreach (\$command in \$commands) {
+    ('=== ' + \$command.Database + ' ===') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    \$sqlOutput = & $executableLiteral -S $serverLiteral -E -C -b -u -f 65001 -i \$command.ScriptPath 2>&1
+    \$sqlExitCode = \$LASTEXITCODE
+    \$sqlOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    ('Result: exit ' + \$sqlExitCode) | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    if (\$sqlExitCode -ne 0) {
+      \$allSucceeded = \$false
+    }
+  }
+  if (-not \$allSucceeded) {
+    exit 1
+  }
+  exit 0
+} catch {
+  \$_ | Out-String | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+  exit 1
+}
+''';
+}
+
 String buildWindowsUacLauncherPowerShell({required String helperScriptPath}) {
   final helperLiteral = powerShellSingleQuotedLiteral(helperScriptPath);
   return '''\$ErrorActionPreference = 'Stop'
@@ -194,6 +240,16 @@ class DatabaseAccessIssue {
   final String database;
   final String login;
   final String details;
+}
+
+class DatabaseAccessGrantScript {
+  const DatabaseAccessGrantScript({
+    required this.database,
+    required this.sqlScriptPath,
+  });
+
+  final String database;
+  final String sqlScriptPath;
 }
 
 class DatabaseAccessStatus {
