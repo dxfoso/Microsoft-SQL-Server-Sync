@@ -14,7 +14,7 @@ void main() {
     );
   });
 
-  test('builds a SQL Server 2008 compatible access grant script', () {
+  test('builds a SQL Server compatible access grant script', () {
     final sql = buildWindowsDatabaseAccessGrantSql(
       database: 'CustomerLedger',
       login: r'DESKTOP-6MQFNA3\MY-PC',
@@ -30,14 +30,8 @@ void main() {
     expect(sql, contains("EXEC sp_addrolemember N'db_datawriter'"));
     expect(sql, contains(r'GRANT CONNECT TO [DESKTOP-6MQFNA3\MY-PC]'));
     expect(sql, contains(r'GRANT ALTER TO [DESKTOP-6MQFNA3\MY-PC]'));
-    expect(
-      sql,
-      contains(
-        r"EXEC(N'GRANT VIEW CHANGE TRACKING TO [DESKTOP-6MQFNA3\MY-PC]')",
-      ),
-    );
-    expect(sql, contains('IF @majorVersion >= 10'));
-    expect(sql, contains("SERVERPROPERTY('ProductVersion')"));
+    expect(sql, isNot(contains('VIEW CHANGE TRACKING')));
+    expect(sql, isNot(contains("SERVERPROPERTY('ProductVersion')")));
     expect(sql, isNot(contains('ALTER ROLE')));
   });
 
@@ -50,10 +44,7 @@ void main() {
     expect(sql, contains("USE [db]]'one];"));
     expect(sql, contains("SUSER_ID(N'PC\\user]''one')"));
     expect(sql, contains("CREATE LOGIN [PC\\user]]'one]"));
-    expect(
-      sql,
-      contains("EXEC(N'GRANT VIEW CHANGE TRACKING TO [PC\\user]]''one]')"),
-    );
+    expect(sql, isNot(contains('VIEW CHANGE TRACKING')));
   });
 
   test('discovers every non-system database and its access state', () {

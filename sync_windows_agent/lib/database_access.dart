@@ -19,7 +19,6 @@ String buildWindowsDatabaseAccessGrantSql({
 }) {
   final databaseIdentifier = database.replaceAll(']', ']]');
   final loginIdentifier = login.replaceAll(']', ']]');
-  final dynamicLoginIdentifier = loginIdentifier.replaceAll("'", "''");
   final loginLiteral = login.replaceAll("'", "''");
   return '''USE [master];
 
@@ -41,16 +40,6 @@ IF ISNULL(IS_ROLEMEMBER(N'db_datawriter', N'$loginLiteral'), 0) <> 1
 
 GRANT CONNECT TO [$loginIdentifier];
 GRANT ALTER TO [$loginIdentifier];
-
-DECLARE @productVersion varchar(32);
-DECLARE @majorVersion int;
-SET @productVersion = CONVERT(varchar(32), SERVERPROPERTY('ProductVersion'));
-SET @majorVersion = CONVERT(
-    int,
-    LEFT(@productVersion, CHARINDEX('.', @productVersion + '.') - 1)
-);
-IF @majorVersion >= 10
-    EXEC(N'GRANT VIEW CHANGE TRACKING TO [$dynamicLoginIdentifier]');
 GO
 ''';
 }
