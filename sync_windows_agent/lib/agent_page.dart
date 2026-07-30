@@ -11,6 +11,7 @@ import 'package:path/path.dart' as path;
 import 'agent_widgets.dart';
 import 'automatic_change_discovery.dart';
 import 'client_version.dart';
+import 'database_access.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_sync_merge.dart';
@@ -121,9 +122,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const Duration _automaticChangeDiscoveryInterval = Duration(
     seconds: 30,
   );
-  static const Duration _automaticDatabaseTargetCheckInterval = Duration(
-    seconds: 30,
-  );
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
   static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);
   static const int _heartbeatTablePayloadLimit = 150;
@@ -139,7 +137,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Timer? _syncPollTimer;
   Timer? _clientUpdateCheckTimer;
   Timer? _automaticChangeDiscoveryTimer;
-  Timer? _automaticDatabaseTargetCheckTimer;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -165,7 +162,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _diagnosticsUploadRequestId;
   bool _rowCountsRefreshing = false;
   bool _automaticChangeDiscoveryBusy = false;
-  bool _automaticDatabaseTargetCheckBusy = false;
+  bool _databaseAccessCheckBusy = false;
+  bool _databaseAccessDialogVisible = false;
+  DatabaseAccessIssue? _databaseAccessIssue;
   List<RemoteSyncJob> _activeJobs = const [];
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
@@ -227,10 +226,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       _automaticChangeDiscoveryInterval,
       (_) => unawaited(_discoverAndEnableChangedTables()),
     );
-    _automaticDatabaseTargetCheckTimer = Timer.periodic(
-      _automaticDatabaseTargetCheckInterval,
-      (_) => unawaited(_checkAutomaticDatabaseTarget()),
-    );
     if (widget.autoLoadOnStart) {
       logStartupEvent('AgentDashboardPage autoLoadOnStart scheduled');
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -241,7 +236,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         unawaited(
           _refreshConnection(
             loadTables: true,
-          ).whenComplete(() => _checkAutomaticDatabaseTarget()),
+          ).whenComplete(() => _checkAutomaticDatabaseTarget(showDialog: true)),
         );
       });
     }
@@ -262,7 +257,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _syncPollTimer?.cancel();
     _clientUpdateCheckTimer?.cancel();
     _automaticChangeDiscoveryTimer?.cancel();
-    _automaticDatabaseTargetCheckTimer?.cancel();
     _controlPlaneClient.dispose();
     _serverController.dispose();
     _userController.dispose();
@@ -843,6 +837,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     if (oldWidget.clientName != widget.clientName) {
       _syncState = widget.initialSyncState;
+      _databaseAccessIssue = null;
       unawaited(_syncWithControlPlane());
     }
   }
@@ -872,20 +867,25 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  Future<void> _checkAutomaticDatabaseTarget() async {
+  Future<bool> _checkAutomaticDatabaseTarget({bool showDialog = false}) async {
     final target = _automaticDatabaseTarget();
-    if (!mounted ||
-        target == null ||
-        _automaticDatabaseTargetCheckBusy ||
-        _selectedDatabase?.toLowerCase() == target.toLowerCase()) {
-      return;
+    if (!mounted || target == null || _databaseAccessCheckBusy) {
+      return false;
+    }
+    if (_selectedDatabase?.toLowerCase() == target.toLowerCase()) {
+      if (_databaseAccessIssue != null) {
+        setState(() {
+          _databaseAccessIssue = null;
+        });
+      }
+      return true;
     }
 
-    _automaticDatabaseTargetCheckBusy = true;
+    _databaseAccessCheckBusy = true;
     try {
       final profile = await _resolveSqlConnectionProfile(_activeProfile());
       if (!mounted) {
-        return;
+        return false;
       }
       final probe = await _runSqlCmd(
         profile: profile,
@@ -894,40 +894,213 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         timeout: const Duration(seconds: 20),
       );
       if (!mounted || probe == null || probe.exitCode != 0) {
-        return;
+        if (!mounted) {
+          return false;
+        }
+        final login = windowsDatabaseLogin(
+          domainOrMachine:
+              Platform.environment['USERDOMAIN'] ?? Platform.localHostname,
+          username: Platform.environment['USERNAME'] ?? '',
+        );
+        final details =
+            probe == null
+                ? _sqlCmdUnavailableMessage(profile)
+                : _sqlCmdFailed('opening database $target', probe);
+        final issue = DatabaseAccessIssue(
+          server: profile.server,
+          database: target,
+          login: login,
+          details: details,
+        );
+        setState(() {
+          _databaseAccessIssue = issue;
+        });
+        logAgentDiagnostic(
+          'database.access_required',
+          level: AgentLogLevel.warning,
+          context: {
+            'server': issue.server,
+            'database': issue.database,
+            'login': issue.login,
+          },
+          error: details,
+        );
+        if (showDialog) {
+          unawaited(_showDatabaseAccessDialog());
+        }
+        return false;
       }
 
       final discovered = await _queryDatabases(profile: profile);
       if (!mounted) {
-        return;
+        return false;
       }
+      final discoveredDatabases =
+          discovered.success ? discovered.values : _databases;
       final canonicalTarget =
-          discovered.success
-              ? discovered.values.cast<String?>().firstWhere(
-                (database) => database?.toLowerCase() == target.toLowerCase(),
-                orElse: () => target,
-              )
-              : target;
-      final nextDatabases =
-          discovered.success
-              ? discovered.values
-              : <String>[
-                ..._databases.where(
-                  (database) => database.toLowerCase() != target.toLowerCase(),
-                ),
-                target,
-              ];
+          discoveredDatabases.cast<String?>().firstWhere(
+            (database) => database?.toLowerCase() == target.toLowerCase(),
+            orElse: () => target,
+          ) ??
+          target;
+      final nextDatabases = <String>[...discoveredDatabases];
+      if (!nextDatabases.any(
+        (database) => database.toLowerCase() == target.toLowerCase(),
+      )) {
+        nextDatabases.add(target);
+      }
 
       setState(() {
         _databases = nextDatabases;
+        _databaseAccessIssue = null;
       });
       logStartupEvent(
         'Automatic database target is available; selecting $canonicalTarget.',
       );
-      await _selectDatabase(canonicalTarget ?? target);
+      await _selectDatabase(canonicalTarget);
       unawaited(_syncWithControlPlane());
+      return true;
     } finally {
-      _automaticDatabaseTargetCheckBusy = false;
+      _databaseAccessCheckBusy = false;
+    }
+  }
+
+  String _databaseAccessGrantSql(DatabaseAccessIssue issue) {
+    return buildWindowsDatabaseAccessGrantSql(
+      database: issue.database,
+      login: issue.login,
+    );
+  }
+
+  Future<void> _copyDatabaseAccessGrantSql(DatabaseAccessIssue issue) async {
+    await Clipboard.setData(
+      ClipboardData(text: _databaseAccessGrantSql(issue)),
+    );
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('SQL permission script copied to the clipboard.'),
+      ),
+    );
+  }
+
+  Future<void> _showDatabaseAccessDialog() async {
+    final initialIssue = _databaseAccessIssue;
+    if (!mounted || initialIssue == null || _databaseAccessDialogVisible) {
+      return;
+    }
+
+    _databaseAccessDialogVisible = true;
+    var retrying = false;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final issue = _databaseAccessIssue ?? initialIssue;
+              return AlertDialog(
+                title: const Text('Database access required'),
+                content: SizedBox(
+                  width: 520,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'SQL Sync Agent cannot open ${issue.database} on '
+                          '${issue.server} using Windows account '
+                          '${issue.login}.',
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'A SQL Server administrator must grant this account '
+                          'access. The client will not request or store an '
+                          'administrator password.',
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFD0D5DD)),
+                          ),
+                          child: SelectableText(
+                            issue.details,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton.icon(
+                    onPressed:
+                        retrying
+                            ? null
+                            : () =>
+                                unawaited(_copyDatabaseAccessGrantSql(issue)),
+                    icon: const Icon(Icons.copy_rounded, size: 17),
+                    label: const Text('Copy permission script'),
+                  ),
+                  TextButton(
+                    onPressed:
+                        retrying
+                            ? null
+                            : () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Continue'),
+                  ),
+                  FilledButton.icon(
+                    onPressed:
+                        retrying
+                            ? null
+                            : () async {
+                              setDialogState(() {
+                                retrying = true;
+                              });
+                              final connected =
+                                  await _checkAutomaticDatabaseTarget();
+                              if (!mounted || !dialogContext.mounted) {
+                                return;
+                              }
+                              if (connected) {
+                                Navigator.of(dialogContext).pop();
+                                return;
+                              }
+                              setDialogState(() {
+                                retrying = false;
+                              });
+                            },
+                    icon:
+                        retrying
+                            ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                            : const Icon(Icons.refresh_rounded, size: 17),
+                    label: Text(retrying ? 'Checking…' : 'Retry'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      _databaseAccessDialogVisible = false;
     }
   }
 
@@ -3297,6 +3470,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             _selectedTable == null ? null : _syncTableKey(_selectedTable!),
         'databaseCount': _databases.length,
         'tableCount': _tables.length,
+        if (_databaseAccessIssue != null)
+          'databaseAccessIssue': {
+            'server': _databaseAccessIssue!.server,
+            'database': _databaseAccessIssue!.database,
+            'login': _databaseAccessIssue!.login,
+            'details': _databaseAccessIssue!.details,
+          },
         'changeTracking': changeTracking,
       },
       'syncSettings': {
@@ -3480,6 +3660,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'selectedTable': sql['selectedTable'],
       'databaseCount': sql['databaseCount'],
       'tableCount': sql['tableCount'],
+      'databaseAccessIssue': sql['databaseAccessIssue'],
       'changeTracking':
           sql['changeTracking'] is Map
               ? _minimalChangeTrackingForUpload(sql['changeTracking'])
@@ -7762,6 +7943,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                               _hasMoreRows = false;
                               _rowOffset = 0;
                               _errorMessage = null;
+                              _databaseAccessIssue = null;
                             });
 
                             widget.onServerChanged(dialogProfile.server);
@@ -7772,6 +7954,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                                 profile: dialogProfile,
                                 loadTables: true,
                                 preserveSelection: false,
+                              ).whenComplete(
+                                () => _checkAutomaticDatabaseTarget(
+                                  showDialog: true,
+                                ),
                               ),
                             );
                           },
@@ -7786,6 +7972,93 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
     clientNameController.dispose();
     serverController.dispose();
+  }
+
+  Widget _buildDatabaseAccessNotice() {
+    final issue = _databaseAccessIssue;
+    if (issue == null) {
+      return const SizedBox.shrink();
+    }
+
+    final message = Text(
+      '${issue.database} needs SQL Server permission for ${issue.login}. '
+      'Its tables will appear here after access is granted.',
+      style: const TextStyle(
+        color: Color(0xFF7A2E0E),
+        fontWeight: FontWeight.w700,
+        height: 1.35,
+      ),
+    );
+    final actions = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        TextButton.icon(
+          onPressed:
+              _databaseAccessCheckBusy
+                  ? null
+                  : () => unawaited(_copyDatabaseAccessGrantSql(issue)),
+          icon: const Icon(Icons.copy_rounded, size: 16),
+          label: const Text('Copy SQL'),
+        ),
+        FilledButton.tonalIcon(
+          onPressed:
+              _databaseAccessCheckBusy
+                  ? null
+                  : () => unawaited(_showDatabaseAccessDialog()),
+          icon: const Icon(Icons.admin_panel_settings_outlined, size: 17),
+          label: const Text('Review access'),
+        ),
+      ],
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E5),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFF5C27A)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 680) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.lock_outline_rounded,
+                      color: Color(0xFFB54708),
+                      size: 21,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: message),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                actions,
+              ],
+            );
+          }
+          return Row(
+            children: [
+              const Icon(
+                Icons.lock_outline_rounded,
+                color: Color(0xFFB54708),
+                size: 21,
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: message),
+              const SizedBox(width: 12),
+              actions,
+            ],
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildDatabaseDropdown() {
@@ -7886,6 +8159,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       return Column(
         children: [
           _buildSyncTablesHeader(),
+          if (_databaseAccessIssue != null) ...[
+            const SizedBox(height: 8),
+            _buildDatabaseAccessNotice(),
+          ],
           const SizedBox(height: 8),
           AgentSurfaceCard(
             title: 'Sync Tables',
@@ -7909,6 +8186,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     return Column(
       children: [
         _buildSyncTablesHeader(),
+        if (_databaseAccessIssue != null) ...[
+          const SizedBox(height: 8),
+          _buildDatabaseAccessNotice(),
+        ],
         const SizedBox(height: 8),
         Expanded(
           child: LayoutBuilder(

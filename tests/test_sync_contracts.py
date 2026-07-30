@@ -1303,6 +1303,23 @@ class SyncContractsTests(unittest.TestCase):
             client_api,
         )
 
+    def test_windows_client_database_access_failure_is_actionable_not_periodic(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        database_access = read_text("sync_windows_agent/lib/database_access.dart")
+
+        self.assertIn("_checkAutomaticDatabaseTarget(showDialog: true)", agent_page)
+        self.assertIn("Database access required", agent_page)
+        self.assertIn("Copy permission script", agent_page)
+        self.assertIn("Review access", agent_page)
+        self.assertIn("'databaseAccessIssue':", agent_page)
+        self.assertNotIn("_automaticDatabaseTargetCheckInterval", agent_page)
+        self.assertNotIn("_automaticDatabaseTargetCheckTimer", agent_page)
+        self.assertIn("CREATE LOGIN", database_access)
+        self.assertIn("sp_addrolemember", database_access)
+        self.assertIn("GRANT ALTER TO", database_access)
+        self.assertIn("GRANT VIEW CHANGE TRACKING TO", database_access)
+        self.assertNotIn("ALTER ROLE", database_access)
+
     def test_windows_client_update_manifest_ignores_localhost_overrides(self):
         app = read_text("sync_windows_agent/lib/app.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
