@@ -32,8 +32,12 @@ void main() {
     expect(sql, contains(r'GRANT ALTER TO [DESKTOP-6MQFNA3\MY-PC]'));
     expect(
       sql,
-      contains(r'GRANT VIEW CHANGE TRACKING TO [DESKTOP-6MQFNA3\MY-PC]'),
+      contains(
+        r"EXEC(N'GRANT VIEW CHANGE TRACKING TO [DESKTOP-6MQFNA3\MY-PC]')",
+      ),
     );
+    expect(sql, contains('IF @majorVersion >= 10'));
+    expect(sql, contains("SERVERPROPERTY('ProductVersion')"));
     expect(sql, isNot(contains('ALTER ROLE')));
   });
 
@@ -46,6 +50,10 @@ void main() {
     expect(sql, contains("USE [db]]'one];"));
     expect(sql, contains("SUSER_ID(N'PC\\user]''one')"));
     expect(sql, contains("CREATE LOGIN [PC\\user]]'one]"));
+    expect(
+      sql,
+      contains("EXEC(N'GRANT VIEW CHANGE TRACKING TO [PC\\user]]''one]')"),
+    );
   });
 
   test('discovers every non-system database and its access state', () {
