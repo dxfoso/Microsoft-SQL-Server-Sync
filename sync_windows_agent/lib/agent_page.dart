@@ -6649,6 +6649,19 @@ END
       );
     }
 
+    final referencedDatabases = <String>{
+      if ((_selectedDatabase ?? '').trim().isNotEmpty)
+        _selectedDatabase!.trim(),
+      if ((widget.initialDatabase ?? '').trim().isNotEmpty)
+        widget.initialDatabase!.trim(),
+      ..._syncState.tables.keys.map(_databaseNameFromSyncKey),
+      ..._activeJobs.map((job) => _databaseNameFromSyncKey(job.table)),
+      ..._relatedSyncTables.keys.map(_databaseNameFromSyncKey),
+      ..._relatedSyncTables.values
+          .expand((values) => values)
+          .map(_databaseNameFromSyncKey),
+    }..removeWhere((database) => database.trim().isEmpty);
+
     final processResult = await _runSqlCmd(
       profile: profile,
       database: 'master',
@@ -6661,7 +6674,7 @@ END
         errorText: _sqlCmdUnavailableMessage(profile),
       );
     }
-    if (processResult.exitCode != 0) {
+    if (processResult.exitCode != 0 && referencedDatabases.isEmpty) {
       return _DatabaseCatalogQueryResult(
         success: false,
         statuses: const [],
@@ -6669,8 +6682,16 @@ END
       );
     }
 
-    final catalog = parseDatabaseAccessDiscoveryRows(
-      _dataOutputLines(processResult.stdout.toString()).map(_splitRowValues),
+    final catalog = mergeDatabaseAccessDiscovery(
+      catalog:
+          processResult.exitCode == 0
+              ? parseDatabaseAccessDiscoveryRows(
+                _dataOutputLines(
+                  processResult.stdout.toString(),
+                ).map(_splitRowValues),
+              )
+              : const <DatabaseAccessStatus>[],
+      referencedDatabases: referencedDatabases,
     );
     if (catalog.isEmpty) {
       return _DatabaseCatalogQueryResult(
@@ -6691,7 +6712,8 @@ END
       final batch = catalog.sublist(offset, end);
       final batchStatuses = await Future.wait(
         batch.map((status) async {
-          if (status.state.toUpperCase() != 'ONLINE') {
+          final normalizedState = status.state.toUpperCase();
+          if (normalizedState != 'ONLINE' && normalizedState != 'UNKNOWN') {
             return DatabaseAccessStatus(
               database: status.database,
               hasAccess: false,

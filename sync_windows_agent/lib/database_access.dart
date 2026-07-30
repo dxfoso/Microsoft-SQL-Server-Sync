@@ -82,6 +82,41 @@ List<DatabaseAccessStatus> parseDatabaseAccessDiscoveryRows(
   return statuses;
 }
 
+List<DatabaseAccessStatus> mergeDatabaseAccessDiscovery({
+  required Iterable<DatabaseAccessStatus> catalog,
+  required Iterable<String> referencedDatabases,
+}) {
+  final statusesByName = <String, DatabaseAccessStatus>{};
+  for (final status in catalog) {
+    final database = status.database.trim();
+    if (database.isEmpty) {
+      continue;
+    }
+    statusesByName.putIfAbsent(database.toLowerCase(), () => status);
+  }
+  for (final value in referencedDatabases) {
+    final database = value.trim();
+    if (database.isEmpty) {
+      continue;
+    }
+    statusesByName.putIfAbsent(
+      database.toLowerCase(),
+      () => DatabaseAccessStatus(
+        database: database,
+        hasAccess: false,
+        state: 'UNKNOWN',
+        accessProblem: 'not_checked',
+      ),
+    );
+  }
+  final statuses = statusesByName.values.toList(growable: false);
+  statuses.sort(
+    (left, right) =>
+        left.database.toLowerCase().compareTo(right.database.toLowerCase()),
+  );
+  return statuses;
+}
+
 String classifyDatabaseAccessProblem(String errorText) {
   final normalized = errorText.toLowerCase();
   final databaseUnavailable =

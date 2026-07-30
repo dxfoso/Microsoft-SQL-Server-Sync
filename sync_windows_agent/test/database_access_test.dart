@@ -69,6 +69,27 @@ void main() {
     expect(statuses.first.accessProblem, 'not_checked');
   });
 
+  test('merges configured database references hidden from sys.databases', () {
+    final statuses = mergeDatabaseAccessDiscovery(
+      catalog: parseDatabaseAccessDiscoveryRows([
+        ['AmnConfig', 'ONLINE'],
+        ['AmnDb015', 'RECOVERY_PENDING'],
+      ]),
+      referencedDatabases: ['AmnConfig', 'AmnDb028', 'AmnDb048', 'amndb048'],
+    );
+
+    expect(statuses.map((status) => status.database), [
+      'AmnConfig',
+      'AmnDb015',
+      'AmnDb028',
+      'AmnDb048',
+    ]);
+    expect(
+      statuses.firstWhere((status) => status.database == 'AmnDb048').state,
+      'UNKNOWN',
+    );
+  });
+
   test('distinguishes access grants from broken database attachments', () {
     expect(
       classifyDatabaseAccessProblem(
