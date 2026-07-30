@@ -1,1 +1,1 @@
-88% - Automatic table enrollment and client 1.0.196+200 are built; a live probe found an unsupported TRU array method before mutation, and the bounded-loop server fix is being redeployed.
+99% - Automatic first-time and continuous table enrollment is live and verified; client 1.0.196+200 updates and diagnostics are queued for offline home and home1.

@@ -15,6 +15,9 @@ sync_windows_agent-windows-portable-zip-parts/
 update.log
 business/logs/
 .codex-run/
+/.codex-tmp/
+# Local portable-client verification output.
+/New folder/
 __pycache__/
 *.py[cod]
 *.bak
