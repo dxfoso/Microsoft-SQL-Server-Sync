@@ -180,6 +180,8 @@ String buildElevatedDatabaseAccessBatchHelperPowerShell({
         (script) =>
             "    [PSCustomObject]@{ Database = "
             "${powerShellSingleQuotedLiteral(script.database)}; "
+            "DatabaseSqlLiteral = "
+            "${powerShellSingleQuotedLiteral(script.database.replaceAll("'", "''"))}; "
             "ScriptPath = "
             "${powerShellSingleQuotedLiteral(script.sqlScriptPath)} }",
       )
@@ -191,33 +193,68 @@ $commands
   )
   \$allSucceeded = \$true
   Remove-Item -LiteralPath $outputLiteral -Force -ErrorAction SilentlyContinue
-  \$contextQuery = "SET NOCOUNT ON; SELECT N'SYNC_GRANT_CONTEXT|' + REPLACE(COALESCE(CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')), N''), N'|', N'/') + N'|' + REPLACE(COALESCE(SUSER_SNAME(), N''), N'|', N'/') + N'|' + CONVERT(nvarchar(1), COALESCE(IS_SRVROLEMEMBER(N'sysadmin'), 0));"
-  \$contextOutput = & $executableLiteral -S $serverLiteral -d master -E -C -b -u -h -1 -W -Q \$contextQuery 2>&1
-  \$contextExitCode = \$LASTEXITCODE
-  \$contextOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
-  if (\$contextExitCode -ne 0) {
-    ('SQL authorization preflight failed with exit ' + \$contextExitCode + '.') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
-    exit \$contextExitCode
+  \$candidates = @($serverLiteral)
+  \$requestedServer = $serverLiteral
+  if (\$requestedServer -match '^(?i)(\\.|localhost|127\\.0\\.0\\.1|\\(local\\))(\\\\.*)?\$') {
+    \$registryPaths = @(
+      'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL',
+      'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL'
+    )
+    foreach (\$registryPath in \$registryPaths) {
+      if (-not (Test-Path -LiteralPath \$registryPath)) {
+        continue
+      }
+      \$properties = (Get-ItemProperty -LiteralPath \$registryPath).PSObject.Properties |
+        Where-Object { -not \$_.Name.StartsWith('PS') }
+      foreach (\$property in \$properties) {
+        if (\$property.Name -eq 'MSSQLSERVER') {
+          \$candidates += '.'
+          \$candidates += \$env:COMPUTERNAME
+        } else {
+          \$candidates += ('.\\' + \$property.Name)
+          \$candidates += (\$env:COMPUTERNAME + '\\' + \$property.Name)
+        }
+      }
+    }
   }
-  \$contextLine = \$contextOutput |
-    ForEach-Object { \$_.ToString().Trim() } |
-    Where-Object { \$_.StartsWith('SYNC_GRANT_CONTEXT|') } |
-    Select-Object -First 1
-  if ([string]::IsNullOrWhiteSpace(\$contextLine)) {
-    'SQL authorization preflight returned no identity information.' | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
-    exit 4
-  }
-  \$contextFields = \$contextLine.Split('|')
-  if (\$contextFields.Count -lt 4 -or \$contextFields[3].Trim() -ne '1') {
-    'SYNC_GRANT_BLOCKED|The approved Windows account is not a SQL Server sysadmin.' | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
-    exit 5
-  }
+  \$candidates = @(\$candidates | Select-Object -Unique)
   foreach (\$command in \$commands) {
+    \$selectedServer = \$null
+    \$selectedResolvedServer = ''
+    foreach (\$candidate in \$candidates) {
+      ('--- Probe ' + \$command.Database + ' on ' + \$candidate + ' ---') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+      \$probeQuery = "SET NOCOUNT ON; SELECT N'SYNC_GRANT_PROBE|' + REPLACE(COALESCE(CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')), N''), N'|', N'/') + N'|' + REPLACE(COALESCE(SUSER_SNAME(), N''), N'|', N'/') + N'|' + CONVERT(nvarchar(1), COALESCE(IS_SRVROLEMEMBER(N'sysadmin'), 0)) + N'|' + CASE WHEN DB_ID(N'" + \$command.DatabaseSqlLiteral + "') IS NULL THEN N'0' ELSE N'1' END;"
+      \$probeOutput = & $executableLiteral -S \$candidate -d master -E -C -b -u -h -1 -W -Q \$probeQuery 2>&1
+      \$probeExitCode = \$LASTEXITCODE
+      \$probeOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+      if (\$probeExitCode -ne 0) {
+        continue
+      }
+      \$probeLine = \$probeOutput |
+        ForEach-Object { \$_.ToString().Trim() } |
+        Where-Object { \$_.StartsWith('SYNC_GRANT_PROBE|') } |
+        Select-Object -First 1
+      if ([string]::IsNullOrWhiteSpace(\$probeLine)) {
+        continue
+      }
+      \$probeFields = \$probeLine.Split('|')
+      if (\$probeFields.Count -ge 5 -and \$probeFields[3].Trim() -eq '1' -and \$probeFields[4].Trim() -eq '1') {
+        \$selectedServer = \$candidate
+        \$selectedResolvedServer = \$probeFields[1].Trim()
+        break
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace(\$selectedServer)) {
+      ('SYNC_GRANT_NOT_FOUND|' + \$command.Database) | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+      \$allSucceeded = \$false
+      continue
+    }
     ('=== ' + \$command.Database + ' ===') | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
-    \$sqlOutput = & $executableLiteral -S $serverLiteral -E -C -b -u -f 65001 -i \$command.ScriptPath 2>&1
+    \$sqlOutput = & $executableLiteral -S \$selectedServer -E -C -b -u -f 65001 -i \$command.ScriptPath 2>&1
     \$sqlExitCode = \$LASTEXITCODE
     \$sqlOutput | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
     ('Result: exit ' + \$sqlExitCode) | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
+    ('SYNC_GRANT_RESULT|' + \$command.Database + '|' + \$selectedResolvedServer + '|' + \$sqlExitCode) | Out-File -LiteralPath $outputLiteral -Encoding Unicode -Append
     if (\$sqlExitCode -ne 0) {
       \$allSucceeded = \$false
     }
@@ -238,7 +275,8 @@ ElevatedDatabaseAccessContext? parseElevatedDatabaseAccessContext(
 ) {
   for (final rawLine in output.split(RegExp(r'\r?\n'))) {
     final line = rawLine.trim();
-    if (!line.startsWith('SYNC_GRANT_CONTEXT|')) {
+    if (!line.startsWith('SYNC_GRANT_CONTEXT|') &&
+        !line.startsWith('SYNC_GRANT_PROBE|')) {
       continue;
     }
     final fields = line.split('|');
@@ -252,6 +290,28 @@ ElevatedDatabaseAccessContext? parseElevatedDatabaseAccessContext(
     );
   }
   return null;
+}
+
+List<DatabaseAccessGrantResult> parseDatabaseAccessGrantResults(String output) {
+  final results = <DatabaseAccessGrantResult>[];
+  for (final rawLine in output.split(RegExp(r'\r?\n'))) {
+    final line = rawLine.trim();
+    if (!line.startsWith('SYNC_GRANT_RESULT|')) {
+      continue;
+    }
+    final fields = line.split('|');
+    if (fields.length < 4) {
+      continue;
+    }
+    results.add(
+      DatabaseAccessGrantResult(
+        database: fields[1].trim(),
+        server: fields[2].trim(),
+        exitCode: int.tryParse(fields[3].trim()) ?? -1,
+      ),
+    );
+  }
+  return results;
 }
 
 String databaseAccessGrantFailureMessage({
@@ -277,6 +337,12 @@ String databaseAccessGrantFailureMessage({
         '${context!.server}, but $names does not exist on that SQL Server '
         'instance. In SQL Server Management Studio, verify that the Server '
         'name containing the database matches $requestedServer.';
+  }
+  if (normalized.contains('sync_grant_not_found|')) {
+    return 'The approved SQL Server administrator searched the installed '
+        'local SQL Server instances, but $names was not found. In SQL Server '
+        'Management Studio, use the exact Server name shown in Object '
+        'Explorer and verify that the database is attached and online.';
   }
   return 'Access was not granted to $names on $requestedServer.'
       '${sqlOutput.trim().isEmpty ? '' : '\n\n$sqlOutput'}';
@@ -348,4 +414,16 @@ class ElevatedDatabaseAccessContext {
   final String server;
   final String identity;
   final bool isSysadmin;
+}
+
+class DatabaseAccessGrantResult {
+  const DatabaseAccessGrantResult({
+    required this.database,
+    required this.server,
+    required this.exitCode,
+  });
+
+  final String database;
+  final String server;
+  final int exitCode;
 }

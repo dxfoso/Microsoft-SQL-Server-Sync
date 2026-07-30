@@ -148,9 +148,12 @@ void main() {
     );
 
     expect(script, contains(r'foreach ($command in $commands)'));
-    expect(script, contains('SYNC_GRANT_CONTEXT|'));
+    expect(script, contains('SYNC_GRANT_PROBE|'));
     expect(script, contains("IS_SRVROLEMEMBER(N'sysadmin')"));
-    expect(script, contains('SYNC_GRANT_BLOCKED|'));
+    expect(script, contains('Instance Names\\SQL'));
+    expect(script, contains(r'foreach ($candidate in $candidates)'));
+    expect(script, contains('SYNC_GRANT_NOT_FOUND|'));
+    expect(script, contains('SYNC_GRANT_RESULT|'));
     expect(script, contains(r'-i $command.ScriptPath'));
     expect(script, contains("'MissingStore'"));
     expect(script, contains("'CustomerLedger'"));
@@ -169,6 +172,19 @@ void main() {
     expect(context!.server, r'DESKTOP-6MQFNA3\SQLEXPRESS');
     expect(context.identity, r'DESKTOP-6MQFNA3\Administrator');
     expect(context.isSysadmin, isFalse);
+  });
+
+  test('parses successful grants and their discovered SQL Server instance', () {
+    final results = parseDatabaseAccessGrantResults(
+      'SYNC_GRANT_RESULT|AmnDb028|DESKTOP-6MQFNA3\\AMN|0\r\n'
+      'SYNC_GRANT_RESULT|AmnDb048|DESKTOP-6MQFNA3\\AMN|1\r\n',
+    );
+
+    expect(results, hasLength(2));
+    expect(results.first.database, 'AmnDb028');
+    expect(results.first.server, r'DESKTOP-6MQFNA3\AMN');
+    expect(results.first.exitCode, 0);
+    expect(results.last.exitCode, 1);
   });
 
   test('explains when Windows elevation is not SQL authorization', () {
@@ -198,6 +214,20 @@ void main() {
 
     expect(message, contains('does not exist on that SQL Server instance'));
     expect(message, contains('verify that the Server name'));
+  });
+
+  test('explains when no installed local instance contains the database', () {
+    final message = databaseAccessGrantFailureMessage(
+      requestedServer: r'.\SQLEXPRESS',
+      databases: const ['AmnDb048'],
+      sqlOutput:
+          'SYNC_GRANT_PROBE|DESKTOP-6MQFNA3\\SQLEXPRESS|'
+          'DESKTOP-6MQFNA3\\SqlAdmin|1|0\r\n'
+          'SYNC_GRANT_NOT_FOUND|AmnDb048',
+    );
+
+    expect(message, contains('searched the installed local SQL Server'));
+    expect(message, contains('exact Server name shown in Object Explorer'));
   });
 
   test('builds a standard Windows UAC launcher and escapes paths', () {

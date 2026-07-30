@@ -1080,6 +1080,25 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return (success: false, message: message);
       }
 
+      final grantResults = parseDatabaseAccessGrantResults(sqlOutput);
+      final successfulGrantServers =
+          grantResults
+              .where(
+                (result) => result.exitCode == 0 && result.server.isNotEmpty,
+              )
+              .map((result) => result.server)
+              .toSet();
+      String? automaticallyDiscoveredServer;
+      if (successfulGrantServers.length == 1) {
+        automaticallyDiscoveredServer = successfulGrantServers.single;
+        if (automaticallyDiscoveredServer.toLowerCase() !=
+            issue.server.toLowerCase()) {
+          setState(() {
+            _serverController.text = automaticallyDiscoveredServer!;
+          });
+          widget.onServerChanged(automaticallyDiscoveredServer);
+        }
+      }
       await _loadDatabases(
         profile: _activeProfile(),
         loadTables: true,
@@ -1136,6 +1155,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             'login': issue.login,
             'method': 'windows_uac',
             'helperExitCode': processResult.exitCode,
+            if (automaticallyDiscoveredServer != null)
+              'automaticallyDiscoveredServer': automaticallyDiscoveredServer,
             'elapsedMs': grantStopwatch.elapsedMilliseconds,
           },
           error: message,
@@ -1153,6 +1174,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           'login': issue.login,
           'method': 'windows_uac',
           'helperExitCode': processResult.exitCode,
+          if (automaticallyDiscoveredServer != null)
+            'automaticallyDiscoveredServer': automaticallyDiscoveredServer,
           'elapsedMs': grantStopwatch.elapsedMilliseconds,
         },
       );
