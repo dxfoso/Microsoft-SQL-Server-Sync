@@ -4437,6 +4437,92 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
   ));
 }
 
+// A comparison batch is deliberately upload-only. Clients capture complete,
+// primary-key ordered snapshots for inspection, but no download/apply job is
+// created and no Change Tracking cursor is advanced. This makes the operation
+// safe while the owner's normal sync gate is blocked for a baseline decision.
+function table_comparison_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>): array<json> {
+  let rows = [];
+  const createdAt = now_iso();
+  for (const agent of agents) {
+    const tableState = scheduler_agent_table_state(
+      scheduler_agent_table_states(agent),
+      table
+    );
+    let expectedRowCount = 0;
+    if (tableState != null && tableState.rowCount != null) {
+      expectedRowCount = int.from(tableState.rowCount);
+    }
+    rows = rows.concat([{
+      id: uuid.v4(),
+      clientName: string.from(agent.clientName),
+      sourceClientName: 'server-diff-preview',
+      subscriberClientName: '',
+      table,
+      direction: 'upload',
+      publisherServer: sync_job_text(agent.server),
+      publisherDatabase: sync_job_text(agent.database),
+      publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
+      publisherUser: sync_job_text(agent.replicationUser),
+      publisherPassword: sync_job_text(agent.replicationPassword),
+      status: 'queued',
+      progress: 0,
+      rowCount: expectedRowCount,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
+      createdAt,
+      updatedAt: createdAt,
+      startedAt: null,
+      completedAt: null,
+      message: string.concat('Queued read-only row comparison for ', table, '.'),
+      error: null,
+      clientUserId: agent.clientUserId,
+      ownerUserId,
+      batchId,
+      protocolVersion: protocol.protocolVersion,
+      syncEpoch: protocol.syncEpoch
+    }]);
+  }
+  return rows;
+}
+
+function create_table_comparison_batch(ownerUserId: string, table: string, agents: array<json>): array<json> {
+  if (agents.length < 2) {
+    return [];
+  }
+  const batchId = uuid.v4();
+  const protocol = sync_protocol_state();
+  const clientNames = agents.map((agent) => string.from(agent.clientName));
+  const createdAt = now_iso();
+  db.insert(SyncBatch, {
+    id: batchId,
+    table,
+    revision: 0,
+    ownerUserId,
+    expectedClients: clientNames,
+    uploadedClients: [],
+    receivedChunks: [],
+    receivedBytes: 0,
+    clientChangeTrackingVersions: [],
+    keyColumns: [],
+    columns: [],
+    rows: [],
+    status: 'uploading',
+    createdAt,
+    updatedAt: createdAt,
+    protocolVersion: protocol.protocolVersion,
+    syncEpoch: protocol.syncEpoch
+  });
+  return db.insertMany(SyncJob, table_comparison_job_rows(
+    batchId,
+    table,
+    agents,
+    ownerUserId,
+    protocol
+  ));
+}
+
 function authoritative_reconcile_job_rows(batchId: string, table: string, sourceAgent: map<json>, targetAgents: array<json>, ownerUserId: string, protocol: map<json>): array<json> {
   const createdAt = now_iso();
   const sourceTableState = scheduler_agent_table_state(
@@ -6280,7 +6366,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       string.from(job.sourceClientName).trim() == 'server-authoritative-reconcile') &&
     batch.expectedClients.length == 1 &&
     string.from(batch.expectedClients[0]).trim() == clientName.trim();
-  if (!payloadIsDelta && !explicitSingleClientBootstrap) {
+  const comparisonPreview =
+    string.from(job.sourceClientName).trim() == 'server-diff-preview';
+  if (!payloadIsDelta && !explicitSingleClientBootstrap && !comparisonPreview) {
     return raw_json_error(409, 'protocol-v3 batches accept deltas only unless this is an explicit single-client bootstrap');
   }
   if (multi_writer_batch_stale(batch)) {
@@ -6334,11 +6422,19 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   }
 
   let resolvedKeyColumns = normalize_key_columns(keyColumns);
-  if (batch.keyColumns.length > 0) {
+  if (!comparisonPreview && batch.keyColumns.length > 0) {
     resolvedKeyColumns = batch.keyColumns.map((value) => string.from(value));
   }
+  if (comparisonPreview && resolvedKeyColumns.length == 0) {
+    return raw_json_error(409, 'row comparison requires permanent primary key columns');
+  }
+  if (comparisonPreview &&
+      batch.keyColumns.length > 0 &&
+      json.stringify(batch.keyColumns) != json.stringify(resolvedKeyColumns)) {
+    return raw_json_error(409, 'clients report different primary key definitions for this table');
+  }
   let resolvedColumns = columns ?? [];
-  if (batch.columns.length > 0) {
+  if (!comparisonPreview && batch.columns.length > 0) {
     resolvedColumns = batch.columns.map((value) => string.from(value));
   }
   if (payloadIsDelta && resolvedKeyColumns.length == 0) {
@@ -6642,7 +6738,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     nextJob = updatedJob;
   }
   let retention = null;
-  if (finalChunk) {
+  if (finalChunk && !comparisonPreview) {
     retention = prune_sync_job_data_for_owner(
       job.ownerUserId,
       job.id,
@@ -7519,6 +7615,133 @@ function jobs_reconcile_authoritative(sourceClientName: string, targetClientName
     tables: requestedTables,
     jobs: createdJobs.map((job) => public_job_payload(job))
   }, 201);
+}
+
+function table_comparison_request(clientName: string, table: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const normalizedTable = table.trim();
+  if (normalizedClientName.length == 0 || normalizedTable.length == 0) {
+    return raw_json_error(400, 'clientName and table are required');
+  }
+  const visibleAgents = visible_agent_rows_for(current);
+  const pageAgent = find_agent_row_by_name(visibleAgents, normalizedClientName);
+  if (pageAgent == null) {
+    return raw_json_error(403, 'client is unavailable or outside your scope');
+  }
+  const ownerId = string.from(pageAgent.ownerUserId);
+  const existingIssue = sync_table_issue_for_owner(ownerId, normalizedTable);
+  if (existingIssue == null ||
+      string.from(existingIssue.status ?? '').trim() != 'needs_input') {
+    return raw_json_error(409, 'this table does not currently need a user decision');
+  }
+
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
+  let participants = [];
+  let unavailableClients = [];
+  for (const agent of visibleAgents) {
+    if (string.from(agent.ownerUserId) != ownerId || !agent_sync_enabled(agent)) {
+      continue;
+    }
+    const enabledTables = unique_string_values(
+      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+      )
+    );
+    if (!string_array_contains(enabledTables, normalizedTable)) {
+      continue;
+    }
+    participants = participants.concat([agent]);
+    if (!effective_agent_online(agent)) {
+      unavailableClients = unavailableClients.concat([string.from(agent.clientName)]);
+    }
+  }
+  if (participants.length < 2) {
+    return raw_json_error(409, 'row comparison requires at least two enabled clients');
+  }
+  if (unavailableClients.length > 0) {
+    return raw_json_error(409, string.concat(
+      'Every enabled client must be online and SQL-connected before comparison: ',
+      json.stringify(unavailableClients)
+    ));
+  }
+  for (const participant of participants) {
+    if (string_array_contains(
+      active_job_tables_for_client(string.from(participant.clientName)),
+      normalizedTable
+    )) {
+      return raw_json_error(409, string.concat(
+        'comparison participant already has active work for this table: ',
+        string.from(participant.clientName)
+      ));
+    }
+  }
+  const jobs = create_table_comparison_batch(ownerId, normalizedTable, participants);
+  if (jobs.length != participants.length) {
+    return raw_json_error(500, 'the row comparison request could not be queued');
+  }
+  return raw_json_success({
+    requestId: string.from(jobs[0].batchId),
+    table: normalizedTable,
+    clientNames: participants.map((agent) => string.from(agent.clientName)),
+    jobs: jobs.map((job) => public_job_payload(job))
+  }, 201);
+}
+
+function table_comparison_status(requestId: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedRequestId = requestId.trim();
+  const batch = find_sync_batch(normalizedRequestId);
+  if (batch == null) {
+    return raw_json_error(404, 'row comparison request not found');
+  }
+  const jobs = db.selectMany(SyncJob, {
+    where: {
+      batchId: normalizedRequestId,
+      sourceClientName: 'server-diff-preview',
+      direction: 'upload'
+    },
+    orderBy: { field: 'clientName', dir: 'asc' },
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
+    limit: 100
+  });
+  if (jobs.length == 0 || !can_access_job(current, jobs[0])) {
+    return raw_json_error(403, 'row comparison request is outside your scope');
+  }
+  let complete = true;
+  let failed = false;
+  for (const job of jobs) {
+    const status = string.from(job.status).trim().toLowerCase();
+    if (status == 'failed' || status == 'cancelled') {
+      failed = true;
+    }
+    if (status != 'completed') {
+      complete = false;
+    }
+  }
+  return raw_json_success({
+    requestId: normalizedRequestId,
+    table: batch.table,
+    clientNames: batch.expectedClients,
+    uploadedClientNames: batch.uploadedClients,
+    keyColumns: batch.keyColumns,
+    columns: batch.columns,
+    complete,
+    failed,
+    jobs: jobs.map((job) => public_job_payload(job))
+  });
 }
 
 function table_sync_issue_resolve(clientName: string, table: string, action: string, sourceClientName: string = '', token: string? = null): map<json> {

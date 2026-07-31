@@ -372,4 +372,68 @@ void main() {
     expect(status.retainedChunkCount, 5);
     api.dispose();
   });
+
+  test(
+    'table comparison requests and polls all participating clients',
+    () async {
+      final requests = <Map<String, dynamic>>[];
+      var call = 0;
+      final api = LiveSyncApiClient(
+        baseUrl: 'https://sync.example/call',
+        client: MockClient((request) async {
+          requests.add(
+            Map<String, dynamic>.from(jsonDecode(request.body) as Map),
+          );
+          call += 1;
+          final value =
+              call == 1
+                  ? {
+                    'requestId': 'comparison-1',
+                    'table': 'db::pt000',
+                    'clientNames': ['factory', 'home', 'shop'],
+                    'jobs': const <dynamic>[],
+                  }
+                  : {
+                    'requestId': 'comparison-1',
+                    'table': 'db::pt000',
+                    'clientNames': ['factory', 'home', 'shop'],
+                    'uploadedClientNames': ['factory', 'home', 'shop'],
+                    'keyColumns': ['id'],
+                    'columns': ['id', 'name'],
+                    'complete': true,
+                    'failed': false,
+                    'jobs': const <dynamic>[],
+                  };
+          return http.Response(
+            jsonEncode({'status': 'success', 'value': value}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      api.setAuthToken('test-token');
+
+      final created = await api.requestTableComparison(
+        clientName: ' factory ',
+        table: ' db::pt000 ',
+      );
+      final status = await api.fetchTableComparisonStatus(created.requestId);
+
+      expect(created.clientNames, ['factory', 'home', 'shop']);
+      expect(status.complete, isTrue);
+      expect(status.keyColumns, ['id']);
+      expect(requests[0]['name'], 'table_comparison_request');
+      expect(requests[0]['args'], {
+        'clientName': 'factory',
+        'table': 'db::pt000',
+        'token': 'test-token',
+      });
+      expect(requests[1]['name'], 'table_comparison_status');
+      expect(requests[1]['args'], {
+        'requestId': 'comparison-1',
+        'token': 'test-token',
+      });
+      api.dispose();
+    },
+  );
 }

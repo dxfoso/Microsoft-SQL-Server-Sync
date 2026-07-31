@@ -1630,6 +1630,23 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("SQL_SYNC_ENGINE_MODE", backend_deployment)
         self.assertNotIn("symmetricds:", values)
 
+    def test_windows_comparison_snapshot_is_full_and_preserves_tracking_cursor(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        snapshot_body = agent_page.split(
+            "Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1
+        )[1].split("Future<void> _processSnapshotRelayUploadJob(", 1)[0]
+        upload_body = agent_page.split(
+            "Future<void> _processSnapshotRelayUploadJob(", 1
+        )[1].split("Future<void> _processSnapshotRelayDownloadJob(", 1)[0]
+
+        self.assertIn("job.sourceClientName == 'server-diff-preview'", snapshot_body)
+        self.assertIn("final completeSnapshot", snapshot_body)
+        self.assertIn("!comparisonSnapshot", snapshot_body)
+        self.assertIn("if (completeSnapshot)", snapshot_body)
+        self.assertIn("_computeTableFingerprint(", snapshot_body)
+        self.assertIn("job.sourceClientName == 'server-diff-preview'", upload_body)
+        self.assertIn("preserveChangeTrackingBaseline", upload_body)
+
 
 if __name__ == "__main__":
     unittest.main()

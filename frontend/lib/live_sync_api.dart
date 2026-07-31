@@ -292,6 +292,40 @@ class LiveSyncApiClient {
     return (decoded['jobs'] as List<dynamic>? ?? const []).length;
   }
 
+  Future<AdminTableComparisonRequest> requestTableComparison({
+    required String clientName,
+    required String table,
+  }) async {
+    final decoded = await _invokeFunction('table_comparison_request', {
+      'clientName': clientName.trim(),
+      'table': table.trim(),
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected table comparison request payload.',
+      );
+    }
+    return AdminTableComparisonRequest.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
+  Future<AdminTableComparisonStatus> fetchTableComparisonStatus(
+    String requestId,
+  ) async {
+    final decoded = await _invokeFunction('table_comparison_status', {
+      'requestId': requestId.trim(),
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected table comparison status payload.',
+      );
+    }
+    return AdminTableComparisonStatus.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
   Future<AdminBulkDiagnosticsRequestResult> requestAllAgentDiagnostics() async {
     final decoded = await _invokeFunction('agent_diagnostics_request_all', {});
     if (decoded is! Map) {

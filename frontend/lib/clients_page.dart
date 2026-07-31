@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'browser_bridge.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
+import 'table_comparison_dialog.dart';
 
 enum _ClientSortField { name, status, database, tables, lastSync, heartbeat }
 
@@ -2385,66 +2386,101 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       );
     }
-    return PopupMenuButton<String>(
-      tooltip: 'Resolve table issue',
-      position: PopupMenuPosition.under,
-      onSelected:
-          (action) =>
-              unawaited(_confirmAndResolveTable(agent, table, issue, action)),
-      itemBuilder:
-          (context) => const [
-            PopupMenuItem(
-              value: 'replace_client',
-              child: ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.download_rounded),
-                title: Text('Replace this client'),
-                subtitle: Text('Copy this table from another healthy client'),
-              ),
-            ),
-            PopupMenuItem(
-              value: 'keep_client',
-              child: ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.upload_rounded),
-                title: Text('Use this client as source'),
-                subtitle: Text('Replace this table on the other clients'),
-              ),
-            ),
-            PopupMenuItem(
-              value: 'exclude_table',
-              child: ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.sync_disabled_rounded),
-                title: Text('Exclude this table'),
-                subtitle: Text('Keep it local and do not synchronize it'),
-              ),
-            ),
-            PopupMenuItem(
-              value: 'accept_baseline',
-              child: ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.fast_forward_rounded),
-                title: Text('Accept current differences'),
-                subtitle: Text('Keep both copies and sync only future changes'),
-              ),
-            ),
-          ],
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.rule_rounded, size: 17),
-            SizedBox(width: 5),
-            Text('Choose resolution'),
-          ],
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        OutlinedButton.icon(
+          onPressed: () => unawaited(_openTableComparison(agent, table, issue)),
+          icon: const Icon(Icons.difference_rounded, size: 17),
+          label: const Text('Compare client rows'),
         ),
-      ),
+        PopupMenuButton<String>(
+          tooltip: 'Resolve table issue',
+          position: PopupMenuPosition.under,
+          onSelected:
+              (action) => unawaited(
+                _confirmAndResolveTable(agent, table, issue, action),
+              ),
+          itemBuilder:
+              (context) => const [
+                PopupMenuItem(
+                  value: 'replace_client',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.download_rounded),
+                    title: Text('Replace this client'),
+                    subtitle: Text(
+                      'Copy this table from another healthy client',
+                    ),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'keep_client',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.upload_rounded),
+                    title: Text('Use this client as source'),
+                    subtitle: Text('Replace this table on the other clients'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'exclude_table',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.sync_disabled_rounded),
+                    title: Text('Exclude this table'),
+                    subtitle: Text('Keep it local and do not synchronize it'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'accept_baseline',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.fast_forward_rounded),
+                    title: Text('Accept current differences'),
+                    subtitle: Text(
+                      'Keep both copies and sync only future changes',
+                    ),
+                  ),
+                ),
+              ],
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.rule_rounded, size: 17),
+                SizedBox(width: 5),
+                Text('Choose resolution'),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openTableComparison(
+    AdminAgent agent,
+    AdminTableState table,
+    AdminTableSyncIssue issue,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => TableComparisonDialog(
+            api: _api,
+            clientName: agent.clientName,
+            table: table.table,
+            issue: issue,
+          ),
     );
   }
 

@@ -4794,7 +4794,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     final uploadedVersion = snapshot.changeTrackingVersion;
     final preserveChangeTrackingBaseline =
-        job.sourceClientName == 'server-partial-delta-v3';
+        job.sourceClientName == 'server-partial-delta-v3' ||
+        job.sourceClientName == 'server-diff-preview';
     if (!preserveChangeTrackingBaseline &&
         uploadedVersion != null &&
         uploadedVersion >= 0) {
@@ -5151,10 +5152,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     final rowCount = rowCountResult.value;
-    if (job.sourceClientName == 'server-authoritative-reconcile' &&
-        job.rowCount != rowCount) {
+    final authoritativeSnapshot =
+        job.sourceClientName == 'server-authoritative-reconcile';
+    final comparisonSnapshot = job.sourceClientName == 'server-diff-preview';
+    final completeSnapshot = authoritativeSnapshot || comparisonSnapshot;
+    if (completeSnapshot && job.rowCount != rowCount) {
       throw StateError(
-        'Authoritative source safety check blocked ${job.table}: '
+        '${comparisonSnapshot ? 'Comparison' : 'Authoritative source'} safety check blocked ${job.table}: '
         'the control plane expected ${job.rowCount} rows, but SQL Server '
         'returned $rowCount. Refresh the table inventory and investigate the '
         'reader before retrying; no target data was changed.',
@@ -5162,7 +5166,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
     if (job.sourceClientName == 'server-bootstrap-v3' ||
-        job.sourceClientName == 'server-authoritative-reconcile') {
+        authoritativeSnapshot) {
       await _ensureChangeTrackingEnabledForDatabase(
         database: database,
         tables: ['${tableParts.schema}.${tableParts.table}'],
@@ -5184,7 +5188,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final rows = <Map<String, String?>>[];
     var isDelta = false;
     if (canUseDelta &&
-        job.sourceClientName != 'server-authoritative-reconcile') {
+        job.sourceClientName != 'server-authoritative-reconcile' &&
+        !comparisonSnapshot) {
       final deltaRows = await _fetchChangeTrackingRows(
         profile: sourceProfile,
         database: database,
@@ -5197,7 +5202,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rows.addAll(deltaRows);
       isDelta = true;
     } else if (job.sourceClientName == 'server-bootstrap-v3' ||
-        job.sourceClientName == 'server-authoritative-reconcile') {
+        completeSnapshot) {
       if (job.batchId?.trim().isNotEmpty != true) {
         throw StateError('Explicit protocol-v3 bootstrap requires a batch.');
       }
@@ -5260,7 +5265,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     var snapshotChecksum = '';
-    if (job.sourceClientName == 'server-authoritative-reconcile') {
+    if (completeSnapshot) {
       final accumulator = SqlSyncFingerprintAccumulator();
       for (final row in rows) {
         accumulator.addRow(syncColumns, row);
@@ -5278,7 +5283,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           sourceFingerprint.rowCount != rows.length ||
           sourceFingerprint.checksum != snapshotChecksum) {
         throw StateError(
-          'Authoritative source ${job.table} changed while its snapshot was being read. Pause writes and retry reconciliation.',
+          '${comparisonSnapshot ? 'Comparison source' : 'Authoritative source'} ${job.table} changed while its snapshot was being read. Pause writes and retry.',
         );
       }
     }

@@ -1320,6 +1320,49 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("delete_sync_row_winner_batch()", reset_body)
         self.assertIn("syncRowWinnerDeletedCount", reset_body)
 
+    def test_table_row_comparison_is_scoped_read_only_and_multi_client(self):
+        source = read_text("business/control_plane.tru")
+        request_body = source.split(
+            "function table_comparison_request(", 1
+        )[1].split("function table_comparison_status(", 1)[0]
+        comparison_rows = source.split(
+            "function table_comparison_job_rows(", 1
+        )[1].split("function create_table_comparison_batch(", 1)[0]
+        comparison_batch = source.split(
+            "function create_table_comparison_batch(", 1
+        )[1].split("function authoritative_reconcile_job_rows(", 1)[0]
+
+        self.assertIn("'server-diff-preview'", comparison_rows)
+        self.assertEqual(comparison_rows.count("direction: 'upload'"), 1)
+        self.assertNotIn("direction: 'download'", comparison_rows)
+        self.assertIn("expectedClients: clientNames", comparison_batch)
+        self.assertIn("is_admin_user(current)", request_body)
+        self.assertIn("is_owner_user(current)", request_body)
+        self.assertIn("sync_table_issue_for_owner", request_body)
+        self.assertIn("'needs_input'", request_body)
+        self.assertIn("participants.length < 2", request_body)
+        self.assertIn("effective_agent_online(agent)", request_body)
+        self.assertIn("active_job_tables_for_client", request_body)
+        self.assertIn("create_table_comparison_batch", request_body)
+
+    def test_table_row_comparison_upload_skips_winners_and_accepts_full_rows(self):
+        source = read_text("business/control_plane.tru")
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+
+        self.assertIn("const comparisonPreview", upload_body)
+        self.assertIn("'server-diff-preview'", upload_body)
+        self.assertIn(
+            "!payloadIsDelta && !explicitSingleClientBootstrap && !comparisonPreview",
+            upload_body,
+        )
+        self.assertIn("const winnerPolicyApplied = payloadIsDelta", upload_body)
+        self.assertIn("db.insert(SyncJobDataChunk", upload_body)
+        self.assertIn("row comparison requires permanent primary key columns", upload_body)
+        self.assertIn("different primary key definitions", upload_body)
+        self.assertIn("if (finalChunk && !comparisonPreview)", upload_body)
+
 
 if __name__ == "__main__":
     unittest.main()

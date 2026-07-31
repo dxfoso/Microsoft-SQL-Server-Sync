@@ -234,6 +234,81 @@ class AdminTableSyncIssue {
   }
 }
 
+class AdminTableComparisonRequest {
+  const AdminTableComparisonRequest({
+    required this.requestId,
+    required this.table,
+    required this.clientNames,
+    required this.jobs,
+  });
+
+  final String requestId;
+  final String table;
+  final List<String> clientNames;
+  final List<AdminJob> jobs;
+
+  factory AdminTableComparisonRequest.fromJson(Map<String, dynamic> json) {
+    return AdminTableComparisonRequest(
+      requestId: json['requestId']?.toString() ?? '',
+      table: json['table']?.toString() ?? '',
+      clientNames: (json['clientNames'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+      jobs: (json['jobs'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AdminTableComparisonStatus {
+  const AdminTableComparisonStatus({
+    required this.requestId,
+    required this.table,
+    required this.clientNames,
+    required this.uploadedClientNames,
+    required this.keyColumns,
+    required this.columns,
+    required this.complete,
+    required this.failed,
+    required this.jobs,
+  });
+
+  final String requestId;
+  final String table;
+  final List<String> clientNames;
+  final List<String> uploadedClientNames;
+  final List<String> keyColumns;
+  final List<String> columns;
+  final bool complete;
+  final bool failed;
+  final List<AdminJob> jobs;
+
+  factory AdminTableComparisonStatus.fromJson(Map<String, dynamic> json) {
+    List<String> strings(String key) =>
+        (json[key] as List<dynamic>? ?? const [])
+            .map((item) => item.toString())
+            .toList(growable: false);
+    return AdminTableComparisonStatus(
+      requestId: json['requestId']?.toString() ?? '',
+      table: json['table']?.toString() ?? '',
+      clientNames: strings('clientNames'),
+      uploadedClientNames: strings('uploadedClientNames'),
+      keyColumns: strings('keyColumns'),
+      columns: strings('columns'),
+      complete: json['complete'] == true,
+      failed: json['failed'] == true,
+      jobs: (json['jobs'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
 class AdminAgent {
   const AdminAgent({
     required this.clientName,
