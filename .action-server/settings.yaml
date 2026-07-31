@@ -1,4 +1,4 @@
-displayName: Example Repo
+displayName: Microsoft SQL Server Sync
 allowForkPullRequests: false
 ignorePushPaths:
   - README.md
@@ -13,8 +13,15 @@ favoriteArtifacts:
     - workspace/tests/nightly/task-results.json
     - workspace/tests/nightly/task-step-results.json
     - workspace/tests/nightly/final-summary.txt
+  sync-verification:
+    - workspace/tests/sync-verification/task-status.json
+    - workspace/tests/sync-verification/task-results.json
+    - workspace/tests/sync-verification/task-step-results.json
+    - workspace/tests/sync-verification/final-summary.txt
 favoriteTextOutputs:
   ci:
     - workspace/tests/ci/final-summary.txt
   nightly:
     - workspace/tests/nightly/final-summary.txt
+  sync-verification:
+    - workspace/tests/sync-verification/final-summary.txt

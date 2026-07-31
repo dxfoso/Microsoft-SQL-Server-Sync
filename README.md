@@ -49,3 +49,15 @@ Windows client:
 
 See `tests/docker-sync/README.md` for covered scenarios and the optional,
 copy-only database export workflow.
+
+For the complete atomicity, chaos, concurrency, fuzz, scale, soak, and SQL
+Server compatibility gates, run:
+
+```powershell
+.\tests\run_sync_verification.ps1 -Profile Standard
+```
+
+Use `-Profile All` for the SQL Server 2017/2019/2022 matrix. The same suite is
+registered in Action Server as **Sync Verification**, with task status,
+results, per-step results, logs, and a stable text summary retained under
+`workspace/tests/sync-verification/`.

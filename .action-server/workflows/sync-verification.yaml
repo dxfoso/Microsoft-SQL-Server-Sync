@@ -1,0 +1,20 @@
+name: Sync Verification
+"on":
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+  schedule:
+    - id: nightly-sync-robustness
+      cron: "45 02 * * *"
+      ref: master
+  workflow_dispatch: {}
+jobs:
+  sync-verification:
+    name: Sync atomicity, chaos, compatibility, fuzz, and soak
+    run: .action-server/tasks/sync-verification.sh
+    timeoutMinutes: 240

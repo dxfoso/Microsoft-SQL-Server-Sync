@@ -20,6 +20,16 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn('"large-1200-row-batch"', runner)
         self.assertIn('"exact-unicode-arabic-emoji-cjk"', runner)
         self.assertIn('"rejected-row-rollback-and-recovery"', runner)
+        self.assertIn("assert_atomic_fault_rollback", runner)
+        self.assertIn("assert_connection_loss_atomicity", runner)
+        self.assertIn("assert_commit_response_loss_is_idempotent", runner)
+        self.assertIn("run_concurrency_scenarios", runner)
+        self.assertIn("run_relational_scenarios", runner)
+        self.assertIn("run_fuzz_scenarios", runner)
+        self.assertIn("run_scale_scenario", runner)
+        self.assertIn("run_soak_scenario", runner)
+        self.assertIn('"duplicate-reordered-delivery"', runner)
+        self.assertIn('"sql-restart-mid-transaction-rollback"', runner)
         self.assertIn('"-f", "65001"', runner)
         self.assertIn('encode("utf-16-le")', runner)
         self.assertIn("assert_unicode_hex_transport", runner)
@@ -39,6 +49,40 @@ class DockerSyncHarnessContracts(unittest.TestCase):
 
         self.assertIn(r".\tests\docker-sync\run.ps1", agents)
         self.assertIn("Before publishing sync logic changes", agents)
+
+    def test_standard_launcher_writes_action_compatible_task_artifacts(self):
+        launcher = (ROOT / "tests/run_sync_verification.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("task-status.json", launcher)
+        self.assertIn("task-results.json", launcher)
+        self.assertIn("task-step-results.json", launcher)
+        self.assertIn("final-summary.txt", launcher)
+        self.assertIn("ACTION_SERVER_TRIGGER", launcher)
+        self.assertIn("SQL Server 2017 compatibility", launcher)
+        self.assertIn("SQL Server 2019 compatibility", launcher)
+        self.assertIn("SQL Server 2022 compatibility", launcher)
+
+    def test_action_server_registers_sync_robustness_workflow(self):
+        workflow = (
+            ROOT / ".action-server/workflows/sync-verification.yaml"
+        ).read_text(encoding="utf-8")
+        task = (
+            ROOT / ".action-server/tasks/sync-verification.sh"
+        ).read_text(encoding="utf-8")
+        settings = (ROOT / ".action-server/settings.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("nightly-sync-robustness", workflow)
+        self.assertIn(".action-server/tasks/sync-verification.sh", workflow)
+        self.assertIn("run_sql_suite robustness", task)
+        self.assertIn("run_sql_suite soak", task)
+        self.assertIn("mssql/server:2017-latest", task)
+        self.assertIn("mssql/server:2019-latest", task)
+        self.assertIn("mssql/server:2022-latest", task)
+        self.assertIn("workspace/tests/sync-verification/task-status.json", settings)
 
 
 if __name__ == "__main__":

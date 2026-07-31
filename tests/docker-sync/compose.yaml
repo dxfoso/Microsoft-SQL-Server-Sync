@@ -1,16 +1,16 @@
 services:
   sql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: "${SQL_SYNC_TEST_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}"
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "${SQL_SYNC_TEST_PASSWORD:-SqlSync_Test_2026!}"
       MSSQL_PID: Developer
     ports:
-      - "14333:1433"
+      - "${SQL_SYNC_TEST_PORT:-14333}:1433"
     healthcheck:
       test:
         - CMD-SHELL
-        - /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b
+        - if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b; else /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b; fi
       interval: 5s
       timeout: 5s
       retries: 30

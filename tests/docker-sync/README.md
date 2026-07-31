@@ -11,6 +11,21 @@ Run from the repository root:
 .\tests\docker-sync\run.ps1
 ```
 
+Run the standard production gate, including atomic fault injection,
+concurrency, relational constraints, seeded fuzzing, scale, and a bounded
+soak:
+
+```powershell
+.\tests\run_sync_verification.ps1 -Profile Standard
+```
+
+Run every local tier, including the SQL Server 2017/2019/2022 compatibility
+matrix:
+
+```powershell
+.\tests\run_sync_verification.ps1 -Profile All -SoakSeconds 300
+```
+
 Covered scenarios:
 
 - insert, update, primary-key change, and delete
@@ -27,6 +42,27 @@ Covered scenarios:
 - idempotent retry
 - transaction rollback and recovery after a rejected row
 - Change Tracking origin context that prevents sync echo loops
+- injected failures between update/insert and immediately before commit
+- connection termination and SQL Server restart during a transaction
+- committed-response loss followed by an idempotent retry
+- overlapping concurrent writers and retryable deadlock victims
+- composite keys, foreign keys, unique constraints, and cascading deletes
+- deterministic property fuzzing with duplicate and reordered delivery
+- configurable 5,000+ row scale verification
+- bounded randomized offline/reconnect soak verification
+
+The compatibility launcher uses the official Linux SQL Server 2017, 2019, and
+2022 images. SQL Server 2008/R2, 2012, and 2016 require dedicated Windows test
+VMs because Microsoft does not provide Linux containers for those releases.
+Run the Python harness with `--external` and provide
+`SQL_SYNC_TEST_SERVER`, `SQL_SYNC_TEST_USER`, and
+`SQL_SYNC_TEST_PASSWORD` only against an approved disposable instance. The
+harness drops and recreates `SyncClient1`, `SyncClient2`, and `SyncClient3`.
+
+The Action Server workflow `.action-server/workflows/sync-verification.yaml`
+runs the standard tier for pushes and pull requests and expands scheduled runs
+to the compatibility matrix and a longer soak. Its stable artifacts are under
+`workspace/tests/sync-verification/`.
 
 The harness is destructive only to its Docker volume. It does not connect to
 the live server or live clients.

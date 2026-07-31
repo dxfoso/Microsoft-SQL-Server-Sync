@@ -1,0 +1,26 @@
+FROM ghcr.io/cirruslabs/flutter:stable
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ACCEPT_EULA=Y
+ENV PATH=/opt/mssql-tools18/bin:/sdks/flutter/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    docker-compose-v2 \
+    docker.io \
+    gnupg \
+    python3 \
+  && install -d -m 0755 /usr/share/keyrings \
+  && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+  && curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list \
+    -o /etc/apt/sources.list.d/microsoft-prod.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends mssql-tools18 unixodbc \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+CMD ["bash"]
