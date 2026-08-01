@@ -15,6 +15,10 @@ void main() {
 
   test('full all-client batches advance cursors after catch-up', () {
     expect(uploadPreservesChangeTrackingBaseline('server-delta-v3'), isFalse);
+    expect(
+      uploadPreservesChangeTrackingBaseline('server-union-bootstrap-v3'),
+      isFalse,
+    );
     expect(downloadPreservesChangeTrackingBaseline('server-merge'), isFalse);
   });
 

@@ -2940,10 +2940,10 @@ function sync_agents_enabled_for_table(agents: array<json>, table: string, polic
 
 // This is the single preflight decision used by manual Sync All, targeted
 // manual sync, and automatic scheduling. A normal delta batch is legal only
-// when every enabled participant owns a valid cursor. If one participant lost
-// its cursor, a full authoritative repair from the unambiguous cursor-owning
-// peer is safer than either silently skipping that participant or uploading
-// its whole non-empty table as inserts.
+// when every enabled participant owns a valid cursor. During the first shared
+// baseline, differing full snapshots are unioned from every online client.
+// After a baseline exists, a client that loses its cursor is repaired from an
+// unambiguous cursor-owning peer so stale rows cannot resurrect old deletes.
 function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null): map<json> {
   let caches = tableCaches;
   if (caches == null) {
@@ -3048,6 +3048,16 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
         string.from(agent.clientName) != sourceClientName
       ),
       message: 'All clients report identical data; one verified snapshot will establish a shared baseline.'
+    };
+  }
+  if (readyAgents.length == 0 && allFingerprints.length > 1) {
+    return {
+      mode: 'union_bootstrap',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: participants,
+      message: 'Clients report different pre-existing data; every client will upload a complete snapshot and receive the primary-key union.'
     };
   }
   return {
@@ -3288,13 +3298,18 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         plan.sourceAgent,
         plan.targetAgents
       );
-    } else if (string.from(plan.mode) == 'delta') {
+    } else if (string.from(plan.mode) == 'delta' ||
+        string.from(plan.mode) == 'union_bootstrap') {
+      if (string.from(plan.mode) == 'union_bootstrap' && preserveChangeTrackingBaselines) {
+        continue;
+      }
       jobs = create_multi_writer_batch(
         normalizedOwnerUserId,
         table,
         tableAgents,
         '',
-        preserveChangeTrackingBaselines
+        preserveChangeTrackingBaselines,
+        string.from(plan.mode) == 'union_bootstrap'
       );
     }
     if (jobs.length > 0) {
@@ -4331,15 +4346,25 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
     const clientName = string.from(agent.clientName);
+    const tableState = scheduler_agent_table_state(
+      scheduler_agent_table_states(agent),
+      table
+    );
+    let expectedRowCount = 0;
+    if (unionBootstrap && tableState != null && tableState.rowCount != null) {
+      expectedRowCount = int.from(tableState.rowCount);
+    }
     rows = rows.concat([{
       id: uuid.v4(),
       clientName,
-      sourceClientName: bootstrapSourceClientName.length != 0
+      sourceClientName: unionBootstrap
+        ? 'server-union-bootstrap-v3'
+        : bootstrapSourceClientName.length != 0
         ? 'server-bootstrap-v3'
         : preserveChangeTrackingBaselines
           ? 'server-partial-delta-v3'
@@ -4354,7 +4379,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       publisherPassword: sync_job_text(agent.replicationPassword),
       status: 'queued',
       progress: 0,
-      rowCount: 0,
+      rowCount: unionBootstrap ? expectedRowCount : 0,
       snapshotBytes: 0,
       snapshotCreatedAt: null,
       snapshotId: null,
@@ -4362,7 +4387,9 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       updatedAt: createdAt,
       startedAt: null,
       completedAt: null,
-      message: bootstrapSourceClientName.length == 0
+      message: unionBootstrap
+        ? string.concat('Queued multi-client union bootstrap upload for ', table, '.')
+        : bootstrapSourceClientName.length == 0
         ? string.concat('Queued protocol-v3 delta upload for ', table, '.')
         : string.concat('Queued explicit protocol-v3 bootstrap upload for ', table, '.'),
       error: null,
@@ -4405,7 +4432,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
   return rows;
 }
 
-function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false): array<json> {
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false): array<json> {
   if (agents.length == 0) {
     return [];
   }
@@ -4443,7 +4470,8 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     ownerUserId,
     protocol,
     bootstrapSourceClientName,
-    preserveChangeTrackingBaselines
+    preserveChangeTrackingBaselines,
+    unionBootstrap
   ));
 }
 
@@ -5955,13 +5983,20 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         sourceResolutionTables = sourceResolutionTables.concat([
           string.concat(ownerUserId, '::', table)
         ]);
-      } else if (string.from(plan.mode) == 'delta') {
+      } else if (string.from(plan.mode) == 'delta' ||
+          string.from(plan.mode) == 'union_bootstrap') {
+        if (string.from(plan.mode) == 'union_bootstrap' && preserveChangeTrackingBaselines) {
+          ownerDeferredTables = ownerDeferredTables.concat([table]);
+          deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
+          continue;
+        }
         jobs = create_multi_writer_batch(
           ownerUserId,
           table,
           tableAgents,
           '',
-          preserveChangeTrackingBaselines
+          preserveChangeTrackingBaselines,
+          string.from(plan.mode) == 'union_bootstrap'
         );
       }
       if (jobs.length > 0) {
@@ -6378,8 +6413,14 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     string.from(batch.expectedClients[0]).trim() == clientName.trim();
   const comparisonPreview =
     string.from(job.sourceClientName).trim() == 'server-diff-preview';
-  if (!payloadIsDelta && !explicitSingleClientBootstrap && !comparisonPreview) {
-    return raw_json_error(409, 'protocol-v3 batches accept deltas only unless this is an explicit single-client bootstrap');
+  const multiClientUnionBootstrap =
+    string.from(job.sourceClientName).trim() == 'server-union-bootstrap-v3' &&
+    batch.expectedClients.length >= 2;
+  if (!payloadIsDelta &&
+      !explicitSingleClientBootstrap &&
+      !comparisonPreview &&
+      !multiClientUnionBootstrap) {
+    return raw_json_error(409, 'protocol-v3 full snapshots require an explicit bootstrap, comparison, or multi-client union batch');
   }
   if (multi_writer_batch_stale(batch)) {
     return raw_json_error(410, 'multi-writer batch expired; start a new sync');
@@ -6502,7 +6543,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   // Every protocol-v3 delta uses one durable row winner. The configurable
   // conflict policy still controls whether unsafe schema/business conflicts
   // pause for input, but it must never disable deterministic row ordering.
-  const winnerPolicyApplied = payloadIsDelta;
+  const winnerPolicyApplied = payloadIsDelta || multiClientUnionBootstrap;
   const winnerOwnerUserId = string.from(batch.ownerUserId ?? '').trim();
   const winnerTable = string.from(batch.table);
   let candidateWinnerIds = [];
@@ -6799,8 +6840,9 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   }
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
-    // Protocol v3 stores only Change Tracking deltas. Full snapshots are
-    // bootstrapped deliberately from one source and never unioned here.
+    // Normal protocol-v3 pages contain Change Tracking deltas. Initial union
+    // bootstrap pages are the guarded exception: every participant uploads a
+    // full snapshot before any participant is allowed to download.
     orderBy: [
       { field: 'subscriberClientName', dir: 'asc' },
       { field: 'createdAt', dir: 'asc' },
@@ -7451,13 +7493,21 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
         plan.sourceAgent,
         plan.targetAgents
       );
-    } else if (string.from(plan.mode) == 'delta') {
+    } else if (string.from(plan.mode) == 'delta' ||
+        string.from(plan.mode) == 'union_bootstrap') {
+      if (string.from(plan.mode) == 'union_bootstrap' && preserveChangeTrackingBaselines) {
+        return raw_json_error(
+          409,
+          'multi-client union bootstrap waits until every enabled client is online'
+        );
+      }
       nextJobs = create_multi_writer_batch(
         ownerId,
         string.from(plan.table),
         plan.participants ?? [],
         '',
-        preserveChangeTrackingBaselines
+        preserveChangeTrackingBaselines,
+        string.from(plan.mode) == 'union_bootstrap'
       );
     }
     if (nextJobs.length > 0) {

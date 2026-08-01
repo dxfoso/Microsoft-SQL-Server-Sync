@@ -5155,10 +5155,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final authoritativeSnapshot =
         job.sourceClientName == 'server-authoritative-reconcile';
     final comparisonSnapshot = job.sourceClientName == 'server-diff-preview';
-    final completeSnapshot = authoritativeSnapshot || comparisonSnapshot;
+    final unionBootstrapSnapshot =
+        job.sourceClientName == 'server-union-bootstrap-v3';
+    final completeSnapshot =
+        authoritativeSnapshot || comparisonSnapshot || unionBootstrapSnapshot;
     if (completeSnapshot && job.rowCount != rowCount) {
+      final snapshotKind =
+          comparisonSnapshot
+              ? 'Comparison'
+              : unionBootstrapSnapshot
+              ? 'Union bootstrap'
+              : 'Authoritative source';
       throw StateError(
-        '${comparisonSnapshot ? 'Comparison' : 'Authoritative source'} safety check blocked ${job.table}: '
+        '$snapshotKind safety check blocked ${job.table}: '
         'the control plane expected ${job.rowCount} rows, but SQL Server '
         'returned $rowCount. Refresh the table inventory and investigate the '
         'reader before retrying; no target data was changed.',
@@ -5166,6 +5175,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
     if (job.sourceClientName == 'server-bootstrap-v3' ||
+        unionBootstrapSnapshot ||
         authoritativeSnapshot) {
       await _ensureChangeTrackingEnabledForDatabase(
         database: database,
@@ -5202,6 +5212,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       rows.addAll(deltaRows);
       isDelta = true;
     } else if (job.sourceClientName == 'server-bootstrap-v3' ||
+        unionBootstrapSnapshot ||
         completeSnapshot) {
       if (job.batchId?.trim().isNotEmpty != true) {
         throw StateError('Explicit protocol-v3 bootstrap requires a batch.');
@@ -5229,10 +5240,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         if (batch.isEmpty) break;
       }
     } else {
-      // Protocol v3 establishes a baseline only from an empty database. A
-      // non-empty database without a valid cursor must be bootstrapped from a
-      // deliberately selected source; silently unioning full snapshots is the
-      // duplication bug that protocol v3 removes.
+      // A non-empty database without a valid cursor must enter an explicit
+      // bootstrap mode. The server selects either an authoritative one-client
+      // repair or the guarded all-client union used for an initial baseline.
       if (rowCount != 0 || tracking == null) {
         throw StateError(
           'Protocol-v3 sync for ${job.table} requires a deliberate one-source bootstrap because this non-empty database has no valid Change Tracking baseline.',
@@ -5282,8 +5292,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (sourceFingerprint == null ||
           sourceFingerprint.rowCount != rows.length ||
           sourceFingerprint.checksum != snapshotChecksum) {
+        final snapshotKind =
+            comparisonSnapshot
+                ? 'Comparison source'
+                : unionBootstrapSnapshot
+                ? 'Union bootstrap source'
+                : 'Authoritative source';
         throw StateError(
-          '${comparisonSnapshot ? 'Comparison source' : 'Authoritative source'} ${job.table} changed while its snapshot was being read. Pause writes and retry.',
+          '$snapshotKind ${job.table} changed while its snapshot was being read. Pause writes and retry.',
         );
       }
     }

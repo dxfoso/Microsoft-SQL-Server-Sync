@@ -21,6 +21,11 @@ class DockerSyncHarnessContracts(unittest.TestCase):
             runner,
         )
         self.assertIn(
+            '"initial-three-client-primary-key-union-bootstrap"',
+            runner,
+        )
+        self.assertIn("Initial union did not retain every client's unique rows", runner)
+        self.assertIn(
             "An offline peer blocked client 1 changes from reaching client 2",
             runner,
         )

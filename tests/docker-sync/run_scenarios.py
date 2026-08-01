@@ -1271,6 +1271,57 @@ def run_scenarios():
     for database in DATABASES:
         assert_business_trigger_enabled(database)
 
+    # Initial convergence is a true multi-writer union: every non-empty
+    # client contributes its pre-existing rows, duplicate primary keys use
+    # the normal deterministic winner policy, and every client receives the
+    # same merged set before Change Tracking deltas begin.
+    initial_client_rows = [
+        [
+            row(910, "BOOTSTRAP-C1", "Pre-existing on client 1"),
+            {
+                **row(913, "BOOTSTRAP-CONFLICT", "Older client 1 value"),
+                "__sync_modified_at_utc": "2026-07-16T09:00:00Z",
+            },
+        ],
+        [
+            row(911, "BOOTSTRAP-C2", "Pre-existing on client 2"),
+            {
+                **row(913, "BOOTSTRAP-CONFLICT", "Newest client 2 value"),
+                "__sync_modified_at_utc": "2026-07-16T09:00:02Z",
+            },
+        ],
+        [
+            row(912, "BOOTSTRAP-C3", "Pre-existing on client 3"),
+            {
+                **row(913, "BOOTSTRAP-CONFLICT", "Middle client 3 value"),
+                "__sync_modified_at_utc": "2026-07-16T09:00:01Z",
+            },
+        ],
+    ]
+    for database, client_rows in zip(DATABASES, initial_client_rows):
+        apply(database, rows=client_rows)
+    initial_union = coalesce([
+        value
+        for client_rows in initial_client_rows
+        for value in client_rows
+    ])
+    if len(initial_union) != 4:
+        raise AssertionError(
+            f"Initial multi-client union selected the wrong cardinality: {initial_union}"
+        )
+    for database in DATABASES:
+        apply(database, rows=initial_union)
+    assert_equal(*DATABASES)
+    for database in DATABASES:
+        if scalar_int(
+            database,
+            "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id BETWEEN 910 AND 913;",
+        ) != 4:
+            raise AssertionError(
+                f"Initial union did not retain every client's unique rows in {database}."
+            )
+    reset_databases()
+
     inserted = row(2, "INSERT-2", "Inserted on client 1", arabic="إضافة جديدة")
     for database in DATABASES[1:]:
         apply(database, rows=[inserted])
@@ -1659,6 +1710,7 @@ VALUES
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
+            "initial-three-client-primary-key-union-bootstrap",
             "independent-multi-writer",
             "offline-peer-online-continuity-and-reconnect-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",

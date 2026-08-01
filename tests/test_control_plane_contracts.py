@@ -1134,7 +1134,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertNotIn("database: null", policy_lookup)
 
-    def test_protocol_v3_never_unions_full_multi_writer_snapshots(self):
+    def test_protocol_v3_unions_full_snapshots_only_for_initial_multi_client_baseline(self):
         source = read_text("business/control_plane.tru")
 
         batch_body = source.split("function create_multi_writer_batch(", 1)[1].split(
@@ -1144,7 +1144,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("'server-anti-entropy'", source)
         self.assertIn("'server-delta-v3'", source)
         self.assertIn("'server-bootstrap-v3'", source)
-        self.assertIn("protocol-v3 batches accept deltas only unless this is an explicit single-client bootstrap", source)
+        self.assertIn("'server-union-bootstrap-v3'", source)
+        self.assertIn("const multiClientUnionBootstrap", source)
+        self.assertIn("mode: 'union_bootstrap'", source)
+        self.assertIn("every client will upload a complete snapshot", source)
         self.assertIn("explicitSingleClientBootstrap", source)
         self.assertIn("field protocolVersion: int? min=3 max=3", source)
         self.assertIn("field syncEpoch: string? min=0 max=64", source)
@@ -1372,14 +1375,31 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const comparisonPreview", upload_body)
         self.assertIn("'server-diff-preview'", upload_body)
         self.assertIn(
-            "!payloadIsDelta && !explicitSingleClientBootstrap && !comparisonPreview",
+            "!multiClientUnionBootstrap",
             upload_body,
         )
-        self.assertIn("const winnerPolicyApplied = payloadIsDelta", upload_body)
+        self.assertIn(
+            "const winnerPolicyApplied = payloadIsDelta || multiClientUnionBootstrap",
+            upload_body,
+        )
         self.assertIn("db.insert(SyncJobDataChunk", upload_body)
         self.assertIn("row comparison requires permanent primary key columns", upload_body)
         self.assertIn("different primary key definitions", upload_body)
         self.assertIn("if (finalChunk && !comparisonPreview)", upload_body)
+
+    def test_union_bootstrap_waits_for_all_clients_and_uses_full_client_snapshots(self):
+        source = read_text("business/control_plane.tru")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("string.from(plan.mode) == 'union_bootstrap'", source)
+        self.assertIn(
+            "multi-client union bootstrap waits until every enabled client is online",
+            source,
+        )
+        self.assertIn("unionBootstrap ? expectedRowCount : 0", source)
+        self.assertIn("batch.expectedClients.length >= 2", source)
+        self.assertIn("unionBootstrapSnapshot", agent_page)
+        self.assertIn("job.sourceClientName == 'server-union-bootstrap-v3'", agent_page)
 
 
 if __name__ == "__main__":
