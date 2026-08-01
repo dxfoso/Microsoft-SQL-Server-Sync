@@ -1309,6 +1309,25 @@ def run_scenarios():
         raise AssertionError(
             f"Initial multi-client union selected the wrong cardinality: {initial_union}"
         )
+    stale_bootstrap_vs_delete = coalesce([
+        {
+            **row(914, "DELETED-BEFORE-UNION", "Must not be resurrected"),
+            "__sync_modified_at_utc": "1970-01-01T00:00:00.000Z",
+        },
+        {
+            "Id": 914,
+            "__sync_op": "D",
+            "__sync_modified_at_utc": "2026-07-16T09:00:03Z",
+        },
+    ])
+    if (
+        len(stale_bootstrap_vs_delete) != 1
+        or stale_bootstrap_vs_delete[0].get("__sync_op") != "D"
+    ):
+        raise AssertionError(
+            "A stale full-union row outranked a durable delete: "
+            f"{stale_bootstrap_vs_delete}"
+        )
     for database in DATABASES:
         apply(database, rows=initial_union)
     assert_equal(*DATABASES)
@@ -1711,6 +1730,7 @@ VALUES
             "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
             "initial-three-client-primary-key-union-bootstrap",
+            "full-union-does-not-resurrect-durable-delete",
             "independent-multi-writer",
             "offline-peer-online-continuity-and-reconnect-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",

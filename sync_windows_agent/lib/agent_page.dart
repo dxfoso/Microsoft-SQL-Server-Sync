@@ -5252,6 +5252,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
 
     for (final row in rows) {
+      // A durable delta winner (especially a delete) must outrank an undated
+      // legacy row encountered during a full all-client anti-entropy pass.
+      if (unionBootstrapSnapshot &&
+          row['__sync_modified_at_utc']?.trim().isNotEmpty != true) {
+        row['__sync_modified_at_utc'] = '1970-01-01T00:00:00.000Z';
+      }
       final operation =
           row['__sync_op']?.trim().isNotEmpty == true
               ? row['__sync_op']!.trim().toUpperCase()

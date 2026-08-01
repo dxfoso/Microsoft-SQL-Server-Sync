@@ -2938,10 +2938,32 @@ function sync_agents_enabled_for_table(agents: array<json>, table: string, polic
   return participants;
 }
 
+// After a full union, allow the next observed inventory mismatch through the
+// normal delta protocol first. If that delta cannot make inventories equal,
+// its upload becomes the latest batch and the following pass performs another
+// full union. This keeps ordinary inserts incremental without hiding legacy
+// rows that predate Change Tracking.
+function latest_completed_table_batch_was_union(ownerUserId: string, table: string): bool {
+  const rows = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      table,
+      direction: 'upload',
+      status: 'completed'
+    },
+    orderBy: { field: 'completedAt', dir: 'desc' },
+    fields: ['sourceClientName'],
+    limit: 1
+  });
+  return rows.length != 0 &&
+    string.from(rows[0].sourceClientName).trim() == 'server-union-bootstrap-v3';
+}
+
 // This is the single preflight decision used by manual Sync All, targeted
 // manual sync, and automatic scheduling. A normal delta batch is legal only
 // when every enabled participant owns a valid cursor. During the first shared
-// baseline, differing full snapshots are unioned from every online client.
+// baseline, or when established clients later report divergent complete
+// inventories, full snapshots are unioned from every online client.
 // After a baseline exists, a client that loses its cursor is repaired from an
 // unambiguous cursor-owning peer so stale rows cannot resurrect old deletes.
 function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null): map<json> {
@@ -2954,6 +2976,8 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
   let readyFingerprints = [];
   let allFingerprints = [];
   let reportedClientCount = 0;
+  let reportedRowCountClientCount = 0;
+  let allReportedRowCounts = [];
   for (const agent of participants) {
     const cache = scheduler_agent_table_state_cache_for_agent(
       string.from(agent.clientName),
@@ -2964,6 +2988,13 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       states = cache.tables;
     }
     const state = scheduler_agent_table_state(states, table);
+    if (state != null && state.rowCount != null) {
+      const reportedRowCount = string.from(state.rowCount);
+      reportedRowCountClientCount += 1;
+      if (!string_array_contains(allReportedRowCounts, reportedRowCount)) {
+        allReportedRowCounts = allReportedRowCounts.concat([reportedRowCount]);
+      }
+    }
     const fingerprint = sync_table_reported_fingerprint(state);
     if (fingerprint.length != 0) {
       reportedClientCount += 1;
@@ -2988,6 +3019,38 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       sourceAgent: null,
       targetAgents: [],
       message: 'Table is not enabled for any client.'
+    };
+  }
+  const establishedInventoryCanUnion =
+    readyAgents.length != participants.length ||
+    !latest_completed_table_batch_was_union(
+      string.from(participants[0].ownerUserId),
+      table
+    );
+  if (participants.length >= 2 &&
+      reportedRowCountClientCount == participants.length &&
+      allReportedRowCounts.length > 1 &&
+      establishedInventoryCanUnion) {
+    return {
+      mode: 'union_bootstrap',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: participants,
+      message: 'Clients report different complete row counts; every client will upload a complete snapshot and receive the primary-key union.'
+    };
+  }
+  if (participants.length >= 2 &&
+      reportedClientCount == participants.length &&
+      allFingerprints.length > 1 &&
+      establishedInventoryCanUnion) {
+    return {
+      mode: 'union_bootstrap',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: participants,
+      message: 'Clients report different complete table fingerprints; every client will upload a complete snapshot and receive the primary-key union.'
     };
   }
   if (readyAgents.length == participants.length) {

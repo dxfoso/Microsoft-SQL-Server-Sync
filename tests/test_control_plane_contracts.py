@@ -1072,6 +1072,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("function enabled_sync_policy_tables_for_agent(", 1)[0]
 
         self.assertIn("readyAgents.length == participants.length", planner)
+        self.assertLess(
+            planner.index("allReportedRowCounts.length > 1"),
+            planner.index("readyAgents.length == participants.length"),
+        )
+        self.assertIn("reportedRowCountClientCount == participants.length", planner)
+        self.assertIn("reportedClientCount == participants.length", planner)
+        self.assertIn("latest_completed_table_batch_was_union(", planner)
+        self.assertIn("establishedInventoryCanUnion", planner)
         self.assertIn("mode: 'delta'", planner)
         self.assertIn("mode: 'reconcile'", planner)
         self.assertIn("mode: 'needs_input'", planner)
@@ -1134,7 +1142,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertNotIn("database: null", policy_lookup)
 
-    def test_protocol_v3_unions_full_snapshots_only_for_initial_multi_client_baseline(self):
+    def test_protocol_v3_unions_full_snapshots_for_multi_client_anti_entropy(self):
         source = read_text("business/control_plane.tru")
 
         batch_body = source.split("function create_multi_writer_batch(", 1)[1].split(
@@ -1400,6 +1408,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("batch.expectedClients.length >= 2", source)
         self.assertIn("unionBootstrapSnapshot", agent_page)
         self.assertIn("job.sourceClientName == 'server-union-bootstrap-v3'", agent_page)
+        self.assertIn("row['__sync_modified_at_utc'] = '1970-01-01T00:00:00.000Z'", agent_page)
 
 
 if __name__ == "__main__":
