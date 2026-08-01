@@ -70,6 +70,21 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertEqual(refresh_body.count("cancel_owner_sync_jobs_for_input("), 1)
         self.assertNotIn("raise_sync_table_issue(", refresh_body)
 
+    def test_owner_cancellation_cleans_all_batches_with_bounded_database_operations(self):
+        control_plane = read_text("business/control_plane.tru")
+        cancel_body = control_plane.split(
+            "function cancel_owner_sync_jobs_for_input(", 1
+        )[1].split("function sync_owner_table_has_active_jobs", 1)[0]
+        cleanup_body = control_plane.split(
+            "function cleanup_multi_writer_batches_storage(", 1
+        )[1].split("function cleanup_multi_writer_batch_storage", 1)[0]
+
+        self.assertIn("cleanup_multi_writer_batches_storage(batchIds);", cancel_body)
+        self.assertNotIn("for (const batchId of batchIds)", cancel_body)
+        self.assertEqual(cleanup_body.count("db.selectMany("), 2)
+        self.assertEqual(cleanup_body.count("db.deleteMany("), 1)
+        self.assertIn("sourceJobId: { in: normalizedBatchIds }", cleanup_body)
+
     def test_manual_job_creation_reuses_preloaded_baseline_inputs(self):
         control_plane = read_text("business/control_plane.tru")
         jobs_body = control_plane.split(

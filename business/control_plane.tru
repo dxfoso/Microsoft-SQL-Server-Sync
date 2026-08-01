@@ -3825,9 +3825,7 @@ function cancel_owner_sync_jobs_for_input(ownerUserId: string, message: string):
       updatedAt: now_iso()
     });
   }
-  for (const batchId of batchIds) {
-    cleanup_multi_writer_batch_storage(batchId);
-  }
+  cleanup_multi_writer_batches_storage(batchIds);
   return jobIds.length;
 }
 
@@ -8448,9 +8446,7 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
   if (cancelledBatchIds.length != 0) {
     // Staged rows are disposable relay data. Remove them with the cancelled
     // batches so failed large syncs cannot consume memory on later startups.
-    for (const batchId of cancelledBatchIds) {
-      cleanup_multi_writer_batch_storage(batchId);
-    }
+    cleanup_multi_writer_batches_storage(cancelledBatchIds);
   }
 
   return {
@@ -8460,24 +8456,50 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
   };
 }
 
-function cleanup_multi_writer_batch_storage(batchId: string): int {
-  const normalizedBatchId = batchId.trim();
-  if (normalizedBatchId.length == 0) {
+function cleanup_multi_writer_batches_storage(batchIds: array<string>): int {
+  let normalizedBatchIds = [];
+  for (const batchId of batchIds) {
+    const normalizedBatchId = batchId.trim();
+    if (normalizedBatchId.length != 0 &&
+        !string_array_contains(normalizedBatchIds, normalizedBatchId)) {
+      normalizedBatchIds = normalizedBatchIds.concat([normalizedBatchId]);
+    }
+  }
+  if (normalizedBatchIds.length == 0) {
     return 0;
   }
   const chunks = db.selectMany(SnapshotRecord, {
-    where: { sourceJobId: normalizedBatchId },
+    where: { sourceJobId: { in: normalizedBatchIds } },
     orderBy: { field: 'createdAt', dir: 'asc' },
     fields: ['storageId'],
     limit: 1000
   });
+  let storageIds = [];
   for (const chunk of chunks) {
     const storageId = string.from(chunk.storageId ?? '').trim();
-    if (storageId.length != 0 && !sync_job_data_storage_referenced_by_archive(storageId)) {
+    if (storageId.length != 0 && !string_array_contains(storageIds, storageId)) {
+      storageIds = storageIds.concat([storageId]);
+    }
+  }
+  let archivedStorageIds = [];
+  if (storageIds.length != 0) {
+    archivedStorageIds = db.selectMany(SyncJobDataChunk, {
+      where: { storageId: { in: storageIds } },
+      orderBy: { field: 'createdAt', dir: 'asc' },
+      fields: ['storageId'],
+      limit: 1000
+    }).map((chunk) => string.from(chunk.storageId ?? '').trim());
+  }
+  for (const storageId of storageIds) {
+    if (!string_array_contains(archivedStorageIds, storageId)) {
       storage.delete(storageId);
     }
   }
-  return db.deleteMany(SnapshotRecord, { sourceJobId: normalizedBatchId });
+  return db.deleteMany(SnapshotRecord, { sourceJobId: { in: normalizedBatchIds } });
+}
+
+function cleanup_multi_writer_batch_storage(batchId: string): int {
+  return cleanup_multi_writer_batches_storage([batchId]);
 }
 
 function jobs_cleanup_multi_writer_batch(batchId: string, token: string? = null): map<json> {

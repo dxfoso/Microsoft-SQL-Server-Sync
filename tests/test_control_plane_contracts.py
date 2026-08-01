@@ -192,7 +192,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "normalized == 'queued' || normalized == 'waiting' || normalized == 'running'",
             source,
         )
-        self.assertIn("cleanup_multi_writer_batch_storage(batchId)", source)
+        self.assertIn("cleanup_multi_writer_batches_storage(cancelledBatchIds)", source)
         self.assertIn("function jobs_cleanup_multi_writer_batch(", source)
 
     def test_client_update_payload_and_ack_track_pending_and_last_ack_state(self):
@@ -1311,7 +1311,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function prune_sync_job_data_for_owner(", 1
         )[1].split("function sync_job_data_chunk_page(", 1)[0]
         relay_cleanup = source.split(
-            "function cleanup_multi_writer_batch_storage(", 1
+            "function cleanup_multi_writer_batches_storage(", 1
         )[1].split("function jobs_cleanup_multi_writer_batch(", 1)[0]
 
         self.assertIn("field syncDataLimitMb: int? min=1 max=1024", source)
@@ -1326,10 +1326,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
             retention,
         )
         self.assertIn("db.aggregate(SyncJobDataChunk", source)
-        self.assertIn(
-            "!sync_job_data_storage_referenced_by_archive(storageId)",
-            relay_cleanup,
-        )
+        self.assertIn("where: { sourceJobId: { in: normalizedBatchIds } }", relay_cleanup)
+        self.assertIn("where: { storageId: { in: storageIds } }", relay_cleanup)
+        self.assertNotIn("sync_job_data_storage_referenced_by_archive(storageId)", relay_cleanup)
         self.assertIn("delete_sync_job_data_batch()", source)
 
     def test_latest_change_winner_is_durable_across_batches_and_resettable(self):
