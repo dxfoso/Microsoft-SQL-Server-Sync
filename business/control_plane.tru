@@ -2943,20 +2943,40 @@ function sync_agents_enabled_for_table(agents: array<json>, table: string, polic
 // its upload becomes the latest batch and the following pass performs another
 // full union. This keeps ordinary inserts incremental without hiding legacy
 // rows that predate Change Tracking.
-function latest_completed_table_batch_was_union(ownerUserId: string, table: string): bool {
+function latest_completed_upload_modes_for_owner(ownerUserId: string): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: {
       ownerUserId,
-      table,
       direction: 'upload',
       status: 'completed'
     },
     orderBy: { field: 'completedAt', dir: 'desc' },
-    fields: ['sourceClientName'],
-    limit: 1
+    fields: ['table', 'sourceClientName'],
+    limit: 1000
   });
-  return rows.length != 0 &&
-    string.from(rows[0].sourceClientName).trim() == 'server-union-bootstrap-v3';
+  let modes = [];
+  let seenTables = [];
+  for (const row of rows) {
+    const rowTable = string.from(row.table).trim();
+    if (rowTable.length == 0 || string_array_contains(seenTables, rowTable)) {
+      continue;
+    }
+    modes = modes.concat([{
+      table: rowTable,
+      union: string.from(row.sourceClientName).trim() == 'server-union-bootstrap-v3'
+    }]);
+    seenTables = seenTables.concat([rowTable]);
+  }
+  return modes;
+}
+
+function latest_completed_table_batch_was_union(table: string, recentUploadModes: array<json>? = null): bool {
+  for (const mode of recentUploadModes ?? []) {
+    if (string.from(mode.table).trim() == table) {
+      return mode.union == true;
+    }
+  }
+  return false;
 }
 
 // This is the single preflight decision used by manual Sync All, targeted
@@ -2966,7 +2986,7 @@ function latest_completed_table_batch_was_union(ownerUserId: string, table: stri
 // inventories, full snapshots are unioned from every online client.
 // After a baseline exists, a client that loses its cursor is repaired from an
 // unambiguous cursor-owning peer so stale rows cannot resurrect old deletes.
-function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null, allowInventoryUnion: bool = true): map<json> {
+function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null, allowInventoryUnion: bool = true, recentUploadModes: array<json>? = null): map<json> {
   let caches = tableCaches;
   if (caches == null) {
     caches = agents.map((agent) => scheduler_agent_table_state_cache(agent, policies));
@@ -3024,10 +3044,7 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
   const establishedInventoryCanUnion =
     allowInventoryUnion &&
     (readyAgents.length != participants.length ||
-      !latest_completed_table_batch_was_union(
-        string.from(participants[0].ownerUserId),
-        table
-      ));
+      !latest_completed_table_batch_was_union(table, recentUploadModes));
   if (participants.length >= 2 &&
       reportedRowCountClientCount == participants.length &&
       allReportedRowCounts.length > 1 &&
@@ -3297,6 +3314,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   // Periodic sync uses the same all-client protocol-v3 barrier as manual Sync
   // All: every registered client uploads first, then every client downloads.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
+  const recentUploadModes = latest_completed_upload_modes_for_owner(normalizedOwnerUserId);
   const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
   const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
   let dueTables = unique_string_values(
@@ -3335,7 +3353,8 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       ownerAgents,
       ownerPolicies,
       tableCaches,
-      !preserveChangeTrackingBaselines
+      !preserveChangeTrackingBaselines,
+      recentUploadModes
     );
     const tableAgents = plan.participants ?? [];
     if (tableAgents.length == 0 ||
@@ -3889,6 +3908,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   const tableCaches = ownerAgents.map((agent) =>
     scheduler_agent_table_state_cache(agent, ownerPolicies)
   );
+  const recentUploadModes = latest_completed_upload_modes_for_owner(ownerUserId);
   let candidateTables = [];
   for (const cache of tableCaches) {
     candidateTables = candidateTables.concat(cache.enabledTables ?? []);
@@ -3898,7 +3918,14 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   let introducedBlockingIssue = false;
   for (const table of unique_string_values(candidateTables)) {
     const existing = sync_table_issue_from_values(nextIssues, table);
-    const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);
+    const plan = sync_table_baseline_plan(
+      table,
+      ownerAgents,
+      ownerPolicies,
+      tableCaches,
+      true,
+      recentUploadModes
+    );
     const participants = plan.participants ?? [];
     let fingerprints = [];
     let reportedClientCount = 0;
@@ -5988,6 +6015,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     const tableCaches = onlineAgents.map((agent) =>
       scheduler_agent_table_state_cache(agent, ownerPolicies)
     );
+    const recentUploadModes = latest_completed_upload_modes_for_owner(ownerUserId);
     let ownerHasActiveJobs = false;
     for (const cache of activeTableCaches) {
       if (cache.tables.length > 0) {
@@ -6016,7 +6044,8 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         onlineAgents,
         ownerPolicies,
         tableCaches,
-        !preserveChangeTrackingBaselines
+        !preserveChangeTrackingBaselines,
+        recentUploadModes
       );
       const tableAgents = plan.participants ?? [];
       if (tableAgents.length == 0) {
@@ -7536,6 +7565,7 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
   const tableCaches = onlineAgents.map((agent) =>
     scheduler_agent_table_state_cache(agent, ownerPolicies)
   );
+  const recentUploadModes = latest_completed_upload_modes_for_owner(ownerId);
   let tablePlans = [];
   for (const table of requestedTables) {
     const plan = sync_table_baseline_plan(
@@ -7543,7 +7573,8 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
       onlineAgents,
       ownerPolicies,
       tableCaches,
-      !preserveChangeTrackingBaselines
+      !preserveChangeTrackingBaselines,
+      recentUploadModes
     );
     if ((plan.participants ?? []).length == 0) {
       return raw_json_error(409, string.concat('sync table is not enabled: ', table));
