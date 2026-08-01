@@ -432,9 +432,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         manual_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
             "function reset_all_agent_saved_state(", 1
         )[0]
-        self.assertIn("const syncGate = sync_gate_payload_for_owners(", manual_all)
-        self.assertIn("if (syncGate.blocked == true)", manual_all)
-        self.assertIn("raw_json_error(409", manual_all)
+        self.assertIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", manual_all)
+        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", manual_all)
+        self.assertIn("sourceResolutionTables = sourceResolutionTables.concat(", manual_all)
 
         manual_one = source.split("function jobs_create(", 1)[1].split(
             "function jobs_bootstrap(", 1
@@ -1033,12 +1033,21 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
     def test_sync_all_queues_one_batch_for_online_peers(self):
         source = read_text("business/control_plane.tru")
+        sync_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
+            "function reset_all_agent_saved_state", 1
+        )[0]
 
         self.assertIn("mode: 'protocol-v3'", source)
         self.assertIn("if (effective_agent_online(agent))", source)
         self.assertIn("create_multi_writer_batch(", source)
         self.assertIn("const plan = sync_table_baseline_plan(", source)
         self.assertIn("!preserveChangeTrackingBaselines", source)
+        self.assertNotIn("sync_gate_payload_for_owners(ownerUserIds)", sync_all)
+        self.assertLess(
+            sync_all.index("if (onlineAgents.length == 0)"),
+            sync_all.index("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)"),
+        )
+        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", sync_all)
         self.assertIn("create_authoritative_reconcile_batch(", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("return raw_json_error(410, 'sync job is no longer active');", source)
