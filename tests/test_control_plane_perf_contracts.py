@@ -54,7 +54,8 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertEqual(jobs_body.count("active_job_tables_for_client("), 1)
         self.assertIn("active_job_tables_from_cache", jobs_body)
         self.assertIn("const tableCaches = onlineAgents.map", jobs_body)
-        self.assertIn("sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches)", jobs_body)
+        self.assertIn("sync_table_baseline_plan(", jobs_body)
+        self.assertIn("!preserveChangeTrackingBaselines", jobs_body)
         self.assertIn("create_multi_writer_batch(", jobs_body)
 
     def test_baseline_issue_refresh_persists_and_cancels_once_per_owner(self):

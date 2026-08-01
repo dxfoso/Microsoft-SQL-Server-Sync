@@ -2966,7 +2966,7 @@ function latest_completed_table_batch_was_union(ownerUserId: string, table: stri
 // inventories, full snapshots are unioned from every online client.
 // After a baseline exists, a client that loses its cursor is repaired from an
 // unambiguous cursor-owning peer so stale rows cannot resurrect old deletes.
-function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null): map<json> {
+function sync_table_baseline_plan(table: string, agents: array<json>, policies: array<json>? = null, tableCaches: array<json>? = null, allowInventoryUnion: bool = true): map<json> {
   let caches = tableCaches;
   if (caches == null) {
     caches = agents.map((agent) => scheduler_agent_table_state_cache(agent, policies));
@@ -3022,11 +3022,12 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
     };
   }
   const establishedInventoryCanUnion =
-    readyAgents.length != participants.length ||
-    !latest_completed_table_batch_was_union(
-      string.from(participants[0].ownerUserId),
-      table
-    );
+    allowInventoryUnion &&
+    (readyAgents.length != participants.length ||
+      !latest_completed_table_batch_was_union(
+        string.from(participants[0].ownerUserId),
+        table
+      ));
   if (participants.length >= 2 &&
       reportedRowCountClientCount == participants.length &&
       allReportedRowCounts.length > 1 &&
@@ -3329,7 +3330,13 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
       break;
     }
-    const plan = sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches);
+    const plan = sync_table_baseline_plan(
+      table,
+      ownerAgents,
+      ownerPolicies,
+      tableCaches,
+      !preserveChangeTrackingBaselines
+    );
     const tableAgents = plan.participants ?? [];
     if (tableAgents.length == 0 ||
         string.from(plan.mode) == 'needs_input' ||
@@ -6004,7 +6011,13 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
         deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
         continue;
       }
-      const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);
+      const plan = sync_table_baseline_plan(
+        table,
+        onlineAgents,
+        ownerPolicies,
+        tableCaches,
+        !preserveChangeTrackingBaselines
+      );
       const tableAgents = plan.participants ?? [];
       if (tableAgents.length == 0) {
         continue;
@@ -7525,7 +7538,13 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
   );
   let tablePlans = [];
   for (const table of requestedTables) {
-    const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);
+    const plan = sync_table_baseline_plan(
+      table,
+      onlineAgents,
+      ownerPolicies,
+      tableCaches,
+      !preserveChangeTrackingBaselines
+    );
     if ((plan.participants ?? []).length == 0) {
       return raw_json_error(409, string.concat('sync table is not enabled: ', table));
     }

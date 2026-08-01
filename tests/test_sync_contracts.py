@@ -1528,10 +1528,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("queuedTableCount >= periodic_sync_scheduler_table_limit()", control_plane)
         self.assertIn("agent_sync_enabled(agent)", scheduler_body)
         self.assertIn("effective_agent_online(agent)", scheduler_body)
-        self.assertIn(
-            "sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches)",
-            scheduler_body,
-        )
+        self.assertIn("sync_table_baseline_plan(", scheduler_body)
+        self.assertIn("!preserveChangeTrackingBaselines", scheduler_body)
         baseline_planner = control_plane.split(
             "function sync_table_baseline_plan(", 1
         )[1].split("function enabled_sync_policy_tables_for_agent(", 1)[0]

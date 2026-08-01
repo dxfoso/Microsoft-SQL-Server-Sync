@@ -343,7 +343,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);", owner_body)
         self.assertNotIn("list_completed_scheduler_job_rows(ownerUserId)", owner_body)
         self.assertIn("effective_agent_online(agent)", owner_body)
-        self.assertIn("sync_table_baseline_plan(table, ownerAgents, ownerPolicies, tableCaches)", owner_body)
+        self.assertIn("sync_table_baseline_plan(", owner_body)
+        self.assertIn("!preserveChangeTrackingBaselines", owner_body)
         self.assertIn("create_multi_writer_batch(", owner_body)
         self.assertIn("preserveChangeTrackingBaselines", owner_body)
         self.assertIn("mark_offline_sync_debt(", owner_body)
@@ -769,10 +770,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
             jobs_create,
         )
         self.assertIn("agent_sync_enabled(targetAgent)", source)
-        self.assertIn(
-            "const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);",
-            jobs_create,
-        )
+        self.assertIn("const plan = sync_table_baseline_plan(", jobs_create)
+        self.assertIn("!preserveChangeTrackingBaselines", jobs_create)
         self.assertIn("nextJobs = create_multi_writer_batch(", jobs_create)
         self.assertIn("nextJobs = create_authoritative_reconcile_batch(", jobs_create)
         self.assertIn(
@@ -1038,10 +1037,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("mode: 'protocol-v3'", source)
         self.assertIn("if (effective_agent_online(agent))", source)
         self.assertIn("create_multi_writer_batch(", source)
-        self.assertIn(
-            "const plan = sync_table_baseline_plan(table, onlineAgents, ownerPolicies, tableCaches);",
-            source,
-        )
+        self.assertIn("const plan = sync_table_baseline_plan(", source)
+        self.assertIn("!preserveChangeTrackingBaselines", source)
         self.assertIn("create_authoritative_reconcile_batch(", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("return raw_json_error(410, 'sync job is no longer active');", source)
@@ -1080,6 +1077,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("reportedClientCount == participants.length", planner)
         self.assertIn("latest_completed_table_batch_was_union(", planner)
         self.assertIn("establishedInventoryCanUnion", planner)
+        self.assertIn("allowInventoryUnion &&", planner)
         self.assertIn("mode: 'delta'", planner)
         self.assertIn("mode: 'reconcile'", planner)
         self.assertIn("mode: 'needs_input'", planner)
@@ -1404,6 +1402,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "multi-client union bootstrap waits until every enabled client is online",
             source,
         )
+        self.assertGreaterEqual(source.count("!preserveChangeTrackingBaselines"), 3)
         self.assertIn("unionBootstrap ? expectedRowCount : 0", source)
         self.assertIn("batch.expectedClients.length >= 2", source)
         self.assertIn("unionBootstrapSnapshot", agent_page)
