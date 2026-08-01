@@ -1543,16 +1543,36 @@ VALUES
             raise AssertionError(f"Unique collision inserted a second invalid identity in {database}: {current}")
     assert_equal(*DATABASES)
 
-    # Client 3 is offline for two rounds, then receives the accumulated delta once.
-    offline_rows = [
-        row(40, "OFFLINE-1", "Queued while client 3 offline"),
-        row(41, "OFFLINE-2", "Second queued row", arabic="عميل غير متصل"),
-    ]
-    for database in DATABASES[:2]:
-        apply(database, rows=offline_rows)
+    # Client 3 remains offline while clients 1 and 2 exchange independent
+    # writes normally. The complete missed range is then replayed once when
+    # client 3 reconnects.
+    client_1_offline_window_row = {
+        **row(40, "OFFLINE-C1", "Written by client 1 while client 3 is offline"),
+        "__sync_modified_at_utc": "2026-07-16T11:00:00Z",
+    }
+    client_2_offline_window_row = {
+        **row(
+            41,
+            "OFFLINE-C2",
+            "Written by client 2 while client 3 is offline",
+            arabic="عميل غير متصل",
+        ),
+        "__sync_modified_at_utc": "2026-07-16T11:00:01Z",
+    }
+    apply(DATABASES[0], rows=[client_1_offline_window_row])
+    apply(DATABASES[1], rows=[client_1_offline_window_row])
+    if table_rows(DATABASES[0]) != table_rows(DATABASES[1]):
+        raise AssertionError("An offline peer blocked client 1 changes from reaching client 2.")
+    apply(DATABASES[1], rows=[client_2_offline_window_row])
+    apply(DATABASES[0], rows=[client_2_offline_window_row])
+    if table_rows(DATABASES[0]) != table_rows(DATABASES[1]):
+        raise AssertionError("An offline peer blocked client 2 changes from reaching client 1.")
     if table_rows(DATABASES[2]) == table_rows(DATABASES[0]):
-        raise AssertionError("Offline client unexpectedly changed before catch-up.")
-    apply(DATABASES[2], rows=offline_rows)
+        raise AssertionError("Offline client unexpectedly changed before reconnecting.")
+    accumulated_offline_delta = coalesce(
+        [client_1_offline_window_row, client_2_offline_window_row]
+    )
+    apply(DATABASES[2], rows=accumulated_offline_delta)
     assert_equal(*DATABASES)
 
     large_rows = [
@@ -1639,7 +1659,8 @@ VALUES
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
-            "independent-multi-writer", "offline-catch-up",
+            "independent-multi-writer",
+            "offline-peer-online-continuity-and-reconnect-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",
             "invoice-line-logical-update-no-duplicate-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",

@@ -1704,6 +1704,16 @@ function client_runtime_status_payload(agent: map<json>): map<json> {
     }
   }
   if (client_has_offline_sync_debt(agent)) {
+    const catchupPaused = automatic_sync_is_paused() ||
+      automatic_sync_is_paused_for_owner(string.from(agent.ownerUserId));
+    if (catchupPaused) {
+      return {
+        code: 'catchup_paused',
+        label: 'Catch-up pending (sync paused)',
+        ready: false,
+        heartbeatAgeSeconds
+      };
+    }
     return {
       code: 'catching_up',
       label: 'Catching up',

@@ -1632,6 +1632,9 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_windows_comparison_snapshot_is_full_and_preserves_tracking_cursor(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        cursor_policy = read_text(
+            "sync_windows_agent/lib/change_tracking_cursor_policy.dart"
+        )
         snapshot_body = agent_page.split(
             "Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1
         )[1].split("Future<void> _processSnapshotRelayUploadJob(", 1)[0]
@@ -1644,7 +1647,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("!comparisonSnapshot", snapshot_body)
         self.assertIn("if (completeSnapshot)", snapshot_body)
         self.assertIn("_computeTableFingerprint(", snapshot_body)
-        self.assertIn("job.sourceClientName == 'server-diff-preview'", upload_body)
+        self.assertIn("uploadPreservesChangeTrackingBaseline", upload_body)
+        self.assertIn("'server-diff-preview'", cursor_policy)
         self.assertIn("preserveChangeTrackingBaseline", upload_body)
 
 

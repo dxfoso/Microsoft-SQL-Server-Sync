@@ -10,6 +10,7 @@ import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
 import 'automatic_change_discovery.dart';
+import 'change_tracking_cursor_policy.dart';
 import 'client_version.dart';
 import 'database_access.dart';
 import 'live_sync_api.dart';
@@ -4794,8 +4795,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     final uploadedVersion = snapshot.changeTrackingVersion;
     final preserveChangeTrackingBaseline =
-        job.sourceClientName == 'server-partial-delta-v3' ||
-        job.sourceClientName == 'server-diff-preview';
+        uploadPreservesChangeTrackingBaseline(job.sourceClientName);
     if (!preserveChangeTrackingBaseline &&
         uploadedVersion != null &&
         uploadedVersion >= 0) {
@@ -5049,7 +5049,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       },
     );
     final preserveChangeTrackingBaseline =
-        job.sourceClientName == 'server-partial-merge';
+        downloadPreservesChangeTrackingBaseline(job.sourceClientName);
     final appliedVersion =
         preserveChangeTrackingBaseline
             ? null

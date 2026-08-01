@@ -16,7 +16,15 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("buildTargetSnapshotStageApplySql(", bridge)
         self.assertIn("coalesceSqlSyncDeltaRows(", bridge)
         self.assertIn('"primary-key-change"', runner)
-        self.assertIn('"offline-catch-up"', runner)
+        self.assertIn(
+            '"offline-peer-online-continuity-and-reconnect-catch-up"',
+            runner,
+        )
+        self.assertIn(
+            "An offline peer blocked client 1 changes from reaching client 2",
+            runner,
+        )
+        self.assertIn("accumulated_offline_delta = coalesce", runner)
         self.assertIn('"large-1200-row-batch"', runner)
         self.assertIn('"exact-unicode-arabic-emoji-cjk"', runner)
         self.assertIn('"rejected-row-rollback-and-recovery"', runner)

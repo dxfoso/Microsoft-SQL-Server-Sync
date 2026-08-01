@@ -1084,6 +1084,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
     def test_partial_batches_preserve_cursors_until_offline_clients_catch_up(self):
         source = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        cursor_policy = read_text(
+            "sync_windows_agent/lib/change_tracking_cursor_policy.dart"
+        )
 
         self.assertIn("class OfflineSyncDebt", source)
         self.assertIn("function mark_offline_sync_debt(", source)
@@ -1095,10 +1098,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "authoritative baseline reconciliation waits until every enabled client is online",
             source,
         )
-        self.assertIn("job.sourceClientName == 'server-partial-delta-v3'", agent_page)
-        self.assertIn("job.sourceClientName == 'server-partial-merge'", agent_page)
+        self.assertIn("uploadPreservesChangeTrackingBaseline", agent_page)
+        self.assertIn("downloadPreservesChangeTrackingBaseline", agent_page)
+        self.assertIn("'server-partial-delta-v3'", cursor_policy)
+        self.assertIn("'server-partial-merge'", cursor_policy)
         self.assertIn("final preserveChangeTrackingBaseline =", agent_page)
         self.assertIn("final appliedVersion =", agent_page)
+
+    def test_offline_debt_status_distinguishes_paused_from_active_catchup(self):
+        source = read_text("business/control_plane.tru")
+        status_body = source.split(
+            "function client_runtime_status_payload(", 1
+        )[1].split("function public_agent_payload(", 1)[0]
+
+        self.assertIn("client_has_offline_sync_debt(agent)", status_body)
+        self.assertIn("automatic_sync_is_paused()", status_body)
+        self.assertIn("automatic_sync_is_paused_for_owner", status_body)
+        self.assertIn("code: 'catchup_paused'", status_body)
+        self.assertIn("label: 'Catch-up pending (sync paused)'", status_body)
+        self.assertIn("code: 'catching_up'", status_body)
 
     def test_database_agnostic_policy_remains_a_safe_fallback(self):
         source = read_text("business/control_plane.tru")
