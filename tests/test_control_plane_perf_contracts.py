@@ -69,6 +69,9 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertEqual(refresh_body.count("save_sync_table_issues_for_owner("), 1)
         self.assertEqual(refresh_body.count("cancel_owner_sync_jobs_for_input("), 1)
         self.assertNotIn("raise_sync_table_issue(", refresh_body)
+        self.assertIn("const activeOwnerTables = active_job_tables_for_owner(ownerUserId);", refresh_body)
+        self.assertIn("!string_array_contains(activeOwnerTables, table)", refresh_body)
+        self.assertNotIn("sync_owner_table_has_active_jobs(ownerUserId, table)", refresh_body)
 
     def test_owner_cancellation_cleans_all_batches_with_bounded_database_operations(self):
         control_plane = read_text("business/control_plane.tru")

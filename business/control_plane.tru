@@ -2724,6 +2724,22 @@ function active_job_tables_for_client(clientName: string): array<string> {
   return unique_string_values(tables);
 }
 
+function active_job_tables_for_owner(ownerUserId: string): array<string> {
+  const jobs = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['table'],
+    limit: 1000
+  });
+  return unique_string_values(
+    jobs.map((job) => string.from(job.table).trim())
+      .filter((table) => table.length != 0)
+  );
+}
+
 function active_job_tables_from_cache(clientName: string, activeTableCaches: array<json>? = null): array<string>? {
   if (activeTableCaches == null) {
     return null;
@@ -3907,6 +3923,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
     scheduler_agent_table_state_cache(agent, ownerPolicies)
   );
   const recentUploadModes = latest_completed_upload_modes_for_owner(ownerUserId);
+  const activeOwnerTables = active_job_tables_for_owner(ownerUserId);
   let candidateTables = [];
   for (const cache of tableCaches) {
     candidateTables = candidateTables.concat(cache.enabledTables ?? []);
@@ -3951,7 +3968,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
     }
     if (existing != null &&
         string.from(existing.status ?? '').trim() == 'resolving' &&
-        !sync_owner_table_has_active_jobs(ownerUserId, table) &&
+        !string_array_contains(activeOwnerTables, table) &&
         reportedClientCount == participants.length &&
         fingerprints.length == 1) {
       nextIssues = replace_sync_table_issue_in_values(nextIssues, {
