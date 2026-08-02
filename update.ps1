@@ -360,11 +360,15 @@ function Start-SupervisorProcess {
     if (-not (Test-Path -LiteralPath $supervisorPath -PathType Leaf)) {
         throw "Independent supervisor is missing: $supervisorPath"
     }
+    $quotedSupervisorPath = "'" + $supervisorPath.Replace("'", "''") + "'"
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes("& $quotedSupervisorPath")
+    )
     $arguments = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-WindowStyle', 'Hidden',
-        '-File', $supervisorPath
+        '-EncodedCommand', $encodedCommand
     )
     Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
 }
@@ -676,7 +680,11 @@ function Start-SupervisorProcess {
     if (-not (Test-Path -LiteralPath $supervisorPath -PathType Leaf)) {
         throw "Independent supervisor is missing: $supervisorPath"
     }
-    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $supervisorPath) -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    $quotedSupervisorPath = "'" + $supervisorPath.Replace("'", "''") + "'"
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes("& $quotedSupervisorPath")
+    )
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', $encodedCommand) -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
 }
 
 function Update-StartupShortcutToSupervisor {
@@ -863,24 +871,30 @@ Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
 
     Set-Content -LiteralPath $helperPath -Value $helper -Encoding ASCII
 
+    $quotedHelperPath = "'" + $helperPath.Replace("'", "''") + "'"
+    $quotedPayloadDir = "'" + $PayloadDir.Replace("'", "''") + "'"
+    $quotedInstallDir = "'" + $TargetInstallDir.Replace("'", "''") + "'"
+    $quotedWorkRoot = "'" + $WorkRoot.Replace("'", "''") + "'"
+    $deferredCommand = "& $quotedHelperPath -PayloadDir $quotedPayloadDir -InstallDir $quotedInstallDir -WorkRoot $quotedWorkRoot -ParentProcessId $ParentProcessId"
+    if (-not [string]::IsNullOrWhiteSpace($DeleteListPath)) {
+        $quotedDeleteListPath = "'" + $DeleteListPath.Replace("'", "''") + "'"
+        $deferredCommand += " -DeleteListPath $quotedDeleteListPath"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $quotedVersion = "'" + $Version.Replace("'", "''") + "'"
+        $deferredCommand += " -Version $quotedVersion"
+    }
+    if ($NoStart) {
+        $deferredCommand += ' -NoStart'
+    }
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($deferredCommand)
+    )
     $startArgs = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
-        '-File', $helperPath,
-        '-PayloadDir', $PayloadDir,
-        '-InstallDir', $TargetInstallDir,
-        '-WorkRoot', $WorkRoot,
-        '-ParentProcessId', $ParentProcessId
+        '-EncodedCommand', $encodedCommand
     )
-    if (-not [string]::IsNullOrWhiteSpace($DeleteListPath)) {
-        $startArgs += @('-DeleteListPath', $DeleteListPath)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $startArgs += @('-Version', $Version)
-    }
-    if ($NoStart) {
-        $startArgs += '-NoStart'
-    }
 
     Start-Process -FilePath 'powershell.exe' -ArgumentList $startArgs -WorkingDirectory $WorkRoot -WindowStyle Hidden
 }

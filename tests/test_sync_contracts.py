@@ -1154,6 +1154,28 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Verified installed client payload for version $Version.", update_script)
         self.assertIn("Start-Sleep -Milliseconds 500", update_script)
 
+    def test_update_script_encodes_paths_passed_to_hidden_powershell(self):
+        update_script = read_text("update.ps1")
+        self.assertIn("[Text.Encoding]::Unicode.GetBytes($deferredCommand)", update_script)
+        self.assertIn("'-EncodedCommand', $encodedCommand", update_script)
+        self.assertIn("$helperPath.Replace(\"'\", \"''\")", update_script)
+        self.assertIn("$TargetInstallDir.Replace(\"'\", \"''\")", update_script)
+        self.assertNotIn("'-File', $helperPath", update_script)
+        self.assertNotIn("'-File', $supervisorPath", update_script)
+
+    def test_client_prefers_live_updater_with_local_offline_fallback(self):
+        for source_path, function_name in (
+            ("sync_windows_agent/lib/app.dart", "_shellClientUpdatePowerShellArgs"),
+            ("sync_windows_agent/lib/agent_page.dart", "_clientUpdatePowerShellArgs"),
+        ):
+            source = read_text(source_path)
+            body = source.split(f"List<String> {function_name}", 1)[1].split(
+                "\n  }", 1
+            )[0]
+            self.assertLess(body.index("if (scriptUrl.isNotEmpty)"), body.index("if (localScriptPath != null)"))
+            self.assertIn("updater-only fixes can repair an", body)
+            self.assertIn("bundled script remains an offline fallback", body)
+
     def test_update_script_stops_supervisor_before_replacing_client_files(self):
         update_script = read_text("update.ps1")
         helper_install = update_script.split(

@@ -161,6 +161,13 @@ try {
                 Invoke-NativeChecked -Executable $pythonCommand -Arguments @($pythonPrefix + $testFile)
             }
         }
+        Invoke-VerificationStep 'Windows updater paths with spaces' {
+            Invoke-NativeChecked -Executable 'powershell.exe' -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', (Join-Path $repoRoot 'tests\test_windows_updater_paths.ps1')
+            )
+        }
     }
 
     if ($Profile -in @('Quick', 'Standard', 'All')) {
