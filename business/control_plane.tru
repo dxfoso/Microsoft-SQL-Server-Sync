@@ -4874,13 +4874,11 @@ function try_start_latest_change_resolution(job: map<json>, conflictKind: string
     return false;
   }
   let targetAgents = [];
+  let onlineParticipants = [sourceAgent];
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
   for (const agent of agents) {
     if (string.from(agent.clientName) == string.from(sourceAgent.clientName)) {
       continue;
-    }
-    if (!effective_agent_online(agent)) {
-      return false;
     }
     const enabledTables = unique_string_values(
       enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
@@ -4888,9 +4886,13 @@ function try_start_latest_change_resolution(job: map<json>, conflictKind: string
       )
     );
     if (!string_array_contains(enabledTables, table)) {
-      return false;
+      continue;
+    }
+    if (!effective_agent_online(agent)) {
+      continue;
     }
     targetAgents = targetAgents.concat([agent]);
+    onlineParticipants = onlineParticipants.concat([agent]);
   }
   if (targetAgents.length == 0) {
     return false;
@@ -4904,6 +4906,13 @@ function try_start_latest_change_resolution(job: map<json>, conflictKind: string
   if (createdJobs.length == 0) {
     return false;
   }
+  mark_offline_sync_debt(
+    ownerUserId,
+    table,
+    agents,
+    onlineParticipants,
+    ownerPolicies
+  );
   replace_sync_table_issue(ownerUserId, {
     table,
     status: 'resolving',
@@ -4913,7 +4922,7 @@ function try_start_latest_change_resolution(job: map<json>, conflictKind: string
       string.from(sourceAgent.clientName),
       ' at ',
       string.from(candidate.modifiedAtUtc),
-      '. Authoritative table repair is running; normal sync remains stopped until fingerprints match.'
+      '. Authoritative table repair is running for online clients; normal sync remains stopped until their fingerprints match. Offline clients will catch up automatically after reconnecting.'
     ),
     clientName: string.from(job.clientName),
     action: 'latest_change_wins',

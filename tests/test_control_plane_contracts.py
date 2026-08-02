@@ -495,6 +495,16 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("'latest_change_wins'", resolution)
         self.assertIn("latest_change_candidate_for_batch(", resolution)
         self.assertIn("create_authoritative_reconcile_batch(", resolution)
+        self.assertIn("mark_offline_sync_debt(", resolution)
+        self.assertIn("onlineParticipants", resolution)
+        self.assertIn(
+            "Offline clients will catch up automatically after reconnecting.",
+            resolution,
+        )
+        self.assertNotIn(
+            "if (!effective_agent_online(agent)) {\n      return false;",
+            resolution,
+        )
         self.assertIn("status: 'resolving'", resolution)
         self.assertIn("try_start_latest_change_resolution(job, conflictKind)", complete)
 
