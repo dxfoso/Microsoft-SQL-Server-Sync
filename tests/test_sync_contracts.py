@@ -658,7 +658,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("final int protocolVersion", sync_state)
         self.assertIn("final String syncEpoch", sync_state)
         self.assertIn("void _prepareSyncProtocolJob(RemoteSyncJob job)", agent_page)
-        self.assertIn("const batchSize = 200;", snapshot_body)
+        self.assertIn("_fetchConsistentSourceTableSnapshot(", snapshot_body)
 
     def test_latest_change_uses_server_clock_and_filters_stale_server_rows(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -697,9 +697,9 @@ class SyncContractsTests(unittest.TestCase):
             "await _ensureChangeTrackingEnabledForDatabase(", download_body
         )
         self.assertIn("SqlSyncFingerprintAccumulator()", snapshot_body)
-        self.assertIn("sourceFingerprint.checksum != snapshotChecksum", snapshot_body)
-        self.assertIn("job.rowCount != rowCount", snapshot_body)
-        self.assertIn("no target data was changed", snapshot_body)
+        self.assertIn("consistentSnapshot.rowCount", snapshot_body)
+        self.assertIn("job.rowCount != consistentSnapshot.rowCount", snapshot_body)
+        self.assertIn("sync.snapshot.inventory_refreshed", snapshot_body)
         self.assertIn(
             "await _ensureChangeTrackingEnabledForDatabase(", snapshot_body
         )
@@ -1686,7 +1686,18 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("final completeSnapshot", snapshot_body)
         self.assertIn("!comparisonSnapshot", snapshot_body)
         self.assertIn("if (completeSnapshot)", snapshot_body)
-        self.assertIn("_computeTableFingerprint(", snapshot_body)
+        self.assertIn("_fetchConsistentSourceTableSnapshot(", snapshot_body)
+        consistent_snapshot_body = agent_page.split(
+            "Future<_ConsistentSourceSnapshot> _fetchConsistentSourceTableSnapshot(", 1
+        )[1].split("Future<_ChangeTrackingState?> _queryChangeTrackingState(", 1)[0]
+        self.assertIn("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", consistent_snapshot_body)
+        self.assertIn("BEGIN TRANSACTION", consistent_snapshot_body)
+        self.assertIn("COUNT_BIG(1)", consistent_snapshot_body)
+        self.assertIn("CHANGE_TRACKING_CURRENT_VERSION()", consistent_snapshot_body)
+        self.assertIn("WITH (HOLDLOCK)", consistent_snapshot_body)
+        self.assertIn("COMMIT TRANSACTION", consistent_snapshot_body)
+        self.assertIn("rows.length != snapshotRowCount", consistent_snapshot_body)
+        self.assertIn("captureOutputFile: true", consistent_snapshot_body)
         self.assertIn("uploadPreservesChangeTrackingBaseline", upload_body)
         self.assertIn("'server-diff-preview'", cursor_policy)
         self.assertIn("preserveChangeTrackingBaseline", upload_body)

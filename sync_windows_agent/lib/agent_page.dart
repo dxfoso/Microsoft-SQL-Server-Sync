@@ -5159,20 +5159,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job.sourceClientName == 'server-union-bootstrap-v3';
     final completeSnapshot =
         authoritativeSnapshot || comparisonSnapshot || unionBootstrapSnapshot;
-    if (completeSnapshot && job.rowCount != rowCount) {
-      final snapshotKind =
-          comparisonSnapshot
-              ? 'Comparison'
-              : unionBootstrapSnapshot
-              ? 'Union bootstrap'
-              : 'Authoritative source';
-      throw StateError(
-        '$snapshotKind safety check blocked ${job.table}: '
-        'the control plane expected ${job.rowCount} rows, but SQL Server '
-        'returned $rowCount. Refresh the table inventory and investigate the '
-        'reader before retrying; no target data was changed.',
-      );
-    }
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
     if (job.sourceClientName == 'server-bootstrap-v3' ||
         unionBootstrapSnapshot ||
@@ -5196,6 +5182,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         previousVersion >= 0 &&
         previousVersion >= tracking.minValidVersion;
     final rows = <Map<String, String?>>[];
+    var snapshotChangeTrackingVersion = tracking?.currentVersion;
     var isDelta = false;
     if (canUseDelta &&
         job.sourceClientName != 'server-authoritative-reconcile' &&
@@ -5217,27 +5204,35 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (job.batchId?.trim().isNotEmpty != true) {
         throw StateError('Explicit protocol-v3 bootstrap requires a batch.');
       }
-      const batchSize = 200;
-      var processed = 0;
-      while (processed < rowCount) {
-        final batch = await _fetchSourceTableBatch(
-          profile: sourceProfile,
-          database: database,
-          schema: tableParts.schema,
-          table: tableParts.table,
-          columns: syncColumns,
-          orderColumns: primaryKeyColumns,
-          offset: processed,
-          batchSize: math.min(batchSize, rowCount - processed),
-        );
-        for (final row in batch) {
-          rows.add({
+      final consistentSnapshot = await _fetchConsistentSourceTableSnapshot(
+        profile: sourceProfile,
+        database: database,
+        schema: tableParts.schema,
+        table: tableParts.table,
+        columns: syncColumns,
+        orderColumns: primaryKeyColumns,
+      );
+      rows.addAll(
+        consistentSnapshot.rows.map(
+          (row) => {
             for (final column in syncColumns)
               column.name: row[column.name]?.toString(),
-          });
-        }
-        processed += batch.length;
-        if (batch.isEmpty) break;
+          },
+        ),
+      );
+      snapshotChangeTrackingVersion = consistentSnapshot.changeTrackingVersion;
+      if (completeSnapshot && job.rowCount != consistentSnapshot.rowCount) {
+        logAgentDiagnostic(
+          'sync.snapshot.inventory_refreshed',
+          level: AgentLogLevel.warning,
+          context: {
+            'jobId': job.id,
+            'batchId': job.batchId,
+            'table': job.table,
+            'inventoryRowCount': job.rowCount,
+            'snapshotRowCount': consistentSnapshot.rowCount,
+          },
+        );
       }
     } else {
       // A non-empty database without a valid cursor must enter an explicit
@@ -5263,7 +5258,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               ? row['__sync_op']!.trim().toUpperCase()
               : 'S';
       final changeVersion =
-          row['__sync_change_version'] ?? tracking?.currentVersion.toString();
+          row['__sync_change_version'] ??
+          snapshotChangeTrackingVersion?.toString();
       final rowHash = canonicalSqlSyncRowSha256(syncColumns, row);
       row['__sync_op'] = operation;
       row['__sync_origin_client'] = widget.clientName;
@@ -5287,27 +5283,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         accumulator.addRow(syncColumns, row);
       }
       snapshotChecksum = accumulator.build();
-      final sourceFingerprint = await _computeTableFingerprint(
-        profile: sourceProfile,
-        database: database,
-        schema: tableParts.schema,
-        table: tableParts.table,
-        writableColumns: syncColumns,
-        orderColumns: primaryKeyColumns,
-      );
-      if (sourceFingerprint == null ||
-          sourceFingerprint.rowCount != rows.length ||
-          sourceFingerprint.checksum != snapshotChecksum) {
-        final snapshotKind =
-            comparisonSnapshot
-                ? 'Comparison source'
-                : unionBootstrapSnapshot
-                ? 'Union bootstrap source'
-                : 'Authoritative source';
-        throw StateError(
-          '$snapshotKind ${job.table} changed while its snapshot was being read. Pause writes and retry.',
-        );
-      }
     }
 
     final createdAt = DateTime.now().toIso8601String();
@@ -5325,7 +5300,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'keyColumns': primaryKeyColumns,
       'rows': rows,
       'sourceJobId': job.id,
-      'changeTrackingVersion': tracking?.currentVersion,
+      'changeTrackingVersion': snapshotChangeTrackingVersion,
       'delta': isDelta,
     };
     var snapshotJson = jsonEncode(payload);
@@ -5339,7 +5314,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       snapshotBytes: utf8.encode(snapshotJson).length,
       snapshotJson: snapshotJson,
       checksum: snapshotChecksum,
-      changeTrackingVersion: tracking?.currentVersion,
+      changeTrackingVersion: snapshotChangeTrackingVersion,
       keyColumns: primaryKeyColumns,
       isDelta: isDelta,
     );
@@ -6015,6 +5990,128 @@ ORDER BY [__sync_agent_row_number];
       columns: columns,
       fieldSeparator: String.fromCharCode(fieldSeparator),
       rowSentinel: String.fromCharCode(rowSentinel),
+    );
+  }
+
+  Future<_ConsistentSourceSnapshot> _fetchConsistentSourceTableSnapshot({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String schema,
+    required String table,
+    required List<_SqlColumnDefinition> columns,
+    required List<String> orderColumns,
+  }) async {
+    const fieldSeparatorCode = 31;
+    const rowSentinelCode = 29;
+    const metadataMarker = '__SYNC_SNAPSHOT_META_V1__';
+    final fieldSeparator = String.fromCharCode(fieldSeparatorCode);
+    final rowSentinel = String.fromCharCode(rowSentinelCode);
+    final target =
+        '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
+    final orderClause = orderColumns
+        .map((column) => _quoteIdentifier(column))
+        .join(', ');
+    final payloadExpression = columns
+        .map(_sourceBatchEncodedColumnExpression)
+        .join(' + NCHAR($fieldSeparatorCode) + ');
+    final query = '''
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+BEGIN TRANSACTION;
+
+DECLARE @sync_snapshot_row_count bigint;
+DECLARE @sync_snapshot_change_version bigint;
+
+SELECT @sync_snapshot_change_version =
+  COALESCE(CONVERT(bigint, CHANGE_TRACKING_CURRENT_VERSION()), 0);
+
+SELECT @sync_snapshot_row_count = COUNT_BIG(1)
+FROM $target WITH (HOLDLOCK);
+
+SELECT (
+  N'$metadataMarker' +
+  NCHAR($fieldSeparatorCode) +
+  CONVERT(nvarchar(40), @sync_snapshot_row_count) +
+  NCHAR($fieldSeparatorCode) +
+  CONVERT(nvarchar(40), @sync_snapshot_change_version) +
+  NCHAR($rowSentinelCode)
+) AS [__sync_agent_row_payload];
+
+SELECT ($payloadExpression + NCHAR($rowSentinelCode)) AS [__sync_agent_row_payload]
+FROM $target WITH (HOLDLOCK)
+ORDER BY $orderClause;
+
+COMMIT TRANSACTION;
+''';
+    final processResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: query,
+      timeout: _snapshotSqlCmdTimeout,
+      captureOutputFile: true,
+    );
+    if (processResult == null) {
+      throw Exception(_sqlCmdUnavailableMessage(profile));
+    }
+    if (processResult.exitCode != 0) {
+      throw Exception(
+        _sqlCmdFailed('consistent source snapshot', processResult),
+      );
+    }
+
+    int? snapshotRowCount;
+    int? snapshotChangeTrackingVersion;
+    final rowLines = <String>[];
+    final outputLines = processResult.stdout.toString().split(RegExp(r'\r?\n'));
+    for (var index = 0; index < outputLines.length; index++) {
+      final line = outputLines[index];
+      final trimmedLine = line.trim();
+      if (_isSkippableOutputLine(trimmedLine)) {
+        continue;
+      }
+      if (_looksLikeHeaderLine(outputLines, index)) {
+        index += 1;
+        continue;
+      }
+      final payload =
+          line.endsWith(rowSentinel)
+              ? line.substring(0, line.length - rowSentinel.length)
+              : line;
+      final parts = payload.split(fieldSeparator);
+      if (parts.length == 3 && parts.first == metadataMarker) {
+        snapshotRowCount = int.tryParse(parts[1]);
+        snapshotChangeTrackingVersion = int.tryParse(parts[2]);
+        continue;
+      }
+      rowLines.add(line);
+    }
+    if (snapshotRowCount == null || snapshotRowCount < 0) {
+      throw const FormatException(
+        'Consistent source snapshot did not return valid row-count metadata.',
+      );
+    }
+    if (snapshotChangeTrackingVersion == null ||
+        snapshotChangeTrackingVersion < 0) {
+      throw const FormatException(
+        'Consistent source snapshot did not return valid Change Tracking metadata.',
+      );
+    }
+    final rows = _parseSourceBatchRows(
+      rowLines.join('\n'),
+      columns: columns,
+      fieldSeparator: fieldSeparator,
+      rowSentinel: rowSentinel,
+    );
+    if (rows.length != snapshotRowCount) {
+      throw StateError(
+        'Consistent source snapshot returned ${rows.length} row(s), but its transaction metadata reported $snapshotRowCount; no target data was changed.',
+      );
+    }
+    return _ConsistentSourceSnapshot(
+      rows: rows,
+      rowCount: snapshotRowCount,
+      changeTrackingVersion: snapshotChangeTrackingVersion,
     );
   }
 
@@ -10842,6 +10939,18 @@ class _RelaySnapshotDocument {
   final int? changeTrackingVersion;
   final List<String> keyColumns;
   final bool isDelta;
+}
+
+class _ConsistentSourceSnapshot {
+  const _ConsistentSourceSnapshot({
+    required this.rows,
+    required this.rowCount,
+    required this.changeTrackingVersion,
+  });
+
+  final List<Map<String, dynamic>> rows;
+  final int rowCount;
+  final int changeTrackingVersion;
 }
 
 class _ChangeTrackingState {
