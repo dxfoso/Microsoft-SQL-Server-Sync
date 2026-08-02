@@ -76,17 +76,20 @@ void main() {
     ];
     final output = rows
         .map((row) {
-          final encoded = row.map((value) {
-            if (value == null) return 'N';
-            final hex = value.codeUnits
-                .map(
-                  (codeUnit) =>
-                      '${(codeUnit & 0xff).toRadixString(16).padLeft(2, '0')}'
-                      '${(codeUnit >> 8).toRadixString(16).padLeft(2, '0')}',
-                )
-                .join();
-            return 'H$hex';
-          }).join('|');
+          final encoded = row
+              .map((value) {
+                if (value == null) return 'N';
+                final hex =
+                    value.codeUnits
+                        .map(
+                          (codeUnit) =>
+                              '${(codeUnit & 0xff).toRadixString(16).padLeft(2, '0')}'
+                              '${(codeUnit >> 8).toRadixString(16).padLeft(2, '0')}',
+                        )
+                        .join();
+                return 'H$hex';
+              })
+              .join('|');
           final framed = '$encoded$sqlSyncHexRowTerminator';
           return RegExp(
             '.{1,97}',
@@ -109,15 +112,11 @@ void main() {
 
   test('rejects malformed framed UTF-16 hex rows', () {
     expect(
-      () => decodeSqlServerHexRows(
-        'invalid$sqlSyncHexRowTerminator',
-      ),
+      () => decodeSqlServerHexRows('invalid$sqlSyncHexRowTerminator'),
       throwsA(isA<FormatException>()),
     );
     expect(
-      () => decodeSqlServerHexRows(
-        'H001$sqlSyncHexRowTerminator',
-      ),
+      () => decodeSqlServerHexRows('H001$sqlSyncHexRowTerminator'),
       throwsA(isA<FormatException>()),
     );
   });
@@ -137,6 +136,19 @@ void main() {
         query: List.filled(24001, 'x').join(),
       ),
       isTrue,
+    );
+  });
+
+  test('strips a framed row sentinel followed by sqlcmd padding', () {
+    final sentinel = String.fromCharCode(29);
+
+    expect(
+      stripSqlCmdRowSentinelPadding('metadata$sentinel   ', sentinel),
+      'metadata',
+    );
+    expect(
+      stripSqlCmdRowSentinelPadding('metadata${sentinel}not-padding', sentinel),
+      'metadata${sentinel}not-padding',
     );
   });
 }

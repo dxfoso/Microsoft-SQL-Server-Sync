@@ -1721,6 +1721,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("COMMIT TRANSACTION", consistent_snapshot_body)
         self.assertIn("rows.length != snapshotRowCount", consistent_snapshot_body)
         self.assertIn("captureOutputFile: true", consistent_snapshot_body)
+        self.assertIn(
+            "stripSqlCmdRowSentinelPadding(line, rowSentinel)",
+            consistent_snapshot_body,
+        )
         self.assertIn("uploadPreservesChangeTrackingBaseline", upload_body)
         self.assertIn("'server-diff-preview'", cursor_policy)
         self.assertIn("preserveChangeTrackingBaseline", upload_body)

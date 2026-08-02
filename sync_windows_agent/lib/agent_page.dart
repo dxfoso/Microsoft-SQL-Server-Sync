@@ -6097,10 +6097,7 @@ COMMIT TRANSACTION;
         index += 1;
         continue;
       }
-      final payload =
-          line.endsWith(rowSentinel)
-              ? line.substring(0, line.length - rowSentinel.length)
-              : line;
+      final payload = stripSqlCmdRowSentinelPadding(line, rowSentinel);
       final parts = payload.split(fieldSeparator);
       if (parts.length == 3 && parts.first == metadataMarker) {
         snapshotRowCount = int.tryParse(parts[1]);
@@ -6569,10 +6566,7 @@ END
       if (_isSkippableOutputLine(trimmedLine)) {
         continue;
       }
-      final payload =
-          line.endsWith(rowSentinel)
-              ? line.substring(0, line.length - rowSentinel.length)
-              : line;
+      final payload = stripSqlCmdRowSentinelPadding(line, rowSentinel);
       final parts = payload.split(fieldSeparator);
       if (parts.length != columns.length) {
         throw Exception(

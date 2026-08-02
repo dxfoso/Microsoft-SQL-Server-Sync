@@ -26,6 +26,24 @@ bool shouldUseSqlCmdInputFile({
   return isWindows || query.length > maxInlineQueryLength;
 }
 
+/// Removes a framed row sentinel when sqlcmd pads the selected expression
+/// with spaces. Business data escapes this control character before framing,
+/// so only an all-whitespace suffix is accepted.
+String stripSqlCmdRowSentinelPadding(String line, String rowSentinel) {
+  if (rowSentinel.isEmpty) {
+    throw ArgumentError('rowSentinel must not be empty.');
+  }
+  final sentinelIndex = line.lastIndexOf(rowSentinel);
+  if (sentinelIndex < 0) {
+    return line;
+  }
+  final trailing = line.substring(sentinelIndex + rowSentinel.length);
+  if (trailing.trim().isNotEmpty) {
+    return line;
+  }
+  return line.substring(0, sentinelIndex);
+}
+
 String decodeSqlServerUtf16Hex(String hex) {
   if (hex.isEmpty) {
     return '';
@@ -68,17 +86,20 @@ List<List<String?>> decodeSqlServerHexRows(
       continue;
     }
     rows.add(
-      encodedRow.split('|').map((token) {
-        if (token == 'N') {
-          return null;
-        }
-        if (!token.startsWith('H')) {
-          throw const FormatException(
-            'Invalid hex Change Tracking field marker.',
-          );
-        }
-        return decodeSqlServerUtf16Hex(token.substring(1));
-      }).toList(growable: false),
+      encodedRow
+          .split('|')
+          .map((token) {
+            if (token == 'N') {
+              return null;
+            }
+            if (!token.startsWith('H')) {
+              throw const FormatException(
+                'Invalid hex Change Tracking field marker.',
+              );
+            }
+            return decodeSqlServerUtf16Hex(token.substring(1));
+          })
+          .toList(growable: false),
     );
   }
   return rows;
