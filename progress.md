@@ -1,1 +1,1 @@
-95% - Multi-writer sync is implemented and fully tested. Remaining: finish the exact server rollout, verify Sync All live, and bring Velvet Home online for final catch-up and database convergence.
+98% - Multi-writer sync is live, fully tested, and Sync All is verified. Remaining: bring Alshallan and Velvet Home online for final catch-up and database convergence.
