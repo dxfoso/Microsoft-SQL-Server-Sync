@@ -1118,9 +1118,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIn("reportedRowCountClientCount == participants.length", planner)
         self.assertIn("reportedClientCount == participants.length", planner)
-        self.assertIn("latest_completed_table_batch_was_union(", planner)
         self.assertIn("establishedInventoryCanUnion", planner)
-        self.assertIn("allowInventoryUnion &&", planner)
+        self.assertIn(
+            "const establishedInventoryCanUnion = allowInventoryUnion;", planner
+        )
+        self.assertNotIn("!latest_completed_table_batch_was_union", planner)
         self.assertNotIn("db.selectMany(", planner)
         self.assertIn("recentUploadModes", planner)
         self.assertIn("function latest_completed_upload_modes_for_owner(", source)

@@ -3057,10 +3057,12 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       message: 'Table is not enabled for any client.'
     };
   }
-  const establishedInventoryCanUnion =
-    allowInventoryUnion &&
-    (readyAgents.length != participants.length ||
-      !latest_completed_table_batch_was_union(table, recentUploadModes));
+  // A completed union is only a transport result, not proof that every SQL
+  // target converged. If complete inventories still differ after the jobs
+  // finish, schedule another guarded union. Atomic client verification and
+  // the active-job table fence prevent overlap; suppressing the retry here
+  // would permanently preserve an incomplete or legacy union result.
+  const establishedInventoryCanUnion = allowInventoryUnion;
   if (participants.length >= 2 &&
       reportedRowCountClientCount == participants.length &&
       allReportedRowCounts.length > 1 &&
