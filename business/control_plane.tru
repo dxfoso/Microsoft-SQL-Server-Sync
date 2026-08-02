@@ -7006,6 +7006,12 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   if (batch.status != 'ready') {
     return raw_json_error(409, 'sync batch is still waiting for client uploads');
   }
+  const unionBootstrapJob = db.selectOne(SyncJob, {
+    batchId,
+    direction: 'upload',
+    sourceClientName: 'server-union-bootstrap-v3'
+  });
+  const canonicalFullMerge = unionBootstrapJob != null;
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
     // Normal protocol-v3 pages contain Change Tracking deltas. Initial union
@@ -7120,6 +7126,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     protocolVersion: batch.protocolVersion,
     syncEpoch: batch.syncEpoch,
     totalRowCount,
+    canonicalFullMerge,
+    mergeParticipantCount: batch.expectedClients.length,
     done,
     nextCursor
   };

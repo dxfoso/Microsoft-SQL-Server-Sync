@@ -230,6 +230,7 @@ String buildTargetSnapshotStageApplySql({
   List<String> logicalIdentityColumns = const <String>[],
   List<Map<String, dynamic>> deltaDeleteRows = const <Map<String, dynamic>>[],
   int? protectLocalChangesAfterVersion,
+  int? requireNoLocalChangesAfterVersion,
   int targetMergeApplyBatchSize = 500,
   bool deleteMissing = true,
   bool manageTriggers = true,
@@ -338,9 +339,29 @@ String buildTargetSnapshotStageApplySql({
             changeTrackingVersion: protectLocalChangesAfterVersion,
           );
   final transactionIsolation =
-      protectLocalChangesAfterVersion == null
+      protectLocalChangesAfterVersion == null &&
+              requireNoLocalChangesAfterVersion == null
           ? ''
           : 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;';
+  final fullReplacementRaceGuard =
+      requireNoLocalChangesAfterVersion == null
+          ? ''
+          : '''
+  -- A canonical replacement can delete rows absent from the upload-time
+  -- view. Lock the table and abort if a user write occurred after upload;
+  -- the next sync uploads that write instead of losing it.
+  DECLARE @SqlSyncLockedTableRows BIGINT = 0;
+  SELECT @SqlSyncLockedTableRows = COUNT_BIG(*)
+  FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} WITH (TABLOCKX, HOLDLOCK);
+  IF EXISTS (
+    SELECT 1
+    FROM CHANGETABLE(CHANGES ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}, $requireNoLocalChangesAfterVersion) AS ct
+    WHERE ct.SYS_CHANGE_CONTEXT IS NULL
+       OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
+  )
+  BEGIN
+    THROW 51000, 'Local rows changed after this client uploaded; retry the canonical sync with a fresh snapshot.', 1;
+  END;''';
   final logicalIdentityStatements = _buildLogicalIdentityReconciliationSql(
     database: database,
     schema: schema,
@@ -377,6 +398,7 @@ BEGIN TRY
   DECLARE @SqlSyncProtectedRows INT = 0;
   DECLARE @SqlSyncProtectedUpsertRows INT = 0;
   DECLARE @SqlSyncProtectedDeleteRows INT = 0;
+  $fullReplacementRaceGuard
   $postUploadProtectionStatements
   $triggerDisableStatement
   $identityInsertOn

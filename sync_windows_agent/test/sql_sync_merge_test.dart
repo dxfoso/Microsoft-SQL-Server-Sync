@@ -84,7 +84,10 @@ void main() {
     final clause = matchClauseForColumns(const ['Code'], columns);
 
     expect(clause, contains('target.[Code] COLLATE DATABASE_DEFAULT'));
-    expect(clause, contains('source.[Code] COLLATE DATABASE_DEFAULT IS NOT NULL'));
+    expect(
+      clause,
+      contains('source.[Code] COLLATE DATABASE_DEFAULT IS NOT NULL'),
+    );
     expect(
       clause,
       contains(
@@ -315,6 +318,37 @@ void main() {
     expect(sql, isNot(contains('DISABLE TRIGGER')));
     expect(sql, isNot(contains('ENABLE TRIGGER')));
     expect(sql, isNot(contains('BEGIN TRY\n  \n  END TRY')));
+  });
+
+  test('canonical replacement aborts atomically after a post-upload write', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'any_database',
+      schema: 'dbo',
+      table: 'items',
+      stageTableName: '#stage_items',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['Id'],
+      requireNoLocalChangesAfterVersion: 42,
+      deleteMissing: true,
+    );
+
+    expect(sql, contains('WITH (TABLOCKX, HOLDLOCK)'));
+    expect(
+      sql,
+      contains('CHANGETABLE(CHANGES [any_database].[dbo].[items], 42)'),
+    );
+    expect(sql, contains('THROW 51000'));
+    expect(sql.indexOf('THROW 51000'), lessThan(sql.indexOf('DELETE TOP')));
   });
 
   test(

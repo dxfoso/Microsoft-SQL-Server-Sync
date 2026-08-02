@@ -588,7 +588,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("bool refreshFingerprint = false", apply_body)
         self.assertIn("if (refreshFingerprint) {", apply_body)
         self.assertIn(
-            "refreshFingerprint: !snapshotToApply.isDelta && !authoritativeReconcile",
+            "!snapshotToApply.isDelta &&\n"
+            "          !authoritativeReconcile &&\n"
+            "          !canonicalFullMerge",
             agent_page,
         )
         self.assertIn("_applyTableFingerprints(", apply_body)
@@ -705,6 +707,7 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn(
             "canUseDelta &&\n"
+            "        !unionBootstrapSnapshot &&\n"
             "        job.sourceClientName != 'server-authoritative-reconcile'",
             snapshot_body,
         )
@@ -713,8 +716,28 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Unable to read the target row count before atomic delta apply.", apply_body)
         self.assertIn("deltaDeleteRows:", apply_body)
         self.assertNotIn("applySqlSyncRowsWithIsolation(", apply_body)
-        self.assertIn("targetFingerprint.checksum != snapshot.checksum", apply_body)
+        self.assertIn("targetFingerprint?.checksum == snapshot.checksum", apply_body)
         self.assertIn("'snapshotChecksum': snapshotChecksum.trim()", client_api)
+
+    def test_union_bootstrap_is_a_generic_atomic_canonical_replacement(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        control_plane = read_text("business/control_plane.tru")
+
+        self.assertIn("!unionBootstrapSnapshot", agent_page)
+        self.assertIn("downloadedSnapshot.canonicalFullMerge", agent_page)
+        self.assertIn(
+            "replaceTarget: authoritativeReconcile || canonicalFullMerge",
+            agent_page,
+        )
+        self.assertIn("requireNoLocalChangesAfterVersion", agent_page)
+        self.assertIn("_deduplicateCanonicalFullMergeRows", client_api)
+        self.assertIn("canonicalFullMerge", control_plane)
+        self.assertIn("mergeParticipantCount", control_plane)
+        self.assertIn("WITH (TABLOCKX, HOLDLOCK)", merge)
+        self.assertIn("THROW 51000", merge)
+        self.assertNotIn("AmnDb048", merge)
 
     def test_change_tracking_baselines_accept_enabled_initial_version_zero(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

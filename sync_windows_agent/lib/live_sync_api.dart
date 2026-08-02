@@ -1324,11 +1324,22 @@ class AgentControlPlaneClient {
       totalSnapshotBytes += snapshot.snapshotBytes;
       final done = decoded['done'] == true;
       if (done) {
+        final mergedIsDelta = firstSnapshot.isDelta && snapshot.isDelta;
+        final canonicalRows =
+            firstSnapshot.canonicalFullMerge && !mergedIsDelta
+                ? _deduplicateCanonicalFullMergeRows(mergedRows)
+                : mergedRows;
         return firstSnapshot.copyWith(
-          rowCount: mergedRowCount,
-          rows: onChunk == null ? mergedRows : const [],
+          rowCount: onChunk == null ? canonicalRows.length : mergedRowCount,
+          rows: onChunk == null ? canonicalRows : const [],
           snapshotBytes: totalSnapshotBytes,
-          isDelta: firstSnapshot.isDelta && snapshot.isDelta,
+          // A participant checksum describes that participant's source, not
+          // the canonical union assembled from all clients.
+          checksum:
+              firstSnapshot.canonicalFullMerge && !mergedIsDelta
+                  ? ''
+                  : firstSnapshot.checksum,
+          isDelta: mergedIsDelta,
         );
       }
       final nextCursor = decoded['nextCursor']?.toString();
@@ -1339,6 +1350,28 @@ class AgentControlPlaneClient {
       }
       cursor = nextCursor;
     }
+  }
+
+  List<Map<String, String?>> _deduplicateCanonicalFullMergeRows(
+    List<Map<String, String?>> rows,
+  ) {
+    final byOperationId = <String, Map<String, String?>>{};
+    for (final row in rows) {
+      final operationId = row['__sync_operation_id']?.trim() ?? '';
+      if (operationId.isEmpty) {
+        throw const AgentControlPlaneException(
+          'Canonical multi-writer merge contains a row without an operation identity.',
+        );
+      }
+      final existing = byOperationId[operationId];
+      if (existing != null && jsonEncode(existing) != jsonEncode(row)) {
+        throw const AgentControlPlaneException(
+          'Canonical multi-writer merge contains conflicting payloads for one operation identity.',
+        );
+      }
+      byOperationId[operationId] = row;
+    }
+    return byOperationId.values.toList(growable: false);
   }
 
   ClientUpdateInfo _parseClientUpdateInfoPayload(
@@ -1981,6 +2014,8 @@ class RemoteSnapshot {
     this.changeTrackingVersion,
     this.changeTrackingVersions = const <String, int>{},
     this.isDelta = false,
+    this.canonicalFullMerge = false,
+    this.mergeParticipantCount = 0,
   });
 
   final String id;
@@ -1996,6 +2031,8 @@ class RemoteSnapshot {
   final int? changeTrackingVersion;
   final Map<String, int> changeTrackingVersions;
   final bool isDelta;
+  final bool canonicalFullMerge;
+  final int mergeParticipantCount;
 
   factory RemoteSnapshot.fromJson(Map<String, dynamic> json) {
     final rawRows = json['rows'] as List<dynamic>? ?? const [];
@@ -2025,6 +2062,9 @@ class RemoteSnapshot {
         json['clientChangeTrackingVersions'],
       ),
       isDelta: json['isDelta'] == true,
+      canonicalFullMerge: json['canonicalFullMerge'] == true,
+      mergeParticipantCount:
+          (json['mergeParticipantCount'] as num? ?? 0).round(),
     );
   }
 
@@ -2060,6 +2100,8 @@ class RemoteSnapshot {
     int? changeTrackingVersion,
     Map<String, int>? changeTrackingVersions,
     bool? isDelta,
+    bool? canonicalFullMerge,
+    int? mergeParticipantCount,
   }) {
     return RemoteSnapshot(
       id: id ?? this.id,
@@ -2077,6 +2119,9 @@ class RemoteSnapshot {
       changeTrackingVersions:
           changeTrackingVersions ?? this.changeTrackingVersions,
       isDelta: isDelta ?? this.isDelta,
+      canonicalFullMerge: canonicalFullMerge ?? this.canonicalFullMerge,
+      mergeParticipantCount:
+          mergeParticipantCount ?? this.mergeParticipantCount,
     );
   }
 }

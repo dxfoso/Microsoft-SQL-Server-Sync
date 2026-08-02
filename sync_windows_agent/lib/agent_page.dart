@@ -4883,6 +4883,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       // pages independently can leave a partial table when a later page fails.
       onChunk: null,
     );
+    final canonicalFullMerge =
+        downloadedSnapshot.canonicalFullMerge && !downloadedSnapshot.isDelta;
+    if (canonicalFullMerge &&
+        !downloadedSnapshot.changeTrackingVersions.containsKey(
+          widget.clientName,
+        )) {
+      throw StateError(
+        'Canonical merge for ${job.table} is missing this client upload version; retry without changing local data.',
+      );
+    }
     logAgentDiagnostic(
       'sync.download.buffered',
       context: {
@@ -4901,7 +4911,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
     _checkSyncJobNotCancelled(job.id);
     final retryRows =
-        authoritativeReconcile
+        authoritativeReconcile || canonicalFullMerge
             ? const <Map<String, String?>>[]
             : pendingRejectedChanges
                 .where(shouldRetrySyncRejectedChange)
@@ -4931,7 +4941,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           'table': job.table,
           'rowCount': snapshotToApply.rows.length,
           'retryRowCount': retryRows.length,
-          'replaceTarget': authoritativeReconcile,
+          'replaceTarget': authoritativeReconcile || canonicalFullMerge,
           'isDelta': snapshotToApply.isDelta,
         },
       );
@@ -4939,7 +4949,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job: job,
         snapshot: snapshotToApply,
         applyStats: applyStats,
-        replaceTarget: authoritativeReconcile,
+        replaceTarget: authoritativeReconcile || canonicalFullMerge,
+        requireNoLocalChangesAfterVersion:
+            canonicalFullMerge
+                ? snapshotToApply.changeTrackingVersions[widget.clientName]
+                : null,
       );
       logAgentDiagnostic(
         'sync.apply.committed',
@@ -4969,7 +4983,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
     final reconciledTargetRowCount = await _refreshTargetStateAfterRemoteApply(
       job,
-      refreshFingerprint: !snapshotToApply.isDelta && !authoritativeReconcile,
+      refreshFingerprint:
+          !snapshotToApply.isDelta &&
+          !authoritativeReconcile &&
+          !canonicalFullMerge,
     );
     // The remote job records changed rows; targetRowCount remains local state.
     if (reconciledTargetRowCount < 0) {
@@ -5185,6 +5202,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     var snapshotChangeTrackingVersion = tracking?.currentVersion;
     var isDelta = false;
     if (canUseDelta &&
+        !unionBootstrapSnapshot &&
         job.sourceClientName != 'server-authoritative-reconcile' &&
         !comparisonSnapshot) {
       final deltaRows = await _fetchChangeTrackingRows(
@@ -5364,6 +5382,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     bool refreshLocalState = true,
     _DeltaApplyStats? applyStats,
     bool replaceTarget = false,
+    int? requireNoLocalChangesAfterVersion,
   }) async {
     final stats = applyStats ?? _DeltaApplyStats();
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
@@ -5549,6 +5568,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         primaryKeyColumns: primaryKeyColumns,
         uniqueIndexColumnSets: uniqueIndexColumnSets,
         rows: rows,
+        requireNoLocalChangesAfterVersion: requireNoLocalChangesAfterVersion,
         deleteMissing: true,
         manageTriggers: true,
         insertOnly: false,
@@ -5684,12 +5704,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     if (replaceTarget) {
       final targetFingerprint = targetFingerprints[visibleTableName];
-      if (snapshot.checksum.trim().isEmpty ||
-          targetFingerprint == null ||
-          targetFingerprint.rowCount != snapshot.rowCount ||
-          targetFingerprint.checksum != snapshot.checksum) {
+      final rowCountMatches =
+          targetFingerprint != null &&
+          targetFingerprint.rowCount == rowsForApply.length;
+      final checksumMatches =
+          snapshot.checksum.trim().isEmpty ||
+          targetFingerprint?.checksum == snapshot.checksum;
+      if (!rowCountMatches || !checksumMatches) {
         throw StateError(
-          'Authoritative reconciliation verification failed for ${job.table}; the target fingerprint does not match the source snapshot.',
+          'Canonical snapshot verification failed for ${job.table}; the target does not match the complete merged snapshot.',
         );
       }
     }
@@ -6637,6 +6660,7 @@ END
     List<String> logicalIdentityColumns = const <String>[],
     List<Map<String, dynamic>> deltaDeleteRows = const <Map<String, dynamic>>[],
     int? protectLocalChangesAfterVersion,
+    int? requireNoLocalChangesAfterVersion,
     required List<Map<String, dynamic>> rows,
     bool deleteMissing = true,
     bool manageTriggers = true,
@@ -6656,7 +6680,7 @@ END
       );
     }
     try {
-      final applyResult = await _runSqlCmdOrThrow(
+      await _runSqlCmdOrThrow(
         profile: profile,
         database: database,
         query: buildTargetSnapshotStageSetupSql(
@@ -6687,7 +6711,7 @@ END
           timeout: _snapshotSqlCmdTimeout,
         );
       }
-      await _runSqlCmdOrThrow(
+      final mergeResult = await _runSqlCmdOrThrow(
         profile: profile,
         database: database,
         query: buildTargetSnapshotStageApplySql(
@@ -6701,6 +6725,7 @@ END
           logicalIdentityColumns: logicalIdentityColumns,
           deltaDeleteRows: deltaDeleteRows,
           protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
+          requireNoLocalChangesAfterVersion: requireNoLocalChangesAfterVersion,
           deleteMissing: deleteMissing,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,
@@ -6710,20 +6735,20 @@ END
         captureOutputFile: true,
       );
       final reportedInsertedRows = _insertedRowCountFromSqlOutput(
-        applyResult.stdout.toString(),
+        mergeResult.stdout.toString(),
       );
       final protectedRows =
-          _sqlSyncCountFromOutput(applyResult.stdout.toString(), 'PROTECTED') ??
+          _sqlSyncCountFromOutput(mergeResult.stdout.toString(), 'PROTECTED') ??
           0;
       final protectedUpsertRows =
           _sqlSyncCountFromOutput(
-            applyResult.stdout.toString(),
+            mergeResult.stdout.toString(),
             'PROTECTED_UPSERTS',
           ) ??
           0;
       final protectedDeleteRows =
           _sqlSyncCountFromOutput(
-            applyResult.stdout.toString(),
+            mergeResult.stdout.toString(),
             'PROTECTED_DELETES',
           ) ??
           0;

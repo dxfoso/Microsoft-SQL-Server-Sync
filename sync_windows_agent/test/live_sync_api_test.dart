@@ -3723,6 +3723,71 @@ void main() {
   );
 
   test(
+    'canonical full merge deduplicates shared operations and discards participant checksum',
+    () async {
+      final operationId = 'c' * 64;
+      final row = {
+        'Id': '1',
+        'Name': 'shared',
+        '__sync_operation_id': operationId,
+      };
+      final client = _ScriptedClient(
+        responseForRequest: (name, args, callIndex) {
+          final done = callIndex == 1;
+          return (
+            statusCode: 200,
+            body: {
+              'status': 'success',
+              'value': {
+                'done': done,
+                'nextCursor': done ? null : 'next',
+                'payloadBase64': base64Encode(utf8.encode(jsonEncode([row]))),
+                'snapshot': {
+                  'id': 'batch-union-$callIndex',
+                  'clientName': 'server-merge',
+                  'table': 'any_database::items',
+                  'createdAt': '2026-08-03T10:00:00Z',
+                  'rowCount': 1,
+                  'checksum': 'participant-checksum-$callIndex',
+                  'snapshotBytes': 64,
+                  'columns': ['Id', 'Name'],
+                  'rows': const [],
+                  'sourceJobId': 'job-union',
+                  'clientChangeTrackingVersions': [
+                    {'clientName': 'client-a', 'changeTrackingVersion': 10},
+                    {'clientName': 'client-b', 'changeTrackingVersion': 20},
+                  ],
+                  'isDelta': false,
+                  'canonicalFullMerge': true,
+                  'mergeParticipantCount': 2,
+                },
+              },
+            },
+          );
+        },
+      );
+      final api = AgentControlPlaneClient(
+        client: client,
+        baseUrl: 'https://example.com/call',
+      );
+
+      final snapshot = await api.downloadMultiWriterDelta(
+        'job-union',
+        batchId: 'batch-union',
+        protocolVersion: 3,
+        syncEpoch: 'epoch-test',
+      );
+
+      expect(snapshot.canonicalFullMerge, isTrue);
+      expect(snapshot.mergeParticipantCount, 2);
+      expect(snapshot.isDelta, isFalse);
+      expect(snapshot.rows, hasLength(1));
+      expect(snapshot.rowCount, 1);
+      expect(snapshot.checksum, isEmpty);
+    },
+  );
+
+  test(
     'multi-writer download removes operations rejected by durable server winner',
     () async {
       final acceptedId = 'a' * 64;
