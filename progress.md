@@ -1,1 +1,1 @@
-99% - Automatic first-time and continuous table enrollment is live and verified; client 1.0.196+200 updates and diagnostics are queued for offline home and home1.
+95% - Multi-writer sync is implemented and fully tested. Remaining: finish the exact server rollout, verify Sync All live, and bring Velvet Home online for final catch-up and database convergence.

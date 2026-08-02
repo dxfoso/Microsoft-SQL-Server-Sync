@@ -73,7 +73,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("!string_array_contains(activeOwnerTables, table)", refresh_body)
         self.assertNotIn("sync_owner_table_has_active_jobs(ownerUserId, table)", refresh_body)
 
-    def test_owner_cancellation_cleans_all_batches_with_bounded_database_operations(self):
+    def test_owner_preflight_cancellation_defers_storage_cleanup_and_bulk_helper_is_bounded(self):
         control_plane = read_text("business/control_plane.tru")
         cancel_body = control_plane.split(
             "function cancel_owner_sync_jobs_for_input(", 1
@@ -82,8 +82,10 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
             "function cleanup_multi_writer_batches_storage(", 1
         )[1].split("function cleanup_multi_writer_batch_storage", 1)[0]
 
-        self.assertIn("cleanup_multi_writer_batches_storage(batchIds);", cancel_body)
-        self.assertNotIn("for (const batchId of batchIds)", cancel_body)
+        self.assertNotIn("cleanup_multi_writer_batch", cancel_body)
+        self.assertNotIn("storage.delete", cancel_body)
+        self.assertEqual(cancel_body.count("db.selectMany("), 1)
+        self.assertEqual(cancel_body.count("db.updateMany("), 1)
         self.assertEqual(cleanup_body.count("db.selectMany("), 2)
         self.assertEqual(cleanup_body.count("db.deleteMany("), 1)
         self.assertIn("sourceJobId: { in: normalizedBatchIds }", cleanup_body)

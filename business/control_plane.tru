@@ -3819,17 +3819,12 @@ function cancel_owner_sync_jobs_for_input(ownerUserId: string, message: string):
       status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
     },
     orderBy: { field: 'createdAt', dir: 'asc' },
-    fields: ['id', 'batchId'],
+    fields: ['id'],
     limit: 1000
   });
   let jobIds = [];
-  let batchIds = [];
   for (const job of activeJobs) {
     jobIds = jobIds.concat([job.id]);
-    const batchId = string.from(job.batchId ?? '').trim();
-    if (batchId.length != 0 && !string_array_contains(batchIds, batchId)) {
-      batchIds = batchIds.concat([batchId]);
-    }
   }
   if (jobIds.length != 0) {
     db.updateMany(SyncJob, { id: { in: jobIds } }, {
@@ -3841,7 +3836,9 @@ function cancel_owner_sync_jobs_for_input(ownerUserId: string, message: string):
       updatedAt: now_iso()
     });
   }
-  cleanup_multi_writer_batches_storage(batchIds);
+  // Keep this safety gate bounded. Relay objects are immutable and cannot be
+  // consumed after their jobs are cancelled; explicit/admin cancellation and
+  // reset maintenance perform storage cleanup outside this preflight request.
   return jobIds.length;
 }
 
