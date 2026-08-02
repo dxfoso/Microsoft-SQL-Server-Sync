@@ -1,1 +1,1 @@
-98% - Multi-writer sync is live, fully tested, and Sync All is verified. Remaining: bring Alshallan and Velvet Home online for final catch-up and database convergence.
+100% - Automatic unique-key conflict recovery is tested and deployed. `AmnDb048::ma000` is reconciled across the online clients with no user decision required; offline Velvet Home will catch up automatically when it reconnects.
