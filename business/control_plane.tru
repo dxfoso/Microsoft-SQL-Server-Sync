@@ -4352,9 +4352,13 @@ function due_offline_catchup_tables(ownerUserId: string, onlineAgents: array<jso
   return unique_string_values(tables);
 }
 
-function clear_offline_sync_debt(ownerUserId: string, table: string): int {
+function clear_offline_sync_debt_for_clients(ownerUserId: string, table: string, clientNames: array<string>): int {
+  const normalizedClientNames = unique_string_values(clientNames);
+  if (normalizedClientNames.length == 0) {
+    return 0;
+  }
   const rows = db.selectMany(OfflineSyncDebt, {
-    where: { ownerUserId, table },
+    where: { ownerUserId, table, clientName: { in: normalizedClientNames } },
     orderBy: { field: 'createdAt', dir: 'asc' },
     fields: ['id'],
     limit: 1000
@@ -4382,6 +4386,16 @@ function sync_batch_all_jobs_completed(batchId: string): bool {
     }
   }
   return true;
+}
+
+function sync_batch_client_names(batchId: string): array<string> {
+  const rows = db.selectMany(SyncJob, {
+    where: { batchId },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['clientName'],
+    limit: 1000
+  });
+  return unique_string_values((rows ?? []).map((row) => string.from(row.clientName)));
 }
 
 function merge_rows_by_key(existingRows: array<json>, incomingRows: array<json>, keyColumns: array<string>): array<json> {
@@ -8243,12 +8257,17 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   const completedBatchId = string.from(job.batchId ?? '').trim();
   if (status.trim().toLowerCase() == 'completed' &&
       string.from(job.direction).trim() == 'download' &&
-      string.from(job.sourceClientName).trim() == 'server-merge' &&
+      (string.from(job.sourceClientName).trim() == 'server-merge' ||
+       string.from(job.sourceClientName).trim() == 'server-partial-merge') &&
       completedBatchId.length != 0 &&
       sync_batch_all_jobs_completed(completedBatchId)) {
-    const clearedDebtCount = clear_offline_sync_debt(
+    // A partial batch proves only its participating clients caught up. Clear
+    // their debt while retaining debt for peers that are still offline; this
+    // prevents a returned client from being rescheduled every cron minute.
+    const clearedDebtCount = clear_offline_sync_debt_for_clients(
       string.from(job.ownerUserId),
-      string.from(job.table)
+      string.from(job.table),
+      sync_batch_client_names(completedBatchId)
     );
     if (clearedDebtCount > 0) {
       log.info('offline client catch-up completed', {

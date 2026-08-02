@@ -1104,8 +1104,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("class OfflineSyncDebt", source)
         self.assertIn("function mark_offline_sync_debt(", source)
         self.assertIn("function due_offline_catchup_tables(", source)
-        self.assertIn("function clear_offline_sync_debt(", source)
+        self.assertIn("function clear_offline_sync_debt_for_clients(", source)
+        self.assertIn("clientName: { in: normalizedClientNames }", source)
+        self.assertIn("function sync_batch_client_names(", source)
         self.assertIn("sync_batch_all_jobs_completed(completedBatchId)", source)
+        self.assertIn("string.from(job.sourceClientName).trim() == 'server-partial-merge'", source)
+        self.assertIn("sync_batch_client_names(completedBatchId)", source)
         self.assertIn("sourceClientName: preserveChangeTrackingBaselines ? 'server-partial-merge'", source)
         self.assertIn(
             "authoritative baseline reconciliation waits until every enabled client is online",

@@ -775,6 +775,43 @@ class AdminJob {
       status.toLowerCase() == 'uploading' ||
       status.toLowerCase() == 'downloading' ||
       status.toLowerCase() == 'applying';
+
+  bool get isTerminal {
+    final normalized = status.toLowerCase();
+    return normalized == 'completed' ||
+        normalized == 'failed' ||
+        normalized == 'cancelled' ||
+        normalized == 'canceled';
+  }
+
+  /// Total wall-clock time for a completed job, or live elapsed time for a
+  /// queued/running/waiting job. Measuring from `createdAt` intentionally
+  /// includes queue and multi-client barrier time, so the UI shows the full
+  /// user-observed duration of every job.
+  Duration? duration({DateTime? now}) {
+    final start = DateTime.tryParse(createdAt);
+    if (start == null) return null;
+    final recordedEnd = DateTime.tryParse(completedAt ?? updatedAt);
+    final end = isTerminal ? recordedEnd : (now ?? DateTime.now().toUtc());
+    if (end == null || end.isBefore(start)) return null;
+    return end.difference(start);
+  }
+}
+
+String formatSyncDuration(Duration? duration) {
+  if (duration == null) return '-';
+  final totalSeconds = duration.inSeconds;
+  if (totalSeconds < 60) {
+    final tenths = duration.inMilliseconds / 1000;
+    return '${tenths.toStringAsFixed(tenths < 10 ? 1 : 0)}s';
+  }
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return '${hours}h ${minutes}m ${seconds}s';
+  }
+  return '${minutes}m ${seconds}s';
 }
 
 class AdminSyncJobDataPage {

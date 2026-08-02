@@ -6909,6 +6909,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         fontSize: 11,
                       ),
                     ),
+                    Text(
+                      formatSyncDuration(job.duration()),
+                      style: const TextStyle(
+                        color: Color(0xFF5F6B76),
+                        fontSize: 11,
+                      ),
+                    ),
                   ],
                 );
 

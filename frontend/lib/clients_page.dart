@@ -116,6 +116,15 @@ class _SyncLogOperation {
         .reduce((left, right) => left < right ? left : right);
   }
 
+  Duration? duration({DateTime? now}) {
+    final durations = jobs
+        .map((job) => job.duration(now: now))
+        .whereType<Duration>()
+        .toList(growable: false);
+    if (durations.isEmpty) return null;
+    return durations.reduce((left, right) => left > right ? left : right);
+  }
+
   String get message {
     for (final job in [download, upload]) {
       if (job?.error?.trim().isNotEmpty == true) return job!.error!;
@@ -188,6 +197,15 @@ class _SyncLogBatch {
     return operations
         .map((operation) => operation.progress)
         .reduce((left, right) => left < right ? left : right);
+  }
+
+  Duration? duration({DateTime? now}) {
+    final durations = operations
+        .map((operation) => operation.duration(now: now))
+        .whereType<Duration>()
+        .toList(growable: false);
+    if (durations.isEmpty) return null;
+    return durations.reduce((left, right) => left > right ? left : right);
   }
 
   String get message {
@@ -2846,6 +2864,7 @@ class _ClientsPageState extends State<ClientsPage> {
               columnSpacing: 20,
               columns: const [
                 DataColumn(label: Text('Sync / updated')),
+                DataColumn(label: Text('Duration')),
                 DataColumn(label: Text('Changed rows')),
                 DataColumn(label: Text('Uploaded new')),
                 DataColumn(label: Text('Downloaded new')),
@@ -2893,6 +2912,7 @@ class _ClientsPageState extends State<ClientsPage> {
             ],
           ),
         ),
+        DataCell(Text(formatSyncDuration(batch.duration()))),
         DataCell(
           Text(
             batch.isReconciliation
@@ -2992,6 +3012,7 @@ class _ClientsPageState extends State<ClientsPage> {
                 DataColumn(label: Text('Table')),
                 DataColumn(label: Text('Phase')),
                 DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Duration')),
                 DataColumn(label: Text('Changed')),
                 DataColumn(label: Text('Uploaded new')),
                 DataColumn(label: Text('Downloaded new')),
@@ -3142,6 +3163,7 @@ class _ClientsPageState extends State<ClientsPage> {
         DataCell(Text(_displayTable(operation.representative.table))),
         DataCell(_statusChip(operation.phase, _phaseColor(operation.phase))),
         DataCell(_statusChip(operation.status, _statusColor(operation.status))),
+        DataCell(Text(formatSyncDuration(operation.duration()))),
         DataCell(
           Text(
             operation.isReconciliation
@@ -3287,6 +3309,11 @@ class _ClientsPageState extends State<ClientsPage> {
             _deltaChip(job.changedRowCount, deltaColor),
             const SizedBox(height: 3),
             Text('${job.progress}%', style: const TextStyle(fontSize: 11)),
+            const SizedBox(height: 3),
+            Text(
+              formatSyncDuration(job.duration()),
+              style: const TextStyle(color: Color(0xFF667085), fontSize: 11),
+            ),
             const SizedBox(height: 3),
             Text(
               _formatTimestamp(job.updatedAt),
