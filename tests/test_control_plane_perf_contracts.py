@@ -59,6 +59,20 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("!preserveChangeTrackingBaselines", jobs_body)
         self.assertIn("create_multi_writer_batch(", jobs_body)
 
+    def test_multi_writer_job_rows_reuse_preloaded_owner_policies(self):
+        control_plane = read_text("business/control_plane.tru")
+        rows_body = control_plane.split(
+            "function multi_writer_job_rows(", 1
+        )[1].split("function create_multi_writer_batch(", 1)[0]
+        create_body = control_plane.split(
+            "function create_multi_writer_batch(", 1
+        )[1].split("function multi_writer_batch_stale(", 1)[0]
+
+        self.assertIn("policies: array<json>? = null", rows_body)
+        self.assertIn("scheduler_agent_table_states(agent, policies)", rows_body)
+        self.assertIn("policies: array<json>? = null", create_body)
+        self.assertIn("unionBootstrap,\n    policies", create_body)
+
     def test_baseline_issue_refresh_persists_and_cancels_once_per_owner(self):
         control_plane = read_text("business/control_plane.tru")
         refresh_body = control_plane.split(

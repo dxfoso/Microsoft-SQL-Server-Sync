@@ -3414,7 +3414,8 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         tableAgents,
         '',
         preserveChangeTrackingBaselines,
-        string.from(plan.mode) == 'union_bootstrap'
+        string.from(plan.mode) == 'union_bootstrap',
+        ownerPolicies
       );
     }
     if (jobs.length > 0) {
@@ -4455,13 +4456,13 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
     const clientName = string.from(agent.clientName);
     const tableState = scheduler_agent_table_state(
-      scheduler_agent_table_states(agent),
+      scheduler_agent_table_states(agent, policies),
       table
     );
     let expectedRowCount = 0;
@@ -4541,7 +4542,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
   return rows;
 }
 
-function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false): array<json> {
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null): array<json> {
   if (agents.length == 0) {
     return [];
   }
@@ -4580,7 +4581,8 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     protocol,
     bootstrapSourceClientName,
     preserveChangeTrackingBaselines,
-    unionBootstrap
+    unionBootstrap,
+    policies
   ));
 }
 
@@ -6083,7 +6085,8 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
           tableAgents,
           '',
           preserveChangeTrackingBaselines,
-          string.from(plan.mode) == 'union_bootstrap'
+          string.from(plan.mode) == 'union_bootstrap',
+          ownerPolicies
         );
       }
       if (jobs.length > 0) {
@@ -7602,7 +7605,8 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
         plan.participants ?? [],
         '',
         preserveChangeTrackingBaselines,
-        string.from(plan.mode) == 'union_bootstrap'
+        string.from(plan.mode) == 'union_bootstrap',
+        ownerPolicies
       );
     }
     if (nextJobs.length > 0) {
@@ -7672,7 +7676,15 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
     if (!string_array_contains(enabledTables, table)) {
       return raw_json_error(409, string.concat('bootstrap table is not enabled: ', table));
     }
-    const jobs = create_multi_writer_batch(ownerId, table, [targetAgent], normalizedClientName);
+    const jobs = create_multi_writer_batch(
+      ownerId,
+      table,
+      [targetAgent],
+      normalizedClientName,
+      false,
+      false,
+      ownerPolicies
+    );
     if (jobs.length > 0) {
       createdJobs = createdJobs.concat(jobs);
     }
