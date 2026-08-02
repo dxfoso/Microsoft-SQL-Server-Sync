@@ -50,9 +50,9 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
             "function jobs_create_all_enabled(", 1
         )[1].split("function reset_all_agent_saved_state", 1)[0]
         self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);", jobs_body)
-        self.assertIn("const activeTableCaches = onlineAgents.map", jobs_body)
-        self.assertEqual(jobs_body.count("active_job_tables_for_client("), 1)
-        self.assertIn("active_job_tables_from_cache", jobs_body)
+        self.assertIn("const activeOwnerTables = active_job_tables_for_owner(ownerUserId);", jobs_body)
+        self.assertNotIn("active_job_tables_for_client(", jobs_body)
+        self.assertNotIn("active_job_tables_from_cache", jobs_body)
         self.assertIn("const tableCaches = onlineAgents.map", jobs_body)
         self.assertIn("sync_table_baseline_plan(", jobs_body)
         self.assertNotIn("refresh_owner_baseline_table_issues(", jobs_body)

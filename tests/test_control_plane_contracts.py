@@ -498,13 +498,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function reset_all_agent_saved_state(", 1
         )[0]
 
-        self.assertIn("let ownerHasActiveJobs = false;", body)
-        self.assertIn(
-            "const activeTableCaches = onlineAgents.map",
-            body,
-        )
-        self.assertIn("if (cache.tables.length > 0)", body)
-        self.assertIn("if (ownerHasActiveJobs) {", body)
+        self.assertIn("const activeOwnerTables = active_job_tables_for_owner(ownerUserId);", body)
+        self.assertIn("if (activeOwnerTables.length > 0) {", body)
+        self.assertNotIn("active_job_tables_for_client(", body)
         self.assertIn("deferredTables = deferredTables.concat(", body)
         self.assertIn("let ownerDeferredTables = [];", body)
         self.assertIn(

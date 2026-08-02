@@ -6012,21 +6012,12 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     }
     enabledTables = unique_string_values(enabledTables);
     let ownerDeferredTables = [];
-    const activeTableCaches = onlineAgents.map((agent) => ({
-      clientName: agent.clientName,
-      tables: active_job_tables_for_client(string.from(agent.clientName))
-    }));
+    const activeOwnerTables = active_job_tables_for_owner(ownerUserId);
     const tableCaches = onlineAgents.map((agent) =>
       scheduler_agent_table_state_cache(agent, ownerPolicies)
     );
     const recentUploadModes = latest_completed_upload_modes_for_owner(ownerUserId);
-    let ownerHasActiveJobs = false;
-    for (const cache of activeTableCaches) {
-      if (cache.tables.length > 0) {
-        ownerHasActiveJobs = true;
-      }
-    }
-    if (ownerHasActiveJobs) {
+    if (activeOwnerTables.length > 0) {
       ownerDeferredTables = enabledTables;
       deferredTables = deferredTables.concat(
         enabledTables.map((table) => string.concat(ownerUserId, '::', table))
@@ -6059,19 +6050,6 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
           string.from(plan.mode) == 'needs_input') {
         ownerDeferredTables = ownerDeferredTables.concat([table]);
         deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
-        continue;
-      }
-      let busy = false;
-      for (const agent of tableAgents) {
-        if (string_array_contains(
-          active_job_tables_from_cache(string.from(agent.clientName), activeTableCaches) ?? [],
-          table
-        )) {
-          busy = true;
-          skippedBusyTables = skippedBusyTables.concat([string.concat(agent.clientName, '::', table)]);
-        }
-      }
-      if (busy) {
         continue;
       }
       let jobs = [];
