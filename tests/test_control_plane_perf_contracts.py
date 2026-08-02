@@ -55,6 +55,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("active_job_tables_from_cache", jobs_body)
         self.assertIn("const tableCaches = onlineAgents.map", jobs_body)
         self.assertIn("sync_table_baseline_plan(", jobs_body)
+        self.assertNotIn("refresh_owner_baseline_table_issues(", jobs_body)
         self.assertIn("!preserveChangeTrackingBaselines", jobs_body)
         self.assertIn("create_multi_writer_batch(", jobs_body)
 

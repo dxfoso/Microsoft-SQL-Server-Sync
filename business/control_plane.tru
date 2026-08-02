@@ -5988,7 +5988,10 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     if (onlineAgents.length == 0) {
       continue;
     }
-    refresh_owner_baseline_table_issues(ownerUserId, visibleAgents);
+    // The bounded table loop below runs the same baseline planner before it
+    // creates each batch. Avoid a second full-owner refresh here: large live
+    // inventories can exceed the per-request database operation budget before
+    // Sync All reaches its intentionally bounded scheduling wave.
     if (sync_owner_has_blocking_table_issues(ownerUserId)) {
       sourceResolutionTables = sourceResolutionTables.concat(
         sync_table_issues_for_owner(ownerUserId).map((issue) =>

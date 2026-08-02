@@ -432,7 +432,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         manual_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
             "function reset_all_agent_saved_state(", 1
         )[0]
-        self.assertIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", manual_all)
+        self.assertNotIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", manual_all)
+        self.assertIn("const plan = sync_table_baseline_plan(", manual_all)
         self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", manual_all)
         self.assertIn("sourceResolutionTables = sourceResolutionTables.concat(", manual_all)
 
@@ -1043,10 +1044,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const plan = sync_table_baseline_plan(", source)
         self.assertIn("!preserveChangeTrackingBaselines", source)
         self.assertNotIn("sync_gate_payload_for_owners(ownerUserIds)", sync_all)
-        self.assertLess(
-            sync_all.index("if (onlineAgents.length == 0)"),
-            sync_all.index("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)"),
-        )
+        self.assertNotIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", sync_all)
         self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", sync_all)
         self.assertIn("create_authoritative_reconcile_batch(", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
