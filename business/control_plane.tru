@@ -8241,6 +8241,29 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   }
   if (status.trim().toLowerCase() == 'failed' ||
       (rejectedRowCount != null && rejectedRowCount > 0)) {
+    const failedBatchId = string.from(job.batchId ?? '').trim();
+    if (failedBatchId.length != 0) {
+      const activeBatchJobs = db.selectMany(SyncJob, {
+        where: {
+          batchId: failedBatchId,
+          status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+        },
+        orderBy: { field: 'createdAt', dir: 'asc' },
+        fields: ['id'],
+        limit: 1000
+      });
+      const activeBatchJobIds = activeBatchJobs.map((batchJob) => string.from(batchJob.id));
+      if (activeBatchJobIds.length != 0) {
+        db.updateMany(SyncJob, { id: { in: activeBatchJobIds } }, {
+          status: 'failed',
+          progress: 100,
+          completedAt,
+          error: string.concat('Atomic batch failed: ', message),
+          message: string.concat('Atomic batch failed: ', message),
+          updatedAt: completedAt
+        });
+      }
+    }
     let issueMessage = message;
     if (rejectionSummary != null && rejectionSummary.trim().length != 0) {
       issueMessage = rejectionSummary;
@@ -8253,6 +8276,9 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
       string.from(job.clientName)
     );
     try_start_latest_change_resolution(job, conflictKind);
+    if (failedBatchId.length != 0) {
+      cleanup_multi_writer_batch_storage(failedBatchId);
+    }
   }
   const completedBatchId = string.from(job.batchId ?? '').trim();
   if (status.trim().toLowerCase() == 'completed' &&

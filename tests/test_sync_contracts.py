@@ -594,6 +594,25 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
 
+    def test_unique_business_key_failure_requests_typed_atomic_recovery(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        failure_body = agent_page.split(
+            "Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {",
+            1,
+        )[1].split("Future<List<_SqlColumnDefinition>> _querySyncColumnDefinitions", 1)[0]
+
+        self.assertIn(
+            "job.direction == 'download' && isSyncIdentityCollision(error)",
+            failure_body,
+        )
+        self.assertIn("await _controlPlaneClient.completeJob(", failure_body)
+        self.assertIn("status: 'failed'", failure_body)
+        self.assertIn("rejectedRowCount: 1", failure_body)
+        self.assertIn("conflictKind: 'unique_business_key'", failure_body)
+        self.assertIn("atomic_rollback=true", failure_body)
+        self.assertIn("return;", failure_body)
+        self.assertIn("await _controlPlaneClient.failJob(", failure_body)
+
     def test_authoritative_source_persists_the_verified_snapshot_fingerprint(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         upload_body = agent_page.split(

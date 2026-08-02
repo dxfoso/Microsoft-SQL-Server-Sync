@@ -452,6 +452,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("raise_sync_table_issue(", complete)
         self.assertNotIn("raise_sync_table_issue(", fail)
         self.assertIn(
+            "const failedBatchId = string.from(job.batchId ?? '').trim();",
+            complete,
+        )
+        self.assertIn("Atomic batch failed:", complete)
+        self.assertIn("cleanup_multi_writer_batch_storage(failedBatchId);", complete)
+        self.assertIn(
             "advances its Change Tracking checkpoint after commit",
             fail,
         )

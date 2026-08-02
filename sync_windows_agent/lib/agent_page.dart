@@ -5786,6 +5786,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {
     try {
+      if (job.direction == 'download' && isSyncIdentityCollision(error)) {
+        final detail = error.toString();
+        await _controlPlaneClient.completeJob(
+          job.id,
+          status: 'failed',
+          progress: 100,
+          message:
+              'A unique business key matched a different primary identity while applying ${job.table}. The atomic transaction was rolled back and authoritative latest-change recovery was requested. $detail',
+          rowCount: 0,
+          rejectedRowCount: 1,
+          rejectionSummary:
+              'unique_business_key=1; atomic_rollback=true; recovery=latest_change_wins',
+          conflictKind: 'unique_business_key',
+        );
+        return;
+      }
       await _controlPlaneClient.failJob(
         job.id,
         error.toString(),

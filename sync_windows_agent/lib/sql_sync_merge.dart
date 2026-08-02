@@ -781,8 +781,10 @@ String stageTableReference(String stageTableName) =>
 /// Keeps one deterministic version for each permanent primary identity.
 ///
 /// Alternate unique/business keys never participate in identity matching.
-/// Different GUIDs therefore remain independent and any business-key collision
-/// is rejected by the target constraint and retained in the conflict outbox.
+/// Different GUIDs therefore remain independent. If the target constraint
+/// detects that they represent the same business row, the client reports a
+/// typed conflict so the control plane can choose a deterministic source and
+/// run the generic authoritative reconciliation path.
 List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
   required List<Map<String, dynamic>> rows,
   required List<String> primaryKeyColumns,
