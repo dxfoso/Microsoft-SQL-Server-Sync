@@ -151,6 +151,8 @@ class AdminSyncGate {
     required this.blocked,
     required this.status,
     required this.issueCount,
+    required this.decisionCount,
+    required this.resolvingCount,
     required this.message,
     required this.issues,
   });
@@ -158,24 +160,33 @@ class AdminSyncGate {
   final bool blocked;
   final String status;
   final int issueCount;
+  final int decisionCount;
+  final int resolvingCount;
   final String message;
   final List<AdminTableSyncIssue> issues;
 
   factory AdminSyncGate.fromJson(Map<String, dynamic> json) {
+    final issues = (json['issues'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => AdminTableSyncIssue.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList(growable: false);
     return AdminSyncGate(
       blocked: json['blocked'] as bool? ?? false,
       status: json['status'] as String? ?? 'ready',
       issueCount: (json['issueCount'] as num? ?? 0).round(),
+      decisionCount:
+          (json['decisionCount'] as num?)?.round() ??
+          issues.where((issue) => issue.needsInput).length,
+      resolvingCount:
+          (json['resolvingCount'] as num?)?.round() ??
+          issues.where((issue) => issue.resolving).length,
       message:
           json['message'] as String? ??
           'Every table is ready for synchronization.',
-      issues: (json['issues'] as List<dynamic>? ?? const [])
-          .map(
-            (item) => AdminTableSyncIssue.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          )
-          .toList(growable: false),
+      issues: issues,
     );
   }
 }

@@ -3282,10 +3282,10 @@ function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, poli
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
-  // A blocked owner can only continue after an explicit table decision.
-  // Avoid repeating the full multi-table baseline scan on every cron tick:
-  // it cannot change the decision, and under load it delays client heartbeats.
-  if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId)) {
+  // A genuine Needs input issue can only continue after a user decision.
+  // Resolving issues must still refresh fingerprints so a completed automatic
+  // repair can reopen the gate without waiting for an offline client.
+  if (sync_owner_has_needs_input_table_issues(normalizedOwnerUserId)) {
     return [];
   }
   refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents);
@@ -3749,6 +3749,15 @@ function sync_owner_has_blocking_table_issues(ownerUserId: string? = null): bool
   return false;
 }
 
+function sync_owner_has_needs_input_table_issues(ownerUserId: string? = null): bool {
+  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    if (string.from(issue.status ?? '').trim().toLowerCase() == 'needs_input') {
+      return true;
+    }
+  }
+  return false;
+}
+
 function save_sync_table_issues_for_owner(ownerUserId: string, issues: array<json>): void {
   const normalizedOwnerUserId = ownerUserId.trim();
   const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
@@ -3942,6 +3951,24 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
     const participants = plan.participants ?? [];
     let fingerprints = [];
     let reportedClientCount = 0;
+    let resolutionClientNames = [];
+    let resolutionParticipantCount = 0;
+    let resolutionReportedClientCount = 0;
+    let resolutionFingerprints = [];
+    if (existing != null &&
+        string.from(existing.status ?? '').trim() == 'resolving') {
+      const sourceClientName = normalize_user_name(existing.sourceClientName);
+      if (sourceClientName.length != 0) {
+        resolutionClientNames = resolutionClientNames.concat([sourceClientName]);
+      }
+      for (const targetClientName of existing.targetClientNames ?? []) {
+        const normalizedTargetClientName = normalize_user_name(targetClientName);
+        if (normalizedTargetClientName.length != 0) {
+          resolutionClientNames = resolutionClientNames.concat([normalizedTargetClientName]);
+        }
+      }
+      resolutionClientNames = unique_string_values(resolutionClientNames);
+    }
     for (const agent of participants) {
       const cache = scheduler_agent_table_state_cache_for_agent(
         string.from(agent.clientName),
@@ -3956,6 +3983,18 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         table
       );
       const fingerprint = sync_table_reported_fingerprint(state);
+      if (string_array_contains(
+        resolutionClientNames,
+        normalize_user_name(agent.clientName)
+      )) {
+        resolutionParticipantCount += 1;
+        if (fingerprint.length != 0) {
+          resolutionReportedClientCount += 1;
+          if (!string_array_contains(resolutionFingerprints, fingerprint)) {
+            resolutionFingerprints = resolutionFingerprints.concat([fingerprint]);
+          }
+        }
+      }
       if (fingerprint.length == 0) {
         continue;
       }
@@ -3967,13 +4006,15 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
     if (existing != null &&
         string.from(existing.status ?? '').trim() == 'resolving' &&
         !string_array_contains(activeOwnerTables, table) &&
-        reportedClientCount == participants.length &&
-        fingerprints.length == 1) {
+        resolutionClientNames.length > 1 &&
+        resolutionParticipantCount == resolutionClientNames.length &&
+        resolutionReportedClientCount == resolutionClientNames.length &&
+        resolutionFingerprints.length == 1) {
       nextIssues = replace_sync_table_issue_in_values(nextIssues, {
         table,
         status: 'ready',
         reason: '',
-        message: 'Authoritative repair completed and every enabled client reports the same table fingerprint.',
+        message: 'Authoritative repair completed and every online repair participant reports the same table fingerprint. Offline clients will catch up automatically after reconnecting.',
         clientName: existing.clientName,
         action: existing.action,
         sourceClientName: existing.sourceClientName,
@@ -4052,14 +4093,28 @@ function sync_gate_payload_for_owners(ownerUserIds: array<string>): map<json> {
     }
   }
   const blocked = blockedOwnerUserIds.length != 0;
+  const decisionCount = issues.filter((issue) =>
+    string.from(issue.status ?? '').trim().toLowerCase() == 'needs_input'
+  ).length;
+  const resolvingCount = issues.filter((issue) =>
+    string.from(issue.status ?? '').trim().toLowerCase() == 'resolving'
+  ).length;
   return {
     blocked,
-    status: blocked ? 'needs_input' : 'ready',
-    issueCount: issues.filter((issue) => sync_table_issue_is_blocking(issue)).length,
+    status: decisionCount > 0
+      ? 'needs_input'
+      : resolvingCount > 0
+        ? 'resolving'
+        : 'ready',
+    issueCount: decisionCount + resolvingCount,
+    decisionCount,
+    resolvingCount,
     blockedOwnerUserIds,
-    message: blocked
+    message: decisionCount > 0
       ? 'Sync is stopped. Resolve every table marked Needs input before manual or automatic sync can start.'
-      : 'Every table is ready for synchronization.',
+      : resolvingCount > 0
+        ? 'Automatic repair is in progress. No user decision is required; normal sync will resume automatically when verification completes.'
+        : 'Every table is ready for synchronization.',
     issues
   };
 }

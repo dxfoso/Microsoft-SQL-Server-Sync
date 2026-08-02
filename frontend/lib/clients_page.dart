@@ -632,7 +632,9 @@ class _ClientsPageState extends State<ClientsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'All sync is stopped · ${gate.issueCount} ${gate.issueCount == 1 ? 'table needs' : 'tables need'} a decision',
+                  gate.decisionCount > 0
+                      ? 'All sync is stopped · ${gate.decisionCount} ${gate.decisionCount == 1 ? 'table needs' : 'tables need'} a decision'
+                      : 'Automatic repair · ${gate.resolvingCount} ${gate.resolvingCount == 1 ? 'table is' : 'tables are'} being verified',
                   style: const TextStyle(
                     color: Color(0xFF7A2E0E),
                     fontWeight: FontWeight.w800,
@@ -1517,12 +1519,16 @@ class _ClientsPageState extends State<ClientsPage> {
         const <AdminClientActivity>[],
   }) {
     if (!agent.isOnline) return 'Offline';
-    if ((_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).any(
-      (issue) =>
-          issue.ownerUserId == (agent.ownerUserId ?? '') && issue.blocksSync,
-    )) {
+    final ownerIssues =
+        (_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).where(
+          (issue) =>
+              issue.ownerUserId == (agent.ownerUserId ?? '') &&
+              issue.blocksSync,
+        );
+    if (ownerIssues.any((issue) => issue.needsInput)) {
       return 'Needs input';
     }
+    if (ownerIssues.any((issue) => issue.resolving)) return 'Repairing';
     if (agent.clientUpdate.pending) return 'Updating';
     if (!agent.serverConnected) return 'Server offline';
     if (!agent.sqlConnected) return 'SQL offline';
@@ -1948,9 +1954,11 @@ class _ClientsPageState extends State<ClientsPage> {
                 const SizedBox(height: 12),
                 _buildMessage(
                   issue!.message.isEmpty
-                      ? 'This table needs a user decision. All synchronization remains stopped.'
+                      ? issue.needsInput
+                          ? 'This table needs a user decision. All synchronization remains stopped.'
+                          : 'Automatic repair is being verified. No user decision is required.'
                       : issue.message,
-                  error: true,
+                  error: issue.needsInput,
                 ),
                 const SizedBox(height: 8),
                 Align(

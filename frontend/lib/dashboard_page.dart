@@ -7593,7 +7593,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     const SizedBox(width: 9),
                     Expanded(
                       child: Text(
-                        'All sync is stopped: ${state!.syncGate.issueCount} ${state.syncGate.issueCount == 1 ? 'table needs' : 'tables need'} a user decision. Open Clients and resolve every table marked Needs input before manual or automatic sync can start.',
+                        state!.syncGate.decisionCount > 0
+                            ? 'All sync is stopped: ${state.syncGate.decisionCount} ${state.syncGate.decisionCount == 1 ? 'table needs' : 'tables need'} a user decision. Open Clients and resolve every table marked Needs input before manual or automatic sync can start.'
+                            : 'Automatic repair is verifying ${state.syncGate.resolvingCount} ${state.syncGate.resolvingCount == 1 ? 'table' : 'tables'}. No user decision is required; normal sync will resume automatically.',
                         style: const TextStyle(
                           color: Color(0xFF7A2E0E),
                           fontWeight: FontWeight.w700,

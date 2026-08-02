@@ -508,6 +508,30 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("status: 'resolving'", resolution)
         self.assertIn("try_start_latest_change_resolution(job, conflictKind)", complete)
 
+    def test_automatic_repair_finishes_for_online_participants_without_user_input(self):
+        source = read_text("business/control_plane.tru")
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        refresh = source.split(
+            "function refresh_owner_baseline_table_issues(", 1
+        )[1].split("function sync_gate_payload_for_owners(", 1)[0]
+        gate = source.split("function sync_gate_payload_for_owners(", 1)[1].split(
+            "function automatic_sync_control_set(", 1
+        )[0]
+
+        self.assertIn("sync_owner_has_needs_input_table_issues", scheduler)
+        self.assertIn("refresh_owner_baseline_table_issues", scheduler)
+        self.assertIn("resolutionClientNames", refresh)
+        self.assertIn(
+            "resolutionReportedClientCount == resolutionClientNames.length",
+            refresh,
+        )
+        self.assertIn("Offline clients will catch up automatically", refresh)
+        self.assertIn("decisionCount", gate)
+        self.assertIn("resolvingCount", gate)
+        self.assertIn("No user decision is required", gate)
+
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
         body = source.split("function jobs_create_all_enabled(", 1)[1].split(

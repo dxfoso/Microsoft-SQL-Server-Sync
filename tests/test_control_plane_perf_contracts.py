@@ -136,19 +136,23 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("} else {", cache_branch)
         self.assertIn("states = scheduler_agent_table_states(agent);", cache_branch)
 
-    def test_blocked_periodic_owner_skips_redundant_baseline_scan(self):
+    def test_only_user_decisions_skip_repair_finalization_scan(self):
         control_plane = read_text("business/control_plane.tru")
         scheduler_body = control_plane.split(
             "function queue_due_periodic_sync_jobs_for_owner(", 1
         )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
 
-        gate_position = scheduler_body.index(
-            "if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId))"
+        decision_gate_position = scheduler_body.index(
+            "if (sync_owner_has_needs_input_table_issues(normalizedOwnerUserId))"
         )
         refresh_position = scheduler_body.index(
             "refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents)"
         )
-        self.assertLess(gate_position, refresh_position)
+        blocking_gate_position = scheduler_body.index(
+            "if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId))"
+        )
+        self.assertLess(decision_gate_position, refresh_position)
+        self.assertLess(refresh_position, blocking_gate_position)
 
     def test_scheduler_reuses_enabled_table_caches_across_baseline_wave(self):
         control_plane = read_text("business/control_plane.tru")

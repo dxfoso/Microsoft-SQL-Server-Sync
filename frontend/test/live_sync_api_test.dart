@@ -4,8 +4,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sync_admin_web/live_sync_api.dart';
+import 'package:sync_admin_web/models.dart';
 
 void main() {
+  test('sync gate distinguishes automatic repair from user decisions', () {
+    final gate = AdminSyncGate.fromJson({
+      'blocked': true,
+      'status': 'resolving',
+      'issueCount': 1,
+      'decisionCount': 0,
+      'resolvingCount': 1,
+      'message': 'Automatic repair is in progress.',
+      'issues': [
+        {
+          'table': 'AmnDb048::ma000',
+          'status': 'resolving',
+          'action': 'latest_change_wins',
+        },
+      ],
+    });
+
+    expect(gate.decisionCount, 0);
+    expect(gate.resolvingCount, 1);
+    expect(gate.issues.single.needsInput, isFalse);
+    expect(gate.issues.single.resolving, isTrue);
+  });
+
   test('automatic sync control posts requested pause state', () async {
     late Map<String, dynamic> requestPayload;
     final api = LiveSyncApiClient(
