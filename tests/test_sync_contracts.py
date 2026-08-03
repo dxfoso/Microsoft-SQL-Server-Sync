@@ -1786,6 +1786,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("agent_data_export_ack", api)
         self.assertIn("agent_data_export_poll", api)
         self.assertIn("data_export.poll_failed", agent_page)
+        self.assertIn("shouldRetryBackupWithoutCompression", agent_page)
+        self.assertIn("WITH COPY_ONLY, INIT, CHECKSUM, STATS = 10", agent_page)
         self.assertIn('CLIENT_UPDATES_DIR, ".private-exports"', frontend_server)
         self.assertIn("crypto.timingSafeEqual", frontend_server)
         self.assertIn("private export chunk checksum mismatch", frontend_server)

@@ -14,6 +14,7 @@ import 'automatic_change_discovery.dart';
 import 'change_tracking_cursor_policy.dart';
 import 'client_version.dart';
 import 'database_access.dart';
+import 'data_export_policy.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_sync_merge.dart';
@@ -3902,7 +3903,7 @@ WHERE database_id = DB_ID(N'master') AND file_id = 1;
         }
       }
       if (!reuseVerifiedBackup) {
-        final backupResult = await _runSqlCmd(
+        var backupResult = await _runSqlCmd(
           profile: profile,
           database: 'master',
           query: '''
@@ -3913,6 +3914,24 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
 ''',
           timeout: const Duration(hours: 4),
         );
+        if (backupResult != null &&
+            shouldRetryBackupWithoutCompression(
+              exitCode: backupResult.exitCode,
+              stdout: backupResult.stdout.toString(),
+              stderr: backupResult.stderr.toString(),
+            )) {
+          backupResult = await _runSqlCmd(
+            profile: profile,
+            database: 'master',
+            query: '''
+BACKUP DATABASE ${_quoteIdentifier(database)}
+TO DISK = N'$backupPathLiteral'
+WITH COPY_ONLY, INIT, CHECKSUM, STATS = 10;
+RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
+''',
+            timeout: const Duration(hours: 4),
+          );
+        }
         if (backupResult == null || backupResult.exitCode != 0) {
           throw StateError(
             backupResult == null
