@@ -6029,11 +6029,26 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
   if (agent.dataExportRequestId != null) {
     resolvedRequestId = string.from(agent.dataExportRequestId).trim();
   }
+  let acknowledgedRequestId = '';
+  if (requestId != null) {
+    acknowledgedRequestId = requestId.trim();
+  }
+  if (acknowledgedRequestId.length == 0) {
+    return raw_json_error(400, 'requestId is required');
+  }
+  if (acknowledgedRequestId != resolvedRequestId) {
+    return {
+      ok: true,
+      stale: true,
+      clientName: resolvedClientName,
+      dataExport: agent_data_export_payload(agent)
+    };
+  }
   let resolvedRequestIdOrNull = null;
   const normalizedStatus = truncate_text(status.trim().toLowerCase(), 32);
   const terminalStatus = normalizedStatus == 'completed' || normalizedStatus == 'failed';
   if (terminalStatus && resolvedRequestId.length != 0) {
-    resolvedRequestIdOrNull = resolvedRequestId;
+    resolvedRequestIdOrNull = acknowledgedRequestId;
   }
   let safeBytes = bytes;
   if (safeBytes < 0) { safeBytes = 0; }

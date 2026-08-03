@@ -1788,6 +1788,12 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn('requestedPath.startsWith(".private-exports/")', frontend_server)
         self.assertIn("Get-FileHash -Algorithm SHA256", collector)
         self.assertIn("kubectl exec -n $Namespace", collector)
+        self.assertIn("Resuming pending read-only export", collector)
+
+        control_plane = read_text("business/control_plane.tru")
+        self.assertIn("requestId is required", control_plane)
+        self.assertIn("acknowledgedRequestId != resolvedRequestId", control_plane)
+        self.assertIn("stale: true", control_plane)
 
 
 if __name__ == "__main__":

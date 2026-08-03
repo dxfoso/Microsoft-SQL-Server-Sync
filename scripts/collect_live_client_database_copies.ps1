@@ -66,7 +66,9 @@ function Copy-PrivateArtifact {
     Invoke-SshText "kubectl cp -n $Namespace '$Pod`:$PodDirectory/$Artifact' '$remoteTemp'" | Out-Null
     & scp "${SshTarget}:$remoteTemp" $localPath
     if ($LASTEXITCODE -ne 0) { throw "SCP failed for $Artifact" }
-    $remoteHash = (Invoke-SshText "sha256sum '$remoteTemp'")[0].Split(' ')[0].Trim().ToLowerInvariant()
+    $remoteHashLines = @(Invoke-SshText "sha256sum '$remoteTemp'")
+    if ($remoteHashLines.Count -eq 0) { throw "Remote checksum returned no output for $Artifact" }
+    $remoteHash = ([string]$remoteHashLines[0]).Split(' ')[0].Trim().ToLowerInvariant()
     $localHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $localPath).Hash.ToLowerInvariant()
     if ($remoteHash -ne $localHash) { throw "Checksum mismatch while copying $Artifact" }
     Invoke-SshText "kubectl exec -n $Namespace '$Pod' -- rm -f '$PodDirectory/$Artifact'" | Out-Null
@@ -93,14 +95,23 @@ if ($clients.Count -eq 0) { throw "No online SQL-connected clients selected $Dat
 $summary = @()
 foreach ($client in $clients) {
     $clientName = [string]$client.clientName
-    $request = Invoke-ControlPlaneFunction 'agent_data_export_request' @{
-        clientName = $clientName
-        database = $Database
-        uploadUrl = "$($BaseUrl.TrimEnd('/'))/private-export"
-        uploadToken = $UploadToken
-        token = $sessionToken
+    $existingExport = $client.dataExport
+    $existingRequestId = if ($null -eq $existingExport) { '' } else { [string]$existingExport.requestId }
+    $existingStatus = if ($null -eq $existingExport) { '' } else { ([string]$existingExport.status).Trim().ToLowerInvariant() }
+    $canResume = $existingRequestId -match '^[A-Za-z0-9._-]{1,64}$' -and @('requested', 'running', 'client_offline') -contains $existingStatus
+    if ($canResume) {
+        $requestId = $existingRequestId
+        Write-Host "Resuming pending read-only export $requestId for $clientName."
+    } else {
+        $request = Invoke-ControlPlaneFunction 'agent_data_export_request' @{
+            clientName = $clientName
+            database = $Database
+            uploadUrl = "$($BaseUrl.TrimEnd('/'))/private-export"
+            uploadToken = $UploadToken
+            token = $sessionToken
+        }
+        $requestId = [string]$request.dataExport.requestId
     }
-    $requestId = [string]$request.dataExport.requestId
     if ($requestId -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "Invalid request id for $clientName" }
     $clientKey = Get-ClientKey $clientName
     $clientDirectory = Join-Path $OutputDirectory $clientKey
@@ -110,7 +121,9 @@ foreach ($client in $clients) {
     $manifestCopied = $false
 
     while ([DateTime]::UtcNow -lt $deadline -and -not $manifestCopied) {
-        $pod = (Invoke-SshText "kubectl get pods -n $Namespace -l app.kubernetes.io/component=frontend -o jsonpath='{.items[0].metadata.name}'")[0].Trim()
+        $podLines = @(Invoke-SshText "kubectl get pods -n $Namespace -l app.kubernetes.io/component=frontend -o jsonpath='{.items[0].metadata.name}'")
+        if ($podLines.Count -eq 0) { throw 'Frontend pod query returned no output.' }
+        $pod = ([string]$podLines[0]).Trim()
         if ([string]::IsNullOrWhiteSpace($pod)) { throw 'Frontend pod was not found.' }
         $podDirectory = "/app/data/client-updates/.private-exports/$requestId/$clientKey"
         $available = Invoke-SshText "kubectl exec -n $Namespace '$pod' -- sh -c 'if [ -d `"$podDirectory`" ]; then ls -1 `"$podDirectory`" | sort; fi'"
