@@ -3886,6 +3886,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Future<String> _buildDiagnosticsPayload() async {
+    // Diagnostics are used for remote recovery decisions. Always base them
+    // on a fresh physical SQL fingerprint rather than cached job progress.
+    await _refreshSelectedTableFingerprints();
+
     final failedTables = _syncState.tables.entries
         .where((entry) => entry.value.status.toLowerCase() == 'failed')
         .take(25)
@@ -3932,6 +3936,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             'changeTrackingStatus': entry.value.changeTrackingStatus,
             'changeTrackingMessage': entry.value.changeTrackingMessage,
             'message': entry.value.message,
+          },
+        )
+        .toList(growable: false);
+    final selectedTableFingerprints = _syncState.tables.entries
+        .where((entry) => _isTableSelectedForSync(entry.value))
+        .map(
+          (entry) => {
+            'table': entry.key,
+            'rowCount': entry.value.rowCount,
+            'tableChecksum': entry.value.tableChecksum,
           },
         )
         .toList(growable: false);
@@ -4000,6 +4014,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'activeJobs': activeJobs,
       'failedTables': failedTables,
       'tableSummaries': tableSummaries,
+      // This compact list is retained even if verbose diagnostics must be
+      // reduced, so every selected table remains remotely verifiable.
+      'selectedTableFingerprints': selectedTableFingerprints,
       'clientLog': {
         'format': 'json-lines',
         'retention': 'current file plus one rotated segment',
@@ -4104,6 +4121,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         payload['tableSummaries'],
         maxItems: 5,
       ),
+      'selectedTableFingerprints': payload['selectedTableFingerprints'],
       'startupLogTail': _truncateUploadText(
         payload['startupLogTail'],
         maxChars: 40000,
@@ -4369,6 +4387,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             },
             error: error,
           );
+          // A cancelled job can stop between a local SQL mutation and the
+          // final state update. Re-read physical table fingerprints so the
+          // next heartbeat never advertises a delta/job row count as the
+          // table's real cardinality.
+          _scheduleSelectedTableFingerprintRefresh(force: true);
         } catch (error, stackTrace) {
           final errorMessage = error.toString();
           if (_isRetryableSyncJobError(error)) {

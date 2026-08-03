@@ -446,6 +446,41 @@ class SyncContractsTests(unittest.TestCase):
             agent_page,
         )
 
+    def test_diagnostics_force_fresh_complete_selected_table_fingerprints(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        diagnostics_body = agent_page.split(
+            "Future<String> _buildDiagnosticsPayload() async {", 1
+        )[1].split(
+            "Future<Map<String, dynamic>>\n  _buildChangeTrackingDiagnosticsForUpload", 1
+        )[0]
+        encoder_body = agent_page.split(
+            "String _encodeDiagnosticsPayloadForUpload", 1
+        )[1].split("List<dynamic> _boundedUploadList", 1)[0]
+
+        self.assertIn("await _refreshSelectedTableFingerprints();", diagnostics_body)
+        self.assertIn(
+            ".where((entry) => _isTableSelectedForSync(entry.value))",
+            diagnostics_body,
+        )
+        self.assertIn(
+            "'selectedTableFingerprints': selectedTableFingerprints",
+            diagnostics_body,
+        )
+        self.assertIn(
+            "'selectedTableFingerprints': payload['selectedTableFingerprints']",
+            encoder_body,
+        )
+
+    def test_cancelled_job_forces_physical_fingerprint_refresh(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        cancelled_body = agent_page.split(
+            "} on _SyncJobCancelled catch (error)", 1
+        )[1].split("} catch (error, stackTrace)", 1)[0]
+        self.assertIn(
+            "_scheduleSelectedTableFingerprintRefresh(force: true);",
+            cancelled_body,
+        )
+
     def test_sync_loop_suppresses_temporary_control_plane_errors_but_records_hard_failures(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         live_sync_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
@@ -1606,7 +1641,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("if (tablesChanged || relationshipsChanged)", heartbeat_body)
         self.assertEqual(heartbeat_body.count("syncEnabled: true,"), 2)
         self.assertIn("_scheduleSelectedTableFingerprintRefresh();", agent_page)
-        self.assertNotIn("await _refreshSelectedTableFingerprints();", agent_page)
+        self.assertNotIn("await _refreshSelectedTableFingerprints();", heartbeat_body)
         self.assertNotIn("_prepareAutomaticSyncQueueIfDue", agent_page)
         self.assertNotIn("_queueEnabledRoleJobs", agent_page)
 
