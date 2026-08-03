@@ -1289,12 +1289,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("automatic_sync_is_paused_for_user(current)", recovery_body)
         self.assertIn("sourceClientName: 'server-union-bootstrap-v3'", recovery_body)
         self.assertIn("sourceJobId: normalizedBatchId", recovery_body)
+        self.assertIn("subscriberClientName: normalizedSourceClientName", recovery_body)
         self.assertIn("'server-retained-union-recovery'", recovery_body)
+        self.assertIn("const recoveryBatchId = uuid.v4()", recovery_body)
+        self.assertIn("previewRows: [{ winnerPolicyApplied: false", recovery_body)
+        self.assertIn("db.insertMany(SnapshotRecord, recoverySnapshots)", recovery_body)
         self.assertIn("effective_agent_online(agent)", recovery_body)
         self.assertIn("active_job_tables_for_client", recovery_body)
         self.assertIn("retained table is not enabled", recovery_body)
-        self.assertEqual(recovery_body.count("direction: 'upload'"), 1)
+        self.assertEqual(recovery_body.count("direction: 'upload'"), 2)
         self.assertEqual(recovery_body.count("direction: 'download'"), 1)
+
 
     def test_authoritative_full_snapshots_preserve_verification_checksum(self):
         source = read_text("business/control_plane.tru")

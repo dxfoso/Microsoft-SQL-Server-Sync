@@ -285,6 +285,7 @@ index SyncProtocolState_id on SyncProtocolState(id)
 index SnapshotRecord_id on SnapshotRecord(id)
 index SnapshotRecord_clientName_table_createdAt on SnapshotRecord(clientName, table, createdAt)
 index SnapshotRecord_createdAt on SnapshotRecord(createdAt)
+index SnapshotRecord_sourceJobId_subscriberClientName_createdAt on SnapshotRecord(sourceJobId, subscriberClientName, createdAt)
 index SyncJobDataChunk_jobId_ordinal on SyncJobDataChunk(jobId, ordinal)
 index SyncJobDataChunk_batchId_createdAt on SyncJobDataChunk(batchId, createdAt)
 index SyncJobDataChunk_ownerUserId_createdAt on SyncJobDataChunk(ownerUserId, createdAt)
@@ -7937,6 +7938,33 @@ function jobs_replay_retained_union(batchId: string, clientNames: array<string>,
   }
   const visibleAgents = visible_agent_rows_for(current);
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  const normalizedSourceClientName = normalize_user_name(string.from(requestedClientNames[0]));
+  if (normalizedSourceClientName.length == 0 ||
+      !string_array_contains(batch.expectedClients, normalizedSourceClientName) ||
+      !string_array_contains(batch.uploadedClients, normalizedSourceClientName)) {
+    return raw_json_error(409, 'recovery source must be a completed participant in the retained union');
+  }
+  const retainedUnionPayloadPage = db.page(SnapshotRecord, {
+    where: { sourceJobId: normalizedBatchId },
+    orderBy: [
+      { field: 'subscriberClientName', dir: 'asc' },
+      { field: 'createdAt', dir: 'asc' },
+      { field: 'id', dir: 'asc' }
+    ],
+    fields: ['id', 'clientName', 'subscriberClientName', 'table', 'rowCount', 'checksum', 'createdAt', 'snapshotBytes', 'columns', 'rows', 'previewRows', 'compressedBytes', 'chunkCount', 'encoding', 'storageId', 'isDelta', 'sourceJobId', 'clientUserId', 'ownerUserId'],
+    limit: 500,
+    cursor: null
+  });
+  const retainedUnionPayloads = retainedUnionPayloadPage.rows;
+  let retainedSourcePayloads = [];
+  for (const retainedUnionPayload of retainedUnionPayloads) {
+    if (normalize_user_name(string.from(retainedUnionPayload.subscriberClientName)) == normalizedSourceClientName) {
+      retainedSourcePayloads = retainedSourcePayloads.concat([retainedUnionPayload]);
+    }
+  }
+  if (retainedSourcePayloads.length == 0) {
+    return raw_json_error(410, 'retained source payload is no longer available');
+  }
   let targetAgents = [];
   for (const requestedClientName of requestedClientNames) {
     const normalizedClientName = normalize_user_name(requestedClientName);
@@ -7962,7 +7990,93 @@ function jobs_replay_retained_union(batchId: string, clientNames: array<string>,
   }
 
   const createdAt = now_iso();
-  let rows = [];
+  const recoveryBatchId = uuid.v4();
+  let recoveryReceivedChunks = [];
+  let recoveryReceivedBytes = 0;
+  let recoverySnapshots = [];
+  for (const retainedSourcePayload of retainedSourcePayloads) {
+    const retainedRowCount = int.from(retainedSourcePayload.rowCount ?? 0);
+    const retainedSnapshotBytes = int.from(retainedSourcePayload.snapshotBytes ?? 0);
+    recoveryReceivedChunks = recoveryReceivedChunks.concat([{
+      chunkId: string.from(retainedSourcePayload.id),
+      clientName: normalizedSourceClientName,
+      receivedAt: createdAt,
+      rowCount: retainedRowCount
+    }]);
+    recoveryReceivedBytes += retainedSnapshotBytes;
+    recoverySnapshots = recoverySnapshots.concat([{
+      id: uuid.v4(),
+      clientName: 'server-merge',
+      subscriberClientName: normalizedSourceClientName,
+      table: batch.table,
+      rowCount: retainedRowCount,
+      checksum: string.from(retainedSourcePayload.checksum),
+      createdAt,
+      snapshotBytes: retainedSnapshotBytes,
+      columns: retainedSourcePayload.columns,
+      rows: retainedSourcePayload.rows,
+      previewRows: [{ winnerPolicyApplied: false, retainedRecovery: true }],
+      compressedBytes: int.from(retainedSourcePayload.compressedBytes ?? 0),
+      chunkCount: int.from(retainedSourcePayload.chunkCount ?? 1),
+      encoding: string.from(retainedSourcePayload.encoding ?? 'json'),
+      storageId: string.from(retainedSourcePayload.storageId ?? ''),
+      isDelta: false,
+      sourceJobId: recoveryBatchId,
+      clientUserId: retainedSourcePayload.clientUserId,
+      ownerUserId
+    }]);
+  }
+  db.insert(SyncBatch, {
+    id: recoveryBatchId,
+    table: batch.table,
+    revision: 0,
+    ownerUserId,
+    expectedClients: [normalizedSourceClientName],
+    uploadedClients: [normalizedSourceClientName],
+    receivedChunks: recoveryReceivedChunks,
+    receivedBytes: recoveryReceivedBytes,
+    clientChangeTrackingVersions: batch.clientChangeTrackingVersions,
+    keyColumns: batch.keyColumns,
+    columns: batch.columns,
+    rows: [],
+    status: 'ready',
+    createdAt,
+    updatedAt: createdAt,
+    protocolVersion: batch.protocolVersion,
+    syncEpoch: batch.syncEpoch
+  });
+  db.insertMany(SnapshotRecord, recoverySnapshots);
+
+  let rows = [{
+    id: uuid.v4(),
+    clientName: normalizedSourceClientName,
+    sourceClientName: 'server-union-bootstrap-v3',
+    subscriberClientName: '',
+    table: batch.table,
+    direction: 'upload',
+    publisherServer: '',
+    publisherDatabase: sync_job_text(unionUpload.publisherDatabase),
+    publisherUseWindowsAuth: unionUpload.publisherUseWindowsAuth == true,
+    publisherUser: '',
+    publisherPassword: '',
+    status: 'completed',
+    progress: 100,
+    rowCount: 0,
+    snapshotBytes: recoveryReceivedBytes,
+    snapshotCreatedAt: createdAt,
+    snapshotId: null,
+    createdAt,
+    updatedAt: createdAt,
+    startedAt: createdAt,
+    completedAt: createdAt,
+    message: 'Retained full-union source prepared for recovery.',
+    error: null,
+    clientUserId: unionUpload.clientUserId,
+    ownerUserId,
+    batchId: recoveryBatchId,
+    protocolVersion: batch.protocolVersion,
+    syncEpoch: batch.syncEpoch
+  }];
   for (const agent of targetAgents) {
     const clientName = string.from(agent.clientName);
     rows = rows.concat([{
@@ -7991,7 +8105,7 @@ function jobs_replay_retained_union(batchId: string, clientNames: array<string>,
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId,
-      batchId: normalizedBatchId,
+      batchId: recoveryBatchId,
       protocolVersion: batch.protocolVersion,
       syncEpoch: batch.syncEpoch
     }]);
@@ -8000,6 +8114,8 @@ function jobs_replay_retained_union(batchId: string, clientNames: array<string>,
   return raw_json_success({
     mode: 'protocol-v3-retained-full-union-recovery',
     batchId: normalizedBatchId,
+    recoveryBatchId,
+    sourceClientName: normalizedSourceClientName,
     table: batch.table,
     clientNames: targetAgents.map((agent) => string.from(agent.clientName)),
     jobs: createdJobs.map((job) => public_job_payload(job))
