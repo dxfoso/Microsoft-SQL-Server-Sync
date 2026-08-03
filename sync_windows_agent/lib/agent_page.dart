@@ -3822,6 +3822,40 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     throw StateError('Private export upload failed after retries: $lastError');
   }
 
+  Future<Directory?> _prepareSharedDataExportDirectory() async {
+    if (!Platform.isWindows) return null;
+    final publicRoot = Platform.environment['PUBLIC']?.trim() ?? '';
+    if (publicRoot.isEmpty) return null;
+    final exportDirectory = Directory(
+      path.join(publicRoot, 'Documents', 'Velvet SQL Sync', 'private-export'),
+    );
+    try {
+      await exportDirectory.create(recursive: true);
+      final aclResult = await Process.run('icacls.exe', <String>[
+        exportDirectory.path,
+        '/grant',
+        '*S-1-5-6:(OI)(CI)M',
+        '*S-1-5-18:(OI)(CI)M',
+      ], runInShell: false);
+      if (aclResult.exitCode == 0) return exportDirectory;
+      logAgentDiagnostic(
+        'data_export.shared_directory_acl_failed',
+        level: AgentLogLevel.warning,
+        context: {'path': exportDirectory.path, 'exitCode': aclResult.exitCode},
+        error: '${aclResult.stdout}\n${aclResult.stderr}',
+      );
+    } catch (error, stackTrace) {
+      logAgentDiagnostic(
+        'data_export.shared_directory_failed',
+        level: AgentLogLevel.warning,
+        context: {'path': exportDirectory.path},
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    return null;
+  }
+
   Future<void> _runRequestedDataExport(RemoteAgentDataExport request) async {
     final requestId = request.requestId?.trim() ?? '';
     final database = request.database?.trim() ?? '';
@@ -3846,10 +3880,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
 
     final profile = _activeProfile();
-    final pathResult = await _runSqlCmd(
-      profile: profile,
-      database: database,
-      query: r"""
+    var backupDirectory = await _prepareSharedDataExportDirectory();
+    if (backupDirectory == null) {
+      final pathResult = await _runSqlCmd(
+        profile: profile,
+        database: database,
+        query: r"""
 SET NOCOUNT ON;
 SELECT COALESCE(
   NULLIF(CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS nvarchar(4000)), N''),
@@ -3864,26 +3900,28 @@ SELECT COALESCE(
 FROM master.sys.master_files
 WHERE database_id = DB_ID(N'master') AND file_id = 1;
 """,
-      suppressHeaders: true,
-    );
-    if (pathResult == null || pathResult.exitCode != 0) {
-      throw StateError(
-        pathResult == null
-            ? _sqlCmdUnavailableMessage(profile)
-            : _sqlCmdFailed('backup path lookup', pathResult),
+        suppressHeaders: true,
       );
-    }
-    final pathValues = _parseSingleColumnOutput(pathResult.stdout.toString());
-    if (pathValues.isEmpty ||
-        pathValues.first.trim().isEmpty ||
-        pathValues.first.trim().toUpperCase() == 'NULL') {
-      throw StateError(
-        'SQL Server did not report a usable backup or master-data directory.',
-      );
+      if (pathResult == null || pathResult.exitCode != 0) {
+        throw StateError(
+          pathResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('backup path lookup', pathResult),
+        );
+      }
+      final pathValues = _parseSingleColumnOutput(pathResult.stdout.toString());
+      if (pathValues.isEmpty ||
+          pathValues.first.trim().isEmpty ||
+          pathValues.first.trim().toUpperCase() == 'NULL') {
+        throw StateError(
+          'SQL Server did not report a usable backup or master-data directory.',
+        );
+      }
+      backupDirectory = Directory(pathValues.first.trim());
     }
     final safeDatabase = database.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
     final backupFile = File(
-      path.join(pathValues.first.trim(), 'sql_sync_export_$safeDatabase.bak'),
+      path.join(backupDirectory.path, 'sql_sync_export_$safeDatabase.bak'),
     );
     try {
       final backupPathLiteral = _escapeSqlLiteral(backupFile.path);
