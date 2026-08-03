@@ -7889,6 +7889,123 @@ function jobs_reconcile_authoritative(sourceClientName: string, targetClientName
   }, 201);
 }
 
+// Replays a retained, completed full-union payload after an interrupted or
+// faulty canonical apply. The original immutable snapshot is reused; clients
+// do not upload their current (possibly damaged) table state.
+function jobs_replay_retained_union(batchId: string, clientNames: array<string>, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  if (!automatic_sync_is_paused_for_user(current)) {
+    return raw_json_error(409, 'pause automatic sync before retained snapshot recovery');
+  }
+  const normalizedBatchId = batchId.trim();
+  const batch = find_sync_batch(normalizedBatchId);
+  if (batch == null || string.from(batch.status).trim() != 'ready') {
+    return raw_json_error(404, 'ready retained sync batch not found');
+  }
+  const ownerUserId = string.from(batch.ownerUserId ?? '').trim();
+  if (!is_admin_user(current) && ownerUserId != owner_namespace_for_user(current)) {
+    return raw_json_error(403, 'retained sync batch is outside your scope');
+  }
+  const unionUpload = db.selectOne(SyncJob, {
+    batchId: normalizedBatchId,
+    direction: 'upload',
+    sourceClientName: 'server-union-bootstrap-v3'
+  });
+  if (unionUpload == null || (batch.receivedChunks ?? []).length == 0) {
+    return raw_json_error(409, 'retained batch is not a complete full-union snapshot');
+  }
+  const retainedPayload = db.selectOne(SnapshotRecord, {
+    sourceJobId: normalizedBatchId
+  });
+  if (retainedPayload == null) {
+    return raw_json_error(410, 'retained full-union payload is no longer available');
+  }
+  if (int.from(batch.protocolVersion ?? 0) != sync_protocol_version() ||
+      string.from(batch.syncEpoch ?? '').trim() != string.from(sync_protocol_state().syncEpoch).trim()) {
+    return raw_json_error(409, 'retained batch belongs to a different sync protocol epoch');
+  }
+
+  const requestedClientNames = unique_string_values(clientNames);
+  if (requestedClientNames.length == 0) {
+    return raw_json_error(400, 'at least one recovery client is required');
+  }
+  const visibleAgents = visible_agent_rows_for(current);
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  let targetAgents = [];
+  for (const requestedClientName of requestedClientNames) {
+    const normalizedClientName = normalize_user_name(requestedClientName);
+    const agent = find_agent_row_by_name(visibleAgents, normalizedClientName);
+    if (agent == null || string.from(agent.ownerUserId ?? '').trim() != ownerUserId) {
+      return raw_json_error(403, string.concat('recovery client is unavailable or outside the batch scope: ', normalizedClientName));
+    }
+    if (!effective_agent_online(agent)) {
+      return raw_json_error(409, string.concat('recovery client must be online and SQL-connected: ', normalizedClientName));
+    }
+    if (active_job_tables_for_client(normalizedClientName).length != 0) {
+      return raw_json_error(409, string.concat('recovery client already has active jobs: ', normalizedClientName));
+    }
+    const enabledTables = unique_string_values(
+      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+      )
+    );
+    if (!string_array_contains(enabledTables, string.from(batch.table))) {
+      return raw_json_error(409, string.concat('retained table is not enabled for recovery client: ', normalizedClientName));
+    }
+    targetAgents = targetAgents.concat([agent]);
+  }
+
+  const createdAt = now_iso();
+  let rows = [];
+  for (const agent of targetAgents) {
+    const clientName = string.from(agent.clientName);
+    rows = rows.concat([{
+      id: uuid.v4(),
+      clientName,
+      sourceClientName: 'server-retained-union-recovery',
+      subscriberClientName: clientName,
+      table: batch.table,
+      direction: 'download',
+      publisherServer: '',
+      publisherDatabase: sync_job_text(agent.database),
+      publisherUseWindowsAuth: agent.replicationUseWindowsAuth == true,
+      publisherUser: '',
+      publisherPassword: '',
+      status: 'queued',
+      progress: 0,
+      rowCount: 0,
+      snapshotBytes: 0,
+      snapshotCreatedAt: null,
+      snapshotId: null,
+      createdAt,
+      updatedAt: createdAt,
+      startedAt: null,
+      completedAt: null,
+      message: string.concat('Queued retained full-union recovery for ', string.from(batch.table), '.'),
+      error: null,
+      clientUserId: agent.clientUserId,
+      ownerUserId,
+      batchId: normalizedBatchId,
+      protocolVersion: batch.protocolVersion,
+      syncEpoch: batch.syncEpoch
+    }]);
+  }
+  const createdJobs = db.insertMany(SyncJob, rows);
+  return raw_json_success({
+    mode: 'protocol-v3-retained-full-union-recovery',
+    batchId: normalizedBatchId,
+    table: batch.table,
+    clientNames: targetAgents.map((agent) => string.from(agent.clientName)),
+    jobs: createdJobs.map((job) => public_job_payload(job))
+  }, 201);
+}
+
 function table_comparison_request(clientName: string, table: string, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {

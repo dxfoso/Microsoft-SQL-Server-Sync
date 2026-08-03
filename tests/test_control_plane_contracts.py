@@ -1280,6 +1280,22 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("reconciliation table is not enabled", reconcile_body)
         self.assertIn("create_authoritative_reconcile_batch(", reconcile_body)
 
+    def test_retained_full_union_recovery_is_explicit_scoped_and_download_only(self):
+        source = read_text("business/control_plane.tru")
+        recovery_body = source.split(
+            "function jobs_replay_retained_union(", 1
+        )[1].split("function table_comparison_request(", 1)[0]
+
+        self.assertIn("automatic_sync_is_paused_for_user(current)", recovery_body)
+        self.assertIn("sourceClientName: 'server-union-bootstrap-v3'", recovery_body)
+        self.assertIn("sourceJobId: normalizedBatchId", recovery_body)
+        self.assertIn("'server-retained-union-recovery'", recovery_body)
+        self.assertIn("effective_agent_online(agent)", recovery_body)
+        self.assertIn("active_job_tables_for_client", recovery_body)
+        self.assertIn("retained table is not enabled", recovery_body)
+        self.assertEqual(recovery_body.count("direction: 'upload'"), 1)
+        self.assertEqual(recovery_body.count("direction: 'download'"), 1)
+
     def test_authoritative_full_snapshots_preserve_verification_checksum(self):
         source = read_text("business/control_plane.tru")
         upload_body = source.split(
