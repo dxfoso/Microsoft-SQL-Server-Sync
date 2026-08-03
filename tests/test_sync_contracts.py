@@ -1805,6 +1805,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function agent_data_export_poll", control_plane)
         self.assertIn("authenticatedClientPoll", control_plane)
         self.assertIn("agent_data_export_payload(agent, true, true)", control_plane)
+        self.assertIn("function authenticated_user_matches_client", control_plane)
+        self.assertIn("diagnostics upload state unavailable", control_plane)
+        self.assertIn("agent.dataExportRequestId", control_plane)
+        self.assertIn("requestId` is reserved by the TRU call envelope", control_plane)
         heartbeat_body = control_plane.split("function agents_heartbeat(", 1)[1].split(
             "function auto_sync_tick", 1
         )[0]

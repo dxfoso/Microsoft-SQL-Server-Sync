@@ -624,6 +624,17 @@ function normalize_user_name(value: string): string {
   return trimmed.toLowerCase();
 }
 
+function authenticated_user_client_name(current: map<json>): string {
+  if (current.username != null && string.from(current.username).trim().length != 0) {
+    return normalize_user_name(string.from(current.username));
+  }
+  return normalize_user_name(string.from(current.name));
+}
+
+function authenticated_user_matches_client(current: map<json>, clientName: string): bool {
+  return authenticated_user_client_name(current) == normalize_user_name(clientName);
+}
+
 function clamp_history_limit(value: int? = null): int {
   if (value == null || value < 1) {
     return 5;
@@ -6059,16 +6070,18 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
     }
   }
   const targetUser = find_user_by_identity(resolvedClientName);
-  if (targetUser != null && !can_manage_user(current, targetUser)) {
+  if (!authenticated_user_matches_client(current, resolvedClientName) && targetUser != null && !can_manage_user(current, targetUser)) {
     return raw_json_error(403, 'permission denied');
   }
   const agent = db.selectOne(Agent, { clientName: resolvedClientName });
   if (agent == null) {
     return raw_json_error(404, 'client not found');
   }
+  // `requestId` is reserved by the TRU call envelope. Use the single current
+  // export request persisted on the Agent row, as the other acknowledgements do.
   let acknowledgedRequestId = '';
-  if (requestId != null) {
-    acknowledgedRequestId = requestId.trim();
+  if (agent.dataExportRequestId != null) {
+    acknowledgedRequestId = string.from(agent.dataExportRequestId).trim();
   }
   if (acknowledgedRequestId.length == 0) {
     return raw_json_error(400, 'requestId is required');
@@ -6140,7 +6153,7 @@ function agent_diagnostics_upload(clientName: string? = null, requestId: string?
     resolvedClientName = normalize_user_name(clientName);
   }
   const targetUser = find_user_by_identity(resolvedClientName);
-  if (targetUser != null && !can_manage_user(current, targetUser)) {
+  if (!authenticated_user_matches_client(current, resolvedClientName) && targetUser != null && !can_manage_user(current, targetUser)) {
     return raw_json_error(403, 'permission denied');
   }
   let targetOwnerUserId = owner_namespace_for_user(current);
@@ -6160,7 +6173,7 @@ function agent_diagnostics_upload(clientName: string? = null, requestId: string?
   if (resolvedRequestId.length != 0) {
     resolvedRequestIdOrNull = resolvedRequestId;
   }
-  const updated = db.update(Agent, { clientName: resolvedClientName }, {
+  const updatedCount = db.updateMany(Agent, { clientName: resolvedClientName }, {
     diagnosticLastRequestId: resolvedRequestIdOrNull,
     diagnosticLastUploadedAt: now_iso(),
     diagnosticStatus: 'uploaded',
@@ -6168,8 +6181,12 @@ function agent_diagnostics_upload(clientName: string? = null, requestId: string?
     diagnosticPayload: truncate_text(payload, 64000),
     updatedAt: now_iso()
   });
-  if (updated == null) {
+  if (updatedCount == 0) {
     return raw_json_error(404, 'client not found');
+  }
+  const updated = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (updated == null) {
+    return raw_json_error(500, 'diagnostics upload state unavailable');
   }
   return {
     ok: true,
