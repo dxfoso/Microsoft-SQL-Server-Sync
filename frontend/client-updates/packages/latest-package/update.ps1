@@ -103,6 +103,63 @@ function Get-DefaultInstallDir {
     return Join-Path -Path $env:LOCALAPPDATA -ChildPath 'MicrosoftSqlServerSync\sync_windows_agent'
 }
 
+function Get-UpdateMutexName {
+    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(
+            ([System.IO.Path]::GetFullPath($TargetInstallDir)).ToLowerInvariant()
+        )
+        $hash = $sha256.ComputeHash($bytes)
+        $prefix = ([System.BitConverter]::ToString($hash)).Replace('-', '').Substring(0, 16)
+        return "Local\SqlSyncAgentUpdater_$prefix"
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function ConvertTo-ComparableClientVersion {
+    param([Parameter(Mandatory = $true)][string] $Value)
+
+    $match = [System.Text.RegularExpressions.Regex]::Match(
+        $Value.Trim(),
+        '^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?'
+    )
+    if (-not $match.Success) {
+        return $null
+    }
+    return @(
+        [int64] $match.Groups[1].Value,
+        [int64] $match.Groups[2].Value,
+        [int64] $match.Groups[3].Value,
+        $(if ($match.Groups[4].Success) { [int64] $match.Groups[4].Value } else { [int64] 0 })
+    )
+}
+
+function Compare-ClientVersions {
+    param(
+        [Parameter(Mandatory = $true)][string] $Left,
+        [Parameter(Mandatory = $true)][string] $Right
+    )
+
+    $leftParts = ConvertTo-ComparableClientVersion -Value $Left
+    $rightParts = ConvertTo-ComparableClientVersion -Value $Right
+    if ($null -eq $leftParts -or $null -eq $rightParts) {
+        return $null
+    }
+    for ($index = 0; $index -lt 4; $index++) {
+        if ($leftParts[$index] -lt $rightParts[$index]) {
+            return -1
+        }
+        if ($leftParts[$index] -gt $rightParts[$index]) {
+            return 1
+        }
+    }
+    return 0
+}
+
 function Format-UpdateBytes {
     param([int64] $Value)
 
@@ -266,158 +323,27 @@ function Test-PayloadInstalled {
     }
 }
 
-function Get-WatchdogScriptPath {
+function Get-SupervisorScriptPath {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
-    return Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1'
+    return Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_supervisor.ps1'
 }
 
-function Get-WatchdogScriptContent {
-@"
-param(
-    [switch] `$RunOnce
-)
-
-`$ErrorActionPreference = 'SilentlyContinue'
-Set-StrictMode -Version Latest
-
-`$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
-`$targetInstallDir = [System.IO.Path]::GetFullPath(`$scriptDir)
-`$executablePath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent.exe'
-`$updateScriptPath = Join-Path -Path `$targetInstallDir -ChildPath 'update.ps1'
-`$logPath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
-
-function Write-WatchdogLog {
-    param([string] `$Message)
-
-    try {
-        `$timestamp = [DateTime]::UtcNow.ToString('o')
-        Add-Content -LiteralPath `$logPath -Value "[`$timestamp] `$Message" -Encoding ASCII
-    } catch {
-    }
-}
-
-function Get-WatchdogMutexName {
-    param([string] `$InstallDir)
-
-    `$bytes = [System.Text.Encoding]::UTF8.GetBytes(`$InstallDir.ToLowerInvariant())
-    `$hash = [System.Security.Cryptography.SHA256]::HashData(`$bytes)
-    return 'Local\SqlSyncAgentWatchdog_' + [System.Convert]::ToHexString(`$hash).Substring(0, 16)
-}
-
-function Get-AgentProcesses {
-    param([string] `$InstallDir)
-
-    `$targetFull = [System.IO.Path]::GetFullPath(`$InstallDir).TrimEnd('\', '/')
-    `$targetPrefix = `$targetFull + [System.IO.Path]::DirectorySeparatorChar
-
-    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {
-            -not [string]::IsNullOrWhiteSpace(`$_.ExecutablePath) -and
-            ([System.IO.Path]::GetFullPath(`$_.ExecutablePath)).StartsWith(`$targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-        })
-}
-
-function Start-AgentProcess {
-    param(
-        [string] `$ExecutablePath,
-        [string] `$InstallDir
-    )
-
-    if (-not (Test-Path -LiteralPath `$ExecutablePath -PathType Leaf)) {
-        Write-WatchdogLog "Executable not found: `$ExecutablePath"
-        return
-    }
-
-    Write-WatchdogLog 'Starting sync_windows_agent.exe from watchdog.'
-    Start-Process -FilePath `$ExecutablePath -ArgumentList '--start-minimized' -WorkingDirectory `$InstallDir -WindowStyle Minimized -ErrorAction SilentlyContinue | Out-Null
-}
-
-function Ensure-AgentRunning {
-    param(
-        [string] `$ExecutablePath,
-        [string] `$InstallDir
-    )
-
-    `$processes = @(Get-AgentProcesses -InstallDir `$InstallDir)
-    if (`$processes.Count -gt 0) {
-        return
-    }
-
-    Start-AgentProcess -ExecutablePath `$ExecutablePath -InstallDir `$InstallDir
-}
-
-function Invoke-AutoUpdate {
-    param(
-        [string] `$UpdateScriptPath,
-        [string] `$InstallDir
-    )
-
-    if (-not (Test-Path -LiteralPath `$UpdateScriptPath -PathType Leaf)) {
-        return
-    }
-
-    try {
-        Write-WatchdogLog 'No client process detected; checking the live update manifest.'
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden `
-            -File `$UpdateScriptPath -InstallDir `$InstallDir -NoStart
-        if (`$LASTEXITCODE -ne 0) {
-            Write-WatchdogLog "Independent updater exited with code `$LASTEXITCODE."
-        }
-        Start-Sleep -Seconds 5
-    } catch {
-        Write-WatchdogLog "Independent updater failed: `$(`$_.Exception.Message)"
-    }
-}
-
-`$mutexName = Get-WatchdogMutexName -InstallDir `$targetInstallDir
-`$createdNew = `$false
-`$mutex = [System.Threading.Mutex]::new(`$true, `$mutexName, [ref] `$createdNew)
-if (-not `$createdNew) {
-    exit 0
-}
-
-try {
-    Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
-    if (`$RunOnce) {
-        exit 0
-    }
-
-    Write-WatchdogLog 'Watchdog loop started.'
-    while (`$true) {
-        Start-Sleep -Seconds 30
-        if (@(Get-AgentProcesses -InstallDir `$targetInstallDir).Count -eq 0) {
-            Invoke-AutoUpdate -UpdateScriptPath `$updateScriptPath -InstallDir `$targetInstallDir
-        }
-        Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
-    }
-} finally {
-    try {
-        `$mutex.ReleaseMutex() | Out-Null
-    } catch {
-    }
-    `$mutex.Dispose()
-}
-"@
-}
-
-function Write-WatchdogScript {
+function Stop-SupervisorProcesses {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
-    $watchdogPath = Get-WatchdogScriptPath -TargetInstallDir $TargetInstallDir
-    Set-Content -LiteralPath $watchdogPath -Value (Get-WatchdogScriptContent) -Encoding ASCII
-    return $watchdogPath
-}
-
-function Stop-WatchdogProcesses {
-    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
-
-    $watchdogPath = [System.IO.Path]::GetFullPath((Get-WatchdogScriptPath -TargetInstallDir $TargetInstallDir))
+    $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+    $legacyWatchdogPath = [System.IO.Path]::GetFullPath(
+        (Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1')
+    )
     $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
             ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
             -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
-            $_.CommandLine.IndexOf($watchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            (
+                $_.CommandLine.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $_.CommandLine.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            )
         })
 
     foreach ($process in $powershellProcesses) {
@@ -425,27 +351,29 @@ function Stop-WatchdogProcesses {
     }
 }
 
-function Start-WatchdogProcess {
+function Start-SupervisorProcess {
     param(
-        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
-        [switch] $RunOnce
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir
     )
 
-    $watchdogPath = Write-WatchdogScript -TargetInstallDir $TargetInstallDir
+    $supervisorPath = Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir
+    if (-not (Test-Path -LiteralPath $supervisorPath -PathType Leaf)) {
+        throw "Independent supervisor is missing: $supervisorPath"
+    }
+    $quotedSupervisorPath = "'" + $supervisorPath.Replace("'", "''") + "'"
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes("& $quotedSupervisorPath")
+    )
     $arguments = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-WindowStyle', 'Hidden',
-        '-File', $watchdogPath
+        '-EncodedCommand', $encodedCommand
     )
-    if ($RunOnce) {
-        $arguments += '-RunOnce'
-    }
-
     Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
 }
 
-function Update-StartupShortcutToWatchdog {
+function Update-StartupShortcutToSupervisor {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
     $appData = $env:APPDATA
@@ -458,20 +386,23 @@ function Update-StartupShortcutToWatchdog {
         return
     }
 
-    $watchdogPath = Write-WatchdogScript -TargetInstallDir $TargetInstallDir
+    $supervisorPath = Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir
+    if (-not (Test-Path -LiteralPath $supervisorPath -PathType Leaf)) {
+        throw "Independent supervisor is missing: $supervisorPath"
+    }
     $powerShellPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = @"
 `$ErrorActionPreference = 'Stop'
 `$shortcutPath = '$($shortcutPath.Replace("'", "''"))'
 `$targetPath = '$($powerShellPath.Replace("'", "''"))'
 `$workingDirectory = '$($TargetInstallDir.Replace("'", "''"))'
-`$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($watchdogPath.Replace("'", "''"))'''
+`$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($supervisorPath.Replace("'", "''"))'''
 `$shell = New-Object -ComObject WScript.Shell
 `$shortcut = `$shell.CreateShortcut(`$shortcutPath)
 `$shortcut.TargetPath = `$targetPath
 `$shortcut.Arguments = `$arguments
 `$shortcut.WorkingDirectory = `$workingDirectory
-`$shortcut.Description = 'SQL Sync Agent'
+`$shortcut.Description = 'SQL Sync Agent Supervisor'
 `$shortcut.Save()
 "@
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $script | Out-Null
@@ -486,16 +417,9 @@ function Start-UpdatedClient {
 
     Write-UpdateLog -Message "Starting updated client executable: $ExecutablePath" -LogPath $LogPath
     try {
-        Stop-WatchdogProcesses -TargetInstallDir $InstallDir
-        $startedProcess = Start-Process -FilePath $ExecutablePath `
-            -ArgumentList '--start-minimized' `
-            -WorkingDirectory $InstallDir `
-            -WindowStyle Minimized `
-            -PassThru `
-            -ErrorAction Stop
-        Write-UpdateLog -Message "Started updated client process pid=$($startedProcess.Id)." -LogPath $LogPath
-        Start-WatchdogProcess -TargetInstallDir $InstallDir
-        Write-UpdateLog -Message 'Started watchdog process for updated client.' -LogPath $LogPath
+        Stop-SupervisorProcesses -TargetInstallDir $InstallDir
+        Start-SupervisorProcess -TargetInstallDir $InstallDir
+        Write-UpdateLog -Message 'Started independent supervisor for updated client.' -LogPath $LogPath
     }
     catch {
         Write-UpdateLog -Message "Failed to start updated client executable: $($_.Exception.Message)" -LogPath $LogPath
@@ -711,18 +635,11 @@ function Start-UpdatedClient {
         [Parameter(Mandatory = $true)][string] $LogPath
     )
 
-    Write-UpdateLog -Message "Starting updated client executable: $ExecutablePath" -LogPath $LogPath
+    Write-UpdateLog -Message "Starting updated client through independent supervisor: $ExecutablePath" -LogPath $LogPath
     try {
-        Stop-WatchdogProcesses -TargetInstallDir $InstallDir
-        $startedProcess = Start-Process -FilePath $ExecutablePath `
-            -ArgumentList '--start-minimized' `
-            -WorkingDirectory $InstallDir `
-            -WindowStyle Minimized `
-            -PassThru `
-            -ErrorAction Stop
-        Write-UpdateLog -Message "Started updated client process pid=$($startedProcess.Id)." -LogPath $LogPath
-        Start-WatchdogProcess -TargetInstallDir $InstallDir
-        Write-UpdateLog -Message 'Started watchdog process for updated client.' -LogPath $LogPath
+        Stop-SupervisorProcesses -TargetInstallDir $InstallDir
+        Start-SupervisorProcess -TargetInstallDir $InstallDir
+        Write-UpdateLog -Message 'Started independent supervisor for updated client.' -LogPath $LogPath
     }
     catch {
         Write-UpdateLog -Message "Failed to start updated client executable: $($_.Exception.Message)" -LogPath $LogPath
@@ -730,131 +647,25 @@ function Start-UpdatedClient {
     }
 }
 
-function Get-WatchdogScriptPath {
+function Get-SupervisorScriptPath {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
-    return Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1'
+    return Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_supervisor.ps1'
 }
 
-function Get-WatchdogScriptContent {
-@"
-param(
-    [switch] `$RunOnce
-)
-
-`$ErrorActionPreference = 'SilentlyContinue'
-Set-StrictMode -Version Latest
-
-`$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
-`$targetInstallDir = [System.IO.Path]::GetFullPath(`$scriptDir)
-`$executablePath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent.exe'
-`$logPath = Join-Path -Path `$targetInstallDir -ChildPath 'sync_windows_agent_watchdog.log'
-
-function Write-WatchdogLog {
-    param([string] $Message)
-
-    try {
-        `$timestamp = [DateTime]::UtcNow.ToString('o')
-        Add-Content -LiteralPath `$logPath -Value "[`$timestamp] `$Message" -Encoding ASCII
-    } catch {
-    }
-}
-
-function Get-WatchdogMutexName {
-    param([string] $InstallDir)
-
-    `$bytes = [System.Text.Encoding]::UTF8.GetBytes(`$InstallDir.ToLowerInvariant())
-    `$hash = [System.Security.Cryptography.SHA256]::HashData(`$bytes)
-    return 'Local\SqlSyncAgentWatchdog_' + [System.Convert]::ToHexString(`$hash).Substring(0, 16)
-}
-
-function Get-AgentProcesses {
-    param([string] $InstallDir)
-
-    `$targetFull = [System.IO.Path]::GetFullPath(`$InstallDir).TrimEnd('\', '/')
-    `$targetPrefix = `$targetFull + [System.IO.Path]::DirectorySeparatorChar
-
-    return @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {
-            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
-            ([System.IO.Path]::GetFullPath(`$_.ExecutablePath)).StartsWith(`$targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-        })
-}
-
-function Start-AgentProcess {
-    param(
-        [string] $ExecutablePath,
-        [string] $InstallDir
-    )
-
-    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
-        Write-WatchdogLog "Executable not found: `$ExecutablePath"
-        return
-    }
-
-    Write-WatchdogLog 'Starting sync_windows_agent.exe from watchdog.'
-    Start-Process -FilePath $ExecutablePath -ArgumentList '--start-minimized' -WorkingDirectory $InstallDir -WindowStyle Minimized -ErrorAction SilentlyContinue | Out-Null
-}
-
-function Ensure-AgentRunning {
-    param(
-        [string] $ExecutablePath,
-        [string] $InstallDir
-    )
-
-    `$processes = @(Get-AgentProcesses -InstallDir `$InstallDir)
-    if (`$processes.Count -gt 0) {
-        return
-    }
-
-    Start-AgentProcess -ExecutablePath $ExecutablePath -InstallDir $InstallDir
-}
-
-`$mutexName = Get-WatchdogMutexName -InstallDir `$targetInstallDir
-`$createdNew = `$false
-`$mutex = [System.Threading.Mutex]::new(`$true, `$mutexName, [ref] `$createdNew)
-if (-not `$createdNew) {
-    exit 0
-}
-
-try {
-    Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
-    if (`$RunOnce) {
-        exit 0
-    }
-
-    Write-WatchdogLog 'Watchdog loop started.'
-    while ($true) {
-        Start-Sleep -Seconds 30
-        Ensure-AgentRunning -ExecutablePath `$executablePath -InstallDir `$targetInstallDir
-    }
-} finally {
-    try {
-        `$mutex.ReleaseMutex() | Out-Null
-    } catch {
-    }
-    `$mutex.Dispose()
-}
-"@
-}
-
-function Write-WatchdogScript {
+function Stop-SupervisorProcesses {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
-    $watchdogPath = Get-WatchdogScriptPath -TargetInstallDir $TargetInstallDir
-    Set-Content -LiteralPath $watchdogPath -Value (Get-WatchdogScriptContent) -Encoding ASCII
-    return $watchdogPath
-}
-
-function Stop-WatchdogProcesses {
-    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
-
-    $watchdogPath = [System.IO.Path]::GetFullPath((Get-WatchdogScriptPath -TargetInstallDir $TargetInstallDir))
+    $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+    $legacyWatchdogPath = [System.IO.Path]::GetFullPath((Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1'))
     $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
             ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
             -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
-            $_.CommandLine.IndexOf($watchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            (
+                $_.CommandLine.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $_.CommandLine.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            )
         })
 
     foreach ($process in $powershellProcesses) {
@@ -862,14 +673,21 @@ function Stop-WatchdogProcesses {
     }
 }
 
-function Start-WatchdogProcess {
+function Start-SupervisorProcess {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
-    $watchdogPath = Write-WatchdogScript -TargetInstallDir $TargetInstallDir
-    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $watchdogPath) -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    $supervisorPath = Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir
+    if (-not (Test-Path -LiteralPath $supervisorPath -PathType Leaf)) {
+        throw "Independent supervisor is missing: $supervisorPath"
+    }
+    $quotedSupervisorPath = "'" + $supervisorPath.Replace("'", "''") + "'"
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes("& $quotedSupervisorPath")
+    )
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', $encodedCommand) -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
 }
 
-function Update-StartupShortcutToWatchdog {
+function Update-StartupShortcutToSupervisor {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
     $appData = $env:APPDATA
@@ -882,25 +700,27 @@ function Update-StartupShortcutToWatchdog {
         return
     }
 
-    $watchdogPath = Write-WatchdogScript -TargetInstallDir $TargetInstallDir
+    $supervisorPath = Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir
+    if (-not (Test-Path -LiteralPath $supervisorPath -PathType Leaf)) {
+        throw "Independent supervisor is missing: $supervisorPath"
+    }
     $powerShellPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = @"
 `$ErrorActionPreference = 'Stop'
 `$shortcutPath = '$($shortcutPath.Replace("'", "''"))'
 `$targetPath = '$($powerShellPath.Replace("'", "''"))'
 `$workingDirectory = '$($TargetInstallDir.Replace("'", "''"))'
-`$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($watchdogPath.Replace("'", "''"))'''
+`$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''$($supervisorPath.Replace("'", "''"))'''
 `$shell = New-Object -ComObject WScript.Shell
 `$shortcut = `$shell.CreateShortcut(`$shortcutPath)
 `$shortcut.TargetPath = `$targetPath
 `$shortcut.Arguments = `$arguments
 `$shortcut.WorkingDirectory = `$workingDirectory
-`$shortcut.Description = 'SQL Sync Agent'
+`$shortcut.Description = 'SQL Sync Agent Supervisor'
 `$shortcut.Save()
 "@
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $script | Out-Null
 }
-
 function Write-UpdateLog {
     param(
         [Parameter(Mandatory = $true)][string] $Message,
@@ -998,6 +818,8 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
     Start-Sleep -Milliseconds 250
 }
 
+Write-UpdateLog -Message "Stopping the supervisor before replacing client files." -LogPath $logPath
+Stop-SupervisorProcesses -TargetInstallDir $InstallDir
 Write-UpdateLog -Message "Ensuring the prior client instance from this install is stopped before install." -LogPath $logPath
 Stop-AgentProcesses -TargetInstallDir $InstallDir
 Start-Sleep -Milliseconds 500
@@ -1021,8 +843,7 @@ Write-UpdateLog -Message "Copying payload into install dir." -LogPath $logPath
 Get-ChildItem -LiteralPath $PayloadDir -Force |
     Copy-Item -Destination $InstallDir -Recurse -Force
 Test-PayloadInstalled -PayloadDir $PayloadDir -InstallDir $InstallDir
-Write-WatchdogScript -TargetInstallDir $InstallDir | Out-Null
-Update-StartupShortcutToWatchdog -TargetInstallDir $InstallDir
+Update-StartupShortcutToSupervisor -TargetInstallDir $InstallDir
 
 $installedExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
 if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
@@ -1048,43 +869,32 @@ Write-UpdateLog -Message "Finalize helper cleaning work root: $WorkRoot" -LogPat
 Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
 '@
 
-    $watchdogFunctionStart = $helper.IndexOf('function Get-WatchdogScriptContent {')
-    $watchdogTemplateStart = $helper.IndexOf('@"', $watchdogFunctionStart)
-    $watchdogTemplateEnd = $helper.IndexOf('"@', $watchdogTemplateStart + 2)
-    if ($watchdogFunctionStart -lt 0 -or $watchdogTemplateStart -lt 0 -or $watchdogTemplateEnd -lt 0) {
-        throw 'Could not isolate the generated watchdog template.'
-    }
-
-    $watchdogBody = $helper.Substring(
-        $watchdogTemplateStart + 2,
-        $watchdogTemplateEnd - ($watchdogTemplateStart + 2)
-    ).Replace('`$', '$')
-    $helper = $helper.Substring(0, $watchdogTemplateStart) +
-        "@'" +
-        $watchdogBody +
-        "'@" +
-        $helper.Substring($watchdogTemplateEnd + 2)
-
     Set-Content -LiteralPath $helperPath -Value $helper -Encoding ASCII
 
+    $quotedHelperPath = "'" + $helperPath.Replace("'", "''") + "'"
+    $quotedPayloadDir = "'" + $PayloadDir.Replace("'", "''") + "'"
+    $quotedInstallDir = "'" + $TargetInstallDir.Replace("'", "''") + "'"
+    $quotedWorkRoot = "'" + $WorkRoot.Replace("'", "''") + "'"
+    $deferredCommand = "& $quotedHelperPath -PayloadDir $quotedPayloadDir -InstallDir $quotedInstallDir -WorkRoot $quotedWorkRoot -ParentProcessId $ParentProcessId"
+    if (-not [string]::IsNullOrWhiteSpace($DeleteListPath)) {
+        $quotedDeleteListPath = "'" + $DeleteListPath.Replace("'", "''") + "'"
+        $deferredCommand += " -DeleteListPath $quotedDeleteListPath"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $quotedVersion = "'" + $Version.Replace("'", "''") + "'"
+        $deferredCommand += " -Version $quotedVersion"
+    }
+    if ($NoStart) {
+        $deferredCommand += ' -NoStart'
+    }
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($deferredCommand)
+    )
     $startArgs = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
-        '-File', $helperPath,
-        '-PayloadDir', $PayloadDir,
-        '-InstallDir', $TargetInstallDir,
-        '-WorkRoot', $WorkRoot,
-        '-ParentProcessId', $ParentProcessId
+        '-EncodedCommand', $encodedCommand
     )
-    if (-not [string]::IsNullOrWhiteSpace($DeleteListPath)) {
-        $startArgs += @('-DeleteListPath', $DeleteListPath)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $startArgs += @('-Version', $Version)
-    }
-    if ($NoStart) {
-        $startArgs += '-NoStart'
-    }
 
     Start-Process -FilePath 'powershell.exe' -ArgumentList $startArgs -WorkingDirectory $WorkRoot -WindowStyle Hidden
 }
@@ -1097,6 +907,16 @@ $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $mainLogPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
 Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir noStart=$NoStart" -LogPath $mainLogPath
 $manifest = Invoke-UpdateRestMethod -Uri $ManifestUrl
+$installedExeForVersion = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
+if (Test-Path -LiteralPath $installedExeForVersion -PathType Leaf) {
+    $installedVersion = [string] (Get-Item -LiteralPath $installedExeForVersion).VersionInfo.ProductVersion
+    $targetVersion = [string] $manifest.version
+    $versionComparison = Compare-ClientVersions -Left $targetVersion -Right $installedVersion
+    if ($null -ne $versionComparison -and $versionComparison -lt 0) {
+        Write-UpdateLog -Message "Skipping downgrade from installed version $installedVersion to target version $targetVersion." -LogPath $mainLogPath
+        return
+    }
+}
 $filesManifestUrlValue = [string] $manifest.filesManifestUrl
 $filesManifestUrl = ''
 if (-not [string]::IsNullOrWhiteSpace($filesManifestUrlValue)) {
@@ -1121,6 +941,20 @@ $zipPath = Join-Path -Path $workRoot -ChildPath 'sync_windows_agent.zip'
 $extractDir = Join-Path -Path $workRoot -ChildPath 'extract'
 $payloadDir = Join-Path -Path $workRoot -ChildPath 'payload'
 $deleteListPath = Join-Path -Path $workRoot -ChildPath 'delete.txt'
+
+$updateMutex = [System.Threading.Mutex]::new($false, (Get-UpdateMutexName -TargetInstallDir $InstallDir))
+$updateMutexAcquired = $false
+try {
+    $updateMutexAcquired = $updateMutex.WaitOne(0)
+}
+catch [System.Threading.AbandonedMutexException] {
+    $updateMutexAcquired = $true
+}
+if (-not $updateMutexAcquired) {
+    Write-UpdateLog -Message 'Another updater owns this installation; skipping the duplicate update request.' -LogPath $mainLogPath
+    $updateMutex.Dispose()
+    return
+}
 
 New-Item -Path $workRoot -ItemType Directory -Force | Out-Null
 try {
@@ -1185,12 +1019,13 @@ try {
                 Write-UpdateLog -Message "Client files already match target version $($manifest.version)." -LogPath $mainLogPath
                 $currentExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
                 if (-not $NoStart -and (Test-Path -LiteralPath $currentExe -PathType Leaf)) {
-                    Write-UpdateLog -Message 'No installation required. Relaunching the current client.' -LogPath $mainLogPath
-                    Start-UpdatedClient -ExecutablePath $currentExe -InstallDir $InstallDir -LogPath $mainLogPath
+                    Write-UpdateLog -Message 'No installation required. The current client and supervisor remain running.' -LogPath $mainLogPath
                 }
                 return
             }
 
+            Write-UpdateLog -Message 'Stopping the supervisor before scheduling differential replacement.' -LogPath $mainLogPath
+            Stop-SupervisorProcesses -TargetInstallDir $InstallDir
             Stop-AgentProcesses -TargetInstallDir $InstallDir
             Write-UpdateLog -Message "Scheduling differential install. files=$downloadCount bytes=$downloadBytes deletes=$($staleManagedPaths.Count)" -LogPath $mainLogPath
             Start-DeferredInstall `
@@ -1227,6 +1062,8 @@ try {
         throw "Downloaded package does not contain sync_windows_agent.exe at the expected path: $payloadExe"
     }
 
+    Write-UpdateLog -Message 'Stopping the supervisor before scheduling package replacement.' -LogPath $mainLogPath
+    Stop-SupervisorProcesses -TargetInstallDir $InstallDir
     Stop-AgentProcesses -TargetInstallDir $InstallDir
     Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath
     Start-DeferredInstall `
@@ -1258,4 +1095,12 @@ finally {
         Write-UpdateLog -Message "Cleaning work root immediately: $workRoot" -LogPath $mainLogPath
         Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+    if ($updateMutexAcquired) {
+        try {
+            $updateMutex.ReleaseMutex() | Out-Null
+        }
+        catch {
+        }
+    }
+    $updateMutex.Dispose()
 }
