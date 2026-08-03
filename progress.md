@@ -1,1 +1,1 @@
-100% - Protocol v4 explicit-delete safety is deployed and verified by client, contract, three-client SQL, fault, scale, offline-catch-up, soak, and isolated live fake-client tests. Windows client `1.0.221+225` is current on the three real clients; real sync remains paused with zero active jobs.
+65% - Updater/export changes passed SQL 2017/2019/2022, atomic, fuzz, scale, and soak tests. Remaining: publish, copy/restore each live `AmnDb048`, verify fake-client safety. Real sync stays paused.

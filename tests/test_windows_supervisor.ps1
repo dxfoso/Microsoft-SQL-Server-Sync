@@ -18,14 +18,15 @@ if (-not $testRoot.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnor
 }
 
 $supervisorProcess = $null
-New-Item -Path $testRoot -ItemType Directory -Force | Out-Null
+$testInstall = Join-Path $testRoot 'portable client with spaces'
+New-Item -Path $testInstall -ItemType Directory -Force | Out-Null
 try {
-    $testSupervisor = Join-Path $testRoot 'sync_windows_agent_supervisor.ps1'
+    $testSupervisor = Join-Path $testInstall 'sync_windows_agent_supervisor.ps1'
     Copy-Item -LiteralPath $SupervisorPath -Destination $testSupervisor -Force
     @'
 param([string] $ManifestUrl, [string] $InstallDir, [switch] $NoStart)
 exit 0
-'@ | Set-Content -LiteralPath (Join-Path $testRoot 'update.ps1') -Encoding ASCII
+'@ | Set-Content -LiteralPath (Join-Path $testInstall 'update.ps1') -Encoding ASCII
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass `
         -File $testSupervisor `
@@ -36,7 +37,7 @@ exit 0
         throw "Supervisor RunOnce failed with exit code $LASTEXITCODE."
     }
 
-    $requestLog = Get-Content -LiteralPath (Join-Path $testRoot 'sync_windows_agent_update_requests.log') -Raw
+    $requestLog = Get-Content -LiteralPath (Join-Path $testInstall 'sync_windows_agent_update_requests.log') -Raw
     if ($requestLog -notmatch 'Update request started' -or $requestLog -notmatch 'exitCode=0') {
         throw 'The independent request log did not record the update lifecycle.'
     }
@@ -46,11 +47,11 @@ exit 0
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
             '-WindowStyle', 'Hidden',
-            '-File', $testSupervisor,
+            '-File', ('"{0}"' -f $testSupervisor),
             '-SkipUpdate',
             '-SkipObsoleteRetirement'
         ) `
-        -WorkingDirectory $testRoot `
+        -WorkingDirectory $testInstall `
         -WindowStyle Hidden `
         -PassThru
     Start-Sleep -Seconds 2
@@ -58,7 +59,7 @@ exit 0
         throw "Supervisor exited while the client executable was absent. exit=$($supervisorProcess.ExitCode)"
     }
 
-    $supervisorLog = Get-Content -LiteralPath (Join-Path $testRoot 'sync_windows_agent_supervisor.log') -Raw
+    $supervisorLog = Get-Content -LiteralPath (Join-Path $testInstall 'sync_windows_agent_supervisor.log') -Raw
     if ($supervisorLog -notmatch 'Agent executable is unavailable; supervisor remains active') {
         throw 'The supervisor did not log missing-client survival.'
     }

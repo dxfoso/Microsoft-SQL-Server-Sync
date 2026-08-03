@@ -1532,6 +1532,26 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("job.sourceClientName == 'server-union-bootstrap-v3'", agent_page)
         self.assertIn("row['__sync_modified_at_utc'] = '1970-01-01T00:00:00.000Z'", agent_page)
 
+    def test_read_only_data_export_credentials_are_heartbeat_only(self):
+        source = read_text("business/control_plane.tru")
+        public_payload = source.split("function public_agent_payload(", 1)[1].split(
+            "function diagnostic_request_pending", 1
+        )[0]
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick", 1
+        )[0]
+        request = source.split("function agent_data_export_request(", 1)[1].split(
+            "function agent_data_export_ack", 1
+        )[0]
+
+        self.assertIn("dataExport: agent_data_export_payload(agent)", public_payload)
+        self.assertNotIn("includeUploadCredentials: true", public_payload)
+        self.assertIn("agent_data_export_payload(nextAgent, true)", heartbeat)
+        self.assertIn("export database must match the client selected database", request)
+        self.assertIn("https://sync.velvet-leaf.com/private-export", request)
+        self.assertIn("dataExportUploadToken", source)
+        self.assertIn("terminalStatus", source)
+
 
 if __name__ == "__main__":
     unittest.main()

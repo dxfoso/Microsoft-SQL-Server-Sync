@@ -73,6 +73,27 @@ DART = native_tool("dart")
 COMPOSE = [DOCKER, "compose", "-f", str(HARNESS_DIR / "compose.yaml")]
 
 
+def go_sqlcmd_version(executable):
+    if not executable:
+        return ""
+    result = subprocess.run(
+        [executable, "--version"],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    return f"{result.stdout}\n{result.stderr}".strip() if result.returncode == 0 else ""
+
+
+SQLCMD_GO_VERSION = go_sqlcmd_version(SQLCMD)
+SQLCMD_TLS_ARGS = (
+    ["-N", "disable"]
+    if SQLCMD_GO_VERSION and ":2017-" in os.environ.get("SQL_SYNC_TEST_IMAGE", "")
+    else []
+)
+
+
 def tool_supports_option(executable, option):
     if not executable:
         return False
@@ -115,6 +136,7 @@ def run(command, *, input_text=None, cwd=ROOT, check=True):
 def sqlcmd(sql, *, database="master", check=True):
     command = [
         SQLCMD, "-C", "-S", SQL_SERVER, "-U", SQL_USER, "-P", PASSWORD,
+        *SQLCMD_TLS_ARGS,
         "-d", database, "-b", "-r", "1",
         *(["-f", "65001"] if SQLCMD_SUPPORTS_INPUT_CODEPAGE else []),
         "-h", "-1", "-W", "-Q", sql,
@@ -133,6 +155,7 @@ def sqlcmd_script(sql, *, database="master", check=True):
     try:
         command = [
             SQLCMD, "-C", "-S", SQL_SERVER, "-U", SQL_USER, "-P", PASSWORD,
+            *SQLCMD_TLS_ARGS,
             "-d", database, "-b", "-r", "1",
             *(["-f", "65001"] if SQLCMD_SUPPORTS_INPUT_CODEPAGE else []),
             "-h", "-1",
@@ -343,6 +366,7 @@ def generated_sql_command(sql_path, *, host_name=None):
         SQL_USER,
         "-P",
         PASSWORD,
+        *SQLCMD_TLS_ARGS,
         "-d",
         "master",
         "-b",

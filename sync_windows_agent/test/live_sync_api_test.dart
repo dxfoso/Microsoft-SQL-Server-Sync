@@ -408,6 +408,90 @@ void main() {
     },
   );
 
+  test(
+    'heartbeat and acknowledgement carry private data export metadata',
+    () async {
+      final scripted = _ScriptedClient(
+        responseForRequest: (name, args, callIndex) {
+          if (name == 'agents_heartbeat') {
+            return (
+              statusCode: 200,
+              body: {
+                'status': 'success',
+                'value': {
+                  'dataExport': {
+                    'pending': true,
+                    'requestId': 'export-1',
+                    'database': 'AmnDb048',
+                    'uploadUrl': 'https://sync.velvet-leaf.com/private-export',
+                    'uploadToken': '0123456789abcdef0123456789abcdef',
+                    'status': 'requested',
+                  },
+                },
+              },
+            );
+          }
+          expect(name, 'agent_data_export_ack');
+          expect(args['bytes'], 4096);
+          expect(args['sha256'], 'a' * 64);
+          expect(args['chunkCount'], 1);
+          return (
+            statusCode: 200,
+            body: {
+              'status': 'success',
+              'value': {
+                'dataExport': {
+                  'requestId': 'export-1',
+                  'database': 'AmnDb048',
+                  'status': 'completed',
+                  'bytes': 4096,
+                  'sha256': 'a' * 64,
+                  'chunkCount': 1,
+                },
+              },
+            },
+          );
+        },
+      );
+      final api = AgentControlPlaneClient(
+        client: scripted,
+        baseUrl: 'https://example.com/call',
+      );
+      final heartbeat = await api.heartbeat(
+        clientName: 'c1',
+        machineName: 'machine',
+        historyLimit: 5,
+        autoSyncIntervalMinutes: 15,
+        server: '.',
+        database: 'AmnDb048',
+        replicationUseWindowsAuth: true,
+        replicationUser: '',
+        replicationPassword: '',
+        serverConnected: true,
+        sqlConnected: true,
+        selectedTable: null,
+        tables: const {},
+        tableRelationships: const [],
+        clientVersion: '1.0.222+226',
+      );
+      expect(heartbeat.dataExport.pending, isTrue);
+      expect(heartbeat.dataExport.database, 'AmnDb048');
+      expect(heartbeat.dataExport.uploadToken, hasLength(32));
+
+      final acknowledged = await api.acknowledgeDataExport(
+        clientName: 'c1',
+        requestId: 'export-1',
+        status: 'completed',
+        bytes: 4096,
+        sha256: 'a' * 64,
+        chunkCount: 1,
+      );
+      expect(acknowledged.status, 'completed');
+      expect(acknowledged.bytes, 4096);
+      expect(acknowledged.chunkCount, 1);
+    },
+  );
+
   test('heartbeat estimates the server clock offset', () async {
     final client = AgentControlPlaneClient(
       client: _DelayedClient(

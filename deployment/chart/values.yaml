@@ -27,6 +27,7 @@ certManager:
 frontend:
   replicas: 1
   image: registry.cloud.divclouds.com/microsoft-sql-server-sync/frontend:dev
+  privateExportSecretName: ""
   clientUpdates:
     size: 2Gi
     storageClassName: ""

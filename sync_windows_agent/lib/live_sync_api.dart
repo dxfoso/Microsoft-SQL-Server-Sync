@@ -651,6 +651,13 @@ class AgentControlPlaneClient {
                 'Unexpected heartbeat payload.',
               )
               : const RemoteAgentWindowAction(),
+      dataExport:
+          decoded['dataExport'] is Map
+              ? _parseRemoteAgentDataExportPayload(
+                decoded['dataExport'],
+                'Unexpected heartbeat payload.',
+              )
+              : const RemoteAgentDataExport(),
       serverClockSynchronized: serverTimeUtc != null,
       serverClockOffset: serverClockOffset,
       heartbeatRoundTrip: roundTrip,
@@ -733,6 +740,35 @@ class AgentControlPlaneClient {
     return _parseRemoteAgentWindowActionPayload(
       response['windowAction'],
       'Unexpected window action acknowledgement payload.',
+    );
+  }
+
+  Future<RemoteAgentDataExport> acknowledgeDataExport({
+    required String clientName,
+    String? requestId,
+    required String status,
+    String message = '',
+    int bytes = 0,
+    String sha256 = '',
+    int chunkCount = 0,
+  }) async {
+    final response = await _invokeFunction('agent_data_export_ack', {
+      'clientName': clientName,
+      'requestId': requestId,
+      'status': status,
+      'message': message,
+      'bytes': bytes,
+      'sha256': sha256,
+      'chunkCount': chunkCount,
+    }, 'acknowledging read-only data export');
+    if (response is! Map || response['dataExport'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected data export acknowledgement payload.',
+      );
+    }
+    return _parseRemoteAgentDataExportPayload(
+      response['dataExport'],
+      'Unexpected data export acknowledgement payload.',
     );
   }
 
@@ -1544,6 +1580,22 @@ class AgentControlPlaneClient {
     }
   }
 
+  RemoteAgentDataExport _parseRemoteAgentDataExportPayload(
+    dynamic response,
+    String message,
+  ) {
+    if (response is! Map) {
+      throw AgentControlPlaneException(message);
+    }
+    try {
+      return RemoteAgentDataExport.fromJson(
+        Map<String, dynamic>.from(response),
+      );
+    } catch (_) {
+      throw AgentControlPlaneException(message);
+    }
+  }
+
   RemoteSnapshot _parseSnapshotPayload(dynamic response, String message) {
     if (response is! Map) {
       throw AgentControlPlaneException(message);
@@ -1669,6 +1721,7 @@ class HeartbeatResult {
     required this.diagnostics,
     required this.clientUpdate,
     required this.windowAction,
+    required this.dataExport,
     required this.serverClockSynchronized,
     required this.serverClockOffset,
     required this.heartbeatRoundTrip,
@@ -1681,6 +1734,7 @@ class HeartbeatResult {
   final RemoteAgentDiagnostics diagnostics;
   final RemoteAgentClientUpdate clientUpdate;
   final RemoteAgentWindowAction windowAction;
+  final RemoteAgentDataExport dataExport;
   final bool serverClockSynchronized;
   final Duration serverClockOffset;
   final Duration heartbeatRoundTrip;
@@ -1871,6 +1925,59 @@ class RemoteAgentWindowAction {
       acknowledgedAt: json['acknowledgedAt'] as String?,
       status: json['status'] as String? ?? 'idle',
       message: json['message'] as String? ?? '',
+    );
+  }
+}
+
+class RemoteAgentDataExport {
+  const RemoteAgentDataExport({
+    this.pending = false,
+    this.requestId,
+    this.requestedAt,
+    this.requestedByUserId,
+    this.database,
+    this.uploadUrl,
+    this.uploadToken,
+    this.lastRequestId,
+    this.acknowledgedAt,
+    this.status = 'idle',
+    this.message = '',
+    this.bytes = 0,
+    this.sha256 = '',
+    this.chunkCount = 0,
+  });
+
+  final bool pending;
+  final String? requestId;
+  final String? requestedAt;
+  final String? requestedByUserId;
+  final String? database;
+  final String? uploadUrl;
+  final String? uploadToken;
+  final String? lastRequestId;
+  final String? acknowledgedAt;
+  final String status;
+  final String message;
+  final int bytes;
+  final String sha256;
+  final int chunkCount;
+
+  factory RemoteAgentDataExport.fromJson(Map<String, dynamic> json) {
+    return RemoteAgentDataExport(
+      pending: json['pending'] as bool? ?? false,
+      requestId: json['requestId'] as String?,
+      requestedAt: json['requestedAt'] as String?,
+      requestedByUserId: json['requestedByUserId'] as String?,
+      database: json['database'] as String?,
+      uploadUrl: json['uploadUrl'] as String?,
+      uploadToken: json['uploadToken'] as String?,
+      lastRequestId: json['lastRequestId'] as String?,
+      acknowledgedAt: json['acknowledgedAt'] as String?,
+      status: json['status'] as String? ?? 'idle',
+      message: json['message'] as String? ?? '',
+      bytes: (json['bytes'] as num? ?? 0).toInt(),
+      sha256: json['sha256'] as String? ?? '',
+      chunkCount: (json['chunkCount'] as num? ?? 0).toInt(),
     );
   }
 }

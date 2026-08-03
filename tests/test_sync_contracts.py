@@ -1307,6 +1307,15 @@ class SyncContractsTests(unittest.TestCase):
         supervisor = read_text("sync_windows_agent_supervisor.ps1")
         self.assertIn("function Invoke-IndependentUpdateCheck {", supervisor)
         self.assertIn("sync_windows_agent_update_requests.log", supervisor)
+        self.assertIn("$updateProcess = Start-Process -FilePath 'powershell.exe'", supervisor)
+        self.assertIn("-WindowStyle Hidden", supervisor)
+        self.assertIn("-Wait", supervisor)
+        self.assertIn("-PassThru", supervisor)
+        self.assertNotIn("& powershell.exe -NoProfile", supervisor)
+        self.assertIn("[int] $UpdateCheckSeconds = 1800", supervisor)
+        self.assertIn("the healthy client performs lightweight manifest checks in-process", supervisor)
+        loop_body = supervisor.split("while ($true) {", 1)[1]
+        self.assertEqual(loop_body.count("Invoke-IndependentUpdateCheck"), 1)
         self.assertNotIn("-NoStart", supervisor)
 
     def test_new_install_retires_obsolete_agent_install_processes(self):
@@ -1758,6 +1767,27 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("uploadPreservesChangeTrackingBaseline", upload_body)
         self.assertIn("'server-diff-preview'", cursor_policy)
         self.assertIn("preserveChangeTrackingBaseline", upload_body)
+
+    def test_live_copy_export_is_read_only_private_chunked_and_checksum_verified(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        frontend_server = read_text("frontend/server.js")
+        collector = read_text("scripts/collect_live_client_database_copies.ps1")
+
+        self.assertIn("WITH COPY_ONLY, INIT, COMPRESSION, CHECKSUM", agent_page)
+        self.assertIn("RESTORE VERIFYONLY", agent_page)
+        self.assertIn("_dataExportChunkBytes = 4 * 1024 * 1024", agent_page)
+        self.assertIn("sha256.bind(backupFile.openRead())", agent_page)
+        self.assertIn("await backupFile.delete()", agent_page)
+        self.assertNotIn("DROP DATABASE", agent_page)
+        self.assertIn("class RemoteAgentDataExport", api)
+        self.assertIn("agent_data_export_ack", api)
+        self.assertIn('CLIENT_UPDATES_DIR, ".private-exports"', frontend_server)
+        self.assertIn("crypto.timingSafeEqual", frontend_server)
+        self.assertIn("private export chunk checksum mismatch", frontend_server)
+        self.assertIn('requestedPath.startsWith(".private-exports/")', frontend_server)
+        self.assertIn("Get-FileHash -Algorithm SHA256", collector)
+        self.assertIn("kubectl exec -n $Namespace", collector)
 
 
 if __name__ == "__main__":

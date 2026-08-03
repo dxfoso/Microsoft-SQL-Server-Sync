@@ -1,4 +1,5 @@
 const fs = require("node:fs/promises");
+const crypto = require("node:crypto");
 const http = require("node:http");
 const path = require("node:path");
 
@@ -8,6 +9,9 @@ const CLIENT_UPDATES_DIR =
   process.env.CLIENT_UPDATES_DIR ||
   path.join(process.cwd(), "data", "client-updates");
 const FALLBACK_CLIENT_UPDATES_DIR = path.join(PUBLIC_DIR, "client-updates");
+const PRIVATE_EXPORTS_DIR = path.join(CLIENT_UPDATES_DIR, ".private-exports");
+const PRIVATE_EXPORT_TOKEN = process.env.PRIVATE_EXPORT_TOKEN || "";
+const MAX_PRIVATE_EXPORT_BODY_BYTES = 8 * 1024 * 1024;
 const BUILD_GIT_COMMIT =
   process.env.BUILD_COMMIT_HASH || process.env.TRU_BUILD_GIT_SHA || "unknown";
 const BUILD_COMMIT_MESSAGE =
@@ -57,8 +61,11 @@ function buildInfo() {
 
 function withCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Content-Sha256",
+  );
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, PUT, OPTIONS");
 }
 
 function sendJson(res, statusCode, payload) {
@@ -122,6 +129,13 @@ async function tryServeClientUpdate(pathname, res) {
     pathname === "/client"
       ? "latest.json"
       : decodeURIComponent(pathname.substring("/client/".length));
+  if (
+    requestedPath === ".private-exports" ||
+    requestedPath.startsWith(".private-exports/")
+  ) {
+    sendJson(res, 404, { error: "client update artifact not found" });
+    return true;
+  }
   const roots = [CLIENT_UPDATES_DIR, FALLBACK_CLIENT_UPDATES_DIR];
   if (requestedPath === "latest.json") {
     const manifests = [];
@@ -200,6 +214,106 @@ function compareClientVersions(left, right) {
   return (a[0] - b[0]) || (a[1] - b[1]) || (a[2] - b[2]);
 }
 
+function privateExportName(value) {
+  const decoded = decodeURIComponent(value || "");
+  return /^[A-Za-z0-9._-]{1,128}$/.test(decoded) ? decoded : null;
+}
+
+function authorizedPrivateExport(req) {
+  if (PRIVATE_EXPORT_TOKEN.length < 32) return false;
+  const actual = Buffer.from(String(req.headers.authorization || ""));
+  const expected = Buffer.from(`Bearer ${PRIVATE_EXPORT_TOKEN}`);
+  return (
+    actual.length === expected.length && crypto.timingSafeEqual(actual, expected)
+  );
+}
+
+async function readBoundedBody(req, maxBytes) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of req) {
+    length += chunk.length;
+    if (length > maxBytes) {
+      const error = new Error("private export chunk is too large");
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, length);
+}
+
+async function tryStorePrivateExport(pathname, req, res) {
+  if (!pathname.startsWith("/private-export/")) return false;
+  if (req.method !== "PUT") {
+    sendJson(res, 405, { error: "method not allowed" });
+    return true;
+  }
+  if (!authorizedPrivateExport(req)) {
+    sendJson(res, 401, { error: "private export authorization failed" });
+    return true;
+  }
+  const segments = pathname.substring("/private-export/".length).split("/");
+  if (segments.length !== 3) {
+    sendJson(res, 400, { error: "invalid private export path" });
+    return true;
+  }
+  const requestId = privateExportName(segments[0]);
+  const clientName = privateExportName(segments[1]);
+  const artifactName = privateExportName(segments[2]);
+  if (!requestId || !clientName || !artifactName) {
+    sendJson(res, 400, { error: "invalid private export name" });
+    return true;
+  }
+  if (artifactName !== "manifest.json" && !/^\d{8}\.part$/.test(artifactName)) {
+    sendJson(res, 400, { error: "invalid private export artifact" });
+    return true;
+  }
+  try {
+    const body = await readBoundedBody(req, MAX_PRIVATE_EXPORT_BODY_BYTES);
+    const actualSha256 = crypto.createHash("sha256").update(body).digest("hex");
+    const expectedSha256 = String(req.headers["x-content-sha256"] || "")
+      .trim()
+      .toLowerCase();
+    if (expectedSha256 && expectedSha256 !== actualSha256) {
+      sendJson(res, 422, { error: "private export chunk checksum mismatch" });
+      return true;
+    }
+    if (artifactName === "manifest.json") {
+      const manifest = JSON.parse(body.toString("utf8"));
+      if (
+        manifest.requestId !== requestId ||
+        manifest.clientName !== clientName ||
+        !Number.isSafeInteger(manifest.bytes) ||
+        !Number.isSafeInteger(manifest.chunkCount) ||
+        !/^[a-f0-9]{64}$/.test(String(manifest.sha256 || ""))
+      ) {
+        sendJson(res, 400, { error: "invalid private export manifest" });
+        return true;
+      }
+    }
+    const directory = path.join(PRIVATE_EXPORTS_DIR, requestId, clientName);
+    await fs.mkdir(directory, { recursive: true });
+    const targetPath = path.join(directory, artifactName);
+    const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(tempPath, body, { flag: "wx", mode: 0o600 });
+    await fs.rename(tempPath, targetPath);
+    sendJson(res, 201, {
+      ok: true,
+      requestId,
+      clientName,
+      artifactName,
+      bytes: body.length,
+      sha256: actualSha256,
+    });
+  } catch (error) {
+    sendJson(res, error.statusCode || 500, {
+      error: error.statusCode ? error.message : "private export storage failed",
+    });
+  }
+  return true;
+}
+
 async function tryServeStatic(pathname, res) {
   const requestedPath =
     pathname === "/" ? "/index.html" : decodeURIComponent(pathname);
@@ -241,13 +355,17 @@ async function handleRequest(req, res) {
     return;
   }
 
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const pathname = url.pathname;
+
+  if (await tryStorePrivateExport(pathname, req, res)) {
+    return;
+  }
+
   if (req.method !== "GET" && req.method !== "HEAD") {
     sendJson(res, 404, { error: "not found" });
     return;
   }
-
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  const pathname = url.pathname;
 
   if (pathname === "/health" || pathname === "/ready") {
     sendJson(res, 200, healthPayload());

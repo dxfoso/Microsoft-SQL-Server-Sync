@@ -44,6 +44,13 @@ spec:
           env:
             - name: BACKEND_BASE_URL
               value: "/call"
+            {{- if .Values.frontend.privateExportSecretName }}
+            - name: PRIVATE_EXPORT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.frontend.privateExportSecretName | quote }}
+                  key: token
+            {{- end }}
           volumeMounts:
             - name: frontend-client-updates
               mountPath: /app/data/client-updates

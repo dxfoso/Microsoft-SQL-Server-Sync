@@ -1,7 +1,7 @@
 param(
     [string] $ManifestUrl = 'https://sync.velvet-leaf.com/client/latest.json',
     [ValidateRange(5, 3600)][int] $AgentCheckSeconds = 15,
-    [ValidateRange(30, 86400)][int] $UpdateCheckSeconds = 300,
+    [ValidateRange(300, 86400)][int] $UpdateCheckSeconds = 1800,
     [switch] $RunOnce,
     [switch] $SkipUpdate,
     [switch] $SkipAgentStart,
@@ -144,6 +144,10 @@ function Invoke-IndependentUpdateCheck {
     if ($SkipUpdate) {
         return
     }
+    if (@(Get-AgentProcesses).Count -gt 0) {
+        Write-RequestLog 'Update process skipped; the healthy client performs lightweight manifest checks in-process.'
+        return
+    }
     if (-not (Test-Path -LiteralPath $updateScriptPath -PathType Leaf)) {
         Write-RequestLog "Update check skipped; updater is unavailable: $updateScriptPath"
         return
@@ -152,11 +156,25 @@ function Invoke-IndependentUpdateCheck {
     $startedAt = [DateTime]::UtcNow
     Write-RequestLog "Update request started. manifest=$ManifestUrl"
     try {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden `
-            -File $updateScriptPath `
-            -ManifestUrl $ManifestUrl `
-            -InstallDir $installDir
-        $exitCode = $LASTEXITCODE
+        # Set hidden STARTUPINFO before the child is created. Supplying
+        # -WindowStyle Hidden to a directly invoked console process can still
+        # flash while that new PowerShell instance parses its arguments.
+        $updateArguments = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-WindowStyle', 'Hidden',
+            '-File', ('"{0}"' -f $updateScriptPath.Replace('"', '\"')),
+            '-ManifestUrl', ('"{0}"' -f $ManifestUrl.Replace('"', '\"')),
+            '-InstallDir', ('"{0}"' -f $installDir.Replace('"', '\"'))
+        )
+        $updateProcess = Start-Process -FilePath 'powershell.exe' `
+            -ArgumentList $updateArguments `
+            -WorkingDirectory $installDir `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru `
+            -ErrorAction Stop
+        $exitCode = $updateProcess.ExitCode
         $elapsedMs = [Math]::Round(([DateTime]::UtcNow - $startedAt).TotalMilliseconds)
         Write-RequestLog "Update request completed. exitCode=$exitCode elapsedMs=$elapsedMs"
     }

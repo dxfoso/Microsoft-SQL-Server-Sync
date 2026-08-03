@@ -267,6 +267,18 @@ $stepPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $re
     ($steps | ForEach-Object { "- $($_.name): $($_.status) [$($_.durationSeconds)s] $($_.log)" })
 ) | Set-Content -LiteralPath (Join-Path $resultsRoot 'final-summary.txt') -Encoding utf8
 
+$historyRoot = Join-Path $resultsRoot ("history\{0}" -f $runId)
+New-Item -ItemType Directory -Path $historyRoot -Force | Out-Null
+foreach ($artifactName in @(
+    'task-status.json',
+    'task-results.json',
+    'task-step-results.json',
+    'final-summary.txt'
+)) {
+    Copy-Item -LiteralPath (Join-Path $resultsRoot $artifactName) `
+        -Destination (Join-Path $historyRoot $artifactName) -Force
+}
+
 if ($failed) {
     throw $failureMessage
 }

@@ -258,6 +258,17 @@ class ChartContractsTests(unittest.TestCase):
         self.assertIs(tru_config["admin"]["requireKey"], False)
         self.assertIs(tru_config["settings"]["admin"]["requireKey"], False)
 
+    def test_frontend_private_export_token_comes_from_optional_secret(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        deployment = (ROOT / "templates" / "deployment.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('privateExportSecretName: ""', values_yaml)
+        self.assertIn("PRIVATE_EXPORT_TOKEN", deployment)
+        self.assertIn("secretKeyRef:", deployment)
+        self.assertIn(".Values.frontend.privateExportSecretName", deployment)
+
 
 if __name__ == "__main__":
     unittest.main()

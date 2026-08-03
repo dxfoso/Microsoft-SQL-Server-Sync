@@ -6,6 +6,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
@@ -45,6 +46,7 @@ const Duration _defaultSqlCmdTimeout = Duration(minutes: 2);
 const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);
 const Duration _diagnosticsChangeTrackingTimeout = Duration(seconds: 20);
 const int _maxDiagnosticsUploadPayloadChars = 60000;
+const int _dataExportChunkBytes = 4 * 1024 * 1024;
 typedef _SqlColumnDefinition = SqlSyncColumnDefinition;
 
 class _PendingWindowActionAck {
@@ -161,6 +163,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _lastTrayProgressStatus;
   bool _diagnosticsUploadBusy = false;
   String? _diagnosticsUploadRequestId;
+  bool _dataExportBusy = false;
+  String? _dataExportRequestId;
   bool _rowCountsRefreshing = false;
   bool _automaticChangeDiscoveryBusy = false;
   bool _databaseAccessGrantBusy = false;
@@ -3606,6 +3610,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       });
 
       _scheduleRequestedDiagnosticsUpload(heartbeat.diagnostics);
+      _scheduleRequestedDataExport(heartbeat.dataExport);
 
       await _flushPendingWindowActionAck();
 
@@ -3738,6 +3743,275 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           })
           .whenComplete(() {
             _diagnosticsUploadBusy = false;
+          }),
+    );
+  }
+
+  Future<void> _acknowledgeDataExport(
+    RemoteAgentDataExport request, {
+    required String status,
+    required String message,
+    int bytes = 0,
+    String sha256 = '',
+    int chunkCount = 0,
+  }) {
+    return _controlPlaneClient.acknowledgeDataExport(
+      clientName: widget.clientName,
+      requestId: request.requestId,
+      status: status,
+      message: message,
+      bytes: bytes,
+      sha256: sha256,
+      chunkCount: chunkCount,
+    );
+  }
+
+  Future<void> _uploadPrivateExportArtifact({
+    required Uri uri,
+    required String token,
+    required List<int> bytes,
+  }) async {
+    final checksum = sha256.convert(bytes).toString();
+    Object? lastError;
+    for (var attempt = 1; attempt <= 5; attempt += 1) {
+      final client =
+          HttpClient()..connectionTimeout = const Duration(seconds: 30);
+      try {
+        final httpRequest = await client.putUrl(uri);
+        httpRequest.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer $token',
+        );
+        httpRequest.headers.set('X-Content-Sha256', checksum);
+        httpRequest.headers.contentType = ContentType.binary;
+        httpRequest.contentLength = bytes.length;
+        httpRequest.add(bytes);
+        final response = await httpRequest.close().timeout(
+          const Duration(minutes: 5),
+        );
+        final responseText = await utf8.decoder.bind(response).join();
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          return;
+        }
+        lastError = StateError(
+          'Private export upload returned HTTP ${response.statusCode}: $responseText',
+        );
+      } catch (error) {
+        lastError = error;
+      } finally {
+        client.close(force: true);
+      }
+      if (attempt < 5) {
+        await Future<void>.delayed(Duration(seconds: attempt * 2));
+      }
+    }
+    throw StateError('Private export upload failed after retries: $lastError');
+  }
+
+  Future<void> _runRequestedDataExport(RemoteAgentDataExport request) async {
+    final requestId = request.requestId?.trim() ?? '';
+    final database = request.database?.trim() ?? '';
+    final uploadBaseUrl = request.uploadUrl?.trim() ?? '';
+    final uploadToken = request.uploadToken?.trim() ?? '';
+    if (requestId.isEmpty ||
+        database.isEmpty ||
+        uploadBaseUrl != 'https://sync.velvet-leaf.com/private-export' ||
+        uploadToken.length < 32) {
+      throw StateError('The read-only export request is incomplete.');
+    }
+    if (_selectedDatabase == null ||
+        _selectedDatabase!.trim().toLowerCase() != database.toLowerCase()) {
+      throw StateError(
+        'The requested export database is not the selected database.',
+      );
+    }
+    await _acknowledgeDataExport(
+      request,
+      status: 'running',
+      message: 'Creating a COPY_ONLY SQL Server backup.',
+    );
+
+    final profile = _activeProfile();
+    final pathResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query:
+          "SET NOCOUNT ON; SELECT CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS nvarchar(4000));",
+      suppressHeaders: true,
+    );
+    if (pathResult == null || pathResult.exitCode != 0) {
+      throw StateError(
+        pathResult == null
+            ? _sqlCmdUnavailableMessage(profile)
+            : _sqlCmdFailed('backup path lookup', pathResult),
+      );
+    }
+    final pathValues = _parseSingleColumnOutput(pathResult.stdout.toString());
+    if (pathValues.isEmpty ||
+        pathValues.first.trim().isEmpty ||
+        pathValues.first.trim().toUpperCase() == 'NULL') {
+      throw StateError(
+        'SQL Server did not report its default backup directory.',
+      );
+    }
+    final safeRequestId = requestId.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final backupFile = File(
+      path.join(pathValues.first.trim(), 'sql_sync_export_$safeRequestId.bak'),
+    );
+    try {
+      final backupPathLiteral = _escapeSqlLiteral(backupFile.path);
+      var reuseVerifiedBackup = false;
+      if (await backupFile.exists()) {
+        final existingVerifyResult = await _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query:
+              "RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;",
+          timeout: const Duration(hours: 1),
+        );
+        reuseVerifiedBackup =
+            existingVerifyResult != null && existingVerifyResult.exitCode == 0;
+        if (!reuseVerifiedBackup) {
+          await backupFile.delete();
+        }
+      }
+      if (!reuseVerifiedBackup) {
+        final backupResult = await _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query: '''
+BACKUP DATABASE ${_quoteIdentifier(database)}
+TO DISK = N'$backupPathLiteral'
+WITH COPY_ONLY, INIT, COMPRESSION, CHECKSUM, STATS = 10;
+RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
+''',
+          timeout: const Duration(hours: 4),
+        );
+        if (backupResult == null || backupResult.exitCode != 0) {
+          throw StateError(
+            backupResult == null
+                ? _sqlCmdUnavailableMessage(profile)
+                : _sqlCmdFailed('COPY_ONLY backup', backupResult),
+          );
+        }
+      }
+      if (!await backupFile.exists()) {
+        throw StateError(
+          'SQL Server completed the backup but the client cannot read the backup file.',
+        );
+      }
+
+      final fileBytes = await backupFile.length();
+      final fileSha256 =
+          (await sha256.bind(backupFile.openRead()).first).toString();
+      final clientKey = base64Url
+          .encode(utf8.encode(widget.clientName))
+          .replaceAll('=', '');
+      final baseUri = Uri.parse(
+        uploadBaseUrl.endsWith('/') ? uploadBaseUrl : '$uploadBaseUrl/',
+      );
+      var chunkCount = 0;
+      final reader = backupFile.openRead();
+      final pending = BytesBuilder(copy: false);
+      await for (final block in reader) {
+        pending.add(block);
+        while (pending.length >= _dataExportChunkBytes) {
+          final combined = pending.takeBytes();
+          final chunk = combined.sublist(0, _dataExportChunkBytes);
+          if (combined.length > _dataExportChunkBytes) {
+            pending.add(combined.sublist(_dataExportChunkBytes));
+          }
+          final artifact = '${chunkCount.toString().padLeft(8, '0')}.part';
+          await _uploadPrivateExportArtifact(
+            uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
+            token: uploadToken,
+            bytes: chunk,
+          );
+          chunkCount += 1;
+        }
+      }
+      final finalChunk = pending.takeBytes();
+      if (finalChunk.isNotEmpty) {
+        final artifact = '${chunkCount.toString().padLeft(8, '0')}.part';
+        await _uploadPrivateExportArtifact(
+          uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
+          token: uploadToken,
+          bytes: finalChunk,
+        );
+        chunkCount += 1;
+      }
+      final manifest = utf8.encode(
+        jsonEncode({
+          'requestId': requestId,
+          'clientName': clientKey,
+          'displayClientName': widget.clientName,
+          'database': database,
+          'bytes': fileBytes,
+          'sha256': fileSha256,
+          'chunkCount': chunkCount,
+          'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+          'format': 'sql-server-copy-only-backup',
+        }),
+      );
+      await _uploadPrivateExportArtifact(
+        uri: baseUri.resolve('$requestId/$clientKey/manifest.json'),
+        token: uploadToken,
+        bytes: manifest,
+      );
+      await _acknowledgeDataExport(
+        request,
+        status: 'completed',
+        message: 'Read-only COPY_ONLY backup uploaded and verified.',
+        bytes: fileBytes,
+        sha256: fileSha256,
+        chunkCount: chunkCount,
+      );
+    } finally {
+      if (await backupFile.exists()) {
+        try {
+          await backupFile.delete();
+        } catch (error) {
+          logAgentDiagnostic(
+            'data_export.backup_cleanup_failed',
+            level: AgentLogLevel.warning,
+            context: {'database': database, 'path': backupFile.path},
+            error: error,
+          );
+        }
+      }
+    }
+  }
+
+  void _scheduleRequestedDataExport(RemoteAgentDataExport request) {
+    if (!request.pending || _dataExportBusy) return;
+    final requestId = request.requestId?.trim() ?? '';
+    if (requestId.isNotEmpty && requestId == _dataExportRequestId) return;
+    _dataExportBusy = true;
+    _dataExportRequestId = requestId.isEmpty ? null : requestId;
+    unawaited(
+      _runRequestedDataExport(request)
+          .catchError((Object error, StackTrace stackTrace) async {
+            logAgentDiagnostic(
+              'data_export.failed',
+              level: AgentLogLevel.error,
+              context: {'requestId': requestId},
+              error: error,
+              stackTrace: stackTrace,
+            );
+            try {
+              await _acknowledgeDataExport(
+                request,
+                status: 'failed',
+                message: error.toString(),
+              );
+            } catch (ackError) {
+              logStartupEvent(
+                'Failed to acknowledge data export error: $ackError',
+              );
+            }
+          })
+          .whenComplete(() {
+            _dataExportBusy = false;
           }),
     );
   }

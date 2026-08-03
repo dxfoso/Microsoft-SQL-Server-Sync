@@ -73,6 +73,19 @@ class Agent {
   field windowActionLastAcknowledgedAt: datetime?
   field windowActionStatus: string? min=0 max=32
   field windowActionMessage: string? min=0 max=4000
+  field dataExportRequestId: string? min=0 max=64
+  field dataExportRequestedAt: datetime?
+  field dataExportRequestedByUserId: string? min=0 max=64
+  field dataExportDatabase: string? min=0 max=256
+  field dataExportUploadUrl: string? min=0 max=1000
+  field dataExportUploadToken: string? min=0 max=256
+  field dataExportLastRequestId: string? min=0 max=64
+  field dataExportLastAcknowledgedAt: datetime?
+  field dataExportStatus: string? min=0 max=32
+  field dataExportMessage: string? min=0 max=4000
+  field dataExportBytes: int? min=0 max=1000000000000
+  field dataExportSha256: string? min=0 max=64
+  field dataExportChunkCount: int? min=0 max=1000000
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field updatedAt: datetime
@@ -1555,7 +1568,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -1770,6 +1783,7 @@ function public_agent_payload(agent: map<json>): map<json> {
     diagnostics: agent_diagnostics_payload(agent),
     clientUpdate: agent_client_update_payload(agent),
     windowAction: agent_window_action_payload(agent),
+    dataExport: agent_data_export_payload(agent),
     tables: nextTables,
     clientUserId: agent.clientUserId,
     ownerUserId: agent.ownerUserId
@@ -1896,6 +1910,55 @@ function agent_window_action_payload(agent: map<json>): map<json> {
     acknowledgedAt: agent.windowActionLastAcknowledgedAt,
     status: statusValue,
     message: messageValue
+  };
+}
+
+function data_export_request_pending(agent: map<json>): bool {
+  if (agent.dataExportRequestId == null) {
+    return false;
+  }
+  const requestId = string.from(agent.dataExportRequestId).trim();
+  if (requestId.length == 0) {
+    return false;
+  }
+  if (agent.dataExportLastRequestId == null) {
+    return true;
+  }
+  return string.from(agent.dataExportLastRequestId).trim() != requestId;
+}
+
+function agent_data_export_payload(agent: map<json>, includeUploadCredentials: bool = false): map<json> {
+  const pending = data_export_request_pending(agent);
+  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  let statusValue = agent.dataExportStatus == null ? 'idle' : string.from(agent.dataExportStatus);
+  let messageValue = agent.dataExportMessage == null ? '' : string.from(agent.dataExportMessage);
+  if (waitingForClient) {
+    statusValue = 'client_offline';
+    if (messageValue.trim().length == 0) {
+      messageValue = 'Waiting for the client to heartbeat before the read-only export can start.';
+    }
+  }
+  let uploadUrl = null;
+  let uploadToken = null;
+  if (includeUploadCredentials && pending && !waitingForClient) {
+    uploadUrl = agent.dataExportUploadUrl;
+    uploadToken = agent.dataExportUploadToken;
+  }
+  return {
+    pending: pending && !waitingForClient,
+    requestId: agent.dataExportRequestId,
+    requestedAt: agent.dataExportRequestedAt,
+    requestedByUserId: agent.dataExportRequestedByUserId,
+    database: agent.dataExportDatabase,
+    uploadUrl,
+    uploadToken,
+    lastRequestId: agent.dataExportLastRequestId,
+    acknowledgedAt: agent.dataExportLastAcknowledgedAt,
+    status: statusValue,
+    message: messageValue,
+    bytes: agent.dataExportBytes ?? 0,
+    sha256: agent.dataExportSha256 ?? '',
+    chunkCount: agent.dataExportChunkCount ?? 0
   };
 }
 
@@ -2149,7 +2212,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -2297,6 +2360,19 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       windowActionLastAcknowledgedAt: null,
       windowActionStatus: 'idle',
       windowActionMessage: '',
+      dataExportRequestId: null,
+      dataExportRequestedAt: null,
+      dataExportRequestedByUserId: null,
+      dataExportDatabase: null,
+      dataExportUploadUrl: null,
+      dataExportUploadToken: null,
+      dataExportLastRequestId: null,
+      dataExportLastAcknowledgedAt: null,
+      dataExportStatus: 'idle',
+      dataExportMessage: '',
+      dataExportBytes: 0,
+      dataExportSha256: '',
+      dataExportChunkCount: 0,
       clientVersion: '',
       clientUserId,
       ownerUserId,
@@ -2352,6 +2428,19 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     windowActionLastAcknowledgedAt: null,
     windowActionStatus: 'idle',
     windowActionMessage: '',
+    dataExportRequestId: null,
+    dataExportRequestedAt: null,
+    dataExportRequestedByUserId: null,
+    dataExportDatabase: null,
+    dataExportUploadUrl: null,
+    dataExportUploadToken: null,
+    dataExportLastRequestId: null,
+    dataExportLastAcknowledgedAt: null,
+    dataExportStatus: 'idle',
+    dataExportMessage: '',
+    dataExportBytes: 0,
+    dataExportSha256: '',
+    dataExportChunkCount: 0,
     clientUserId,
     ownerUserId,
     updatedAt: now_iso()
@@ -5210,7 +5299,8 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     jobs: active_jobs_for_client(resolvedClientName),
     diagnostics: agent_diagnostics_payload(nextAgent),
     clientUpdate: agent_client_update_payload(nextAgent),
-    windowAction: agent_window_action_payload(nextAgent)
+    windowAction: agent_window_action_payload(nextAgent),
+    dataExport: agent_data_export_payload(nextAgent, true)
   };
 }
 
@@ -5677,6 +5767,15 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
   } else {
     resolvedClientName = normalize_user_name(clientName);
   }
+  if (is_client_user(current)) {
+    let currentClientName = normalize_user_name(current.name);
+    if (current.username != null) {
+      currentClientName = normalize_user_name(current.username);
+    }
+    if (resolvedClientName != currentClientName) {
+      return raw_json_error(403, 'permission denied');
+    }
+  }
   const targetUser = find_user_by_identity(resolvedClientName);
   if (targetUser != null && !can_manage_user(current, targetUser)) {
     return raw_json_error(403, 'permission denied');
@@ -5843,6 +5942,128 @@ function agent_window_action_ack(clientName: string? = null, requestId: string? 
     ok: true,
     clientName: resolvedClientName,
     windowAction: agent_window_action_payload(updated)
+  };
+}
+
+function agent_data_export_request(clientName: string, database: string, uploadUrl: string, uploadToken: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
+  if (targetAgent == null || !can_read_agent(current, targetAgent.ownerUserId, targetAgent.clientUserId)) {
+    return raw_json_error(404, 'client not found');
+  }
+  const normalizedDatabase = truncate_text(database.trim(), 256);
+  if (normalizedDatabase.length == 0 || normalizedDatabase.toLowerCase() != string.from(targetAgent.database).trim().toLowerCase()) {
+    return raw_json_error(400, 'export database must match the client selected database');
+  }
+  const normalizedUploadUrl = truncate_text(uploadUrl.trim(), 1000);
+  if (normalizedUploadUrl != 'https://sync.velvet-leaf.com/private-export') {
+    return raw_json_error(400, 'export upload URL must use the private sync endpoint');
+  }
+  const normalizedUploadToken = truncate_text(uploadToken.trim(), 256);
+  if (normalizedUploadToken.length < 32) {
+    return raw_json_error(400, 'export upload token is invalid');
+  }
+  const requestedAt = now_iso();
+  const updated = db.update(Agent, { clientName: normalizedClientName }, {
+    dataExportRequestId: uuid.v4(),
+    dataExportRequestedAt: requestedAt,
+    dataExportRequestedByUserId: current.id,
+    dataExportDatabase: normalizedDatabase,
+    dataExportUploadUrl: normalizedUploadUrl,
+    dataExportUploadToken: normalizedUploadToken,
+    dataExportStatus: 'requested',
+    dataExportMessage: '',
+    dataExportBytes: 0,
+    dataExportSha256: '',
+    dataExportChunkCount: 0,
+    updatedAt: requestedAt
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: normalizedClientName,
+    dataExport: agent_data_export_payload(updated)
+  };
+}
+
+function agent_data_export_ack(clientName: string? = null, requestId: string? = null, status: string = 'completed', message: string = '', bytes: int = 0, sha256: string = '', chunkCount: int = 0, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  let resolvedClientName = '';
+  if (clientName == null || clientName.trim().length == 0) {
+    resolvedClientName = current.username == null
+      ? normalize_user_name(current.name)
+      : normalize_user_name(current.username);
+  } else {
+    resolvedClientName = normalize_user_name(clientName);
+  }
+  if (is_client_user(current)) {
+    let currentClientName = normalize_user_name(current.name);
+    if (current.username != null) {
+      currentClientName = normalize_user_name(current.username);
+    }
+    if (resolvedClientName != currentClientName) {
+      return raw_json_error(403, 'permission denied');
+    }
+  }
+  const targetUser = find_user_by_identity(resolvedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const agent = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (agent == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  let resolvedRequestId = '';
+  if (agent.dataExportRequestId != null) {
+    resolvedRequestId = string.from(agent.dataExportRequestId).trim();
+  }
+  let resolvedRequestIdOrNull = null;
+  const normalizedStatus = truncate_text(status.trim().toLowerCase(), 32);
+  const terminalStatus = normalizedStatus == 'completed' || normalizedStatus == 'failed';
+  if (terminalStatus && resolvedRequestId.length != 0) {
+    resolvedRequestIdOrNull = resolvedRequestId;
+  }
+  let safeBytes = bytes;
+  if (safeBytes < 0) { safeBytes = 0; }
+  let safeChunkCount = chunkCount;
+  if (safeChunkCount < 0) { safeChunkCount = 0; }
+  let nextUploadUrl = agent.dataExportUploadUrl;
+  let nextUploadToken = agent.dataExportUploadToken;
+  if (terminalStatus) {
+    nextUploadUrl = null;
+    nextUploadToken = null;
+  }
+  const updated = db.update(Agent, { clientName: resolvedClientName }, {
+    dataExportLastRequestId: resolvedRequestIdOrNull,
+    dataExportLastAcknowledgedAt: now_iso(),
+    dataExportUploadUrl: nextUploadUrl,
+    dataExportUploadToken: nextUploadToken,
+    dataExportStatus: normalizedStatus,
+    dataExportMessage: truncate_text(message, 4000),
+    dataExportBytes: safeBytes,
+    dataExportSha256: truncate_text(sha256.trim().toLowerCase(), 64),
+    dataExportChunkCount: safeChunkCount,
+    updatedAt: now_iso()
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: resolvedClientName,
+    dataExport: agent_data_export_payload(updated)
   };
 }
 
@@ -6122,6 +6343,19 @@ function reset_all_agent_saved_state(): int {
     windowActionLastAcknowledgedAt: null,
     windowActionStatus: 'idle',
     windowActionMessage: '',
+    dataExportRequestId: null,
+    dataExportRequestedAt: null,
+    dataExportRequestedByUserId: null,
+    dataExportDatabase: null,
+    dataExportUploadUrl: null,
+    dataExportUploadToken: null,
+    dataExportLastRequestId: null,
+    dataExportLastAcknowledgedAt: null,
+    dataExportStatus: 'idle',
+    dataExportMessage: '',
+    dataExportBytes: 0,
+    dataExportSha256: '',
+    dataExportChunkCount: 0,
     updatedAt: now_iso()
   });
 }

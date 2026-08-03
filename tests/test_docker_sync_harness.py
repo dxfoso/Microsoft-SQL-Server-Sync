@@ -57,6 +57,18 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("RESTORE VERIFYONLY", exporter)
         self.assertIn("*.bak", gitignore)
 
+    def test_go_sqlcmd_disables_tls_only_for_local_sql_2017_matrix(self):
+        runner = (ROOT / "tests/docker-sync/run_scenarios.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("SQLCMD_GO_VERSION = go_sqlcmd_version(SQLCMD)", runner)
+        self.assertIn(
+            '":2017-" in os.environ.get("SQL_SYNC_TEST_IMAGE", "")', runner
+        )
+        self.assertIn('["-N", "disable"]', runner)
+        self.assertGreaterEqual(runner.count("*SQLCMD_TLS_ARGS"), 3)
+
     def test_agents_requires_the_docker_suite_before_client_publication(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -73,6 +85,7 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("task-step-results.json", launcher)
         self.assertIn("final-summary.txt", launcher)
         self.assertIn("ACTION_SERVER_TRIGGER", launcher)
+        self.assertIn('("history\\{0}" -f $runId)', launcher)
         self.assertIn("SQL Server 2017 compatibility", launcher)
         self.assertIn("SQL Server 2019 compatibility", launcher)
         self.assertIn("SQL Server 2022 compatibility", launcher)
