@@ -681,6 +681,7 @@ class SyncContractsTests(unittest.TestCase):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
+        control_plane = read_text("business/control_plane.tru")
         snapshot_body = agent_page.split(
             "Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(", 1
         )[1].split("List<Map<String, String?>> _snapshotRows(", 1)[0]
@@ -691,6 +692,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("requires a deliberate one-source bootstrap", snapshot_body)
         self.assertIn("previousVersion >= 0", snapshot_body)
         self.assertIn("const int kSyncProtocolVersion = 4", client_api)
+        self.assertEqual(control_plane.count("field protocolVersion: int? min=3 max=4"), 2)
+        self.assertIn("field protocolVersion: int min=3 max=4", control_plane)
         self.assertIn("__sync_row_hash", snapshot_body)
         self.assertIn("__sync_change_version", snapshot_body)
         self.assertIn("__sync_origin_client", snapshot_body)

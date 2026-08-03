@@ -1202,7 +1202,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("mode: 'union_bootstrap'", source)
         self.assertIn("every client will upload a complete snapshot", source)
         self.assertIn("explicitSingleClientBootstrap", source)
-        self.assertIn("field protocolVersion: int? min=3 max=3", source)
+        self.assertIn("field protocolVersion: int? min=3 max=4", source)
         self.assertIn("field syncEpoch: string? min=0 max=64", source)
         self.assertIn("protocolVersion != sync_protocol_version()", source)
         self.assertIn("sync epoch changed; discard this job", source)
