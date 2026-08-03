@@ -1471,6 +1471,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
             upload_body,
         )
         self.assertIn("matchesDurableWinnerContent", upload_body)
+        self.assertIn("let currentWinner = null", upload_body)
+        self.assertIn("let matchesDurableWinnerContent = false", upload_body)
+        self.assertNotIn("const matchesDurableWinnerContent =", upload_body)
         self.assertIn("incomingRowHash == string.from(currentWinner.rowHash).trim()", upload_body)
         self.assertIn("operation != 'D'", upload_body)
         self.assertIn(

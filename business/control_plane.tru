@@ -6846,6 +6846,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     for (const incomingRow of effectiveIncomingRows) {
       const operationId = string.from(incomingRow.__sync_operation_id ?? '').trim();
       let accepted = true;
+      let currentWinner = null;
+      let matchesDurableWinnerContent = false;
       if (winnerPolicyApplied) {
         accepted = operationId.length == 64;
         const operation = string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase();
@@ -6864,7 +6866,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           json.stringify([winnerOwnerUserId, winnerTable, identityKey]),
           'sha256'
         );
-        let currentWinner = sync_row_winner_find_by_id(pendingWinners, winnerId);
+        currentWinner = sync_row_winner_find_by_id(pendingWinners, winnerId);
         if (currentWinner == null) {
           currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
         }
@@ -6874,7 +6876,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         // but keep the original winner metadata. Differing stale rows and
         // rows hidden by a durable delete still follow the normal winner rule.
         const incomingRowHash = string.from(incomingRow.__sync_row_hash ?? '').trim();
-        const matchesDurableWinnerContent =
+        matchesDurableWinnerContent =
           multiClientUnionBootstrap &&
           currentWinner != null &&
           string.from(currentWinner.operationId) != operationId &&
