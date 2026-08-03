@@ -3835,8 +3835,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final pathResult = await _runSqlCmd(
       profile: profile,
       database: database,
-      query:
-          "SET NOCOUNT ON; SELECT CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS nvarchar(4000));",
+      query: r"""
+SET NOCOUNT ON;
+SELECT COALESCE(
+  NULLIF(CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS nvarchar(4000)), N''),
+  CASE
+    WHEN CHARINDEX(N'\', REVERSE(physical_name)) > 0 THEN
+      LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'\', REVERSE(physical_name)) + 1)
+    WHEN CHARINDEX(N'/', REVERSE(physical_name)) > 0 THEN
+      LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'/', REVERSE(physical_name)) + 1)
+    ELSE NULL
+  END
+)
+FROM master.sys.master_files
+WHERE database_id = DB_ID(N'master') AND file_id = 1;
+""",
       suppressHeaders: true,
     );
     if (pathResult == null || pathResult.exitCode != 0) {
@@ -3851,7 +3864,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         pathValues.first.trim().isEmpty ||
         pathValues.first.trim().toUpperCase() == 'NULL') {
       throw StateError(
-        'SQL Server did not report its default backup directory.',
+        'SQL Server did not report a usable backup or master-data directory.',
       );
     }
     final safeRequestId = requestId.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');

@@ -1776,6 +1776,8 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("WITH COPY_ONLY, INIT, COMPRESSION, CHECKSUM", agent_page)
         self.assertIn("RESTORE VERIFYONLY", agent_page)
+        self.assertIn("SERVERPROPERTY('InstanceDefaultBackupPath')", agent_page)
+        self.assertIn("FROM master.sys.master_files", agent_page)
         self.assertIn("_dataExportChunkBytes = 4 * 1024 * 1024", agent_page)
         self.assertIn("sha256.bind(backupFile.openRead())", agent_page)
         self.assertIn("await backupFile.delete()", agent_page)
