@@ -1416,7 +1416,16 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("acceptedOperationIds", download_body)
         self.assertIn("winnerPolicyApplied", download_body)
         self.assertIn("const durableWinners = db.selectMany(SyncRowWinner", download_body)
-        self.assertIn("operationId: { in: candidateAcceptedOperationIds }", download_body)
+        self.assertIn("candidateDurableOperationIds", download_body)
+        self.assertIn("operationId: { in: candidateDurableOperationIds }", download_body)
+        self.assertIn(
+            "string_array_contains(durableWinnerOperationIds, durableOperationId)",
+            download_body,
+        )
+        self.assertIn(
+            "durableWinner.operationId).trim() == durableOperationId",
+            download_body,
+        )
         self.assertIn("delete_sync_row_winner_batch()", reset_body)
         self.assertIn("syncRowWinnerDeletedCount", reset_body)
 
@@ -1469,6 +1478,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
             upload_body,
         )
         self.assertIn("!matchesDurableWinnerContent", upload_body)
+        self.assertIn(
+            "durableOperationId = string.from(currentWinner.operationId).trim()",
+            upload_body,
+        )
+        self.assertIn("durableOperationId,", upload_body)
         self.assertIn("db.insert(SyncJobDataChunk", upload_body)
         self.assertIn("row comparison requires permanent primary key columns", upload_body)
         self.assertIn("different primary key definitions", upload_body)

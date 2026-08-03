@@ -6922,8 +6922,13 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         }
       }
       if (accepted) {
+        let durableOperationId = operationId;
+        if (matchesDurableWinnerContent && currentWinner != null) {
+          durableOperationId = string.from(currentWinner.operationId).trim();
+        }
         acceptedOperationIds = acceptedOperationIds.concat([{
           operationId,
+          durableOperationId,
           authoritativeModifiedAtUtc: sync_row_effective_modified_at(
             incomingRow,
             string.from(serverReceivedAt)
@@ -7052,6 +7057,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   let chunkIsDelta = true;
   let candidateAcceptedOperationIds = [];
   let candidateAcceptedOperations = [];
+  let candidateDurableOperationIds = [];
   let winnerPolicyApplied = false;
   if (batch.receivedChunks.length == 0) {
     chunkIsDelta = false;
@@ -7074,9 +7080,17 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
         for (const acceptedRow of storedChunk.rows ?? []) {
           const acceptedOperationId = string.from(acceptedRow.operationId ?? '').trim();
           if (acceptedOperationId.length != 0) {
+            let durableOperationId = string.from(
+              acceptedRow.durableOperationId ?? acceptedOperationId
+            ).trim();
+            if (durableOperationId.length == 0) {
+              durableOperationId = acceptedOperationId;
+            }
             candidateAcceptedOperationIds = candidateAcceptedOperationIds.concat([acceptedOperationId]);
+            candidateDurableOperationIds = candidateDurableOperationIds.concat([durableOperationId]);
             candidateAcceptedOperations = candidateAcceptedOperations.concat([{
               operationId: acceptedOperationId,
+              durableOperationId,
               authoritativeModifiedAtUtc: string.from(
                 acceptedRow.authoritativeModifiedAtUtc ?? ''
               ).trim()
@@ -7096,23 +7110,42 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       where: {
         ownerUserId: string.from(batch.ownerUserId ?? '').trim(),
         table: string.from(batch.table),
-        operationId: { in: candidateAcceptedOperationIds }
+        operationId: { in: candidateDurableOperationIds }
       },
       orderBy: { field: 'id', dir: 'asc' },
       fields: ['operationId', 'modifiedAtUtc'],
       limit: 500
     });
-    acceptedOperationIds = [];
-    acceptedOperations = [];
+    let durableWinnerOperationIds = [];
     for (const durableWinner of durableWinners) {
       const operationId = string.from(durableWinner.operationId).trim();
       if (operationId.length != 0) {
+        durableWinnerOperationIds = durableWinnerOperationIds.concat([operationId]);
+      }
+    }
+    acceptedOperationIds = [];
+    acceptedOperations = [];
+    for (const candidateOperation of candidateAcceptedOperations) {
+      const operationId = string.from(candidateOperation.operationId).trim();
+      const durableOperationId = string.from(
+        candidateOperation.durableOperationId ?? operationId
+      ).trim();
+      if (operationId.length != 0 &&
+          string_array_contains(durableWinnerOperationIds, durableOperationId)) {
+        let authoritativeModifiedAtUtc = string.from(
+          candidateOperation.authoritativeModifiedAtUtc ?? ''
+        ).trim();
+        for (const durableWinner of durableWinners) {
+          if (string.from(durableWinner.operationId).trim() == durableOperationId) {
+            authoritativeModifiedAtUtc = string.from(
+              durableWinner.modifiedAtUtc ?? authoritativeModifiedAtUtc
+            ).trim();
+          }
+        }
         acceptedOperationIds = acceptedOperationIds.concat([operationId]);
         acceptedOperations = acceptedOperations.concat([{
           operationId,
-          authoritativeModifiedAtUtc: string.from(
-            durableWinner.modifiedAtUtc ?? ''
-          ).trim()
+          authoritativeModifiedAtUtc
         }]);
       }
     }
