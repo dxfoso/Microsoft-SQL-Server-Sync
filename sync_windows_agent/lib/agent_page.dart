@@ -3881,91 +3881,146 @@ WHERE database_id = DB_ID(N'master') AND file_id = 1;
         'SQL Server did not report a usable backup or master-data directory.',
       );
     }
-    final safeRequestId = requestId.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final safeDatabase = database.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
     final backupFile = File(
-      path.join(pathValues.first.trim(), 'sql_sync_export_$safeRequestId.bak'),
+      path.join(pathValues.first.trim(), 'sql_sync_export_$safeDatabase.bak'),
     );
     try {
       final backupPathLiteral = _escapeSqlLiteral(backupFile.path);
-      var reuseVerifiedBackup = false;
-      if (await backupFile.exists()) {
-        final existingVerifyResult = await _runSqlCmd(
-          profile: profile,
-          database: 'master',
-          query:
-              "RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;",
-          timeout: const Duration(hours: 1),
-        );
-        reuseVerifiedBackup =
-            existingVerifyResult != null && existingVerifyResult.exitCode == 0;
-        if (!reuseVerifiedBackup) {
-          await backupFile.delete();
-        }
-      }
-      if (!reuseVerifiedBackup) {
-        var backupResult = await _runSqlCmd(
-          profile: profile,
-          database: 'master',
-          query: '''
+      var backupResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query: '''
 BACKUP DATABASE ${_quoteIdentifier(database)}
 TO DISK = N'$backupPathLiteral'
 WITH COPY_ONLY, INIT, COMPRESSION, CHECKSUM, STATS = 10;
 RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
 ''',
-          timeout: const Duration(hours: 4),
-        );
-        if (backupResult != null &&
-            shouldRetryBackupWithoutCompression(
-              exitCode: backupResult.exitCode,
-              stdout: backupResult.stdout.toString(),
-              stderr: backupResult.stderr.toString(),
-            )) {
-          backupResult = await _runSqlCmd(
-            profile: profile,
-            database: 'master',
-            query: '''
+        timeout: const Duration(hours: 4),
+      );
+      if (backupResult != null &&
+          shouldRetryBackupWithoutCompression(
+            exitCode: backupResult.exitCode,
+            stdout: backupResult.stdout.toString(),
+            stderr: backupResult.stderr.toString(),
+          )) {
+        backupResult = await _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query: '''
 BACKUP DATABASE ${_quoteIdentifier(database)}
 TO DISK = N'$backupPathLiteral'
 WITH COPY_ONLY, INIT, CHECKSUM, STATS = 10;
 RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
 ''',
-            timeout: const Duration(hours: 4),
-          );
-        }
-        if (backupResult == null || backupResult.exitCode != 0) {
-          throw StateError(
-            backupResult == null
-                ? _sqlCmdUnavailableMessage(profile)
-                : _sqlCmdFailed('COPY_ONLY backup', backupResult),
-          );
-        }
+          timeout: const Duration(hours: 4),
+        );
       }
-      if (!await backupFile.exists()) {
+      if (backupResult == null || backupResult.exitCode != 0) {
         throw StateError(
-          'SQL Server completed the backup but the client cannot read the backup file.',
+          backupResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('COPY_ONLY backup', backupResult),
         );
       }
 
-      final fileBytes = await backupFile.length();
-      final fileSha256 =
-          (await sha256.bind(backupFile.openRead()).first).toString();
       final clientKey = base64Url
           .encode(utf8.encode(widget.clientName))
           .replaceAll('=', '');
       final baseUri = Uri.parse(
         uploadBaseUrl.endsWith('/') ? uploadBaseUrl : '$uploadBaseUrl/',
       );
+      var fileBytes = 0;
+      var fileSha256 = '';
       var chunkCount = 0;
-      final reader = backupFile.openRead();
-      final pending = BytesBuilder(copy: false);
-      await for (final block in reader) {
-        pending.add(block);
-        while (pending.length >= _dataExportChunkBytes) {
-          final combined = pending.takeBytes();
-          final chunk = combined.sublist(0, _dataExportChunkBytes);
-          if (combined.length > _dataExportChunkBytes) {
-            pending.add(combined.sublist(_dataExportChunkBytes));
+      if (await backupFile.exists()) {
+        fileBytes = await backupFile.length();
+        fileSha256 =
+            (await sha256.bind(backupFile.openRead()).first).toString();
+        final reader = backupFile.openRead();
+        final pending = BytesBuilder(copy: false);
+        await for (final block in reader) {
+          pending.add(block);
+          while (pending.length >= _dataExportChunkBytes) {
+            final combined = pending.takeBytes();
+            final chunk = combined.sublist(0, _dataExportChunkBytes);
+            if (combined.length > _dataExportChunkBytes) {
+              pending.add(combined.sublist(_dataExportChunkBytes));
+            }
+            final artifact = '${chunkCount.toString().padLeft(8, '0')}.part';
+            await _uploadPrivateExportArtifact(
+              uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
+              token: uploadToken,
+              bytes: chunk,
+            );
+            chunkCount += 1;
           }
+        }
+        final finalChunk = pending.takeBytes();
+        if (finalChunk.isNotEmpty) {
+          final artifact = '${chunkCount.toString().padLeft(8, '0')}.part';
+          await _uploadPrivateExportArtifact(
+            uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
+            token: uploadToken,
+            bytes: finalChunk,
+          );
+          chunkCount += 1;
+        }
+      } else {
+        final lengthResult = await _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query: '''
+SET NOCOUNT ON;
+SELECT DATALENGTH(BulkColumn)
+FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
+''',
+          suppressHeaders: true,
+        );
+        if (lengthResult == null || lengthResult.exitCode != 0) {
+          throw StateError(
+            lengthResult == null
+                ? _sqlCmdUnavailableMessage(profile)
+                : _sqlCmdFailed('backup stream length', lengthResult),
+          );
+        }
+        fileBytes = parseSqlServerBlobLength(lengthResult.stdout.toString());
+        final digestValues = <Digest>[];
+        final digestInput = sha256.startChunkedConversion(
+          ChunkedConversionSink.withCallback(digestValues.addAll),
+        );
+        var offset = 1;
+        while (offset <= fileBytes) {
+          final expectedBytes = math.min(
+            _dataExportChunkBytes,
+            fileBytes - offset + 1,
+          );
+          final chunkResult = await _runSqlCmd(
+            profile: profile,
+            database: 'master',
+            query: '''
+SET NOCOUNT ON;
+SELECT CONVERT(varchar(max), SUBSTRING(BulkColumn, $offset, $expectedBytes), 2)
+FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
+''',
+            timeout: const Duration(minutes: 10),
+            captureOutputFile: true,
+            suppressHeaders: true,
+          );
+          if (chunkResult == null || chunkResult.exitCode != 0) {
+            throw StateError(
+              chunkResult == null
+                  ? _sqlCmdUnavailableMessage(profile)
+                  : _sqlCmdFailed('backup stream chunk', chunkResult),
+            );
+          }
+          final chunk = decodeSqlServerHexBlob(chunkResult.stdout.toString());
+          if (chunk.length != expectedBytes) {
+            throw StateError(
+              'SQL Server returned ${chunk.length} backup bytes; expected $expectedBytes.',
+            );
+          }
+          digestInput.add(chunk);
           final artifact = '${chunkCount.toString().padLeft(8, '0')}.part';
           await _uploadPrivateExportArtifact(
             uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
@@ -3973,17 +4028,13 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
             bytes: chunk,
           );
           chunkCount += 1;
+          offset += expectedBytes;
         }
-      }
-      final finalChunk = pending.takeBytes();
-      if (finalChunk.isNotEmpty) {
-        final artifact = '${chunkCount.toString().padLeft(8, '0')}.part';
-        await _uploadPrivateExportArtifact(
-          uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
-          token: uploadToken,
-          bytes: finalChunk,
-        );
-        chunkCount += 1;
+        digestInput.close();
+        if (digestValues.length != 1) {
+          throw StateError('Unable to calculate the streamed backup checksum.');
+        }
+        fileSha256 = digestValues.single.toString();
       }
       final manifest = utf8.encode(
         jsonEncode({
@@ -8359,7 +8410,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       '-b',
       '-w',
       '32767',
-      if (!suppressHeaders) ...['-y', '0', '-Y', '0'],
+      '-y',
+      '0',
+      '-Y',
+      '0',
       '-u',
       '-f',
       '65001',

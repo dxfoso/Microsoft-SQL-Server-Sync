@@ -32,4 +32,20 @@ void main() {
       isFalse,
     );
   });
+
+  test('parses SQL Server blob length from headerless output', () {
+    expect(parseSqlServerBlobLength('\u{feff}  8388609\r\n'), 8388609);
+  });
+
+  test('decodes wrapped SQL Server hexadecimal output', () {
+    expect(
+      decodeSqlServerHexBlob('DEADBEEF\r\n0102\r\n(1 row affected)'),
+      <int>[0xde, 0xad, 0xbe, 0xef, 1, 2],
+    );
+  });
+
+  test('rejects empty or incomplete SQL Server hexadecimal output', () {
+    expect(() => decodeSqlServerHexBlob(''), throwsFormatException);
+    expect(() => decodeSqlServerHexBlob('ABC'), throwsFormatException);
+  });
 }
