@@ -703,6 +703,19 @@ function sync_table_reference(syncTable: string): map<json> {
   };
 }
 
+function sync_table_belongs_to_database(syncTable: string, database: string): bool {
+  const selectedDatabase = database.trim().toLowerCase();
+  if (selectedDatabase.length == 0) {
+    return false;
+  }
+  const reference = sync_table_reference(syncTable);
+  const tableDatabase = string.from(reference.database).trim().toLowerCase();
+  const localTable = string.from(reference.table).trim();
+  return tableDatabase.length != 0 &&
+    localTable.length != 0 &&
+    tableDatabase == selectedDatabase;
+}
+
 function table_sync_policy_database_name(policy: map<json>): string {
   return string.from(policy.database ?? '').trim();
 }
@@ -2974,7 +2987,12 @@ function enabled_sync_tables_for_agent_with_policies(agent: map<json>, policies:
     );
   }
   for (const tableState of tables) {
-    if (tableState.enabled == true && tableState.table != null) {
+    if (tableState.enabled == true &&
+        tableState.table != null &&
+        sync_table_belongs_to_database(
+          string.from(tableState.table),
+          string.from(agent.database)
+        )) {
       enabledTables = enabledTables.concat([string.from(tableState.table)]);
     }
   }
@@ -2985,12 +3003,23 @@ function scheduler_agent_table_states(agent: map<json>, policies: array<json>? =
   if (agent.tables == null) {
     return [];
   }
-  return apply_table_sync_policies_with_policies(
+  const tables = apply_table_sync_policies_with_policies(
     agent.ownerUserId,
     agent.tables,
     string.from(agent.database),
     policies
   );
+  let selectedDatabaseTables = [];
+  for (const tableState of tables) {
+    if (tableState.table != null &&
+        sync_table_belongs_to_database(
+          string.from(tableState.table),
+          string.from(agent.database)
+        )) {
+      selectedDatabaseTables = selectedDatabaseTables.concat([tableState]);
+    }
+  }
+  return selectedDatabaseTables;
 }
 
 function scheduler_agent_table_state(agentTables: array<json>, table: string): map<json>? {
@@ -3311,7 +3340,8 @@ function enabled_sync_policy_tables_for_agent(agent: map<json>, policies: array<
   for (const policy of sourcePolicies ?? []) {
     if (policy.enabled == true) {
       const table = table_sync_policy_sync_key(policy);
-      if (table.trim().length != 0) {
+      if (table.trim().length != 0 &&
+          sync_table_belongs_to_database(table, string.from(agent.database))) {
         enabledTables = enabledTables.concat([table]);
       }
     }

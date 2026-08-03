@@ -1104,6 +1104,45 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("Change Tracking cursors are preserved until offline clients catch up", source)
         self.assertIn("skippedOfflineClients", source)
 
+    def test_sync_scheduling_is_scoped_to_each_agents_selected_database(self):
+        source = read_text("business/control_plane.tru")
+
+        database_guard = source.split(
+            "function sync_table_belongs_to_database(", 1
+        )[1].split("\nfunction ", 1)[0]
+        self.assertIn("database.trim().toLowerCase()", database_guard)
+        self.assertIn("sync_table_reference(syncTable)", database_guard)
+        self.assertIn("tableDatabase == selectedDatabase", database_guard)
+        self.assertIn("return false;", database_guard)
+
+        inventory_tables = source.split(
+            "function enabled_sync_tables_for_agent_with_policies(", 1
+        )[1].split("\nfunction scheduler_agent_table_states(", 1)[0]
+        self.assertIn("sync_table_belongs_to_database(", inventory_tables)
+        self.assertIn("string.from(agent.database)", inventory_tables)
+
+        scheduler_states = source.split(
+            "function scheduler_agent_table_states(", 1
+        )[1].split("\nfunction scheduler_agent_table_state(", 1)[0]
+        self.assertIn("sync_table_belongs_to_database(", scheduler_states)
+        self.assertIn("selectedDatabaseTables", scheduler_states)
+
+        policy_tables = source.split(
+            "function enabled_sync_policy_tables_for_agent(", 1
+        )[1].split("\nfunction sync_table_state_due_for_interval(", 1)[0]
+        self.assertIn("sync_table_belongs_to_database(", policy_tables)
+        self.assertIn("string.from(agent.database)", policy_tables)
+
+        # Every scheduling entry point consumes one of the guarded shared
+        # selectors, so stale mixed-database heartbeat inventory cannot leak
+        # into Sync All, periodic waves, retries, or comparison jobs.
+        self.assertGreaterEqual(
+            source.count("enabled_sync_tables_for_agent_with_policies("), 8
+        )
+        self.assertGreaterEqual(
+            source.count("enabled_sync_policy_tables_for_agent("), 8
+        )
+
     def test_shared_baseline_preflight_keeps_delta_and_reconcile_modes_explicit(self):
         source = read_text("business/control_plane.tru")
         planner = source.split(
