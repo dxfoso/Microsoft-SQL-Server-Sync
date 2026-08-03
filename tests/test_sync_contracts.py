@@ -1639,7 +1639,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("scheduler_table_change_tracking_ready(", baseline_planner)
         self.assertIn("function json_payload_changed", control_plane)
         self.assertIn("if (tablesChanged || relationshipsChanged)", heartbeat_body)
-        self.assertEqual(heartbeat_body.count("syncEnabled: true,"), 2)
+        self.assertEqual(heartbeat_body.count("syncEnabled: true,"), 0)
         self.assertIn("_scheduleSelectedTableFingerprintRefresh();", agent_page)
         self.assertNotIn("await _refreshSelectedTableFingerprints();", heartbeat_body)
         self.assertNotIn("_prepareAutomaticSyncQueueIfDue", agent_page)

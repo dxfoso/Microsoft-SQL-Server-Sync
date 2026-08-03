@@ -380,6 +380,18 @@ class ControlPlaneContractsTests(unittest.TestCase):
             source,
         )
 
+    def test_agent_heartbeat_preserves_explicit_sync_disabled_setting(self):
+        source = read_text("business/control_plane.tru")
+        heartbeat_body = source.split("function agents_heartbeat(", 1)[1].split(
+            "\nfunction ", 1
+        )[0]
+        enabled_set_body = source.split(
+            "function agent_sync_enabled_set(", 1
+        )[1].split("\nfunction ", 1)[0]
+
+        self.assertNotIn("syncEnabled: true", heartbeat_body)
+        self.assertIn("syncEnabled: enabled", enabled_set_body)
+
     def test_paused_automatic_sync_does_not_stop_an_accepted_manual_queue(self):
         source = read_text("business/control_plane.tru")
         auto_tick_body = source.split("function auto_sync_tick(", 1)[1].split(
