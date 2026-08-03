@@ -6867,9 +6867,23 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         if (currentWinner == null) {
           currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
         }
+        // A full-union retry receives a new Change Tracking version even when
+        // the SQL row is byte-for-byte identical to the durable winner. Relay
+        // that row so a failed canonical download can be rebuilt completely,
+        // but keep the original winner metadata. Differing stale rows and
+        // rows hidden by a durable delete still follow the normal winner rule.
+        const incomingRowHash = string.from(incomingRow.__sync_row_hash ?? '').trim();
+        const matchesDurableWinnerContent =
+          multiClientUnionBootstrap &&
+          currentWinner != null &&
+          string.from(currentWinner.operationId) != operationId &&
+          incomingRowHash.length != 0 &&
+          incomingRowHash == string.from(currentWinner.rowHash).trim() &&
+          operation == string.from(currentWinner.operation).trim().toUpperCase();
         if (accepted &&
             currentWinner != null &&
             string.from(currentWinner.operationId) != operationId &&
+            !matchesDurableWinnerContent &&
             !sync_row_candidate_is_later(
               incomingRow,
               currentWinner,
@@ -6879,7 +6893,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             )) {
           accepted = false;
         }
-        if (accepted && (currentWinner == null || string.from(currentWinner.operationId) != operationId)) {
+        if (accepted &&
+            !matchesDurableWinnerContent &&
+            (currentWinner == null || string.from(currentWinner.operationId) != operationId)) {
           const nextWinner = {
             id: winnerId,
             ownerUserId: winnerOwnerUserId,
@@ -6895,7 +6911,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             originClient: normalize_user_name(normalizedClientName),
             changeVersion: string.from(incomingRow.__sync_change_version ?? '').trim(),
             operationId,
-            rowHash: string.from(incomingRow.__sync_row_hash ?? '').trim(),
+            rowHash: incomingRowHash,
             operation,
             revision: currentWinner == null ? 1 : int.from(currentWinner.revision) + 1,
             updatedAt: serverReceivedAt
