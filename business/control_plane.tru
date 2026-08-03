@@ -6032,7 +6032,7 @@ function agent_data_export_poll(clientName: string? = null, token: string? = nul
   return {
     ok: true,
     clientName: resolvedClientName,
-    dataExport: agent_data_export_payload(agent, true, is_client_user(current))
+    dataExport: agent_data_export_payload(agent, true, true)
   };
 }
 
