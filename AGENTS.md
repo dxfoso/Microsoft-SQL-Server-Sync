@@ -16,6 +16,13 @@ Use this from the repository root:
 
 Use the launcher when a local stack restart is actually needed.
 
+## Windows Background Execution Rule
+
+- Never run long tests, builds, deployment scripts, Docker suites, update helpers, or repeated native child processes in a visible Windows console. They must not steal focus or interrupt the person using the PC.
+- Start long-running Windows work with `Start-Process -WindowStyle Hidden`, redirect standard output and standard error to repository log files, retain the process ID, and monitor the process and logs from the existing agent session.
+- Keep quick read-only commands in the existing hidden agent shell. Open a visible process only when the user explicitly requests an interactive window.
+- Start Windows client verification hidden or minimized, collect its startup log, and close only the verification instance after the required checks. Do not disrupt an existing user-run client instance.
+
 ## Windows Client Rule
 
 - After any shipped `sync_windows_agent/` client change, update `sync_windows_agent/pubspec.yaml` `version:` and publish a new Windows client update before considering the change deployed.
@@ -32,6 +39,16 @@ Use the launcher when a local stack restart is actually needed.
 - Treat exception code `0xc0000005` with `Faulting module name: unknown` during startup as a native Windows runner crash, not a Dart/Flutter screen error.
 - Make sure the client is rebuilt from a commit that includes guarded Windows theme API handling in `sync_windows_agent/windows/runner/win32_window.cpp` (`DwmSetWindowAttribute` must be loaded dynamically and called only when available).
 - Do not validate a downloaded portable build after this crash without rebuilding or replacing it from the latest source; older portable builds can still contain the unguarded startup crash.
+
+## Explicit Delete Sync Rule
+
+- Synchronize a deletion only when SQL Server Change Tracking reports an explicit `D` operation for a complete primary key. A user deletion and an Al-Ameen application deletion have the same meaning and must become a durable, versioned server tombstone.
+- Apply an explicit tombstone atomically to the exact primary-key row on the other participating clients. Preserve the `SQLSYNC` Change Tracking context so an agent-applied delete is not uploaded again.
+- Never infer deletion from snapshot absence, row-count differences, incomplete uploads, an offline client, authoritative reconciliation, unique-key conflicts, or comparison results. Full snapshots and union/bootstrap jobs may insert or update rows only and must never reduce the target row count.
+- Never delete a different primary key to resolve a unique or logical-identity conflict. Stop atomically and report the conflict instead.
+- Keep tombstones durable and deterministically ordered so retries, connection loss, client restarts, and concurrent updates cannot resurrect an older value or apply a stale delete.
+- Every sync logic change must include fake three-client coverage proving explicit deletes converge, missing snapshot rows are preserved, target-only rows survive bootstrap/reconciliation, agent-origin changes are filtered, and interrupted retries remain atomic and idempotent.
+- Never exercise synchronization changes against real client databases during verification. Keep real clients and automatic scheduling paused; use local Docker clients and explicitly isolated live fake clients until the user starts real synchronization from the web UI.
 
 ## Backend Rule
 

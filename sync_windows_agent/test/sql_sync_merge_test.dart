@@ -3,70 +3,42 @@ import 'package:sync_windows_agent/sql_sync_merge.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
 
 void main() {
-  test(
-    'large snapshot apply uses segmented update and insert batches with batched delete',
-    () {
-      final columns = [
-        const SqlSyncColumnDefinition(
-          name: 'Id',
-          sqlType: 'int',
-          maxLength: 4,
-          precision: 10,
-          scale: 0,
-          isIdentity: true,
-          isComputed: false,
-        ),
-        const SqlSyncColumnDefinition(
-          name: 'Name',
-          sqlType: 'nvarchar',
-          maxLength: 100,
-          precision: 0,
-          scale: 0,
-          isIdentity: false,
-          isComputed: false,
-        ),
-      ];
-      final rows = List<Map<String, dynamic>>.generate(
-        1200,
-        (index) => {'Id': index + 1, 'Name': 'Row $index'},
-        growable: false,
-      );
+  test('complete snapshot apply never deletes target-only rows', () {
+    final columns = [
+      const SqlSyncColumnDefinition(
+        name: 'Id',
+        sqlType: 'int',
+        maxLength: 4,
+        precision: 10,
+        scale: 0,
+        isIdentity: true,
+        isComputed: false,
+      ),
+      const SqlSyncColumnDefinition(
+        name: 'Name',
+        sqlType: 'nvarchar',
+        maxLength: 100,
+        precision: 0,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'mt000',
+      stageTableName: '#stage_mt000',
+      columns: columns,
+      primaryKeyColumns: const ['Id'],
+    );
 
-      final sql = buildTargetSnapshotMergeSql(
-        database: 'db',
-        schema: 'dbo',
-        table: 'mt000',
-        columns: columns,
-        primaryKeyColumns: const ['Id'],
-        rows: rows,
-      );
-
-      expect('UPDATE target'.allMatches(sql).length, greaterThan(1));
-      expect(
-        'INSERT INTO [db].[dbo].[mt000] ([Id], [Name])'.allMatches(sql).length,
-        greaterThan(1),
-      );
-      expect(sql, contains('WHERE __row_num BETWEEN 1 AND 500'));
-      expect(sql, contains('WHERE __row_num BETWEEN 501 AND 1000'));
-      expect(
-        sql,
-        contains(
-          'CREATE UNIQUE CLUSTERED INDEX IX_source_rows_row_num ON #source_rows (__row_num);',
-        ),
-      );
-      expect(
-        sql,
-        contains('CREATE INDEX IX_source_rows_match_1 ON #source_rows ([Id]);'),
-      );
-      expect(sql, contains('DELETE TOP (500) target'));
-      expect(sql, contains('WHERE NOT EXISTS ('));
-      expect(sql, isNot(contains('MERGE [db].[dbo].[mt000] AS target')));
-      expect(
-        sql,
-        isNot(contains('WHEN NOT MATCHED BY SOURCE THEN\n  DELETE;')),
-      );
-    },
-  );
+    expect(sql, contains('UPDATE target'));
+    expect(sql, contains('INSERT INTO [db].[dbo].[mt000] ([Id], [Name])'));
+    expect(sql, contains('WHERE NOT EXISTS ('));
+    expect(sql, isNot(contains('DELETE target')));
+    expect(sql, isNot(contains('DELETE TOP')));
+  });
 
   test('text match columns keep database collation handling', () {
     final columns = [
@@ -114,7 +86,6 @@ void main() {
         ),
       ],
       primaryKeyColumns: const ['Id'],
-      deleteMissing: false,
     );
 
     expect(sql, isNot(contains('DELETE TOP (500) target')));
@@ -153,7 +124,6 @@ void main() {
           {'Id': 9},
         ],
         protectLocalChangesAfterVersion: 42,
-        deleteMissing: false,
       );
 
       expect(sql, contains('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;'));
@@ -199,7 +169,6 @@ void main() {
       ],
       primaryKeyColumns: const ['Code'],
       protectLocalChangesAfterVersion: 42,
-      deleteMissing: false,
     );
 
     expect(
@@ -225,73 +194,59 @@ void main() {
     );
   });
 
-  test(
-    'authoritative replacement removes a conflicting old identity before insert',
-    () {
-      final sql = buildTargetSnapshotStageApplySql(
-        database: 'db',
-        schema: 'dbo',
-        table: 'ce000',
-        stageTableName: '#stage_ce000',
-        columns: const [
-          SqlSyncColumnDefinition(
-            name: 'GUID',
-            sqlType: 'uniqueidentifier',
-            maxLength: 16,
-            precision: 0,
-            scale: 0,
-            isIdentity: false,
-            isComputed: false,
-          ),
-          SqlSyncColumnDefinition(
-            name: 'Type',
-            sqlType: 'int',
-            maxLength: 4,
-            precision: 10,
-            scale: 0,
-            isIdentity: false,
-            isComputed: false,
-          ),
-          SqlSyncColumnDefinition(
-            name: 'Number',
-            sqlType: 'int',
-            maxLength: 4,
-            precision: 10,
-            scale: 0,
-            isIdentity: false,
-            isComputed: false,
-          ),
-          SqlSyncColumnDefinition(
-            name: 'Branch',
-            sqlType: 'uniqueidentifier',
-            maxLength: 16,
-            precision: 0,
-            scale: 0,
-            isIdentity: false,
-            isComputed: false,
-          ),
-        ],
-        primaryKeyColumns: const ['GUID'],
-        uniqueIndexColumnSets: const [
-          ['Type', 'Number', 'Branch'],
-        ],
-        deleteMissing: true,
-      );
-
-      final conflictDelete = sql.indexOf(
-        'DELETE target\n  FROM [db].[dbo].[ce000] AS target\n  WHERE EXISTS',
-      );
-      final insert = sql.indexOf('INSERT INTO [db].[dbo].[ce000]');
-      expect(conflictDelete, greaterThanOrEqualTo(0));
-      expect(insert, greaterThan(conflictDelete));
-      expect(
-        sql,
-        contains(
-          'AND NOT (source.[GUID] IS NOT NULL AND target.[GUID] = source.[GUID])',
+  test('complete snapshot never deletes a conflicting old identity', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'ce000',
+      stageTableName: '#stage_ce000',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'GUID',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
         ),
-      );
-    },
-  );
+        SqlSyncColumnDefinition(
+          name: 'Type',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Number',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Branch',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['GUID'],
+      uniqueIndexColumnSets: const [
+        ['Type', 'Number', 'Branch'],
+      ],
+    );
+
+    expect(sql, contains('INSERT INTO [db].[dbo].[ce000]'));
+    expect(sql, isNot(contains('DELETE target')));
+  });
 
   test('staged delta apply does not toggle triggers', () {
     final sql = buildTargetSnapshotStageApplySql(
@@ -311,7 +266,6 @@ void main() {
         ),
       ],
       primaryKeyColumns: const ['Id'],
-      deleteMissing: false,
       manageTriggers: false,
     );
 
@@ -320,7 +274,7 @@ void main() {
     expect(sql, isNot(contains('BEGIN TRY\n  \n  END TRY')));
   });
 
-  test('canonical replacement aborts atomically after a post-upload write', () {
+  test('complete snapshot preserves rows missing from its stage', () {
     final sql = buildTargetSnapshotStageApplySql(
       database: 'any_database',
       schema: 'dbo',
@@ -338,26 +292,11 @@ void main() {
         ),
       ],
       primaryKeyColumns: const ['Id'],
-      requireNoLocalChangesAfterVersion: 42,
-      deleteMissing: true,
     );
 
-    expect(sql, contains('WITH (TABLOCKX, HOLDLOCK)'));
-    expect(
-      sql,
-      contains('CHANGETABLE(CHANGES [any_database].[dbo].[items], 42)'),
-    );
-    expect(
-      sql,
-      contains(
-        "RAISERROR('Local rows changed after this client uploaded; retry the canonical sync with a fresh snapshot.', 16, 1)",
-      ),
-    );
-    expect(sql, isNot(contains('THROW')));
-    expect(
-      sql.indexOf("RAISERROR('Local rows changed after this client uploaded"),
-      lessThan(sql.indexOf('DELETE TOP')),
-    );
+    expect(sql, contains('INSERT INTO [any_database].[dbo].[items]'));
+    expect(sql, isNot(contains('DELETE target')));
+    expect(sql, isNot(contains('TABLOCKX')));
   });
 
   test(
@@ -408,7 +347,6 @@ void main() {
         ],
         primaryKeyColumns: const ['Id'],
         insertOnly: false,
-        deleteMissing: false,
         manageTriggers: false,
       );
 
@@ -428,11 +366,12 @@ void main() {
     },
   );
 
-  test('delta delete removes only explicit primary keys', () {
-    final sql = buildTargetDeltaDeleteSql(
+  test('delta tombstone deletes only explicit primary keys', () {
+    final sql = buildTargetSnapshotStageApplySql(
       database: 'db',
       schema: 'dbo',
       table: 'items',
+      stageTableName: '#stage_items',
       columns: const [
         SqlSyncColumnDefinition(
           name: 'Id',
@@ -454,27 +393,24 @@ void main() {
         ),
       ],
       primaryKeyColumns: const ['Id'],
-      rows: const [
+      deltaDeleteRows: const [
         {'Id': 7},
         {'Id': 9},
       ],
     );
 
-    expect(sql, contains('CREATE TABLE #delete_rows'));
+    expect(sql, contains('CREATE TABLE #delta_delete_rows'));
     expect(sql, contains('DELETE target'));
     expect(sql, contains('WITH CHANGE_TRACKING_CONTEXT (0x53514C53594E43)'));
-    expect(sql, contains('INNER JOIN #delete_rows AS source'));
+    expect(sql, contains('INNER JOIN #delta_delete_rows AS source'));
     expect(sql, contains('target.[Id] = source.[Id]'));
-    expect(sql, contains('__SQL_SYNC_DELETED__='));
     expect(
       sql,
       contains('ALTER TABLE [db].[dbo].[items] DISABLE TRIGGER ALL;'),
     );
     expect(sql, contains('ALTER TABLE [db].[dbo].[items] ENABLE TRIGGER ALL;'));
-    expect(sql, contains('RAISERROR(@SqlSyncDeleteErrorMessage, 16, 1)'));
-    expect(sql, isNot(contains('THROW;')));
-    expect(sql, isNot(contains('[Value]')));
-    expect(sql, isNot(contains('WHERE NOT EXISTS')));
+    expect(sql, contains('RAISERROR(@SqlSyncStageErrorMessage, 16, 1)'));
+    expect(sql, isNot(contains('DELETE TOP')));
   });
 
   test(
@@ -510,7 +446,8 @@ void main() {
       );
 
       expect(sql, contains('UPDATE target'));
-      expect(sql, contains('DELETE TOP'));
+      expect(sql, isNot(contains('DELETE TOP')));
+      expect(sql, isNot(contains('DELETE target')));
     },
   );
 
@@ -584,24 +521,7 @@ void main() {
     expect(rows.map((row) => row['Id']), ['c1-id', 'c2-id']);
   });
 
-  test('bi000 exposes its stable invoice line identity', () {
-    expect(
-      sqlSyncLogicalIdentityColumns(
-        table: 'BI000',
-        availableColumns: const ['GUID', 'ParentGUID', 'Number', 'Quantity'],
-      ),
-      const ['ParentGUID', 'Number'],
-    );
-    expect(
-      sqlSyncLogicalIdentityColumns(
-        table: 'bu000',
-        availableColumns: const ['GUID', 'ParentGUID', 'Number'],
-      ),
-      isEmpty,
-    );
-  });
-
-  test('invoice replacement rows converge by parent and line number', () {
+  test('invoice rows with different GUIDs remain independent', () {
     final rows = coalesceSqlSyncDeltaRows(
       rows: const [
         {
@@ -627,16 +547,14 @@ void main() {
         },
       ],
       primaryKeyColumns: const ['GUID'],
-      logicalIdentityColumns: const ['ParentGUID', 'Number'],
     );
 
-    expect(rows, hasLength(2));
+    expect(rows, hasLength(3));
     expect(rows.first['__sync_op'], 'D');
-    expect(rows.last['GUID'], 'c2-guid');
-    expect(rows.last['Quantity'], 234);
+    expect(rows.map((row) => row['GUID']), ['old-guid', 'c1-guid', 'c2-guid']);
   });
 
-  test('invoice replacement delete, rekey, cleanup and update are atomic', () {
+  test('invoice replacement explicit delete and insert are atomic', () {
     final sql = buildTargetSnapshotStageApplySql(
       database: 'db',
       schema: 'dbo',
@@ -681,28 +599,21 @@ void main() {
         ),
       ],
       primaryKeyColumns: const ['GUID'],
-      logicalIdentityColumns: const ['ParentGUID', 'Number'],
       deltaDeleteRows: const [
         {'GUID': '3F781CBB-66A5-461A-A92C-8F5EBF77968B'},
       ],
-      deleteMissing: false,
     );
 
     final begin = sql.indexOf('BEGIN TRANSACTION;');
     final explicitDelete = sql.indexOf('CREATE TABLE #delta_delete_rows');
-    final rekey = sql.indexOf(
-      'SET target.[GUID] = candidate.source_primary_key',
-    );
     final update = sql.lastIndexOf('UPDATE target');
     final commit = sql.indexOf('COMMIT TRANSACTION;');
     expect(begin, greaterThanOrEqualTo(0));
     expect(explicitDelete, greaterThan(begin));
-    expect(rekey, greaterThan(explicitDelete));
-    expect(update, greaterThan(rekey));
+    expect(update, greaterThan(explicitDelete));
     expect(commit, greaterThan(update));
-    expect(sql, contains('target.[ParentGUID] = source.[ParentGUID]'));
-    expect(sql, contains('target.[Number] = source.[Number]'));
     expect(sql, contains('DELETE target'));
+    expect(sql, isNot(contains('candidate.source_primary_key')));
   });
 
   test('different GUIDs remain independent across streamed pages', () {

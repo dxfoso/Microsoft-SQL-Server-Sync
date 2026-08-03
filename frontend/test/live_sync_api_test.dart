@@ -173,8 +173,7 @@ void main() {
     final count = await api.resolveTableSyncIssue(
       clientName: ' c1 ',
       table: ' db::pt000 ',
-      action: 'replace_client',
-      sourceClientName: ' c2 ',
+      action: 'retry_sync',
     );
 
     expect(count, 2);
@@ -182,8 +181,7 @@ void main() {
     expect(requestPayload['args'], {
       'clientName': 'c1',
       'table': 'db::pt000',
-      'action': 'replace_client',
-      'sourceClientName': 'c2',
+      'action': 'retry_sync',
       'token': 'test-token',
     });
     api.dispose();

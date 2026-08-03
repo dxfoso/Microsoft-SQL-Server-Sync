@@ -12,8 +12,8 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         bridge = (ROOT / "sync_windows_agent/tool/sync_sql_harness.dart").read_text(encoding="utf-8")
 
         self.assertIn("mcr.microsoft.com/mssql/server:2022-latest", compose)
-        self.assertIn("buildTargetDeltaDeleteSql(", bridge)
         self.assertIn("buildTargetSnapshotStageApplySql(", bridge)
+        self.assertIn("deltaDeleteRows: deletes", bridge)
         self.assertIn("coalesceSqlSyncDeltaRows(", bridge)
         self.assertIn('"primary-key-change"', runner)
         self.assertIn(

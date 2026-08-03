@@ -253,8 +253,9 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _bulkUpdateBusy = false;
   bool _bulkLogsBusy = false;
   bool _automaticSyncBusy = false;
-  bool _reconcileBusy = false;
   bool _serverResetBusy = false;
+  // Legacy source-reconciliation is intentionally not exposed in the UI.
+  bool _reconcileBusy = false;
   AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
   String _tableFilter = '';
@@ -1276,18 +1277,6 @@ class _ClientsPageState extends State<ClientsPage> {
                   ? 'Resume Automatic Sync'
                   : 'Pause Automatic Sync',
             ),
-          ),
-        if (widget.authenticatedUser.canManageUsers)
-          OutlinedButton.icon(
-            onPressed:
-                _reconcileBusy
-                    ? null
-                    : () => unawaited(_openAuthoritativeReconcileDialog()),
-            icon: _actionIcon(
-              busy: _reconcileBusy,
-              icon: Icons.compare_arrows_rounded,
-            ),
-            label: const Text('Reconcile from Source'),
           ),
         if (widget.authenticatedUser.canManageUsers)
           OutlinedButton.icon(
@@ -2432,25 +2421,15 @@ class _ClientsPageState extends State<ClientsPage> {
           itemBuilder:
               (context) => const [
                 PopupMenuItem(
-                  value: 'replace_client',
+                  value: 'retry_sync',
                   child: ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.download_rounded),
-                    title: Text('Replace this client'),
+                    leading: Icon(Icons.refresh_rounded),
+                    title: Text('Retry after local correction'),
                     subtitle: Text(
-                      'Copy this table from another healthy client',
+                      'Use after deleting the unwanted row in Al-Ameen',
                     ),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'keep_client',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.upload_rounded),
-                    title: Text('Use this client as source'),
-                    subtitle: Text('Replace this table on the other clients'),
                   ),
                 ),
                 PopupMenuItem(
@@ -2516,28 +2495,14 @@ class _ClientsPageState extends State<ClientsPage> {
     AdminTableSyncIssue issue,
     String action,
   ) async {
-    final peers = (_state?.agents ?? const <AdminAgent>[])
-        .where(
-          (candidate) =>
-              candidate.ownerUserId == agent.ownerUserId &&
-              candidate.clientName != agent.clientName &&
-              candidate.syncEnabled,
-        )
-        .toList(growable: false)
-      ..sort((left, right) => left.clientName.compareTo(right.clientName));
-    String selectedSource = peers.firstOrNull?.clientName ?? '';
-    final copyAction = action == 'replace_client' || action == 'keep_client';
     final title = switch (action) {
-      'replace_client' => 'Replace this client table?',
-      'keep_client' => 'Use ${agent.clientName} as the source?',
+      'retry_sync' => 'Retry this table after local correction?',
       'exclude_table' => 'Exclude this table from sync?',
       _ => 'Accept the current differences?',
     };
     final explanation = switch (action) {
-      'replace_client' =>
-        'The selected source will overwrite ${agent.clientName} for this table.',
-      'keep_client' =>
-        '${agent.clientName} will overwrite this table on every other enabled client.',
+      'retry_sync' =>
+        'Confirm only after the unwanted row was deleted through Al-Ameen. Sync will relay that explicit SQL Change Tracking delete; a missing snapshot row never deletes data.',
       'exclude_table' =>
         'This table will remain local on every client and will no longer synchronize.',
       _ =>
@@ -2547,81 +2512,44 @@ class _ClientsPageState extends State<ClientsPage> {
       context: context,
       barrierDismissible: false,
       builder:
-          (dialogContext) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  title: Text(title),
-                  content: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 460),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _displayTable(table.table),
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(explanation),
-                        if (action == 'replace_client') ...[
-                          const SizedBox(height: 16),
-                          DropdownButtonFormField<String>(
-                            initialValue:
-                                selectedSource.isEmpty ? null : selectedSource,
-                            decoration: const InputDecoration(
-                              labelText: 'Authoritative source client',
-                            ),
-                            items: peers
-                                .map(
-                                  (peer) => DropdownMenuItem(
-                                    value: peer.clientName,
-                                    child: Text(
-                                      '${peer.clientName}${peer.isOnline ? '' : ' · offline'}',
-                                    ),
-                                  ),
-                                )
-                                .toList(growable: false),
-                            onChanged:
-                                (value) => setDialogState(
-                                  () => selectedSource = value ?? '',
-                                ),
-                          ),
-                          if (peers.isEmpty) ...[
-                            const SizedBox(height: 8),
-                            const Text(
-                              'No other enabled client is available.',
-                              style: TextStyle(color: Color(0xFFB42318)),
-                            ),
-                          ],
-                        ],
-                        if (copyAction) ...[
-                          const SizedBox(height: 12),
-                          const Text(
-                            'Both source and target clients must be online. Normal sync stays stopped until their fingerprints match.',
-                            style: TextStyle(
-                              color: Color(0xFF667085),
-                              fontSize: 12,
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+          (dialogContext) => AlertDialog(
+            title: Text(title),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _displayTable(table.table),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(false),
-                      child: const Text('Cancel'),
-                    ),
-                    FilledButton(
-                      onPressed:
-                          action == 'replace_client' && selectedSource.isEmpty
-                              ? null
-                              : () => Navigator.of(dialogContext).pop(true),
-                      child: const Text('Confirm resolution'),
+                  const SizedBox(height: 8),
+                  Text(explanation),
+                  if (action == 'retry_sync') ...[
+                    const SizedBox(height: 12),
+                    const Text(
+                      'This never chooses an authoritative client or replaces a table. Inserts and updates merge by primary key; deletes require an explicit tombstone.',
+                      style: TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
                     ),
                   ],
-                ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Confirm resolution'),
+              ),
+            ],
           ),
     );
     if (confirmed != true || !mounted) return;
@@ -2631,7 +2559,6 @@ class _ClientsPageState extends State<ClientsPage> {
         clientName: agent.clientName,
         table: table.table,
         action: action,
-        sourceClientName: action == 'replace_client' ? selectedSource : '',
       );
       await _refresh(silent: true);
       if (!mounted) return;
@@ -2639,8 +2566,8 @@ class _ClientsPageState extends State<ClientsPage> {
         SnackBar(
           content: Text(
             jobCount == 0
-                ? 'Table decision saved. Sync will resume when every issue is resolved.'
-                : 'Authoritative repair started with $jobCount jobs. Normal sync remains stopped until verification passes.',
+                ? 'Table decision saved. Sync remains stopped until you start it.'
+                : 'Retry queued with $jobCount jobs. No table replacement was requested.',
           ),
         ),
       );

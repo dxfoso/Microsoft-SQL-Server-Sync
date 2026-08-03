@@ -1,6 +1,6 @@
 # Sync Production Readiness
 
-Date: 2026-07-22
+Date: 2026-08-03
 
 ## Result
 
@@ -13,13 +13,13 @@ This report does not claim that every possible SQL Server schema or external
 failure can be simulated. The remaining limitations are listed explicitly
 below.
 
-## Protocol V3 GUID Identity And Row Integrity
+## Protocol V4 Explicit Deletes And Row Integrity
 
-Protocol v3 removes multi-client full-snapshot anti-entropy. A multi-writer
-batch accepts Change Tracking deltas only; a full snapshot must be an explicit
-one-source bootstrap into an empty or deliberately replaceable target. The
-server rejects older protocol uploads, non-delta multi-writer payloads, and requests from a
-stale sync epoch.
+Protocol v4 makes deletion an explicit operation. Only a SQL Server Change
+Tracking `D` record with a complete primary key, operation ID, origin client,
+and Change Tracking version can become a durable server tombstone. Full
+snapshots, union/bootstrap payloads, row-count differences, offline clients,
+and comparison results never imply deletion.
 
 The primary GUID is the only permanent row identity. Every changed row carries
 a canonical SHA-256 of all synchronized business columns, its origin client,
@@ -27,10 +27,10 @@ Change Tracking version, database commit time when available, and a deterministi
 operation ID. Targets validate the hash, read the existing row by GUID, compare
 the complete-row hashes, and skip unchanged content.
 
-Different GUIDs are never coalesced through an alternate unique index. If two
-independent records collide on a target business constraint, the established
-row is left untouched and the incoming row is retained as a permanent
-quarantined conflict. Same-GUID concurrent versions use deterministic
+Different GUIDs are never coalesced or deleted through an alternate unique
+index. If two independent records collide on a target business constraint, the
+entire target transaction rolls back and the web UI reports that explicit
+local correction is required. Same-GUID concurrent versions use deterministic
 commit/version/origin/operation ordering.
 
 Every server-data reset rotates the durable sync epoch. Windows clients persist
@@ -38,57 +38,38 @@ that epoch and clear their Change Tracking cursors when it changes. A nonempty
 database without a valid cursor fails closed with a bootstrap-required error;
 it is never converted into a full-table multi-writer upload.
 
-The current relay has one outbound cursor per client/table rather than a
-durable per-subscriber operation log. Therefore scheduling uses an all-client
-barrier: if any registered peer is offline, the table is deferred and no
-client cursor advances. This preserves offline catch-up without losing deltas.
-Decommissioned clients must be removed or disabled so they do not hold the
-barrier indefinitely.
+The durable server winners and tombstones allow online clients to continue
+while another client is offline. The offline client retains catch-up debt and
+receives the merged operations when it reconnects. Agent-applied changes use
+the `SQLSYNC` Change Tracking context and are not uploaded again.
 
-## Authoritative Reconciliation
+## Safe Baseline And Conflict Recovery
 
-Protocol v3 has a separate repair operation for historical divergence. It is
-not part of ordinary multi-writer sync:
+Protocol v4 does not expose source-to-target table replacement. A baseline or
+full-union apply stages its payload and may insert or update primary-key rows,
+but it must never remove a target-only row or reduce the target row count.
 
-1. Pause automatic sync.
-2. Keep the trusted source and every repair target online and SQL-connected.
-3. In **Clients**, choose **Reconcile from Source**.
-4. Select the authoritative source, target clients, and enabled tables.
-5. Confirm the target replacement warning.
+When a unique business-key conflict prevents the union from being stored, the
+whole table apply rolls back. Compare the client rows in the web UI, delete the
+unwanted record through Al-Ameen on the client where it exists, then choose
+**Retry after local correction**. The next delta relays that real Change
+Tracking tombstone. The retry action itself does not delete or replace data.
 
-The source client reads a complete, primary-key-ordered snapshot and verifies
-that its fingerprint did not change during extraction. Each target stages the
-complete snapshot, updates/inserts source rows, deletes target-only rows, and
-commits that replacement atomically with business triggers restored. The
-target then compares its row count and full writable-column fingerprint with
-the source snapshot before advancing its local Change Tracking baseline.
-
-This operation is deliberately fail-closed: the control plane rejects it while
-automatic sync is running, when any participant is busy/offline, when clients
-belong to different owners, or when a requested table is not enabled on every
-participant. A retry of the same authoritative snapshot is idempotent.
-
-For a scripted live proof, including an automatic idempotent retry:
-
-```powershell
-python .\scripts\verify_live_authoritative_reconcile.py `
-  --source c1 --targets c2 `
-  --tables AmnDb028::en000 AmnDb028::mt000 AmnDb028::pt000
-```
+Clients from protocol v3 and earlier fail closed on protocol-v4 jobs, preventing
+an older snapshot-replacement implementation from joining a new sync epoch.
 
 ## Verification Evidence
 
 | Layer | Result |
 | --- | --- |
-| Windows agent tests | 104 passed |
-| Frontend tests | 8 passed |
-| Repository Python tests | 237 passed |
-| Focused sync wrapper | 14 Dart and 90 contract tests passed |
-| Docker SQL matrix | 15 scenarios passed across 3 independent databases |
-| Docker final state | 1,208 rows identical on all 3 databases |
-| TRU release validation | 2 files, 10 objects, 209 functions compiled |
+| Windows agent tests | 163 passed |
+| Frontend tests | 23 passed |
+| Repository Python tests | 298 passed |
+| Docker SQL standard matrix | 24 scenarios passed across 3 independent databases |
+| Docker robustness matrix | 11 atomicity, concurrency, fuzz, scale, and restart scenarios passed |
+| Docker final standard state | 1,215 rows converged without snapshot-derived deletion |
 | Frontend analysis | Clean |
-| Windows agent analysis | 6 existing warnings, no errors |
+| Windows agent analysis | Clean |
 
 Run the main database readiness gate from the repository root:
 

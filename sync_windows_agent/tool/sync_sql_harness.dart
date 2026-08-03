@@ -31,9 +31,6 @@ void main(List<String> arguments) {
     final winners = coalesceSqlSyncDeltaRows(
       rows: rows,
       primaryKeyColumns: _strings(request['primaryKeyColumns']),
-      logicalIdentityColumns: _strings(
-        request['logicalIdentityColumns'] ?? const <dynamic>[],
-      ),
     );
     stdout.write(jsonEncode(winners));
     return;
@@ -46,9 +43,6 @@ void main(List<String> arguments) {
       .map((column) => _column(Map<String, dynamic>.from(column as Map)))
       .toList(growable: false);
   final primaryKeyColumns = _strings(request['primaryKeyColumns']);
-  final logicalIdentityColumns = _strings(
-    request['logicalIdentityColumns'] ?? const <dynamic>[],
-  );
   final uniqueIndexColumnSets = (request['uniqueIndexColumnSets'] as List? ??
           const [])
       .map((columns) => _strings(columns))
@@ -69,26 +63,7 @@ void main(List<String> arguments) {
       'sql_sync_harness_${DateTime.now().microsecondsSinceEpoch}';
   final sql = StringBuffer();
 
-  if (deletes.isNotEmpty &&
-      logicalIdentityColumns.isEmpty &&
-      protectLocalChangesAfterVersion == null) {
-    sql.writeln(
-      buildTargetDeltaDeleteSql(
-        database: database,
-        schema: schema,
-        table: table,
-        columns: columns,
-        primaryKeyColumns: primaryKeyColumns,
-        rows: deletes,
-      ),
-    );
-  }
-  final deleteMissing = request['deleteMissing'] == true;
-  if (rows.isNotEmpty ||
-      deleteMissing ||
-      (deletes.isNotEmpty &&
-          (logicalIdentityColumns.isNotEmpty ||
-              protectLocalChangesAfterVersion != null))) {
+  if (rows.isNotEmpty || deletes.isNotEmpty) {
     sql.writeln(
       buildTargetSnapshotStageSetupSql(
         stageTableName: stageTableName,
@@ -113,14 +88,8 @@ void main(List<String> arguments) {
         columns: columns,
         primaryKeyColumns: primaryKeyColumns,
         uniqueIndexColumnSets: uniqueIndexColumnSets,
-        logicalIdentityColumns: logicalIdentityColumns,
-        deltaDeleteRows:
-            logicalIdentityColumns.isEmpty &&
-                    protectLocalChangesAfterVersion == null
-                ? const []
-                : deletes,
+        deltaDeleteRows: deletes,
         protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
-        deleteMissing: deleteMissing,
         manageTriggers: true,
         insertOnly: false,
       ),

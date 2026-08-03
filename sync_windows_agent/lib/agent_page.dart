@@ -2911,7 +2911,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   String _syncFlowDescription() {
-    return 'Upload local changes, then apply merged inserts, updates, and deletes.';
+    return 'Upload local changes and apply merged inserts, updates, and explicit SQL delete tombstones. Missing snapshot rows are always preserved.';
   }
 
   Color _statusColor(String status) {
@@ -4615,7 +4615,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
     logStartupEvent(
-      'Sync protocol changed from ${_syncState.protocolVersion} to ${job.protocolVersion} or epoch changed from ${_syncState.syncEpoch.isEmpty ? '(none)' : _syncState.syncEpoch} to ${job.syncEpoch}; preparing protocol-v3 processing.',
+      'Sync protocol changed from ${_syncState.protocolVersion} to ${job.protocolVersion} or epoch changed from ${_syncState.syncEpoch.isEmpty ? '(none)' : _syncState.syncEpoch} to ${job.syncEpoch}; preparing protocol-v4 processing.',
     );
     final epochChanged =
         _syncState.syncEpoch.isEmpty || _syncState.syncEpoch != job.syncEpoch;
@@ -4964,7 +4964,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           'table': job.table,
           'rowCount': snapshotToApply.rows.length,
           'retryRowCount': retryRows.length,
-          'replaceTarget': authoritativeReconcile || canonicalFullMerge,
+          'fullSnapshotApply': authoritativeReconcile || canonicalFullMerge,
+          'deletePolicy': 'explicit-tombstones-only',
           'isDelta': snapshotToApply.isDelta,
         },
       );
@@ -4972,11 +4973,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         job: job,
         snapshot: snapshotToApply,
         applyStats: applyStats,
-        replaceTarget: authoritativeReconcile || canonicalFullMerge,
-        requireNoLocalChangesAfterVersion:
-            canonicalFullMerge
-                ? snapshotToApply.changeTrackingVersions[widget.clientName]
-                : null,
+        fullSnapshotApply: authoritativeReconcile || canonicalFullMerge,
       );
       logAgentDiagnostic(
         'sync.apply.committed',
@@ -5243,7 +5240,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         unionBootstrapSnapshot ||
         completeSnapshot) {
       if (job.batchId?.trim().isNotEmpty != true) {
-        throw StateError('Explicit protocol-v3 bootstrap requires a batch.');
+        throw StateError('Explicit protocol-v4 bootstrap requires a batch.');
       }
       final consistentSnapshot = await _fetchConsistentSourceTableSnapshot(
         profile: sourceProfile,
@@ -5404,8 +5401,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required RemoteSnapshot snapshot,
     bool refreshLocalState = true,
     _DeltaApplyStats? applyStats,
-    bool replaceTarget = false,
-    int? requireNoLocalChangesAfterVersion,
+    bool fullSnapshotApply = false,
   }) async {
     final stats = applyStats ?? _DeltaApplyStats();
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
@@ -5466,15 +5462,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
-    final logicalIdentityColumns = sqlSyncLogicalIdentityColumns(
-      table: targetTable.table,
-      availableColumns: syncColumns.map((column) => column.name),
-    );
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     final postUploadChangeTrackingVersion =
         applyDelta ? snapshot.changeTrackingVersions[widget.clientName] : null;
-    if (replaceTarget && snapshot.isDelta) {
+    if (fullSnapshotApply && snapshot.isDelta) {
       throw StateError(
         'Authoritative reconciliation requires a complete source snapshot.',
       );
@@ -5505,7 +5497,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                   .map((row) => Map<String, dynamic>.from(row))
                   .toList(growable: false),
               primaryKeyColumns: primaryKeyColumns,
-              logicalIdentityColumns: logicalIdentityColumns,
             )
             : snapshot.rows;
     stats.seenRowIdentities.addAll(
@@ -5522,7 +5513,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     final contentCheckedRows =
-        applyDelta && logicalIdentityColumns.isEmpty
+        applyDelta
             ? await _rowsWhoseContentChanged(
               profile: targetProfile,
               database: targetDatabase,
@@ -5551,10 +5542,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final upsertRows = contentCheckedRows
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
-    if (replaceTarget) {
+    if (fullSnapshotApply) {
       if (deleteRows.isNotEmpty) {
         throw StateError(
-          'Authoritative reconciliation snapshots cannot contain delta delete markers.',
+          'Complete snapshots cannot contain explicit delete tombstones.',
         );
       }
       final rowCountBefore = await _queryTableRowCount(
@@ -5591,8 +5582,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         primaryKeyColumns: primaryKeyColumns,
         uniqueIndexColumnSets: uniqueIndexColumnSets,
         rows: rows,
-        requireNoLocalChangesAfterVersion: requireNoLocalChangesAfterVersion,
-        deleteMissing: true,
         manageTriggers: true,
         insertOnly: false,
       );
@@ -5610,10 +5599,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       stats.insertedRows += applyResult.insertedRows;
       stats.updatedRows += rows.length - applyResult.insertedRows;
-      stats.deletedRows += math.max(
-        0,
-        rowCountBefore.value + applyResult.insertedRows - rowCountAfter.value,
-      );
+      if (rowCountAfter.value < rowCountBefore.value) {
+        throw StateError(
+          'Complete snapshot apply reduced ${job.table} from ${rowCountBefore.value} to ${rowCountAfter.value} rows. Snapshot absence is never a delete instruction.',
+        );
+      }
     } else {
       final rowCountBefore = await _queryTableRowCount(
         profile: targetProfile,
@@ -5643,9 +5633,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         primaryKeyColumns: primaryKeyColumns,
         rows: rows,
         deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>(),
-        logicalIdentityColumns: logicalIdentityColumns,
         protectLocalChangesAfterVersion: postUploadChangeTrackingVersion,
-        deleteMissing: false,
         manageTriggers: true,
         insertOnly: false,
       );
@@ -5725,17 +5713,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         fingerprints: targetFingerprints,
       );
     }
-    if (replaceTarget) {
-      final targetFingerprint = targetFingerprints[visibleTableName];
-      final rowCountMatches =
-          targetFingerprint != null &&
-          targetFingerprint.rowCount == rowsForApply.length;
-      final checksumMatches =
-          snapshot.checksum.trim().isEmpty ||
-          targetFingerprint?.checksum == snapshot.checksum;
-      if (!rowCountMatches || !checksumMatches) {
+    if (fullSnapshotApply) {
+      final unappliedRows = await _rowsWhoseContentChanged(
+        profile: targetProfile,
+        database: targetDatabase,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        columns: syncColumns,
+        primaryKeyColumns: primaryKeyColumns,
+        rows: rowsForApply,
+      );
+      if (unappliedRows.isNotEmpty) {
         throw StateError(
-          'Canonical snapshot verification failed for ${job.table}; the target does not match the complete merged snapshot.',
+          'Complete snapshot verification failed for ${job.table}; ${unappliedRows.length} incoming row(s) were not applied. Existing target-only rows were preserved.',
         );
       }
     }
@@ -5814,11 +5804,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           status: 'failed',
           progress: 100,
           message:
-              'A unique business key matched a different primary identity while applying ${job.table}. The atomic transaction was rolled back and authoritative latest-change recovery was requested. $detail',
+              'A unique business key matched a different primary identity while applying ${job.table}. The atomic transaction was rolled back. Sync cannot delete either identity automatically; remove the unwanted row through Al-Ameen on its client, then retry so its explicit Change Tracking tombstone can synchronize. $detail',
           rowCount: 0,
           rejectedRowCount: 1,
           rejectionSummary:
-              'unique_business_key=1; atomic_rollback=true; recovery=latest_change_wins',
+              'unique_business_key=1; atomic_rollback=true; automatic_delete=false; resolution=explicit_local_delete',
           conflictKind: 'unique_business_key',
         );
         return;
@@ -6674,12 +6664,9 @@ END
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
     List<List<String>> uniqueIndexColumnSets = const <List<String>>[],
-    List<String> logicalIdentityColumns = const <String>[],
     List<Map<String, dynamic>> deltaDeleteRows = const <Map<String, dynamic>>[],
     int? protectLocalChangesAfterVersion,
-    int? requireNoLocalChangesAfterVersion,
     required List<Map<String, dynamic>> rows,
-    bool deleteMissing = true,
     bool manageTriggers = true,
     bool insertOnly = false,
   }) async {
@@ -6739,11 +6726,8 @@ END
           columns: columns,
           primaryKeyColumns: primaryKeyColumns,
           uniqueIndexColumnSets: uniqueIndexColumnSets,
-          logicalIdentityColumns: logicalIdentityColumns,
           deltaDeleteRows: deltaDeleteRows,
           protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
-          requireNoLocalChangesAfterVersion: requireNoLocalChangesAfterVersion,
-          deleteMissing: deleteMissing,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,
         ),

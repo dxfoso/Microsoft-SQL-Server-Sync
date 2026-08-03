@@ -3774,7 +3774,7 @@ void main() {
       final snapshot = await api.downloadMultiWriterDelta(
         'job-union',
         batchId: 'batch-union',
-        protocolVersion: 3,
+        protocolVersion: kSyncProtocolVersion,
         syncEpoch: 'epoch-test',
       );
 
@@ -3853,7 +3853,7 @@ void main() {
       final snapshot = await api.downloadMultiWriterDelta(
         'job-winner',
         batchId: 'batch-winner',
-        protocolVersion: 3,
+        protocolVersion: kSyncProtocolVersion,
         syncEpoch: 'epoch-test',
       );
 

@@ -303,7 +303,14 @@ function now_iso(): datetime {
 }
 
 function sync_protocol_version(): int {
-  return 3;
+  return 4;
+}
+
+function sync_delete_policy(): string {
+  // A delete is valid only as a protocol-v4 Change Tracking tombstone. Full
+  // snapshots, unions, comparisons, and row-count differences never imply a
+  // delete and may only insert or update rows.
+  return 'explicit-tombstones-only';
 }
 
 function sync_protocol_state(): map<json> {
@@ -3353,7 +3360,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     }
   }
 
-  // Periodic sync uses the same all-client protocol-v3 barrier as manual Sync
+  // Periodic sync uses the same all-client protocol-v4 barrier as manual Sync
   // All: every registered client uploads first, then every client downloads.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const recentUploadModes = latest_completed_upload_modes_for_owner(normalizedOwnerUserId);
@@ -4218,20 +4225,9 @@ function sync_row_physical_key(row: map<json>, keyColumns: array<string>): strin
 
 function sync_row_identity_key(table: string, row: map<json>, keyColumns: array<string>): string {
   const physicalKey = sync_row_physical_key(row, keyColumns);
-  const operation = string.from(row.__sync_op ?? 'S').trim().toUpperCase();
-  const localTable = string.from(sync_table_reference(table).table).trim().toLowerCase();
-  let values = [];
-  if ((localTable == 'bi000' || localTable == 'dbo.bi000') &&
-      operation != 'D' &&
-      row.ParentGUID != null &&
-      row.Number != null) {
-    values = ['logical', row.ParentGUID, row.Number];
-  } else {
-    values = ['physical', physicalKey];
-  }
   return crypto.hash(json.stringify({
     table: table.trim().toLowerCase(),
-    values
+    values: ['physical', physicalKey]
   }), 'sha256');
 }
 
@@ -4595,8 +4591,8 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       message: unionBootstrap
         ? string.concat('Queued multi-client union bootstrap upload for ', table, '.')
         : bootstrapSourceClientName.length == 0
-        ? string.concat('Queued protocol-v3 delta upload for ', table, '.')
-        : string.concat('Queued explicit protocol-v3 bootstrap upload for ', table, '.'),
+        ? string.concat('Queued protocol-v4 delta upload for ', table, '.')
+        : string.concat('Queued explicit protocol-v4 bootstrap upload for ', table, '.'),
       error: null,
       clientUserId: agent.clientUserId,
       ownerUserId,
@@ -4878,142 +4874,6 @@ function create_authoritative_reconcile_batch(ownerUserId: string, table: string
     ownerUserId,
     protocol
   ));
-}
-
-function latest_change_candidate_for_batch(batchId: string): map<json>? {
-  const batch = find_sync_batch(batchId);
-  if (batch == null) {
-    return null;
-  }
-  let winner = null;
-  let winnerAt = '';
-  let winnerReceivedAt = '';
-  let winnerSequence = '';
-  let winnerOperationId = '';
-  let winnerClientName = '';
-  for (const chunk of batch.receivedChunks ?? []) {
-    const changedAt = string.from(chunk.latestModifiedAtUtc ?? '').trim();
-    const receivedAt = string.from(chunk.receivedAt ?? '').trim();
-    const serverSequence = string.from(chunk.serverSequence ?? '').trim();
-    const operationId = string.from(chunk.latestOperationId ?? '').trim();
-    const clientName = normalize_user_name(chunk.clientName);
-    if (clientName.length == 0) {
-      continue;
-    }
-    const changedAtOrder = sync_timestamp_compare_ms(changedAt, winnerAt);
-    const receivedAtOrder = sync_timestamp_compare_ms(receivedAt, winnerReceivedAt);
-    if (winner == null ||
-        changedAtOrder > 0 ||
-        (changedAtOrder == 0 && receivedAtOrder > 0) ||
-        (changedAtOrder == 0 &&
-          receivedAtOrder == 0 &&
-          serverSequence > winnerSequence) ||
-        (changedAtOrder == 0 &&
-          receivedAtOrder == 0 &&
-          serverSequence == winnerSequence &&
-          operationId > winnerOperationId) ||
-        (changedAtOrder == 0 &&
-          receivedAtOrder == 0 &&
-          serverSequence == winnerSequence &&
-          operationId == winnerOperationId &&
-          clientName > winnerClientName)) {
-      winner = {
-        clientName,
-        modifiedAtUtc: changedAt,
-        operationId
-      };
-      winnerAt = changedAt;
-      winnerReceivedAt = receivedAt;
-      winnerSequence = serverSequence;
-      winnerOperationId = operationId;
-      winnerClientName = clientName;
-    }
-  }
-  return winner;
-}
-
-function try_start_latest_change_resolution(job: map<json>, conflictKind: string): bool {
-  if (conflictKind.trim().toLowerCase() != 'unique_business_key') {
-    return false;
-  }
-  const policyAgent = db.selectOne(Agent, { clientName: string.from(job.clientName) });
-  if (policyAgent == null ||
-      normalize_conflict_policy(policyAgent.conflictPolicy) != 'latest_change_wins') {
-    return false;
-  }
-  const candidate = latest_change_candidate_for_batch(string.from(job.batchId ?? ''));
-  if (candidate == null) {
-    return false;
-  }
-  const ownerUserId = string.from(job.ownerUserId).trim();
-  const table = string.from(job.table).trim();
-  const agents = list_scheduler_agent_rows().filter((agent) =>
-    string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)
-  );
-  const sourceAgent = find_agent_row_by_name(agents, string.from(candidate.clientName));
-  if (sourceAgent == null || !effective_agent_online(sourceAgent)) {
-    return false;
-  }
-  let targetAgents = [];
-  let onlineParticipants = [sourceAgent];
-  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
-  for (const agent of agents) {
-    if (string.from(agent.clientName) == string.from(sourceAgent.clientName)) {
-      continue;
-    }
-    const enabledTables = unique_string_values(
-      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-      )
-    );
-    if (!string_array_contains(enabledTables, table)) {
-      continue;
-    }
-    if (!effective_agent_online(agent)) {
-      continue;
-    }
-    targetAgents = targetAgents.concat([agent]);
-    onlineParticipants = onlineParticipants.concat([agent]);
-  }
-  if (targetAgents.length == 0) {
-    return false;
-  }
-  const createdJobs = create_authoritative_reconcile_batch(
-    ownerUserId,
-    table,
-    sourceAgent,
-    targetAgents
-  );
-  if (createdJobs.length == 0) {
-    return false;
-  }
-  mark_offline_sync_debt(
-    ownerUserId,
-    table,
-    agents,
-    onlineParticipants,
-    ownerPolicies
-  );
-  replace_sync_table_issue(ownerUserId, {
-    table,
-    status: 'resolving',
-    reason: 'unique_business_key',
-    message: string.concat(
-      'Latest-change-wins selected ',
-      string.from(sourceAgent.clientName),
-      ' at ',
-      string.from(candidate.modifiedAtUtc),
-      '. Authoritative table repair is running for online clients; normal sync remains stopped until their fingerprints match. Offline clients will catch up automatically after reconnecting.'
-    ),
-    clientName: string.from(job.clientName),
-    action: 'latest_change_wins',
-    sourceClientName: string.from(sourceAgent.clientName),
-    targetClientNames: targetAgents.map((agent) => string.from(agent.clientName)),
-    detectedAt: now_iso(),
-    updatedAt: now_iso(),
-    resolvedAt: null
-  });
-  return true;
 }
 
 function multi_writer_batch_stale(batch: map<json>): bool {
@@ -6614,7 +6474,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       !explicitSingleClientBootstrap &&
       !comparisonPreview &&
       !multiClientUnionBootstrap) {
-    return raw_json_error(409, 'protocol-v3 full snapshots require an explicit bootstrap, comparison, or multi-client union batch');
+    return raw_json_error(409, 'protocol-v4 full snapshots require an explicit bootstrap, comparison, or multi-client union batch');
   }
   if (multi_writer_batch_stale(batch)) {
     return raw_json_error(410, 'multi-writer batch expired; start a new sync');
@@ -6685,6 +6545,27 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (payloadIsDelta && resolvedKeyColumns.length == 0) {
     return raw_json_error(409, 'latest-change sync requires permanent primary key columns');
   }
+  for (const incomingRow of effectiveIncomingRows) {
+    const operation = string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase();
+    if (operation != 'S' && operation != 'I' && operation != 'U' && operation != 'D') {
+      return raw_json_error(400, 'sync row operation must be S, I, U, or D');
+    }
+    if (operation == 'D') {
+      if (!payloadIsDelta) {
+        return raw_json_error(409, 'delete tombstones are forbidden in full snapshots; snapshot absence never deletes data');
+      }
+      for (const keyColumn of resolvedKeyColumns) {
+        if (incomingRow[keyColumn] == null) {
+          return raw_json_error(400, 'delete tombstone requires every primary key value');
+        }
+      }
+      if (string.from(incomingRow.__sync_operation_id ?? '').trim().length != 64 ||
+          string.from(incomingRow.__sync_change_version ?? '').trim().length == 0 ||
+          string.from(incomingRow.__sync_origin_client ?? '').trim().length == 0) {
+        return raw_json_error(400, 'delete tombstone requires protocol-v4 operation, origin, and Change Tracking version metadata');
+      }
+    }
+  }
   const nextOrdinal = batch.revision + 1;
   const serverReceivedAt = now_iso();
   const serverSequence = string.concat(
@@ -6734,7 +6615,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (hasStoredPayload) {
     storedRows = [];
   }
-  // Every protocol-v3 delta uses one durable row winner. The configurable
+  // Every protocol-v4 delta uses one durable row winner. The configurable
   // conflict policy still controls whether unsafe schema/business conflicts
   // pause for input, but it must never disable deterministic row ordering.
   const winnerPolicyApplied = payloadIsDelta || multiClientUnionBootstrap;
@@ -7087,7 +6968,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   const canonicalFullMerge = unionBootstrapJob != null;
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
-    // Normal protocol-v3 pages contain Change Tracking deltas. Initial union
+    // Normal protocol-v4 pages contain Change Tracking deltas. Initial union
     // bootstrap pages are the guarded exception: every participant uploads a
     // full snapshot before any participant is allowed to download.
     orderBy: [
@@ -7810,7 +7691,7 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     }
   }
   return raw_json_success({
-    mode: 'protocol-v3',
+    mode: 'protocol-v4',
     jobs: createdJobs.map((job) => public_job_payload(job))
   }, 201);
 }
@@ -7877,7 +7758,7 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
     }
   }
   return raw_json_success({
-    mode: 'protocol-v3-bootstrap',
+    mode: 'protocol-v4-bootstrap',
     clientName: normalizedClientName,
     jobs: createdJobs.map((job) => public_job_payload(job))
   }, 201);
@@ -7963,7 +7844,7 @@ function jobs_reconcile_authoritative(sourceClientName: string, targetClientName
     }
   }
   return raw_json_success({
-    mode: 'protocol-v3-authoritative-reconcile',
+    mode: 'protocol-v4-authoritative-reconcile',
     sourceClientName: normalizedSourceClientName,
     targetClientNames: normalizedTargetClientNames,
     tables: requestedTables,
@@ -8193,7 +8074,7 @@ function jobs_replay_retained_union(batchId: string, clientNames: array<string>,
   }
   const createdJobs = db.insertMany(SyncJob, rows);
   return raw_json_success({
-    mode: 'protocol-v3-retained-full-union-recovery',
+    mode: 'protocol-v4-retained-full-union-recovery',
     batchId: normalizedBatchId,
     recoveryBatchId,
     sourceClientName: normalizedSourceClientName,
@@ -8330,7 +8211,7 @@ function table_comparison_status(requestId: string, token: string? = null): map<
   });
 }
 
-function table_sync_issue_resolve(clientName: string, table: string, action: string, sourceClientName: string = '', token: string? = null): map<json> {
+function table_sync_issue_resolve(clientName: string, table: string, action: string, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -8344,8 +8225,7 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
   if (normalizedClientName.length == 0 || normalizedTable.length == 0) {
     return raw_json_error(400, 'clientName and table are required');
   }
-  if (normalizedAction != 'replace_client' &&
-      normalizedAction != 'keep_client' &&
+  if (normalizedAction != 'retry_sync' &&
       normalizedAction != 'exclude_table' &&
       normalizedAction != 'accept_baseline') {
     return raw_json_error(400, 'unsupported table resolution action');
@@ -8398,92 +8278,22 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
     return raw_json_success({ ok: true, issue: resolved, jobs: [] });
   }
 
-  let sourceAgent = pageAgent;
-  let targetAgents = [];
-  if (normalizedAction == 'replace_client') {
-    sourceAgent = null;
-    const requestedSourceClientName = normalize_user_name(sourceClientName);
-    for (const agent of visibleAgents) {
-      if (string.from(agent.ownerUserId) != ownerId ||
-          !agent_sync_enabled(agent) ||
-          normalize_user_name(agent.clientName) == normalizedClientName) {
-        continue;
-      }
-      if (requestedSourceClientName.length == 0 ||
-          normalize_user_name(agent.clientName) == requestedSourceClientName) {
-        sourceAgent = agent;
-        break;
-      }
-    }
-    if (sourceAgent == null) {
-      return raw_json_error(409, 'choose an available source client for this table');
-    }
-    targetAgents = [pageAgent];
-  } else {
-    for (const agent of visibleAgents) {
-      if (string.from(agent.ownerUserId) == ownerId &&
-          agent_sync_enabled(agent) &&
-          normalize_user_name(agent.clientName) != normalizedClientName) {
-        targetAgents = targetAgents.concat([agent]);
-      }
-    }
-  }
-  if (targetAgents.length == 0) {
-    return raw_json_error(409, 'at least one other enabled client is required');
-  }
-  if (!effective_agent_online(sourceAgent)) {
-    return raw_json_error(409, 'the authoritative source client must be online and SQL-connected');
-  }
-  for (const targetAgent of targetAgents) {
-    if (!effective_agent_online(targetAgent)) {
-      return raw_json_error(409, string.concat('resolution target must be online and SQL-connected: ', string.from(targetAgent.clientName)));
-    }
-  }
-
-  const participants = [sourceAgent].concat(targetAgents);
-  const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
-  for (const participant of participants) {
-    if (active_job_tables_for_client(string.from(participant.clientName)).length != 0) {
-      return raw_json_error(409, string.concat('resolution participant already has active jobs: ', string.from(participant.clientName)));
-    }
-    const enabledTables = unique_string_values(
-      enabled_sync_tables_for_agent_with_policies(participant, ownerPolicies).concat(
-        enabled_sync_policy_tables_for_agent(participant, ownerPolicies)
-      )
-    );
-    if (!string_array_contains(enabledTables, normalizedTable)) {
-      return raw_json_error(409, string.concat('resolution table is not enabled for ', string.from(participant.clientName)));
-    }
-  }
-
-  const createdJobs = create_authoritative_reconcile_batch(
-    ownerId,
-    normalizedTable,
-    sourceAgent,
-    targetAgents
-  );
-  if (createdJobs.length == 0) {
-    return raw_json_error(409, 'the authoritative repair could not be queued');
-  }
-  const targetClientNames = targetAgents.map((agent) => string.from(agent.clientName));
-  const resolving = replace_sync_table_issue(ownerId, {
+  const resolved = replace_sync_table_issue(ownerId, {
     table: normalizedTable,
-    status: 'resolving',
-    reason: existingIssue.reason,
-    message: 'Authoritative table repair is running. Normal manual and automatic sync remain stopped.',
+    status: 'ready',
+    reason: '',
+    message: string.from(existingIssue.reason).trim() == 'unique_business_key'
+      ? 'Conflict acknowledged after an explicit local deletion. Start sync to relay its Change Tracking tombstone and retry atomically.'
+      : 'Issue acknowledged. Start sync to retry with primary-key union and explicit tombstones only.',
     clientName: normalizedClientName,
     action: normalizedAction,
-    sourceClientName: sourceAgent.clientName,
-    targetClientNames,
+    sourceClientName: '',
+    targetClientNames: [],
     detectedAt: existingIssue.detectedAt,
     updatedAt: now_iso(),
-    resolvedAt: null
+    resolvedAt: now_iso()
   });
-  return raw_json_success({
-    ok: true,
-    issue: resolving,
-    jobs: createdJobs.map((job) => public_job_payload(job))
-  }, 201);
+  return raw_json_success({ ok: true, issue: resolved, jobs: [] });
 }
 
 function sync_job_status_is_terminal(status: string): bool {
@@ -8676,11 +8486,14 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     raise_sync_table_issue(
       job.ownerUserId,
       string.from(job.table),
-      rejectedRowCount != null && rejectedRowCount > 0 ? 'rejected_rows' : 'sync_failed',
+      conflictKind.trim().toLowerCase() == 'unique_business_key'
+        ? 'unique_business_key'
+        : rejectedRowCount != null && rejectedRowCount > 0
+          ? 'rejected_rows'
+          : 'sync_failed',
       issueMessage,
       string.from(job.clientName)
     );
-    try_start_latest_change_resolution(job, conflictKind);
     if (failedBatchId.length != 0) {
       cleanup_multi_writer_batch_storage(failedBatchId);
     }

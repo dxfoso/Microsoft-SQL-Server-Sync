@@ -274,12 +274,10 @@ def generate_sql(
     *,
     rows=None,
     deletes=None,
-    delete_missing=False,
     unique_index_column_sets=None,
     table="SyncItems",
     columns=None,
     primary_key_columns=None,
-    logical_identity_columns=None,
     protect_local_changes_after_version=None,
 ):
     columns = columns or COLUMNS
@@ -292,11 +290,9 @@ def generate_sql(
         "stageTableName": f"sync_stage_{uuid.uuid4().hex}",
         "columns": columns,
         "primaryKeyColumns": primary_key_columns,
-        "logicalIdentityColumns": logical_identity_columns or [],
         "uniqueIndexColumnSets": unique_index_column_sets or [],
         "rows": rows or [],
         "deletes": deletes or [],
-        "deleteMissing": delete_missing,
     }
     if protect_local_changes_after_version is not None:
         request["protectLocalChangesAfterVersion"] = protect_local_changes_after_version
@@ -318,24 +314,20 @@ def apply(
     *,
     rows=None,
     deletes=None,
-    delete_missing=False,
     unique_index_column_sets=None,
     table="SyncItems",
     columns=None,
     primary_key_columns=None,
-    logical_identity_columns=None,
     protect_local_changes_after_version=None,
 ):
     generated = generate_sql(
         database,
         rows=rows,
         deletes=deletes,
-        delete_missing=delete_missing,
         unique_index_column_sets=unique_index_column_sets,
         table=table,
         columns=columns,
         primary_key_columns=primary_key_columns,
-        logical_identity_columns=logical_identity_columns,
         protect_local_changes_after_version=protect_local_changes_after_version,
     )
     return execute_generated_sql(generated).stdout
@@ -380,12 +372,11 @@ def execute_generated_sql(generated, *, check=True):
         sql_path.unlink(missing_ok=True)
 
 
-def coalesce(rows, *, primary_key_columns=None, logical_identity_columns=None):
+def coalesce(rows, *, primary_key_columns=None):
     request = {
         "operation": "coalesce",
         "rows": rows,
         "primaryKeyColumns": primary_key_columns or ["Id"],
-        "logicalIdentityColumns": logical_identity_columns or [],
     }
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
         json.dump(request, handle, ensure_ascii=False)
@@ -1119,7 +1110,7 @@ def fuzz_value(rng, identifier, revision):
 def run_fuzz_scenarios(*, seed=20260731, rounds=30):
     reset_databases()
     for database in DATABASES:
-        apply(database, rows=[], delete_missing=True)
+        apply(database, deletes=[{"Id": 1}])
     rng = random.Random(seed)
     model = {}
     for revision in range(rounds):
@@ -1195,7 +1186,7 @@ def run_scale_scenario(row_count=5000):
 def run_soak_scenario(*, seconds=60, seed=20260731):
     reset_databases()
     for database in DATABASES:
-        apply(database, rows=[], delete_missing=True)
+        apply(database, deletes=[{"Id": 1}])
     rng = random.Random(seed)
     model = {}
     deadline = time.time() + seconds
@@ -1217,7 +1208,11 @@ def run_soak_scenario(*, seconds=60, seed=20260731):
         if iteration % 3 != 0:
             apply(DATABASES[2], rows=rows, deletes=deletes)
         if iteration % 7 == 0:
-            apply(DATABASES[2], rows=list(model.values()), delete_missing=True)
+            apply(
+                DATABASES[2],
+                rows=list(model.values()),
+                deletes=[{"Id": identifier} for identifier in range(8700, 8800) if identifier not in model],
+            )
         if iteration % 10 == 0:
             before = table_rows(DATABASES[0])
             expect_apply_failure(
@@ -1228,7 +1223,11 @@ def run_soak_scenario(*, seconds=60, seed=20260731):
                 raise AssertionError("Soak rejection left a partial transaction.")
         iteration += 1
     for database in DATABASES:
-        apply(database, rows=list(model.values()), delete_missing=True)
+        apply(
+            database,
+            rows=list(model.values()),
+            deletes=[{"Id": identifier} for identifier in range(8700, 8800) if identifier not in model],
+        )
     assert_equal(*DATABASES)
     for database in DATABASES:
         assert_business_trigger_enabled(database)
@@ -1378,9 +1377,9 @@ def run_scenarios():
         apply(database, rows=winners)
     assert_equal(*DATABASES)
 
-    # Ameen edits an invoice line by deleting its GUID and inserting the same
-    # ParentGUID + Number under a new GUID. Concurrent clients therefore need
-    # logical replacement reconciliation, not a union of both generated GUIDs.
+    # Ameen edits an invoice line by deleting its GUID and inserting a new GUID.
+    # Standard SQL identity is the primary key, so concurrent new GUIDs remain
+    # independent unless a later explicit tombstone names one of them.
     invoice_guid = "181B8328-0A14-410B-9CF9-79223B0F3015"
     old_guids = [
         "3F781CBB-66A5-461A-A92C-8F5EBF77968B",
@@ -1449,7 +1448,6 @@ def run_scenarios():
             ],
         ],
         primary_key_columns=["GUID"],
-        logical_identity_columns=["ParentGUID", "Number"],
     )
     deletes = [
         row_value for row_value in merged_invoice_delta
@@ -1459,9 +1457,9 @@ def run_scenarios():
         row_value for row_value in merged_invoice_delta
         if row_value.get("__sync_op") != "D"
     ]
-    if len(deletes) != 2 or len(upserts) != 2:
+    if len(deletes) != 2 or len(upserts) != 4:
         raise AssertionError(
-            f"Invoice logical reconciliation selected invalid winners: {merged_invoice_delta}"
+            f"Invoice primary-key reconciliation selected invalid winners: {merged_invoice_delta}"
         )
     for database in DATABASES:
         apply(
@@ -1471,24 +1469,23 @@ def run_scenarios():
             table="InvoiceLines",
             columns=INVOICE_LINE_COLUMNS,
             primary_key_columns=["GUID"],
-            logical_identity_columns=["ParentGUID", "Number"],
         )
     invoice_snapshots = {
         database: invoice_line_rows(database) for database in DATABASES
     }
-    if any(len(rows_for_client) != 2 for rows_for_client in invoice_snapshots.values()):
+    if any(len(rows_for_client) != 4 for rows_for_client in invoice_snapshots.values()):
         raise AssertionError(
-            f"Invoice line replacement produced duplicates: {invoice_snapshots}"
+            f"Invoice primary-key union produced the wrong cardinality: {invoice_snapshots}"
         )
     if len({tuple(rows_for_client) for rows_for_client in invoice_snapshots.values()}) != 1:
         raise AssertionError(
             f"Invoice line replacement did not converge: {invoice_snapshots}"
         )
     expected_arabic_hex = "تعديل العميل الثاني".encode("utf-16-le").hex().upper()
-    if any(
-        "|234.00|" not in row_value or not row_value.endswith(expected_arabic_hex)
+    if sum(
+        "|234.00|" in row_value and row_value.endswith(expected_arabic_hex)
         for row_value in invoice_snapshots[DATABASES[0]]
-    ):
+    ) != 2:
         raise AssertionError(
             f"Invoice winner values or Arabic text changed: {invoice_snapshots}"
         )
@@ -1500,10 +1497,9 @@ def run_scenarios():
             table="InvoiceLines",
             columns=INVOICE_LINE_COLUMNS,
             primary_key_columns=["GUID"],
-            logical_identity_columns=["ParentGUID", "Number"],
         )
     if invoice_line_rows(DATABASES[0]) != invoice_snapshots[DATABASES[0]]:
-        raise AssertionError("Invoice logical replacement retry was not idempotent.")
+        raise AssertionError("Invoice explicit replacement retry was not idempotent.")
 
     exact_unicode = "العربية 🌍 漢字"
     typed_row = row(
@@ -1658,8 +1654,8 @@ VALUES
         apply(database, rows=large_rows[:25])
     assert_equal(*DATABASES)
 
-    # An authoritative reconciliation atomically replaces stale target-only
-    # rows and remains idempotent when the same complete snapshot is retried.
+    # A complete reconciliation inserts/updates its incoming rows while always
+    # preserving target-only rows. Repeating it remains idempotent.
     authoritative_rows = [
         row(
             7001,
@@ -1670,36 +1666,31 @@ VALUES
         ),
         row(7002, "AUTHORITATIVE-2", "Second authoritative row"),
     ]
-    apply(DATABASES[0], rows=authoritative_rows, delete_missing=True)
-    apply(DATABASES[2], rows=authoritative_rows, delete_missing=True)
+    apply(DATABASES[0], rows=authoritative_rows)
+    apply(DATABASES[2], rows=authoritative_rows)
+    target_only_row = row(7999, "TARGET-ONLY", "Must be preserved")
     apply(
         DATABASES[1],
-        rows=[
-            row(7998, "AUTHORITATIVE-AR", "Old identity with winning business key"),
-            row(7999, "STALE-TARGET", "Must be removed"),
-        ],
+        rows=[target_only_row],
     )
     apply(
         DATABASES[1],
         rows=authoritative_rows,
-        delete_missing=True,
         unique_index_column_sets=[["Code"]],
     )
-    if table_rows(DATABASES[1]) != [
-        line for line in table_rows(DATABASES[1])
-        if "STALE-TARGET" not in line
-    ]:
-        raise AssertionError("Authoritative replacement retained a stale target-only row.")
+    if not any("TARGET-ONLY" in line for line in table_rows(DATABASES[1])):
+        raise AssertionError("Complete reconciliation deleted a target-only row.")
     assert_text_value(DATABASES[1], 7001, authoritative_rows[0]["ArabicText"])
     authoritative_once = table_rows(DATABASES[1])
     apply(
         DATABASES[1],
         rows=authoritative_rows,
-        delete_missing=True,
         unique_index_column_sets=[["Code"]],
     )
     if table_rows(DATABASES[1]) != authoritative_once:
-        raise AssertionError("Authoritative replacement retry was not idempotent.")
+        raise AssertionError("Complete reconciliation retry was not idempotent.")
+    apply(DATABASES[0], rows=[target_only_row])
+    apply(DATABASES[2], rows=[target_only_row])
     assert_equal(*DATABASES)
 
     before_failure = table_rows(DATABASES[0])
@@ -1725,7 +1716,7 @@ VALUES
         "clients": len(DATABASES),
         "scenarios": [
             "insert", "update", "primary-key-change", "delete",
-            "missing-delete", "empty-delta", "newest-commit-conflict",
+            "explicit-delete-of-missing-key-is-idempotent", "empty-delta", "newest-commit-conflict",
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
@@ -1734,9 +1725,9 @@ VALUES
             "independent-multi-writer",
             "offline-peer-online-continuity-and-reconnect-catch-up",
             "guid-only-identity-unique-collision-atomic-failure",
-            "invoice-line-logical-update-no-duplicate-arabic-atomic-retry",
+            "invoice-line-primary-key-union-explicit-delete-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",
-            "authoritative-replace-unique-conflict-delete-missing-unicode-retry",
+            "complete-reconcile-preserves-target-only-unicode-retry",
             "rejected-row-rollback-and-recovery", "change-context",
             "post-upload-overlap-row-protection",
             "business-trigger-bypass-and-restore",

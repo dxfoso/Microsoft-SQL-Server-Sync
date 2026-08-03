@@ -1,1 +1,1 @@
-100% - Automatic unique-key conflict recovery is tested and deployed. `AmnDb048::ma000` is reconciled across the online clients with no user decision required; offline Velvet Home will catch up automatically when it reconnects.
+90% - Protocol v4 explicit-delete safety is implemented and all local client, contract, three-client SQL, fault, scale, offline-catch-up, and soak tests pass. Remaining: deploy the server and Windows client `1.0.221+225`, then validate with isolated live fake clients. Real-client sync remains paused.

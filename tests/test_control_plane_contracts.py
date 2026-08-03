@@ -417,8 +417,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function sync_owner_has_blocking_table_issues(", source)
         self.assertIn("function raise_sync_table_issue(", source)
         self.assertIn("function table_sync_issue_resolve(", source)
-        self.assertIn("'replace_client'", source)
-        self.assertIn("'keep_client'", source)
+        self.assertIn("'retry_sync'", source)
+        self.assertNotIn("normalizedAction != 'replace_client'", source)
+        self.assertNotIn("normalizedAction != 'keep_client'", source)
         self.assertIn("'exclude_table'", source)
         self.assertIn("'accept_baseline'", source)
 
@@ -476,14 +477,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertIn("syncGate,", live_state)
 
-    def test_latest_change_policy_is_limited_to_timestamped_unique_key_conflicts(self):
+    def test_unique_key_conflicts_require_explicit_user_deletion(self):
         source = read_text("business/control_plane.tru")
         upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
             "function jobs_multi_writer_download(", 1
         )[0]
-        resolution = source.split(
-            "function try_start_latest_change_resolution(", 1
-        )[1].split("function multi_writer_batch_stale(", 1)[0]
         complete = source.split("function jobs_complete(", 1)[1].split(
             "function jobs_fail(", 1
         )[0]
@@ -491,22 +489,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field conflictPolicy: string? min=0 max=32", source)
         self.assertIn("latestModifiedAtUtc: latestModifiedAtUtc.trim()", upload)
         self.assertIn("latestOperationId: latestOperationId.trim()", upload)
-        self.assertIn("'unique_business_key'", resolution)
-        self.assertIn("'latest_change_wins'", resolution)
-        self.assertIn("latest_change_candidate_for_batch(", resolution)
-        self.assertIn("create_authoritative_reconcile_batch(", resolution)
-        self.assertIn("mark_offline_sync_debt(", resolution)
-        self.assertIn("onlineParticipants", resolution)
-        self.assertIn(
-            "Offline clients will catch up automatically after reconnecting.",
-            resolution,
-        )
-        self.assertNotIn(
-            "if (!effective_agent_online(agent)) {\n      return false;",
-            resolution,
-        )
-        self.assertIn("status: 'resolving'", resolution)
-        self.assertIn("try_start_latest_change_resolution(job, conflictKind)", complete)
+        self.assertNotIn("function try_start_latest_change_resolution(", source)
+        self.assertNotIn("function latest_change_candidate_for_batch(", source)
+        self.assertIn("conflictKind.trim().toLowerCase() == 'unique_business_key'", complete)
+        self.assertIn("? 'unique_business_key'", complete)
+        self.assertIn("raise_sync_table_issue(", complete)
 
     def test_automatic_repair_finishes_for_online_participants_without_user_input(self):
         source = read_text("business/control_plane.tru")
@@ -1074,7 +1061,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function reset_all_agent_saved_state", 1
         )[0]
 
-        self.assertIn("mode: 'protocol-v3'", source)
+        self.assertIn("mode: 'protocol-v4'", source)
         self.assertIn("if (effective_agent_online(agent))", source)
         self.assertIn("create_multi_writer_batch(", source)
         self.assertIn("const plan = sync_table_baseline_plan(", source)
@@ -1200,7 +1187,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertNotIn("database: null", policy_lookup)
 
-    def test_protocol_v3_unions_full_snapshots_for_multi_client_anti_entropy(self):
+    def test_protocol_v4_unions_full_snapshots_for_multi_client_anti_entropy(self):
         source = read_text("business/control_plane.tru")
 
         batch_body = source.split("function create_multi_writer_batch(", 1)[1].split(
@@ -1445,6 +1432,27 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIn("delete_sync_row_winner_batch()", reset_body)
         self.assertIn("syncRowWinnerDeletedCount", reset_body)
+
+    def test_only_explicit_delta_tombstones_can_delete(self):
+        source = read_text("business/control_plane.tru")
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+        identity_body = source.split(
+            "function sync_row_identity_key(", 1
+        )[1].split("function sync_timestamp_compare_ms(", 1)[0]
+
+        self.assertIn("function sync_delete_policy(): string", source)
+        self.assertIn("return 'explicit-tombstones-only'", source)
+        self.assertIn("if (!payloadIsDelta)", upload_body)
+        self.assertIn("delete tombstones are forbidden in full snapshots", upload_body)
+        self.assertIn("snapshot absence never deletes data", upload_body)
+        self.assertIn("delete tombstone requires every primary key value", upload_body)
+        self.assertIn("__sync_change_version", upload_body)
+        self.assertIn("__sync_origin_client", upload_body)
+        self.assertIn("operation,", upload_body)
+        self.assertIn("values: ['physical', physicalKey]", identity_body)
+        self.assertNotIn("ParentGUID", identity_body)
 
     def test_table_row_comparison_is_scoped_read_only_and_multi_client(self):
         source = read_text("business/control_plane.tru")

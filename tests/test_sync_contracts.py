@@ -389,7 +389,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged(", agent_page)
         self.assertIn("targetHash == null || targetHash != incomingHash", agent_page)
         self.assertIn("Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged", agent_page)
-        self.assertIn("int targetMergeInsertBatchSize = 100", merge_helper)
+        self.assertIn("_targetSnapshotStageInsertBatchSize = 100", agent_page)
         self.assertIn("_buildSourceTempIndexStatements(", merge_helper)
 
     def test_table_fingerprints_only_hash_writable_sync_columns(self):
@@ -647,6 +647,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("rejectedRowCount: 1", failure_body)
         self.assertIn("conflictKind: 'unique_business_key'", failure_body)
         self.assertIn("atomic_rollback=true", failure_body)
+        self.assertIn("automatic_delete=false", failure_body)
+        self.assertIn("explicit Change Tracking tombstone", failure_body)
         self.assertIn("return;", failure_body)
         self.assertIn("await _controlPlaneClient.failJob(", failure_body)
 
@@ -673,7 +675,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("shouldApplyLocalRowCount", apply_state_body)
         self.assertNotIn("rowCount: job.rowCount,\n      message:", apply_state_body)
 
-    def test_protocol_v3_multi_writer_is_hashed_delta_only_and_fails_closed_without_baseline(self):
+    def test_protocol_v4_multi_writer_is_hashed_delta_only_and_fails_closed_without_baseline(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
@@ -686,7 +688,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("if (rowCount != 0 || tracking == null)", snapshot_body)
         self.assertIn("requires a deliberate one-source bootstrap", snapshot_body)
         self.assertIn("previousVersion >= 0", snapshot_body)
-        self.assertIn("const int kSyncProtocolVersion = 3", client_api)
+        self.assertIn("const int kSyncProtocolVersion = 4", client_api)
         self.assertIn("__sync_row_hash", snapshot_body)
         self.assertIn("__sync_change_version", snapshot_body)
         self.assertIn("__sync_origin_client", snapshot_body)
@@ -714,7 +716,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("__sync_server_received_at_utc", merge)
         self.assertIn("__sync_server_sequence", merge)
 
-    def test_authoritative_reconciliation_replaces_and_verifies_the_target(self):
+    def test_complete_reconciliation_preserves_target_only_rows_and_verifies_incoming(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         download_body = agent_page.split(
@@ -728,7 +730,7 @@ class SyncContractsTests(unittest.TestCase):
         )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
 
         self.assertIn("server-authoritative-reconcile", download_body)
-        self.assertIn("replaceTarget: authoritativeReconcile", download_body)
+        self.assertIn("fullSnapshotApply: authoritativeReconcile", download_body)
         self.assertIn("authoritativeAppliedVersion = tracking.currentVersion", download_body)
         self.assertIn(
             "await _ensureChangeTrackingEnabledForDatabase(", download_body
@@ -746,15 +748,16 @@ class SyncContractsTests(unittest.TestCase):
             "        job.sourceClientName != 'server-authoritative-reconcile'",
             snapshot_body,
         )
-        self.assertIn("deleteMissing: true", apply_body)
+        self.assertIn("Snapshot absence is never a delete instruction", apply_body)
         self.assertIn("} else {", apply_body)
         self.assertIn("Unable to read the target row count before atomic delta apply.", apply_body)
         self.assertIn("deltaDeleteRows:", apply_body)
         self.assertNotIn("applySqlSyncRowsWithIsolation(", apply_body)
-        self.assertIn("targetFingerprint?.checksum == snapshot.checksum", apply_body)
+        self.assertIn("final unappliedRows = await _rowsWhoseContentChanged", apply_body)
+        self.assertIn("Existing target-only rows were preserved", apply_body)
         self.assertIn("'snapshotChecksum': snapshotChecksum.trim()", client_api)
 
-    def test_union_bootstrap_is_a_generic_atomic_canonical_replacement(self):
+    def test_union_bootstrap_is_a_generic_atomic_non_destructive_merge(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
@@ -763,18 +766,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("!unionBootstrapSnapshot", agent_page)
         self.assertIn("downloadedSnapshot.canonicalFullMerge", agent_page)
         self.assertIn(
-            "replaceTarget: authoritativeReconcile || canonicalFullMerge",
+            "fullSnapshotApply: authoritativeReconcile || canonicalFullMerge",
             agent_page,
         )
-        self.assertIn("requireNoLocalChangesAfterVersion", agent_page)
+        self.assertNotIn("requireNoLocalChangesAfterVersion", agent_page)
         self.assertIn("_deduplicateCanonicalFullMergeRows", client_api)
         self.assertIn("canonicalFullMerge", control_plane)
         self.assertIn("mergeParticipantCount", control_plane)
-        self.assertIn("WITH (TABLOCKX, HOLDLOCK)", merge)
-        self.assertIn(
-            "RAISERROR('Local rows changed after this client uploaded; retry the canonical sync with a fresh snapshot.', 16, 1)",
-            merge,
-        )
+        self.assertNotIn("TABLOCKX", merge)
+        self.assertNotIn("DELETE TOP", merge)
+        self.assertIn("explicit-tombstones-only", merge)
         self.assertNotIn("THROW 51000", merge)
         self.assertNotIn("AmnDb048", merge)
 
@@ -1496,29 +1497,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("labelText: 'Sync Client'", dashboard)
         self.assertIn("for (const agent of visible_agent_rows_for(current))", settings_post_all_body)
 
-    def test_windows_client_target_apply_uses_small_transactional_batches(self):
+    def test_windows_client_target_apply_uses_atomic_staging_without_missing_row_deletes(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
-        target_apply = merge_helper.split("String buildTargetSnapshotMergeSql(", 1)[1].split(
-            "String sourceBatchTargetLiteral(", 1
+        target_apply = merge_helper.split("String buildTargetSnapshotStageApplySql(", 1)[1].split(
+            "String _buildStagedDeltaDeleteStatements(", 1
         )[0]
 
         self.assertIn("SET XACT_ABORT ON;", target_apply)
         self.assertIn("BEGIN TRANSACTION;", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
-        self.assertIn("targetMergeInsertBatchSize = 100", target_apply)
-        self.assertIn("targetMergeApplyBatchSize = 500", target_apply)
-        self.assertIn("CREATE TABLE #source_rows", target_apply)
-        self.assertIn(
-            "CREATE UNIQUE CLUSTERED INDEX IX_source_rows_row_num ON #source_rows (__row_num);",
-            target_apply,
-        )
-        self.assertIn("INSERT INTO #source_rows ($sourceColumnList)", target_apply)
-        self.assertIn("DROP TABLE #source_rows;", target_apply)
-        self.assertIn("__row_num INT IDENTITY(1,1) NOT NULL", target_apply)
-        self.assertEqual(target_apply.count("CREATE TABLE #source_rows"), 1)
-        self.assertIn("DELETE TOP ($targetMergeApplyBatchSize) target", target_apply)
-        self.assertIn("WHERE NOT EXISTS (", target_apply)
+        self.assertIn("stageTableReference(stageTableName)", target_apply)
+        self.assertIn("DROP TABLE $stageTarget", target_apply)
+        self.assertNotIn("DELETE TOP", target_apply)
+        self.assertIn("WHERE NOT EXISTS (", merge_helper)
         self.assertIn("target snapshot merge", agent_page)
         self.assertIn("matchClauseForColumns(primaryKeyColumns, columns)", target_apply)
         self.assertNotIn("alternateUniqueKeys", target_apply)
@@ -1526,15 +1518,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("MERGE ", target_apply)
         self.assertIn("UPDATE target", merge_helper)
         self.assertIn("INSERT INTO", merge_helper)
-        query_template = target_apply.split("return '''", 1)[1].split("''';", 1)[0]
-        self.assertLess(
-            query_template.index("BEGIN TRANSACTION;"),
-            query_template.index("${insertStatements.toString()}"),
-        )
-        self.assertLess(
-            query_template.index("${applyStatements.toString()}"),
-            query_template.index("COMMIT TRANSACTION;"),
-        )
+        self.assertIn("$deltaDeleteStatements", target_apply)
+        self.assertIn("COMMIT TRANSACTION;", target_apply)
 
     def test_windows_client_delta_sync_reconciles_changes_and_advances_checkpoint(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -1565,7 +1550,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("changeTrackingVersion: appliedVersion", agent_page)
         self.assertNotIn("Change Tracking checkpoint was not advanced", agent_page)
         self.assertIn("bool insertOnly = false", merge_helper)
-        self.assertIn("deleteMissing && !insertOnly", merge_helper)
+        self.assertNotIn("deleteMissing", merge_helper)
+        self.assertIn("const sqlSyncDeletePolicy = 'explicit-tombstones-only'", merge_helper)
         self.assertIn("${insertOnly ? '' : _buildBatchedUpdateStatement", merge_helper)
         self.assertIn("__SQL_SYNC_INSERTED__=", merge_helper)
         self.assertIn("WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)", merge_helper)

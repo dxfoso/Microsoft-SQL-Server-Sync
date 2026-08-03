@@ -277,14 +277,11 @@ class LiveSyncApiClient {
     required String clientName,
     required String table,
     required String action,
-    String sourceClientName = '',
   }) async {
     final decoded = await _invokeFunction('table_sync_issue_resolve', {
       'clientName': clientName.trim(),
       'table': table.trim(),
       'action': action.trim(),
-      if (sourceClientName.trim().isNotEmpty)
-        'sourceClientName': sourceClientName.trim(),
     });
     if (decoded is! Map) {
       throw const LiveSyncApiException('Unexpected table resolution payload.');
