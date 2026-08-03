@@ -6922,12 +6922,35 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           };
           pendingWinners = sync_row_winner_replace(pendingWinners, nextWinner);
         }
+        if (accepted && matchesDurableWinnerContent && currentWinner != null) {
+          // Identical full-union retries can arrive from several clients and
+          // pages. Advance only the relay operation id while preserving the
+          // durable winner's ordering metadata. The final durable id then
+          // selects exactly one payload row for this identity at download,
+          // preventing duplicate relay candidates from inflating canonical
+          // verification counts.
+          const relayedWinner = {
+            id: currentWinner.id,
+            ownerUserId: currentWinner.ownerUserId,
+            table: currentWinner.table,
+            identityKey: currentWinner.identityKey,
+            physicalKey: currentWinner.physicalKey,
+            modifiedAtUtc: currentWinner.modifiedAtUtc,
+            serverReceivedAtUtc: currentWinner.serverReceivedAtUtc,
+            serverSequence: currentWinner.serverSequence,
+            originClient: currentWinner.originClient,
+            changeVersion: currentWinner.changeVersion,
+            operationId,
+            rowHash: currentWinner.rowHash,
+            operation: currentWinner.operation,
+            revision: int.from(currentWinner.revision) + 1,
+            updatedAt: serverReceivedAt
+          };
+          pendingWinners = sync_row_winner_replace(pendingWinners, relayedWinner);
+        }
       }
       if (accepted) {
         let durableOperationId = operationId;
-        if (matchesDurableWinnerContent && currentWinner != null) {
-          durableOperationId = string.from(currentWinner.operationId).trim();
-        }
         acceptedOperationIds = acceptedOperationIds.concat([{
           operationId,
           durableOperationId,

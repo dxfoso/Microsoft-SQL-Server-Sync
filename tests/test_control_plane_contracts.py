@@ -1481,10 +1481,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
             upload_body,
         )
         self.assertIn("!matchesDurableWinnerContent", upload_body)
-        self.assertIn(
-            "durableOperationId = string.from(currentWinner.operationId).trim()",
-            upload_body,
-        )
+        self.assertIn("const relayedWinner = {", upload_body)
+        self.assertIn("serverSequence: currentWinner.serverSequence", upload_body)
+        self.assertIn("modifiedAtUtc: currentWinner.modifiedAtUtc", upload_body)
+        self.assertIn("pendingWinners, relayedWinner", upload_body)
         self.assertIn("durableOperationId,", upload_body)
         self.assertIn("db.insert(SyncJobDataChunk", upload_body)
         self.assertIn("row comparison requires permanent primary key columns", upload_body)
