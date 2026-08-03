@@ -1927,9 +1927,9 @@ function data_export_request_pending(agent: map<json>): bool {
   return string.from(agent.dataExportLastRequestId).trim() != requestId;
 }
 
-function agent_data_export_payload(agent: map<json>, includeUploadCredentials: bool = false): map<json> {
+function agent_data_export_payload(agent: map<json>, includeUploadCredentials: bool = false, authenticatedClientPoll: bool = false): map<json> {
   const pending = data_export_request_pending(agent);
-  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);
   let statusValue = agent.dataExportStatus == null ? 'idle' : string.from(agent.dataExportStatus);
   let messageValue = agent.dataExportMessage == null ? '' : string.from(agent.dataExportMessage);
   if (waitingForClient) {
@@ -5243,7 +5243,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   );
   let updated = null;
   if (tablesChanged || relationshipsChanged) {
-    updated = db.update(Agent, { clientName: resolvedClientName }, {
+    const updatedCount = db.updateMany(Agent, { clientName: resolvedClientName }, {
       machineName: nextMachineName,
       server,
       database,
@@ -5263,8 +5263,11 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       tableRelationships: nextTableRelationships,
       updatedAt: now_iso()
     });
+    if (updatedCount != 0) {
+      updated = db.selectOne(Agent, { clientName: resolvedClientName });
+    }
   } else if (lightweightHeartbeatChanged || heartbeat_write_due(agent)) {
-    updated = db.update(Agent, { clientName: resolvedClientName }, {
+    const updatedCount = db.updateMany(Agent, { clientName: resolvedClientName }, {
       machineName: nextMachineName,
       server,
       database,
@@ -5282,6 +5285,9 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       selectedTable,
       updatedAt: now_iso()
     });
+    if (updatedCount != 0) {
+      updated = db.selectOne(Agent, { clientName: resolvedClientName });
+    }
   }
   let nextAgent = agent;
   if (updated != null) {
@@ -6026,7 +6032,7 @@ function agent_data_export_poll(clientName: string? = null, token: string? = nul
   return {
     ok: true,
     clientName: resolvedClientName,
-    dataExport: agent_data_export_payload(agent, true)
+    dataExport: agent_data_export_payload(agent, true, is_client_user(current))
   };
 }
 

@@ -1803,6 +1803,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("const nextRequestId = uuid.v4()", control_plane)
         self.assertIn("dataExportRequestId: acknowledgedRequestId", control_plane)
         self.assertIn("function agent_data_export_poll", control_plane)
+        self.assertIn("authenticatedClientPoll", control_plane)
+        heartbeat_body = control_plane.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick", 1
+        )[0]
+        self.assertEqual(heartbeat_body.count("db.updateMany(Agent"), 2)
 
 
 if __name__ == "__main__":
