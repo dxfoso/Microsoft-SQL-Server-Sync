@@ -1791,6 +1791,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Get-FileHash -Algorithm SHA256", collector)
         self.assertIn("kubectl exec -n $Namespace", collector)
         self.assertIn("Resuming pending read-only export", collector)
+        self.assertIn("$existingExport.pending -eq $true", collector)
 
         control_plane = read_text("business/control_plane.tru")
         self.assertIn("requestId is required", control_plane)

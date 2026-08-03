@@ -98,7 +98,7 @@ foreach ($client in $clients) {
     $existingExport = $client.dataExport
     $existingRequestId = if ($null -eq $existingExport) { '' } else { [string]$existingExport.requestId }
     $existingStatus = if ($null -eq $existingExport) { '' } else { ([string]$existingExport.status).Trim().ToLowerInvariant() }
-    $canResume = $existingRequestId -match '^[A-Za-z0-9._-]{1,64}$' -and @('requested', 'running', 'client_offline') -contains $existingStatus
+    $canResume = $existingExport.pending -eq $true -and $existingRequestId -match '^[A-Za-z0-9._-]{1,64}$' -and @('requested', 'running') -contains $existingStatus
     if ($canResume) {
         $requestId = $existingRequestId
         Write-Host "Resuming pending read-only export $requestId for $clientName."
