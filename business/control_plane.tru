@@ -2394,13 +2394,38 @@ function delete_sync_job_data(jobId: string): map<json> {
     limit: 1000
   });
   let ids = [];
+  let storageIds = [];
   let deletedStorageObjectCount = 0;
   let deletedBytes = 0;
   for (const chunk of chunks) {
     ids = ids.concat([chunk.id]);
     deletedBytes += int.from(chunk.snapshotBytes ?? 0);
     const storageId = string.from(chunk.storageId ?? '').trim();
-    if (storageId.length != 0 && !sync_job_data_storage_referenced_by_relay(storageId)) {
+    if (storageId.length != 0 && !string_array_contains(storageIds, storageId)) {
+      storageIds = storageIds.concat([storageId]);
+    }
+  }
+  // Retention may remove hundreds of chunks after a large union. Resolve all
+  // live relay references in one database read; one select per chunk can
+  // exceed the shared request operation budget before final upload commits.
+  let relayStorageIds = [];
+  if (storageIds.length != 0) {
+    const relayRows = db.selectMany(SnapshotRecord, {
+      where: { storageId: { in: storageIds } },
+      orderBy: { field: 'storageId', dir: 'asc' },
+      fields: ['storageId'],
+      limit: 1000
+    });
+    for (const relayRow of relayRows) {
+      const relayStorageId = string.from(relayRow.storageId ?? '').trim();
+      if (relayStorageId.length != 0 &&
+          !string_array_contains(relayStorageIds, relayStorageId)) {
+        relayStorageIds = relayStorageIds.concat([relayStorageId]);
+      }
+    }
+  }
+  for (const storageId of storageIds) {
+    if (!string_array_contains(relayStorageIds, storageId)) {
       storage.delete(storageId);
       deletedStorageObjectCount += 1;
     }
@@ -2452,9 +2477,13 @@ function prune_sync_job_data_for_owner(ownerUserId: string? = null, newestJobId:
   let deletedJobCount = 0;
   let deletedChunkCount = 0;
   let deletedBytes = 0;
+  const maxDeletedJobsPerRequest = 20;
   for (const jobId of jobIds) {
     if (totalBytes <= limitBytes || jobId == protectedJobId) {
       continue;
+    }
+    if (deletedJobCount >= maxDeletedJobsPerRequest) {
+      break;
     }
     let jobBytes = 0;
     for (const row of rows) {
@@ -2468,23 +2497,14 @@ function prune_sync_job_data_for_owner(ownerUserId: string? = null, newestJobId:
     deletedChunkCount += int.from(deleted.deletedChunkCount ?? 0);
     deletedJobCount += 1;
   }
-  // A page is sufficient in normal operation. If a very large history has
-  // more than 1,000 chunks, continue pruning page-by-page without weakening
-  // the configured total-byte limit.
-  if (totalBytes > limitBytes && rows.length == 1000 && deletedJobCount != 0) {
-    const continued = prune_sync_job_data_for_owner(ownerUserId, protectedJobId, limitMb);
-    totalBytes = int.from(continued.retainedBytes ?? totalBytes);
-    deletedBytes += int.from(continued.deletedBytes ?? 0);
-    deletedChunkCount += int.from(continued.deletedChunkCount ?? 0);
-    deletedJobCount += int.from(continued.deletedJobCount ?? 0);
-  }
   return {
     limitMb: clamp_sync_data_limit_mb(limitMb),
     retainedBytes: totalBytes,
     protectedJobId,
     deletedJobCount,
     deletedChunkCount,
-    deletedBytes
+    deletedBytes,
+    hasMore: totalBytes > limitBytes
   };
 }
 

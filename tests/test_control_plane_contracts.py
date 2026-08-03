@@ -1375,6 +1375,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
     def test_sync_job_data_retention_keeps_newest_whole_job(self):
         source = read_text("business/control_plane.tru")
+        deletion = source.split(
+            "function delete_sync_job_data(jobId: string)", 1
+        )[1].split("function sync_job_data_owner_stats", 1)[0]
         retention = source.split(
             "function prune_sync_job_data_for_owner(", 1
         )[1].split("function sync_job_data_chunk_page(", 1)[0]
@@ -1383,13 +1386,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("function jobs_cleanup_multi_writer_batch(", 1)[0]
 
         self.assertIn("field syncDataLimitMb: int? min=1 max=1024", source)
+        self.assertIn("storageId: { in: storageIds }", deletion)
+        self.assertIn("fields: ['storageId']", deletion)
+        self.assertNotIn(
+            "sync_job_data_storage_referenced_by_relay(storageId)", deletion
+        )
         self.assertIn("protectedJobId", retention)
         self.assertIn("jobId == protectedJobId", retention)
         self.assertIn("delete_sync_job_data(jobId)", retention)
         self.assertIn("totalBytes <= limitBytes", retention)
         self.assertIn("sync_job_data_owner_stats(ownerUserId)", retention)
-        self.assertIn("rows.length == 1000", retention)
-        self.assertIn(
+        self.assertIn("const maxDeletedJobsPerRequest = 20", retention)
+        self.assertIn("deletedJobCount >= maxDeletedJobsPerRequest", retention)
+        self.assertIn("hasMore: totalBytes > limitBytes", retention)
+        self.assertNotIn(
             "prune_sync_job_data_for_owner(ownerUserId, protectedJobId, limitMb)",
             retention,
         )
