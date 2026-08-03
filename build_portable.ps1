@@ -3,6 +3,8 @@ param(
     [string] $ClientUpdateBaseUrl = '',
     [string] $FlutterVersion = '',
     [string] $FlutterCacheRoot = '',
+    [string] $OutputRoot = '',
+    [string] $PortableName = '',
     [switch] $RequireFlutterVersion
 )
 
@@ -60,49 +62,6 @@ function Remove-OutputPath {
     if (Test-Path -LiteralPath $Path) {
         Assert-ChildPath -ChildPath $Path -ParentPath $OutputRoot -Purpose $Purpose
         Remove-Item -LiteralPath $Path -Recurse -Force
-    }
-}
-
-function Stop-ProcessesUnderPath {
-    param([Parameter(Mandatory = $true)][string] $Path)
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return
-    }
-
-    $targetFull = Get-FullPath -Path $Path
-    $trimChars = [char[]]@(
-        [System.IO.Path]::DirectorySeparatorChar,
-        [System.IO.Path]::AltDirectorySeparatorChar
-    )
-    $targetPrefix = $targetFull.TrimEnd($trimChars) + [System.IO.Path]::DirectorySeparatorChar
-
-    $stoppedProcessIds = [System.Collections.Generic.List[int]]::new()
-
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
-                return $false
-            }
-
-            $executablePath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
-            return $executablePath.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-        } |
-        ForEach-Object {
-            Write-Host "Stopping process using portable output: $($_.Name) [$($_.ProcessId)]"
-            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            [void] $stoppedProcessIds.Add([int] $_.ProcessId)
-        }
-
-    foreach ($processId in $stoppedProcessIds) {
-        for ($attempt = 0; $attempt -lt 40; $attempt++) {
-            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-            if ($null -eq $process) {
-                break
-            }
-
-            Start-Sleep -Milliseconds 250
-        }
     }
 }
 
@@ -1079,8 +1038,10 @@ function Get-ExecutableProductVersion {
 Push-Location $PSScriptRoot
 try {
     $ProjectPath = Get-FullPath -Path (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent')
-    $OutputRoot = Get-FullPath -Path $PSScriptRoot
-    $PortableName = ''
+    if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+        $OutputRoot = $PSScriptRoot
+    }
+    $OutputRoot = Get-FullPath -Path $OutputRoot
     if (-not [string]::IsNullOrWhiteSpace($FlutterVersion) -and [string]::IsNullOrWhiteSpace($FlutterCacheRoot)) {
         $FlutterCacheRoot = Get-DefaultFlutterCacheRoot
     }
@@ -1107,16 +1068,16 @@ try {
     }
 
     $releaseDir = Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64\runner\Release'
-    $portableDir = Join-Path -Path $OutputRoot -ChildPath $PortableName
-    $zipPath = Join-Path -Path $OutputRoot -ChildPath "$PortableName.zip"
+    $stagingRoot = Join-Path -Path $OutputRoot -ChildPath ("artifacts\portable-builds\" + [guid]::NewGuid().ToString('N'))
+    $portableDir = Join-Path -Path $stagingRoot -ChildPath $PortableName
+    $zipPath = Join-Path -Path $stagingRoot -ChildPath "$PortableName.zip"
+    $publishedZipPath = Join-Path -Path $OutputRoot -ChildPath "$PortableName.zip"
     $exeName = "$binaryName.exe"
     $exePath = Join-Path -Path $releaseDir -ChildPath $exeName
     $expectedAppVersion = Get-WindowsAgentFlutterAppVersion -ProjectPath $ProjectPath
 
     New-Item -Path $OutputRoot -ItemType Directory -Force | Out-Null
-    Stop-ProcessesUnderPath -Path $portableDir
-    Remove-OutputPath -Path $portableDir -OutputRoot $OutputRoot -Purpose 'to remove the old portable directory before build'
-    Remove-OutputPath -Path $zipPath -OutputRoot $OutputRoot -Purpose 'to remove the old zip archive before build'
+    New-Item -Path $stagingRoot -ItemType Directory -Force | Out-Null
 
     Push-Location $ProjectPath
     try {
@@ -1212,6 +1173,9 @@ try {
     Write-Host "Creating zip archive..."
     Compress-Archive -LiteralPath $portableDir -DestinationPath $zipPath -Force
     Assert-PortableZipContents -ZipPath $zipPath -PortableName $PortableName -ExeName $exeName -RequireVCRuntime
+    $publishedZipTemp = "$publishedZipPath.$([guid]::NewGuid().ToString('N')).tmp"
+    Copy-Item -LiteralPath $zipPath -Destination $publishedZipTemp -Force
+    Move-Item -LiteralPath $publishedZipTemp -Destination $publishedZipPath -Force
 
     $portableSize = Get-DirectorySize -Path $portableDir
     $zipSize = (Get-Item -LiteralPath $zipPath).Length
@@ -1219,7 +1183,7 @@ try {
     Write-Host ''
     Write-Host 'Portable Windows build complete.'
     Write-Host "Folder: $portableDir"
-    Write-Host "Zip:    $zipPath"
+    Write-Host "Zip:    $publishedZipPath"
     Write-Host "EXE:    $(Join-Path -Path $portableDir -ChildPath $exeName)"
     Write-Host ("Folder size: {0:N1} MB" -f ($portableSize / 1MB))
     Write-Host ("Zip size:    {0:N1} MB" -f ($zipSize / 1MB))
