@@ -1,1 +1,1 @@
-98% - Server sync state is clean; global sync is paused and real clients are disabled. Factory/home copies passed Docker DBCC, and the full 3-client standard, robustness, restart, scale, and soak suites passed. Remaining: final repository checks, commit/deployment, and health verification.
+100% - Server sync state is clean; global sync is paused and all real clients remain disabled across heartbeats. Factory/home copies passed Docker DBCC; all standard, robustness, restart, scale, and soak tests passed; commit `565c0f7` is live and healthy.
