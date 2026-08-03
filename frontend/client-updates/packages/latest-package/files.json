@@ -1,170 +1,170 @@
 {
-    "version":  "1.0.222+226",
-    "commit":  "c1ba406fb5c2",
-    "generatedAt":  "2026-08-03T10:53:27.9472783Z",
+    "version":  "1.0.223+227",
+    "commit":  "5ce044391f17",
+    "generatedAt":  "2026-08-03T11:31:20.7219162Z",
     "packageType":  "files-v1",
-    "packageRootUrl":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2",
+    "packageRootUrl":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17",
     "fileCount":  27,
     "files":  [
                   {
                       "path":  "concrt140.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/concrt140.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/concrt140.dll",
                       "sha256":  "215a66742134aca227fecbcdb34b3fada492b9d72e6d4f54fd9a62fc808c298d",
                       "sizeBytes":  301024
                   },
                   {
                       "path":  "data/app.so",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/app.so",
-                      "sha256":  "f517e71fdd93210ef7f4db86357f8b2298403e133668ab72d61d24a28db67bb1",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/app.so",
+                      "sha256":  "3db6088d61a8c6bcf2735b1689f909b45033546db26cb62bef703d53a7da00e4",
                       "sizeBytes":  7078800
                   },
                   {
                       "path":  "data/flutter_assets/AssetManifest.bin",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/AssetManifest.bin",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/AssetManifest.bin",
                       "sha256":  "00af55ad3d6f21898fe77e0ff092d1a1cda52c941b6860e9928d45c8af8c095d",
                       "sizeBytes":  117
                   },
                   {
                       "path":  "data/flutter_assets/FontManifest.json",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/FontManifest.json",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/FontManifest.json",
                       "sha256":  "cd7e03645bc44b2dd47b7cb626f51c4ecbf55a197ab77241628b47ac165fbe21",
                       "sizeBytes":  208
                   },
                   {
                       "path":  "data/flutter_assets/fonts/MaterialIcons-Regular.otf",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/fonts/MaterialIcons-Regular.otf",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/fonts/MaterialIcons-Regular.otf",
                       "sha256":  "d9865b671a09d683d13a863089d8825e0f61a37696ce5d7d448bc8023aa62453",
                       "sizeBytes":  1645184
                   },
                   {
                       "path":  "data/flutter_assets/NativeAssetsManifest.json",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/NativeAssetsManifest.json",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/NativeAssetsManifest.json",
                       "sha256":  "9548a31e4a048135c1d94f919328bfb62ae2c7bb3cab96557c7941daa97776cb",
                       "sizeBytes":  45
                   },
                   {
                       "path":  "data/flutter_assets/NOTICES.Z",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/NOTICES.Z",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/NOTICES.Z",
                       "sha256":  "be9bdfd3bc81f3954d8abe05ad5b846965b663d9f8d2469ad08dc4209d633670",
                       "sizeBytes":  104678
                   },
                   {
                       "path":  "data/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf",
                       "sha256":  "67c44fe9183b002e79dde7f6977e2988661c9a3e4a3c5fce968787efdbed823c",
                       "sizeBytes":  257628
                   },
                   {
                       "path":  "data/flutter_assets/shaders/ink_sparkle.frag",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/shaders/ink_sparkle.frag",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/shaders/ink_sparkle.frag",
                       "sha256":  "1fe8436a743884cb65078fe8c7b38e18f5365f2a2961270916f426fd13c604af",
                       "sizeBytes":  21856
                   },
                   {
                       "path":  "data/flutter_assets/shaders/stretch_effect.frag",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/flutter_assets/shaders/stretch_effect.frag",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/flutter_assets/shaders/stretch_effect.frag",
                       "sha256":  "62a899ff4e168ac6ca888ce7c2f40e5d3fbf8ca20a1c3ded781a116a6d7907e2",
                       "sizeBytes":  17624
                   },
                   {
                       "path":  "data/icudtl.dat",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/data/icudtl.dat",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/data/icudtl.dat",
                       "sha256":  "998367809a821d595928089c197b3f7959f0420f81f79d4d0daee53378492ed5",
                       "sizeBytes":  862304
                   },
                   {
                       "path":  "file_selector_windows_plugin.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/file_selector_windows_plugin.dll",
-                      "sha256":  "600ad15325ddbcc9d88de96f23672430ff42e824e2426925f2b7a9b2f9f059f1",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/file_selector_windows_plugin.dll",
+                      "sha256":  "ea5d5e25927cc3aa49cb762ffac7ede35a135d4a0a61a2176a80c3fca0f0b365",
                       "sizeBytes":  111104
                   },
                   {
                       "path":  "flutter_windows.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/flutter_windows.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/flutter_windows.dll",
                       "sha256":  "890b23404e770d3a01a978e6ee8dbeef9006c85c39a9f5d75e3f91e5bcf3bb80",
                       "sizeBytes":  21284864
                   },
                   {
                       "path":  "msvcp140.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/msvcp140.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/msvcp140.dll",
                       "sha256":  "8b3e7b3bd95147c47272b300c566f98607525b620afe6b289a887759d5519edf",
                       "sizeBytes":  546312
                   },
                   {
                       "path":  "msvcp140_1.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/msvcp140_1.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/msvcp140_1.dll",
                       "sha256":  "124c9a76223e26b1e52b4f9184af4a4033ff3625ffb5f3afee9fd8ba566b7eba",
                       "sizeBytes":  26088
                   },
                   {
                       "path":  "msvcp140_2.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/msvcp140_2.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/msvcp140_2.dll",
                       "sha256":  "074e1f295edcd0745a0e63ffcfe6b56cb5b6a394c68a7daa990b35bc31e3774b",
                       "sizeBytes":  270304
                   },
                   {
                       "path":  "msvcp140_atomic_wait.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/msvcp140_atomic_wait.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/msvcp140_atomic_wait.dll",
                       "sha256":  "b77d6ae431d189e743fa108966c6646bfa46de50bf7a1da6207d396459da3b3a",
                       "sizeBytes":  39424
                   },
                   {
                       "path":  "msvcp140_codecvt_ids.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/msvcp140_codecvt_ids.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/msvcp140_codecvt_ids.dll",
                       "sha256":  "03c306a2d0c5754750e723c6704e35bc4510427365bd2d5a8120ccfcedb7d70b",
                       "sizeBytes":  21984
                   },
                   {
                       "path":  "portable-manifest.txt",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/portable-manifest.txt",
-                      "sha256":  "3c45dbc93d5e1a83418a89db69560dd4dc8f1d203a2e3759cc71fb59f2a8e339",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/portable-manifest.txt",
+                      "sha256":  "2fd7a942ac6f6ab687916a3ff107c212911e0d5c38ebe41e6a078c64d2bbd949",
                       "sizeBytes":  2845
                   },
                   {
                       "path":  "run_portable.bat",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/run_portable.bat",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/run_portable.bat",
                       "sha256":  "d128acf006ebbd9fe61aea1aacfb0e84ed02f8bd6391ddc9047e14d12ab36e9e",
                       "sizeBytes":  657
                   },
                   {
                       "path":  "sync_windows_agent.exe",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/sync_windows_agent.exe",
-                      "sha256":  "b4078316029fbe0a4e079f83db22ab76268448628ba9e1c487bd138cac29957c",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/sync_windows_agent.exe",
+                      "sha256":  "d897bf7590402e4dc2c2d1798dcc480a86231f919abbb67feaf8642bf149b536",
                       "sizeBytes":  429056
                   },
                   {
                       "path":  "sync_windows_agent_supervisor.ps1",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/sync_windows_agent_supervisor.ps1",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/sync_windows_agent_supervisor.ps1",
                       "sha256":  "c789122b0095da97c77ceffb2b70769822bec15732bbc76e033fd72ecb05e260",
                       "sizeBytes":  8429
                   },
                   {
                       "path":  "update.ps1",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/update.ps1",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/update.ps1",
                       "sha256":  "7bbaee86f87a58914df3d3cfa0445b43435d19dc5e787655be3cd31a781c6435",
                       "sizeBytes":  43857
                   },
                   {
                       "path":  "vccorlib140.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/vccorlib140.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/vccorlib140.dll",
                       "sha256":  "74d9db82c959836391c363ddbb7a847393b9f5edad9211d6dea5608032b2a1a2",
                       "sizeBytes":  343008
                   },
                   {
                       "path":  "vcruntime140.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/vcruntime140.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/vcruntime140.dll",
                       "sha256":  "3dd51ceefab6c79e5c22b72bf2c11da7d28f390fc4b7852cc71656a61f51f261",
                       "sizeBytes":  113632
                   },
                   {
                       "path":  "vcruntime140_1.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/vcruntime140_1.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/vcruntime140_1.dll",
                       "sha256":  "3667158e396e409345578d93e82167594e45626941daa8766ac17e062c4f214f",
                       "sizeBytes":  38368
                   },
                   {
                       "path":  "vcruntime140_threads.dll",
-                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.222-226-c1ba406fb5c2/vcruntime140_threads.dll",
+                      "url":  "https://sync.velvet-leaf.com/client/packages/sync_windows_agent-1.0.223-227-5ce044391f17/vcruntime140_threads.dll",
                       "sha256":  "fd04f51314a88c768ee80ccabc1d65a6e79be2c7c2f4f6e4d9e81726ebd815bf",
                       "sizeBytes":  29168
                   }
