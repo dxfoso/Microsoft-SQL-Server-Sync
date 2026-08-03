@@ -6879,7 +6879,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           string.from(currentWinner.operationId) != operationId &&
           incomingRowHash.length != 0 &&
           incomingRowHash == string.from(currentWinner.rowHash).trim() &&
-          operation == string.from(currentWinner.operation).trim().toUpperCase();
+          operation != 'D' &&
+          string.from(currentWinner.operation).trim().toUpperCase() != 'D';
         if (accepted &&
             currentWinner != null &&
             string.from(currentWinner.operationId) != operationId &&

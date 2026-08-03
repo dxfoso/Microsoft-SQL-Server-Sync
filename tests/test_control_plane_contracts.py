@@ -1442,6 +1442,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIn("matchesDurableWinnerContent", upload_body)
         self.assertIn("incomingRowHash == string.from(currentWinner.rowHash).trim()", upload_body)
+        self.assertIn("operation != 'D'", upload_body)
+        self.assertIn(
+            "string.from(currentWinner.operation).trim().toUpperCase() != 'D'",
+            upload_body,
+        )
         self.assertIn("!matchesDurableWinnerContent", upload_body)
         self.assertIn("db.insert(SyncJobDataChunk", upload_body)
         self.assertIn("row comparison requires permanent primary key columns", upload_body)
