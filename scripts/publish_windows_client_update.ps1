@@ -445,8 +445,8 @@ try {
     Invoke-CheckedNative -Description 'Uploading staged differential package to SSH target...' -Command {
         & scp -r $packageOutputDir "$SshTarget`:$remoteStage/packages/"
     }
-    Invoke-CheckedNative -Description 'Uploading staged latest differential package to SSH target...' -Command {
-        & scp -r $latestPackageDir "$SshTarget`:$remoteStage/packages/"
+    Invoke-CheckedNative -Description 'Creating staged latest differential package alias...' -Command {
+        & ssh $SshTarget "rm -rf '$remoteStage/packages/latest-package' && cp -a '$remoteStage/packages/$packageDirName' '$remoteStage/packages/latest-package'"
     }
     $podOutput = & ssh $SshTarget "kubectl get pods -n '$Namespace' -l app.kubernetes.io/component=frontend -o name"
     if ($LASTEXITCODE -ne 0) {

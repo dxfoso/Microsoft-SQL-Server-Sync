@@ -12,13 +12,29 @@ $copyRoot = $summaryFile.Directory.FullName
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $copyRoot 'docker-restores.json'
 }
-$entries = @(Get-Content -Raw -LiteralPath $summaryFile.FullName | ConvertFrom-Json)
+$parsedEntries = Get-Content -Raw -LiteralPath $summaryFile.FullName | ConvertFrom-Json
+$entries = @()
+foreach ($parsedEntry in $parsedEntries) {
+    $entries += $parsedEntry
+}
 if ($entries.Count -eq 0) { throw 'The live-copy summary contains no backups.' }
 
 function Invoke-Sqlcmd {
     param([string] $Container, [string] $Query, [switch] $Raw)
     $tools = '/opt/mssql-tools18/bin/sqlcmd'
-    & docker exec $Container sh -c "if [ -x $tools ]; then $tools -C -S localhost -U sa -P '$SaPassword' -b -W -h -1 -s '|' -Q `"$Query`"; else /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P '$SaPassword' -b -W -h -1 -s '|' -Q `"$Query`"; fi"
+    & docker exec $Container test -x $tools 2>$null
+    $trustArguments = @('-C')
+    if ($LASTEXITCODE -ne 0) {
+        $tools = '/opt/mssql-tools/bin/sqlcmd'
+        $trustArguments = @()
+    }
+    $arguments = @(
+        'exec', $Container, $tools,
+        $trustArguments,
+        '-S', 'localhost', '-U', 'sa', '-P', $SaPassword,
+        '-b', '-W', '-h', '-1', '-s', '|', '-Q', $Query
+    )
+    & docker @arguments
     if ($LASTEXITCODE -ne 0) { throw "SQL command failed in $Container" }
 }
 

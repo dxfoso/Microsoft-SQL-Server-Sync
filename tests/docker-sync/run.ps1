@@ -17,13 +17,34 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $pythonCommand = $null
 $pythonPrefix = @()
-foreach ($candidate in @('python', 'python3', 'py')) {
-    $resolved = Get-Command $candidate -ErrorAction SilentlyContinue
-    if ($resolved) {
+$pythonCandidates = @(
+    [pscustomobject]@{ Command = 'python'; Prefix = @() },
+    [pscustomobject]@{ Command = 'python3'; Prefix = @() },
+    [pscustomobject]@{ Command = 'py'; Prefix = @('-3') }
+)
+if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    $pythonCandidates += @(Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python*\python.exe') -File -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending |
+        ForEach-Object { [pscustomobject]@{ Command = $_.FullName; Prefix = @() } })
+}
+foreach ($programsRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    if (-not [string]::IsNullOrWhiteSpace($programsRoot)) {
+        $pythonCandidates += @(Get-ChildItem -Path (Join-Path $programsRoot 'Python*\python.exe') -File -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            ForEach-Object { [pscustomobject]@{ Command = $_.FullName; Prefix = @() } })
+    }
+}
+foreach ($candidate in $pythonCandidates) {
+    $resolved = Get-Command ([string]$candidate.Command) -ErrorAction SilentlyContinue
+    if (-not $resolved) { continue }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    & $resolved.Source @($candidate.Prefix) --version *> $null
+    $candidateExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($candidateExitCode -eq 0) {
         $pythonCommand = $resolved.Source
-        if ($candidate -eq 'py') {
-            $pythonPrefix = @('-3')
-        }
+        $pythonPrefix = @($candidate.Prefix)
         break
     }
 }

@@ -71,6 +71,7 @@ DOCKER = native_tool("docker")
 SQLCMD = native_tool("sqlcmd")
 DART = native_tool("dart")
 COMPOSE = [DOCKER, "compose", "-f", str(HARNESS_DIR / "compose.yaml")]
+CONTAINER_SQLCMD = SQLCMD is None and DOCKER is not None
 
 
 def go_sqlcmd_version(executable):
@@ -133,17 +134,37 @@ def run(command, *, input_text=None, cwd=ROOT, check=True):
     return result
 
 
+def sqlcmd_command(arguments):
+    if not CONTAINER_SQLCMD:
+        return [SQLCMD, *arguments]
+    launcher = (
+        'if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then '
+        'exec /opt/mssql-tools18/bin/sqlcmd "$@"; '
+        'else shift; exec /opt/mssql-tools/bin/sqlcmd "$@"; fi'
+    )
+    return [*COMPOSE, "exec", "-T", "sql", "/bin/sh", "-c", launcher, "sqlcmd", *arguments]
+
+
 def sqlcmd(sql, *, database="master", check=True):
-    command = [
-        SQLCMD, "-C", "-S", SQL_SERVER, "-U", SQL_USER, "-P", PASSWORD,
+    server = "localhost" if CONTAINER_SQLCMD else SQL_SERVER
+    arguments = [
+        "-C", "-S", server, "-U", SQL_USER, "-P", PASSWORD,
         *SQLCMD_TLS_ARGS,
         "-d", database, "-b", "-r", "1",
         *(["-f", "65001"] if SQLCMD_SUPPORTS_INPUT_CODEPAGE else []),
         "-h", "-1", "-W", "-Q", sql,
     ]
-    return run(command, check=check)
+    return run(sqlcmd_command(arguments), check=check)
 
 def sqlcmd_script(sql, *, database="master", check=True):
+    if CONTAINER_SQLCMD:
+        arguments = [
+            "-C", "-S", "localhost", "-U", SQL_USER, "-P", PASSWORD,
+            *SQLCMD_TLS_ARGS,
+            "-d", database, "-b", "-r", "1",
+            "-h", "-1", "-w", "32767", "-i", "/dev/stdin",
+        ]
+        return run(sqlcmd_command(arguments), input_text=sql, check=check)
     with tempfile.NamedTemporaryFile(
         "w",
         suffix=".sql",
@@ -357,11 +378,13 @@ def apply(
 
 
 def generated_sql_command(sql_path, *, host_name=None):
-    command = [
-        SQLCMD,
+    input_path = str(sql_path)
+    if CONTAINER_SQLCMD:
+        input_path = f"/harness/{sql_path.name}"
+    arguments = [
         "-C",
         "-S",
-        SQL_SERVER,
+        "localhost" if CONTAINER_SQLCMD else SQL_SERVER,
         "-U",
         SQL_USER,
         "-P",
@@ -374,11 +397,11 @@ def generated_sql_command(sql_path, *, host_name=None):
         "1",
         *(["-f", "65001"] if SQLCMD_SUPPORTS_INPUT_CODEPAGE else []),
         "-i",
-        str(sql_path),
+        input_path,
     ]
     if host_name:
-        command.extend(["-H", host_name])
-    return command
+        arguments.extend(["-H", host_name])
+    return sqlcmd_command(arguments)
 
 
 def execute_generated_sql(generated, *, check=True):
@@ -387,6 +410,7 @@ def execute_generated_sql(generated, *, check=True):
         suffix=".sql",
         encoding="utf-8",
         delete=False,
+        dir=HARNESS_DIR if CONTAINER_SQLCMD else None,
     ) as handle:
         handle.write(generated)
         sql_path = Path(handle.name)
@@ -879,6 +903,7 @@ def run_interrupted_apply(generated, context_hex, *, restart_sql=False):
         suffix=".sql",
         encoding="utf-8",
         delete=False,
+        dir=HARNESS_DIR if CONTAINER_SQLCMD else None,
     ) as handle:
         handle.write(injected)
         sql_path = Path(handle.name)
@@ -968,6 +993,7 @@ def assert_commit_response_loss_is_idempotent(database):
         suffix=".sql",
         encoding="utf-8",
         delete=False,
+        dir=HARNESS_DIR if CONTAINER_SQLCMD else None,
     ) as handle:
         handle.write(delayed)
         sql_path = Path(handle.name)
@@ -1782,11 +1808,11 @@ def main():
         help="Skip the SQL service restart fault (for externally managed servers).",
     )
     args = parser.parse_args()
-    if DOCKER is None or SQLCMD is None or DART is None:
+    if DOCKER is None or (SQLCMD is None and args.external) or DART is None:
         required = [
             name
             for name, executable in (("sqlcmd", SQLCMD), ("dart", DART))
-            if executable is None
+            if executable is None and (name != "sqlcmd" or args.external)
         ]
         if not args.external and DOCKER is None:
             required.append("docker")

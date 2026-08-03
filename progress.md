@@ -1,1 +1,1 @@
-75% - Updater fix and private export are live; retry IDs are being hardened. Remaining: copy/restore each live `AmnDb048` and verify fake-client safety. Real sync stays paused.
+98% - Server sync state is clean; global sync is paused and real clients are disabled. Factory/home copies passed Docker DBCC, and the full 3-client standard, robustness, restart, scale, and soak suites passed. Remaining: final repository checks, commit/deployment, and health verification.

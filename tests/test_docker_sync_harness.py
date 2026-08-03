@@ -69,6 +69,24 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn('["-N", "disable"]', runner)
         self.assertGreaterEqual(runner.count("*SQLCMD_TLS_ARGS"), 3)
 
+    def test_windows_launcher_ignores_store_alias_and_uses_container_sqlcmd(self):
+        launcher = (ROOT / "tests/docker-sync/run.ps1").read_text(
+            encoding="utf-8"
+        )
+        runner = (ROOT / "tests/docker-sync/run_scenarios.py").read_text(
+            encoding="utf-8"
+        )
+        compose = (ROOT / "tests/docker-sync/compose.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("$candidateExitCode = $LASTEXITCODE", launcher)
+        self.assertIn("Programs\\Python\\Python*\\python.exe", launcher)
+        self.assertIn("CONTAINER_SQLCMD = SQLCMD is None", runner)
+        self.assertIn('"exec", "-T", "sql"', runner)
+        self.assertIn('input_path = f"/harness/{sql_path.name}"', runner)
+        self.assertIn("./:/harness:ro", compose)
+
     def test_agents_requires_the_docker_suite_before_client_publication(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 

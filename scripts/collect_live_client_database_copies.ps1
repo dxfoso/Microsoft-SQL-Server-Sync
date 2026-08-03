@@ -44,10 +44,19 @@ function Get-ClientKey([string] $ClientName) {
     return $encoded.TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
 
-function Invoke-SshText([string] $Command) {
-    $lines = & ssh $SshTarget $Command
-    if ($LASTEXITCODE -ne 0) { throw "SSH command failed: $Command" }
-    return @($lines)
+function Invoke-SshText {
+    param([string] $Command, [switch] $RequireOutput)
+    $lastExitCode = 0
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        $lines = @(& ssh $SshTarget $Command)
+        $lastExitCode = $LASTEXITCODE
+        $hasOutput = @($lines | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+        if ($lastExitCode -eq 0 -and (-not $RequireOutput -or $hasOutput)) { return $lines }
+        if ($attempt -lt 6) {
+            Start-Sleep -Seconds ([Math]::Min(15, $attempt * 2))
+        }
+    }
+    throw "SSH command failed after 6 attempts (exit $lastExitCode): $Command"
 }
 
 function Copy-PrivateArtifact {
@@ -66,7 +75,7 @@ function Copy-PrivateArtifact {
     Invoke-SshText "kubectl cp -n $Namespace '$Pod`:$PodDirectory/$Artifact' '$remoteTemp'" | Out-Null
     & scp "${SshTarget}:$remoteTemp" $localPath
     if ($LASTEXITCODE -ne 0) { throw "SCP failed for $Artifact" }
-    $remoteHashLines = @(Invoke-SshText "sha256sum '$remoteTemp'")
+    $remoteHashLines = @(Invoke-SshText "sha256sum '$remoteTemp'" -RequireOutput)
     if ($remoteHashLines.Count -eq 0) { throw "Remote checksum returned no output for $Artifact" }
     $remoteHash = ([string]$remoteHashLines[0]).Split(' ')[0].Trim().ToLowerInvariant()
     $localHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $localPath).Hash.ToLowerInvariant()
@@ -103,10 +112,18 @@ foreach ($client in $clients) {
     $existingExport = $client.dataExport
     $existingRequestId = if ($null -eq $existingExport) { '' } else { [string]$existingExport.requestId }
     $existingStatus = if ($null -eq $existingExport) { '' } else { ([string]$existingExport.status).Trim().ToLowerInvariant() }
-    $canResume = $existingExport.pending -eq $true -and $existingRequestId -match '^[A-Za-z0-9._-]{1,64}$' -and @('requested', 'running') -contains $existingStatus
+    $validExistingRequest = $existingRequestId -match '^[A-Za-z0-9._-]{1,64}$'
+    $canResume = $validExistingRequest -and (
+        ($existingExport.pending -eq $true -and @('requested', 'running') -contains $existingStatus) -or
+        $existingStatus -eq 'completed'
+    )
     if ($canResume) {
         $requestId = $existingRequestId
-        Write-Host "Resuming pending read-only export $requestId for $clientName."
+        if ($existingStatus -eq 'completed') {
+            Write-Host "Reusing completed read-only export $requestId for $clientName."
+        } else {
+            Write-Host "Resuming pending read-only export $requestId ($existingStatus) for $clientName."
+        }
     } else {
         $request = Invoke-ControlPlaneFunction 'agent_data_export_request' @{
             clientName = $clientName
@@ -124,13 +141,12 @@ foreach ($client in $clients) {
     $copied = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
     $manifestCopied = $false
+    $podLines = @(Invoke-SshText "kubectl get pods -n $Namespace -l app.kubernetes.io/component=frontend -o jsonpath='{.items[0].metadata.name}'" -RequireOutput)
+    $pod = ([string]$podLines[0]).Trim()
+    if ([string]::IsNullOrWhiteSpace($pod)) { throw 'Frontend pod was not found.' }
+    $podDirectory = "/app/data/client-updates/.private-exports/$requestId/$clientKey"
 
     while ([DateTime]::UtcNow -lt $deadline -and -not $manifestCopied) {
-        $podLines = @(Invoke-SshText "kubectl get pods -n $Namespace -l app.kubernetes.io/component=frontend -o jsonpath='{.items[0].metadata.name}'")
-        if ($podLines.Count -eq 0) { throw 'Frontend pod query returned no output.' }
-        $pod = ([string]$podLines[0]).Trim()
-        if ([string]::IsNullOrWhiteSpace($pod)) { throw 'Frontend pod was not found.' }
-        $podDirectory = "/app/data/client-updates/.private-exports/$requestId/$clientKey"
         $available = Invoke-SshText "kubectl exec -n $Namespace '$pod' -- sh -c 'if [ -d `"$podDirectory`" ]; then ls -1 `"$podDirectory`" | sort; fi'"
         foreach ($artifact in @($available | Where-Object { $_ -match '^\d{8}\.part$' })) {
             if ($copied.Add($artifact)) {
@@ -147,7 +163,7 @@ foreach ($client in $clients) {
         if ($null -ne $current -and $current.dataExport.status -eq 'failed') {
             throw "$clientName export failed: $($current.dataExport.message)"
         }
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 30
     }
     if (-not $manifestCopied) { throw "$clientName export timed out." }
 
