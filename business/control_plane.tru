@@ -6000,6 +6000,36 @@ function agent_data_export_request(clientName: string, database: string, uploadU
   };
 }
 
+function agent_data_export_poll(clientName: string? = null, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  let resolvedClientName = current.username == null
+    ? normalize_user_name(current.name)
+    : normalize_user_name(current.username);
+  if (clientName != null && clientName.trim().length != 0) {
+    resolvedClientName = normalize_user_name(clientName);
+  }
+  if (is_client_user(current)) {
+    const currentClientName = current.username == null
+      ? normalize_user_name(current.name)
+      : normalize_user_name(current.username);
+    if (resolvedClientName != currentClientName) {
+      return raw_json_error(403, 'permission denied');
+    }
+  }
+  const agent = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (agent == null || !can_read_agent(current, agent.ownerUserId, agent.clientUserId)) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: resolvedClientName,
+    dataExport: agent_data_export_payload(agent, true)
+  };
+}
+
 function agent_data_export_ack(clientName: string? = null, requestId: string? = null, status: string = 'completed', message: string = '', bytes: int = 0, sha256: string = '', chunkCount: int = 0, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {

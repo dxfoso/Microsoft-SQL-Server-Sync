@@ -772,6 +772,23 @@ class AgentControlPlaneClient {
     );
   }
 
+  Future<RemoteAgentDataExport> pollDataExport({
+    required String clientName,
+  }) async {
+    final response = await _invokeFunction('agent_data_export_poll', {
+      'clientName': clientName,
+    }, 'polling read-only data export commands');
+    if (response is! Map || response['dataExport'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected data export poll payload.',
+      );
+    }
+    return _parseRemoteAgentDataExportPayload(
+      response['dataExport'],
+      'Unexpected data export poll payload.',
+    );
+  }
+
   Future<RemoteTableSyncPolicy> updateTableSyncPolicy({
     required String table,
     required bool enabled,

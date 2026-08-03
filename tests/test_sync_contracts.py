@@ -1784,6 +1784,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("DROP DATABASE", agent_page)
         self.assertIn("class RemoteAgentDataExport", api)
         self.assertIn("agent_data_export_ack", api)
+        self.assertIn("agent_data_export_poll", api)
+        self.assertIn("data_export.poll_failed", agent_page)
         self.assertIn('CLIENT_UPDATES_DIR, ".private-exports"', frontend_server)
         self.assertIn("crypto.timingSafeEqual", frontend_server)
         self.assertIn("private export chunk checksum mismatch", frontend_server)
@@ -1800,6 +1802,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("stale: true", control_plane)
         self.assertIn("const nextRequestId = uuid.v4()", control_plane)
         self.assertIn("dataExportRequestId: acknowledgedRequestId", control_plane)
+        self.assertIn("function agent_data_export_poll", control_plane)
 
 
 if __name__ == "__main__":

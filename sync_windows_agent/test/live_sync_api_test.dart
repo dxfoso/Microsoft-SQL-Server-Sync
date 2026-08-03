@@ -493,6 +493,42 @@ void main() {
     },
   );
 
+  test('dedicated data export poll parses a pending command', () async {
+    final scripted = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        expect(name, 'agent_data_export_poll');
+        expect(args['clientName'], 'c1');
+        return (
+          statusCode: 200,
+          body: {
+            'status': 'success',
+            'value': {
+              'dataExport': {
+                'pending': true,
+                'requestId': 'export-2',
+                'database': 'AmnDb048',
+                'uploadUrl': 'https://sync.velvet-leaf.com/private-export',
+                'uploadToken': '0123456789abcdef0123456789abcdef',
+                'status': 'requested',
+              },
+            },
+          },
+        );
+      },
+    );
+    final api = AgentControlPlaneClient(
+      client: scripted,
+      baseUrl: 'https://example.com/call',
+    );
+
+    final export = await api.pollDataExport(clientName: 'c1');
+
+    expect(export.pending, isTrue);
+    expect(export.requestId, 'export-2');
+    expect(export.database, 'AmnDb048');
+    expect(export.uploadToken, hasLength(32));
+  });
+
   test('heartbeat estimates the server clock offset', () async {
     final client = AgentControlPlaneClient(
       client: _DelayedClient(

@@ -3664,6 +3664,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             temporaryControlPlaneUnavailable ? null : error.toString();
       });
     } finally {
+      try {
+        final export = await _controlPlaneClient.pollDataExport(
+          clientName: widget.clientName,
+        );
+        _scheduleRequestedDataExport(export);
+      } catch (error) {
+        logAgentDiagnostic(
+          'data_export.poll_failed',
+          level: AgentLogLevel.warning,
+          context: {'clientName': widget.clientName},
+          error: error,
+        );
+      }
       _syncLoopBusy = false;
       _updateTraySyncIndicator();
       _retryAutomaticClientUpdateIfReady();
