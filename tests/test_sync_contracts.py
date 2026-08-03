@@ -736,7 +736,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("canonicalFullMerge", control_plane)
         self.assertIn("mergeParticipantCount", control_plane)
         self.assertIn("WITH (TABLOCKX, HOLDLOCK)", merge)
-        self.assertIn("THROW 51000", merge)
+        self.assertIn(
+            "RAISERROR('Local rows changed after this client uploaded; retry the canonical sync with a fresh snapshot.', 16, 1)",
+            merge,
+        )
+        self.assertNotIn("THROW 51000", merge)
         self.assertNotIn("AmnDb048", merge)
 
     def test_change_tracking_baselines_accept_enabled_initial_version_zero(self):

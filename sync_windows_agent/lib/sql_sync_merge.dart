@@ -360,7 +360,7 @@ String buildTargetSnapshotStageApplySql({
        OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
   )
   BEGIN
-    THROW 51000, 'Local rows changed after this client uploaded; retry the canonical sync with a fresh snapshot.', 1;
+    RAISERROR('Local rows changed after this client uploaded; retry the canonical sync with a fresh snapshot.', 16, 1);
   END;''';
   final logicalIdentityStatements = _buildLogicalIdentityReconciliationSql(
     database: database,

@@ -347,8 +347,17 @@ void main() {
       sql,
       contains('CHANGETABLE(CHANGES [any_database].[dbo].[items], 42)'),
     );
-    expect(sql, contains('THROW 51000'));
-    expect(sql.indexOf('THROW 51000'), lessThan(sql.indexOf('DELETE TOP')));
+    expect(
+      sql,
+      contains(
+        "RAISERROR('Local rows changed after this client uploaded; retry the canonical sync with a fresh snapshot.', 16, 1)",
+      ),
+    );
+    expect(sql, isNot(contains('THROW')));
+    expect(
+      sql.indexOf("RAISERROR('Local rows changed after this client uploaded"),
+      lessThan(sql.indexOf('DELETE TOP')),
+    );
   });
 
   test(
