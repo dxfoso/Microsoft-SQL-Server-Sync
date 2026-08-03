@@ -1792,11 +1792,14 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("kubectl exec -n $Namespace", collector)
         self.assertIn("Resuming pending read-only export", collector)
         self.assertIn("$existingExport.pending -eq $true", collector)
+        self.assertIn("Skipping duplicate control-plane metadata row", collector)
 
         control_plane = read_text("business/control_plane.tru")
         self.assertIn("requestId is required", control_plane)
-        self.assertIn("acknowledgedRequestId != resolvedRequestId", control_plane)
+        self.assertIn("matchingAgent == null", control_plane)
         self.assertIn("stale: true", control_plane)
+        self.assertIn("const nextRequestId = uuid.v4()", control_plane)
+        self.assertIn("dataExportRequestId: acknowledgedRequestId", control_plane)
 
 
 if __name__ == "__main__":

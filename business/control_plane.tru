@@ -5971,8 +5971,9 @@ function agent_data_export_request(clientName: string, database: string, uploadU
     return raw_json_error(400, 'export upload token is invalid');
   }
   const requestedAt = now_iso();
-  const updated = db.update(Agent, { clientName: normalizedClientName }, {
-    dataExportRequestId: uuid.v4(),
+  const nextRequestId = uuid.v4();
+  const updatedCount = db.updateMany(Agent, { clientName: normalizedClientName }, {
+    dataExportRequestId: nextRequestId,
     dataExportRequestedAt: requestedAt,
     dataExportRequestedByUserId: current.id,
     dataExportDatabase: normalizedDatabase,
@@ -5985,8 +5986,12 @@ function agent_data_export_request(clientName: string, database: string, uploadU
     dataExportChunkCount: 0,
     updatedAt: requestedAt
   });
-  if (updated == null) {
+  if (updatedCount == 0) {
     return raw_json_error(404, 'client not found');
+  }
+  const updated = db.selectOne(Agent, { clientName: normalizedClientName, dataExportRequestId: nextRequestId });
+  if (updated == null) {
+    return raw_json_error(500, 'export request state unavailable');
   }
   return {
     ok: true,
@@ -6025,10 +6030,6 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
   if (agent == null) {
     return raw_json_error(404, 'client not found');
   }
-  let resolvedRequestId = '';
-  if (agent.dataExportRequestId != null) {
-    resolvedRequestId = string.from(agent.dataExportRequestId).trim();
-  }
   let acknowledgedRequestId = '';
   if (requestId != null) {
     acknowledgedRequestId = requestId.trim();
@@ -6036,7 +6037,8 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
   if (acknowledgedRequestId.length == 0) {
     return raw_json_error(400, 'requestId is required');
   }
-  if (acknowledgedRequestId != resolvedRequestId) {
+  const matchingAgent = db.selectOne(Agent, { clientName: resolvedClientName, dataExportRequestId: acknowledgedRequestId });
+  if (matchingAgent == null) {
     return {
       ok: true,
       stale: true,
@@ -6047,20 +6049,20 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
   let resolvedRequestIdOrNull = null;
   const normalizedStatus = truncate_text(status.trim().toLowerCase(), 32);
   const terminalStatus = normalizedStatus == 'completed' || normalizedStatus == 'failed';
-  if (terminalStatus && resolvedRequestId.length != 0) {
+  if (terminalStatus) {
     resolvedRequestIdOrNull = acknowledgedRequestId;
   }
   let safeBytes = bytes;
   if (safeBytes < 0) { safeBytes = 0; }
   let safeChunkCount = chunkCount;
   if (safeChunkCount < 0) { safeChunkCount = 0; }
-  let nextUploadUrl = agent.dataExportUploadUrl;
-  let nextUploadToken = agent.dataExportUploadToken;
+  let nextUploadUrl = matchingAgent.dataExportUploadUrl;
+  let nextUploadToken = matchingAgent.dataExportUploadToken;
   if (terminalStatus) {
     nextUploadUrl = null;
     nextUploadToken = null;
   }
-  const updated = db.update(Agent, { clientName: resolvedClientName }, {
+  const updatedCount = db.updateMany(Agent, { clientName: resolvedClientName, dataExportRequestId: acknowledgedRequestId }, {
     dataExportLastRequestId: resolvedRequestIdOrNull,
     dataExportLastAcknowledgedAt: now_iso(),
     dataExportUploadUrl: nextUploadUrl,
@@ -6072,8 +6074,12 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
     dataExportChunkCount: safeChunkCount,
     updatedAt: now_iso()
   });
-  if (updated == null) {
+  if (updatedCount == 0) {
     return raw_json_error(404, 'client not found');
+  }
+  const updated = db.selectOne(Agent, { clientName: resolvedClientName, dataExportRequestId: acknowledgedRequestId });
+  if (updated == null) {
+    return raw_json_error(500, 'export acknowledgement state unavailable');
   }
   return {
     ok: true,

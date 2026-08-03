@@ -93,8 +93,13 @@ $clients = @($initialState.agents | Where-Object {
 if ($clients.Count -eq 0) { throw "No online SQL-connected clients selected $Database." }
 
 $summary = @()
+$seenClientNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($client in $clients) {
     $clientName = [string]$client.clientName
+    if (-not $seenClientNames.Add($clientName)) {
+        Write-Host "Skipping duplicate control-plane metadata row for $clientName."
+        continue
+    }
     $existingExport = $client.dataExport
     $existingRequestId = if ($null -eq $existingExport) { '' } else { [string]$existingExport.requestId }
     $existingStatus = if ($null -eq $existingExport) { '' } else { ([string]$existingExport.status).Trim().ToLowerInvariant() }
