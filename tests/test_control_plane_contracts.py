@@ -1117,7 +1117,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
             planner.index("readyAgents.length == participants.length"),
         )
         self.assertIn("reportedRowCountClientCount == participants.length", planner)
-        self.assertIn("reportedClientCount == participants.length", planner)
+        fingerprint_union = planner.split(
+            "Clients report different complete table fingerprints", 1
+        )[0].rsplit("if (participants.length >= 2", 1)[1]
+        self.assertIn("allFingerprints.length > 1", fingerprint_union)
+        self.assertNotIn(
+            "reportedClientCount == participants.length", fingerprint_union
+        )
+        self.assertIn("missing fingerprint", planner)
         self.assertIn("establishedInventoryCanUnion", planner)
         self.assertIn(
             "const establishedInventoryCanUnion = allowInventoryUnion;", planner

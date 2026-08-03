@@ -3077,8 +3077,11 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       message: 'Clients report different complete row counts; every client will upload a complete snapshot and receive the primary-key union.'
     };
   }
+  // A missing fingerprint on one client must not hide a proven divergence
+  // between other participants. A full union is safe here because every
+  // enabled participant contributes its complete snapshot; choosing delta
+  // would report success while preserving historical differences forever.
   if (participants.length >= 2 &&
-      reportedClientCount == participants.length &&
       allFingerprints.length > 1 &&
       establishedInventoryCanUnion) {
     return {
