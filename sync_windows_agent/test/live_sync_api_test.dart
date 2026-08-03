@@ -420,8 +420,8 @@ void main() {
                 'status': 'success',
                 'value': {
                   'dataExport': {
-                    'pending': true,
-                    'requestId': 'export-1',
+                    'pending': 'true',
+                    'requestId': 101,
                     'database': 'AmnDb048',
                     'uploadUrl': 'https://sync.velvet-leaf.com/private-export',
                     'uploadToken': '0123456789abcdef0123456789abcdef',
@@ -475,6 +475,7 @@ void main() {
         clientVersion: '1.0.222+226',
       );
       expect(heartbeat.dataExport.pending, isTrue);
+      expect(heartbeat.dataExport.requestId, '101');
       expect(heartbeat.dataExport.database, 'AmnDb048');
       expect(heartbeat.dataExport.uploadToken, hasLength(32));
 

@@ -1963,21 +1963,29 @@ class RemoteAgentDataExport {
   final int chunkCount;
 
   factory RemoteAgentDataExport.fromJson(Map<String, dynamic> json) {
+    String? optionalString(Object? value) => value?.toString();
+    int integerValue(Object? value) {
+      if (value is num) return value.toInt();
+      return int.tryParse(value?.toString() ?? '') ?? 0;
+    }
+
     return RemoteAgentDataExport(
-      pending: json['pending'] as bool? ?? false,
-      requestId: json['requestId'] as String?,
-      requestedAt: json['requestedAt'] as String?,
-      requestedByUserId: json['requestedByUserId'] as String?,
-      database: json['database'] as String?,
-      uploadUrl: json['uploadUrl'] as String?,
-      uploadToken: json['uploadToken'] as String?,
-      lastRequestId: json['lastRequestId'] as String?,
-      acknowledgedAt: json['acknowledgedAt'] as String?,
-      status: json['status'] as String? ?? 'idle',
-      message: json['message'] as String? ?? '',
-      bytes: (json['bytes'] as num? ?? 0).toInt(),
-      sha256: json['sha256'] as String? ?? '',
-      chunkCount: (json['chunkCount'] as num? ?? 0).toInt(),
+      pending:
+          json['pending'] == true ||
+          json['pending']?.toString().toLowerCase() == 'true',
+      requestId: optionalString(json['requestId']),
+      requestedAt: optionalString(json['requestedAt']),
+      requestedByUserId: optionalString(json['requestedByUserId']),
+      database: optionalString(json['database']),
+      uploadUrl: optionalString(json['uploadUrl']),
+      uploadToken: optionalString(json['uploadToken']),
+      lastRequestId: optionalString(json['lastRequestId']),
+      acknowledgedAt: optionalString(json['acknowledgedAt']),
+      status: optionalString(json['status']) ?? 'idle',
+      message: optionalString(json['message']) ?? '',
+      bytes: integerValue(json['bytes']),
+      sha256: optionalString(json['sha256']) ?? '',
+      chunkCount: integerValue(json['chunkCount']),
     );
   }
 }
