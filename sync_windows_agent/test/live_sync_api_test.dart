@@ -3738,6 +3738,9 @@ void main() {
                   'checksum': 'checksum-1',
                   'snapshotBytes': 32,
                   'columns': ['Id', 'Name'],
+                  'uniqueKeyColumnSets': [
+                    ['Name'],
+                  ],
                   'rows': const [],
                   'sourceJobId': 'job-mw-download',
                   'clientChangeTrackingVersions': const [],
@@ -3872,6 +3875,9 @@ void main() {
                   'checksum': 'participant-checksum-$callIndex',
                   'snapshotBytes': 64,
                   'columns': ['Id', 'Name'],
+                  'uniqueKeyColumnSets': [
+                    ['Name'],
+                  ],
                   'rows': const [],
                   'sourceJobId': 'job-union',
                   'clientChangeTrackingVersions': [
@@ -3902,6 +3908,9 @@ void main() {
       expect(snapshot.canonicalFullMerge, isTrue);
       expect(snapshot.mergeParticipantCount, 2);
       expect(snapshot.isDelta, isFalse);
+      expect(snapshot.uniqueKeyColumnSets, const [
+        ['Name'],
+      ]);
       expect(snapshot.rows, hasLength(1));
       expect(snapshot.rowCount, 1);
       expect(snapshot.checksum, isEmpty);
