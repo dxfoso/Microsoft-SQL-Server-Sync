@@ -131,6 +131,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
         self.assertIn("function agent_command_delivery_online(agent: map<json>): bool {", source)
         self.assertIn("return pending && !agent_command_delivery_online(agent);", source)
+        command_delivery_body = source.split(
+            "function agent_command_delivery_online(agent: map<json>): bool {", 1
+        )[1].split("\n}", 1)[0]
+        self.assertIn("agent.lastHeartbeat", command_delivery_body)
+        self.assertIn("agent_online_timeout_ms(agent)", command_delivery_body)
+        self.assertNotIn("agent.isOnline", command_delivery_body)
+        self.assertNotIn("agent.serverConnected", command_delivery_body)
+        self.assertNotIn("agent.sqlConnected", command_delivery_body)
 
     def test_job_schema_keeps_only_current_snapshot_fields(self):
         source = read_text("business/control_plane.tru")

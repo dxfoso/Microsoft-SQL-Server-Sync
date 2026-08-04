@@ -599,9 +599,6 @@ function agent_sync_enabled(agent: map<json>): bool {
 // Command delivery only needs a live heartbeat. Database readiness is
 // required for sync scheduling, but must not block updates or diagnostics.
 function agent_command_delivery_online(agent: map<json>): bool {
-  if (agent.isOnline != true) {
-    return false;
-  }
   const heartbeat = string.from(agent.lastHeartbeat ?? '').trim();
   if (heartbeat.length == 0) {
     return false;
