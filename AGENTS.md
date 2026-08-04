@@ -62,7 +62,7 @@ Use the launcher when a local stack restart is actually needed.
 - Deploy directly through the configured SSH alias `velvet-leaf-1` (`dxfoso@75.119.136.143`, identity file `C:\Users\adnan\.ssh\velvet-leaf-1`).
 - Do not use Cloud deployment APIs, Cloud deployment tokens, action-server deployment sessions, deployment UI triggers, or old Cloud runbooks.
 - Work only in namespace `velvet-sql-server-sync`. Every remote `kubectl` command must include `-n velvet-sql-server-sync`; never use or modify workloads in another namespace.
-- Build and push immutable `backend` and `frontend` images for the exact pushed commit from the SSH target using `sudo docker`. Never deploy mutable tags such as `latest` or `dev`.
+- Build and push immutable `backend` and `frontend` images locally with Docker from the exact pushed commit. Do not build production images on the SSH target. Push the exact immutable tags to the registry locally, then deploy those references through the SSH target. Never deploy mutable tags such as `latest` or `dev`.
 - Update only `deployment/sql-sync-back` and `deployment/sql-sync-front` to the exact immutable image references, then wait for both rollouts to complete.
 - Preserve the live frontend client-update files when building a new frontend image. The deployed `/client/latest.json`, differential package, updater, and portable ZIP must remain available.
 - Treat Helm lint/template failure, cluster-scoped resources, wrong-node rendering, registry pulls, workload readiness, ingress/DNS/TLS, health, or any nonzero `compile_errors` as deployment failure.
