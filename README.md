@@ -40,6 +40,16 @@ Old sync-engine compatibility paths and obsolete bootstrap code have been remove
 
 ## Docker Sync Tests
 
+The single repeatable local test entry point is:
+
+```powershell
+.\tests\run_local_test_standard.ps1
+```
+
+It runs the standard gate in a hidden background process and retains logs and
+machine-readable results under `workspace/tests/local-standard/`. The complete
+test matrix and safety rules are documented in `docs/local-testing.md`.
+
 Run the standardized three-client SQL Server scenario suite before publishing a
 Windows client:
 

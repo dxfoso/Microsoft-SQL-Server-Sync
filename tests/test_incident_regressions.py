@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 28)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 29)}
         observed_ids = set()
 
         for row in rows:
@@ -96,6 +96,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("A manual check alone is not sufficient", rules)
         self.assertIn("tests/run_sync_verification.ps1", rules)
         self.assertIn("Never use active production client databases to reproduce an issue", rules)
+
+    def test_local_test_standard_is_hidden_documented_and_delegates_to_gate(self):
+        runner = read_text("tests/run_local_test_standard.ps1")
+        documentation = read_text("docs/local-testing.md")
+        readme = read_text("README.md")
+
+        self.assertIn("-WindowStyle Hidden", runner)
+        self.assertIn("run_sync_verification.ps1", runner)
+        self.assertIn("task-status.json", runner)
+        self.assertIn("tests/run_local_test_standard.ps1", documentation)
+        self.assertIn("workspace/tests/local-standard/", documentation)
+        self.assertIn("run_local_test_standard.ps1", readme)
 
 
 if __name__ == "__main__":
