@@ -172,6 +172,7 @@ try {
                 'tests/test_sync_contracts.py',
                 'tests/test_control_plane_contracts.py',
                 'tests/test_control_plane_perf_contracts.py',
+                'tests/test_incident_regressions.py',
                 'tests/test_docker_sync_harness.py',
                 'tests/test_heartbeat_contracts.py',
                 'tests/test_live_verifier_scripts.py'
