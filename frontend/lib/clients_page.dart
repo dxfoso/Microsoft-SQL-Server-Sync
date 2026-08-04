@@ -786,7 +786,9 @@ class _ClientsPageState extends State<ClientsPage> {
     final conflictPolicyValues =
         agents.map((agent) => agent.conflictPolicy).toSet();
     var conflictPolicy =
-        conflictPolicyValues.length == 1 ? conflictPolicyValues.first : 'ask';
+        conflictPolicyValues.length == 1
+            ? conflictPolicyValues.first
+            : 'latest_change_wins';
     var saving = false;
     String? intervalError;
     String? historyError;
@@ -850,10 +852,6 @@ class _ClientsPageState extends State<ClientsPage> {
                           ),
                           items: const [
                             DropdownMenuItem(
-                              value: 'ask',
-                              child: Text('Stop and ask for a decision'),
-                            ),
-                            DropdownMenuItem(
                               value: 'latest_change_wins',
                               child: Text(
                                 'Use the latest database change automatically',
@@ -864,7 +862,9 @@ class _ClientsPageState extends State<ClientsPage> {
                               saving
                                   ? null
                                   : (value) => setDialogState(
-                                    () => conflictPolicy = value ?? 'ask',
+                                    () =>
+                                        conflictPolicy =
+                                            value ?? 'latest_change_wins',
                                   ),
                         ),
                         if (conflictPolicy == 'latest_change_wins') ...[
@@ -1499,22 +1499,6 @@ class _ClientsPageState extends State<ClientsPage> {
                 icon: const Icon(Icons.visibility_outlined, size: 16),
                 label: const Text('View'),
               ),
-              if (widget.authenticatedUser.canManageUsers)
-                OutlinedButton.icon(
-                  onPressed:
-                      _reconcileBusy ||
-                              !agent.isOnline ||
-                              !agent.serverConnected ||
-                              !agent.sqlConnected
-                          ? null
-                          : () => unawaited(
-                            _openAuthoritativeReconcileDialog(
-                              initialSourceName: agent.clientName,
-                            ),
-                          ),
-                  icon: const Icon(Icons.verified_user_outlined, size: 16),
-                  label: const Text('Use as source'),
-                ),
             ],
           ),
         ),

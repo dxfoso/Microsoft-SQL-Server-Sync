@@ -145,6 +145,7 @@ class SyncBatch {
   field receivedBytes: int min=0 max=2147483647
   field clientChangeTrackingVersions: array<json>
   field keyColumns: array<json>
+  field uniqueKeyColumnSets: array<json>?
   field columns: array<json>
   field rows: array<json>
   field status: string min=1 max=32
@@ -225,6 +226,7 @@ class SyncRowWinner {
   field table: string min=1 max=256
   field identityKey: string min=64 max=64
   field physicalKey: string min=64 max=64
+  field logicalWinnerIds: array<json>?
   field modifiedAtUtc: string min=0 max=64
   field serverReceivedAtUtc: string min=1 max=64
   field serverSequence: string min=1 max=128
@@ -666,11 +668,7 @@ function clamp_sync_data_limit_mb(value: int? = null): int {
 }
 
 function normalize_conflict_policy(value: string? = null): string {
-  const normalized = string.from(value ?? '').trim().toLowerCase();
-  if (normalized == 'latest_change_wins') {
-    return normalized;
-  }
-  return 'ask';
+  return 'latest_change_wins';
 }
 
 function kSyncTableKeySeparator(): string {
@@ -4370,6 +4368,71 @@ function sync_row_identity_key(table: string, row: map<json>, keyColumns: array<
   }), 'sha256');
 }
 
+function sync_row_winner_id(ownerUserId: string, table: string, identityKey: string): string {
+  return crypto.hash(
+    json.stringify([ownerUserId.trim(), table.trim(), identityKey.trim()]),
+    'sha256'
+  );
+}
+
+function normalize_unique_key_column_sets(values: array<json>? = null, columns: array<string>? = null): array<json> {
+  const availableColumns = columns ?? [];
+  let normalizedSets = [];
+  let seen = [];
+  for (const rawSet of values ?? []) {
+    let normalizedSet = [];
+    for (const rawColumn of rawSet ?? []) {
+      const requested = string.from(rawColumn).trim();
+      let resolved = '';
+      for (const availableColumn of availableColumns) {
+        const candidate = string.from(availableColumn).trim();
+        if (candidate.toLowerCase() == requested.toLowerCase()) {
+          resolved = candidate;
+        }
+      }
+      if (resolved.length != 0 && !string_array_contains(normalizedSet, resolved)) {
+        normalizedSet = normalizedSet.concat([resolved]);
+      }
+    }
+    if (normalizedSet.length == 0) {
+      continue;
+    }
+    const signature = normalizedSet.map((column) => string.from(column).toLowerCase()).join('|');
+    if (!string_array_contains(seen, signature)) {
+      seen = seen.concat([signature]);
+      normalizedSets = normalizedSets.concat([normalizedSet]);
+    }
+  }
+  return normalizedSets;
+}
+
+function sync_row_logical_winner_refs(ownerUserId: string, table: string, row: map<json>, uniqueKeyColumnSets: array<json>): array<json> {
+  let refs = [];
+  for (const rawColumnSet of uniqueKeyColumnSets) {
+    let columnSet = [];
+    for (const rawColumn of rawColumnSet ?? []) {
+      columnSet = columnSet.concat([string.from(rawColumn)]);
+    }
+    if (columnSet.length == 0) {
+      continue;
+    }
+    let values = [];
+    for (const rawColumn of columnSet) {
+      values = values.concat([row[string.from(rawColumn)]]);
+    }
+    const identityKey = crypto.hash(json.stringify({
+      table: table.trim().toLowerCase(),
+      columns: columnSet.map((column) => string.from(column).toLowerCase()),
+      values
+    }), 'sha256');
+    refs = refs.concat([{
+      id: sync_row_winner_id(ownerUserId, table, identityKey),
+      identityKey
+    }]);
+  }
+  return refs;
+}
+
 function sync_timestamp_compare_ms(left: string, right: string): int {
   const normalizedLeft = left.trim();
   const normalizedRight = right.trim();
@@ -4458,6 +4521,31 @@ function sync_row_effective_modified_at(row: map<json>, serverReceivedAtUtc: str
   } catch (err) {
     return serverReceivedAtUtc;
   }
+}
+
+function sync_row_next_winner_record(id: string, identityKey: string, physicalKey: string, logicalWinnerIds: array<json>, row: map<json>, ownerUserId: string, table: string, serverReceivedAtUtc: string, serverSequence: string, originClient: string, current: map<json>? = null): map<json> {
+  let nextRevision = 1;
+  if (current != null) {
+    nextRevision = int.from(current.revision) + 1;
+  }
+  return {
+    id,
+    ownerUserId,
+    table,
+    identityKey,
+    physicalKey,
+    logicalWinnerIds,
+    modifiedAtUtc: sync_row_effective_modified_at(row, serverReceivedAtUtc),
+    serverReceivedAtUtc,
+    serverSequence,
+    originClient: normalize_user_name(originClient),
+    changeVersion: string.from(row.__sync_change_version ?? '').trim(),
+    operationId: string.from(row.__sync_operation_id ?? '').trim(),
+    rowHash: string.from(row.__sync_row_hash ?? '').trim(),
+    operation: string.from(row.__sync_op ?? 'S').trim().toUpperCase(),
+    revision: nextRevision,
+    updatedAt: serverReceivedAtUtc
+  };
 }
 
 function sync_row_winner_find_by_id(winners: array<json>, id: string): map<json>? {
@@ -6784,7 +6872,7 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   });
 }
 
-function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, snapshotChecksum: string = '', protocolVersion: int = 0, syncEpoch: string = '', latestModifiedAtUtc: string = '', latestOperationId: string = ''): map<json> {
+function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, uniqueKeyColumnSets: array<json>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, snapshotChecksum: string = '', protocolVersion: int = 0, syncEpoch: string = '', latestModifiedAtUtc: string = '', latestOperationId: string = ''): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -6894,6 +6982,21 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (!comparisonPreview && batch.columns.length > 0) {
     resolvedColumns = batch.columns.map((value) => string.from(value));
   }
+  let resolvedUniqueKeyColumnSets = normalize_unique_key_column_sets(
+    uniqueKeyColumnSets,
+    resolvedColumns
+  );
+  const batchUniqueKeyColumnSets = normalize_unique_key_column_sets(
+    batch.uniqueKeyColumnSets ?? [],
+    resolvedColumns
+  );
+  if (batchUniqueKeyColumnSets.length > 0) {
+    if (resolvedUniqueKeyColumnSets.length > 0 &&
+        json.stringify(resolvedUniqueKeyColumnSets) != json.stringify(batchUniqueKeyColumnSets)) {
+      return raw_json_error(409, 'clients report different SQL unique-key definitions for this table');
+    }
+    resolvedUniqueKeyColumnSets = batchUniqueKeyColumnSets;
+  }
   if (payloadIsDelta && resolvedKeyColumns.length == 0) {
     return raw_json_error(409, 'latest-change sync requires permanent primary key columns');
   }
@@ -6980,14 +7083,24 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       const candidatePhysicalKey = sync_row_physical_key(incomingRow, resolvedKeyColumns);
       const candidateIdentityKey = sync_row_identity_key(winnerTable, incomingRow, resolvedKeyColumns);
       candidatePhysicalKeys = candidatePhysicalKeys.concat([candidatePhysicalKey]);
-      candidateWinnerIds = candidateWinnerIds.concat([
-        crypto.hash(
-          json.stringify([winnerOwnerUserId, winnerTable, candidateIdentityKey]),
-          'sha256'
-        )
-      ]);
+      candidateWinnerIds = candidateWinnerIds.concat([sync_row_winner_id(
+        winnerOwnerUserId,
+        winnerTable,
+        candidateIdentityKey
+      )]);
+      if (string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase() != 'D') {
+        candidateWinnerIds = candidateWinnerIds.concat(
+          sync_row_logical_winner_refs(
+            winnerOwnerUserId,
+            winnerTable,
+            incomingRow,
+            resolvedUniqueKeyColumnSets
+          ).map((value) => string.from(value.id))
+        );
+      }
     }
   }
+  candidateWinnerIds = unique_string_values(candidateWinnerIds);
   let currentWinners = [];
   if (candidateWinnerIds.length > 0) {
     currentWinners = db.selectMany(SyncRowWinner, {
@@ -6997,7 +7110,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         id: { in: candidateWinnerIds }
       },
       orderBy: { field: 'id', dir: 'asc' },
-      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
+      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'logicalWinnerIds', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
       limit: 500
     });
   }
@@ -7009,12 +7122,76 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         physicalKey: { in: candidatePhysicalKeys }
       },
       orderBy: { field: 'id', dir: 'asc' },
-      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
+      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'logicalWinnerIds', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
       limit: 500
     });
     for (const physicalWinner of physicalWinners) {
       if (sync_row_winner_find_by_id(currentWinners, string.from(physicalWinner.id)) == null) {
         currentWinners = currentWinners.concat([physicalWinner]);
+      }
+    }
+  }
+  // Logical winners point at the current physical identity. Load that primary
+  // register too so accepting a newer conflicting identity can redirect the
+  // older primary key and prevent a delayed offline upload from resurrecting it.
+  let displacedPrimaryWinnerIds = [];
+  for (const currentWinner of currentWinners) {
+    const displacedIdentityKey = crypto.hash(json.stringify({
+      table: winnerTable.trim().toLowerCase(),
+      values: ['physical', string.from(currentWinner.physicalKey)]
+    }), 'sha256');
+    const displacedWinnerId = sync_row_winner_id(
+      winnerOwnerUserId,
+      winnerTable,
+      displacedIdentityKey
+    );
+    if (sync_row_winner_find_by_id(currentWinners, displacedWinnerId) == null) {
+      displacedPrimaryWinnerIds = displacedPrimaryWinnerIds.concat([displacedWinnerId]);
+    }
+  }
+  displacedPrimaryWinnerIds = unique_string_values(displacedPrimaryWinnerIds);
+  if (displacedPrimaryWinnerIds.length > 0) {
+    const displacedWinners = db.selectMany(SyncRowWinner, {
+      where: {
+        ownerUserId: winnerOwnerUserId,
+        table: winnerTable,
+        id: { in: displacedPrimaryWinnerIds }
+      },
+      orderBy: { field: 'id', dir: 'asc' },
+      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'logicalWinnerIds', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
+      limit: 500
+    });
+    for (const displacedWinner of displacedWinners) {
+      if (sync_row_winner_find_by_id(currentWinners, string.from(displacedWinner.id)) == null) {
+        currentWinners = currentWinners.concat([displacedWinner]);
+      }
+    }
+  }
+  let storedLogicalWinnerIds = [];
+  for (const currentWinner of currentWinners) {
+    for (const logicalWinnerId of currentWinner.logicalWinnerIds ?? []) {
+      const normalizedLogicalWinnerId = string.from(logicalWinnerId).trim();
+      if (normalizedLogicalWinnerId.length != 0 &&
+          sync_row_winner_find_by_id(currentWinners, normalizedLogicalWinnerId) == null) {
+        storedLogicalWinnerIds = storedLogicalWinnerIds.concat([normalizedLogicalWinnerId]);
+      }
+    }
+  }
+  storedLogicalWinnerIds = unique_string_values(storedLogicalWinnerIds);
+  if (storedLogicalWinnerIds.length > 0) {
+    const storedLogicalWinners = db.selectMany(SyncRowWinner, {
+      where: {
+        ownerUserId: winnerOwnerUserId,
+        table: winnerTable,
+        id: { in: storedLogicalWinnerIds }
+      },
+      orderBy: { field: 'id', dir: 'asc' },
+      fields: ['id', 'ownerUserId', 'table', 'identityKey', 'physicalKey', 'logicalWinnerIds', 'modifiedAtUtc', 'serverReceivedAtUtc', 'serverSequence', 'originClient', 'changeVersion', 'operationId', 'rowHash', 'operation', 'revision', 'updatedAt'],
+      limit: 500
+    });
+    for (const storedLogicalWinner of storedLogicalWinners) {
+      if (sync_row_winner_find_by_id(currentWinners, string.from(storedLogicalWinner.id)) == null) {
+        currentWinners = currentWinners.concat([storedLogicalWinner]);
       }
     }
   }
@@ -7081,6 +7258,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       receivedBytes: receivedBytes + incomingBytes,
       clientChangeTrackingVersions,
       keyColumns: resolvedKeyColumns,
+      uniqueKeyColumnSets: resolvedUniqueKeyColumnSets,
       columns: resolvedColumns,
       rows: [],
       status: ready ? 'ready' : 'uploading',
@@ -7109,22 +7287,42 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         const operation = string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase();
         const physicalKey = sync_row_physical_key(incomingRow, resolvedKeyColumns);
         let identityKey = sync_row_identity_key(winnerTable, incomingRow, resolvedKeyColumns);
-        if (operation == 'D') {
-          let physicalWinner = sync_row_winner_find_by_physical_key(pendingWinners, physicalKey);
-          if (physicalWinner == null) {
-            physicalWinner = sync_row_winner_find_by_physical_key(currentWinners, physicalKey);
-          }
-          if (physicalWinner != null) {
-            identityKey = string.from(physicalWinner.identityKey);
-          }
-        }
-        const winnerId = crypto.hash(
-          json.stringify([winnerOwnerUserId, winnerTable, identityKey]),
-          'sha256'
+        const winnerId = sync_row_winner_id(
+          winnerOwnerUserId,
+          winnerTable,
+          identityKey
         );
         currentWinner = sync_row_winner_find_by_id(pendingWinners, winnerId);
         if (currentWinner == null) {
           currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
+        }
+        let logicalWinnerRefs = [];
+        if (operation == 'D' && currentWinner != null) {
+          for (const logicalWinnerId of currentWinner.logicalWinnerIds ?? []) {
+            let logicalWinner = sync_row_winner_find_by_id(
+              pendingWinners,
+              string.from(logicalWinnerId)
+            );
+            if (logicalWinner == null) {
+              logicalWinner = sync_row_winner_find_by_id(
+                currentWinners,
+                string.from(logicalWinnerId)
+              );
+            }
+            if (logicalWinner != null) {
+              logicalWinnerRefs = logicalWinnerRefs.concat([{
+                id: logicalWinner.id,
+                identityKey: logicalWinner.identityKey
+              }]);
+            }
+          }
+        } else if (operation != 'D') {
+          logicalWinnerRefs = sync_row_logical_winner_refs(
+            winnerOwnerUserId,
+            winnerTable,
+            incomingRow,
+            resolvedUniqueKeyColumnSets
+          );
         }
         // A full-union retry receives a new Change Tracking version even when
         // the SQL row is byte-for-byte identical to the durable winner. Relay
@@ -7140,43 +7338,104 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           incomingRowHash == string.from(currentWinner.rowHash).trim() &&
           operation != 'D' &&
           string.from(currentWinner.operation).trim().toUpperCase() != 'D';
-        if (accepted &&
-            currentWinner != null &&
-            string.from(currentWinner.operationId) != operationId &&
-            !matchesDurableWinnerContent &&
-            !sync_row_candidate_is_later(
-              incomingRow,
-              currentWinner,
-              string.from(serverReceivedAt),
-              serverSequence,
-              normalizedClientName
-            )) {
-          accepted = false;
+        let relevantWinnerRefs = [{ id: winnerId, identityKey }].concat(logicalWinnerRefs);
+        if (accepted && !matchesDurableWinnerContent) {
+          for (const winnerRef of relevantWinnerRefs) {
+            let relevantWinner = sync_row_winner_find_by_id(
+              pendingWinners,
+              string.from(winnerRef.id)
+            );
+            if (relevantWinner == null) {
+              relevantWinner = sync_row_winner_find_by_id(
+                currentWinners,
+                string.from(winnerRef.id)
+              );
+            }
+            if (relevantWinner != null &&
+                string.from(relevantWinner.operationId) != operationId &&
+                !sync_row_candidate_is_later(
+                  incomingRow,
+                  relevantWinner,
+                  string.from(serverReceivedAt),
+                  serverSequence,
+                  normalizedClientName
+                )) {
+              accepted = false;
+            }
+          }
         }
         if (accepted &&
             !matchesDurableWinnerContent &&
             (currentWinner == null || string.from(currentWinner.operationId) != operationId)) {
-          const nextWinner = {
-            id: winnerId,
-            ownerUserId: winnerOwnerUserId,
-            table: winnerTable,
-            identityKey,
-            physicalKey,
-            modifiedAtUtc: sync_row_effective_modified_at(
-              incomingRow,
-              string.from(serverReceivedAt)
-            ),
-            serverReceivedAtUtc: serverReceivedAt,
-            serverSequence,
-            originClient: normalize_user_name(normalizedClientName),
-            changeVersion: string.from(incomingRow.__sync_change_version ?? '').trim(),
-            operationId,
-            rowHash: incomingRowHash,
-            operation,
-            revision: currentWinner == null ? 1 : int.from(currentWinner.revision) + 1,
-            updatedAt: serverReceivedAt
-          };
-          pendingWinners = sync_row_winner_replace(pendingWinners, nextWinner);
+          const logicalWinnerIds = logicalWinnerRefs.map((value) => string.from(value.id));
+          for (const winnerRef of relevantWinnerRefs) {
+            let relevantWinner = sync_row_winner_find_by_id(
+              pendingWinners,
+              string.from(winnerRef.id)
+            );
+            if (relevantWinner == null) {
+              relevantWinner = sync_row_winner_find_by_id(
+                currentWinners,
+                string.from(winnerRef.id)
+              );
+            }
+            if (relevantWinner != null &&
+                string.from(relevantWinner.physicalKey) != physicalKey) {
+              const displacedIdentityKey = crypto.hash(json.stringify({
+                table: winnerTable.trim().toLowerCase(),
+                values: ['physical', string.from(relevantWinner.physicalKey)]
+              }), 'sha256');
+              const displacedWinnerId = sync_row_winner_id(
+                winnerOwnerUserId,
+                winnerTable,
+                displacedIdentityKey
+              );
+              let displacedWinner = sync_row_winner_find_by_id(
+                pendingWinners,
+                displacedWinnerId
+              );
+              if (displacedWinner == null) {
+                displacedWinner = sync_row_winner_find_by_id(
+                  currentWinners,
+                  displacedWinnerId
+                );
+              }
+              if (displacedWinner != null) {
+                pendingWinners = sync_row_winner_replace(
+                  pendingWinners,
+                  sync_row_next_winner_record(
+                    string.from(displacedWinner.id),
+                    string.from(displacedWinner.identityKey),
+                    string.from(displacedWinner.physicalKey),
+                    displacedWinner.logicalWinnerIds ?? [],
+                    incomingRow,
+                    winnerOwnerUserId,
+                    winnerTable,
+                    string.from(serverReceivedAt),
+                    serverSequence,
+                    normalizedClientName,
+                    displacedWinner
+                  )
+                );
+              }
+            }
+            pendingWinners = sync_row_winner_replace(
+              pendingWinners,
+              sync_row_next_winner_record(
+                string.from(winnerRef.id),
+                string.from(winnerRef.identityKey),
+                physicalKey,
+                string.from(winnerRef.id) == winnerId ? logicalWinnerIds : [],
+                incomingRow,
+                winnerOwnerUserId,
+                winnerTable,
+                string.from(serverReceivedAt),
+                serverSequence,
+                normalizedClientName,
+                relevantWinner
+              )
+            );
+          }
         }
         if (accepted && matchesDurableWinnerContent && currentWinner != null) {
           // Identical full-union retries can arrive from several clients and
@@ -7191,6 +7450,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             table: currentWinner.table,
             identityKey: currentWinner.identityKey,
             physicalKey: currentWinner.physicalKey,
+            logicalWinnerIds: currentWinner.logicalWinnerIds ?? [],
             modifiedAtUtc: currentWinner.modifiedAtUtc,
             serverReceivedAtUtc: currentWinner.serverReceivedAtUtc,
             serverSequence: currentWinner.serverSequence,
@@ -7454,6 +7714,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     sourceJobId: job.id,
     columns: batch.columns,
     keyColumns: batch.keyColumns,
+    uniqueKeyColumnSets: batch.uniqueKeyColumnSets ?? [],
     clientChangeTrackingVersions: batch.clientChangeTrackingVersions,
     rows: chunkRows,
     isDelta: chunkIsDelta,

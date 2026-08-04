@@ -20,13 +20,31 @@ $resultsRoot = [System.IO.Path]::GetFullPath($ResultsDirectory)
 New-Item -ItemType Directory -Path $resultsRoot -Force | Out-Null
 $pythonCommand = $null
 $pythonPrefix = @()
-foreach ($candidate in @('python', 'python3', 'py')) {
-    $resolved = Get-Command $candidate -ErrorAction SilentlyContinue
-    if ($resolved) {
+$pythonCandidates = @()
+$localPythonRoot = Join-Path $env:LOCALAPPDATA 'Programs\Python'
+if (Test-Path -LiteralPath $localPythonRoot) {
+    $pythonCandidates += Get-ChildItem -LiteralPath $localPythonRoot -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { @{ Command = (Join-Path $_.FullName 'python.exe'); Prefix = @() } }
+}
+$pythonCandidates += @(
+    @{ Command = 'python'; Prefix = @() },
+    @{ Command = 'python3'; Prefix = @() },
+    @{ Command = 'py'; Prefix = @('-3') }
+)
+foreach ($candidate in $pythonCandidates) {
+    $resolved = Get-Command $candidate.Command -ErrorAction SilentlyContinue
+    if (-not $resolved) {
+        continue
+    }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    & $resolved.Source @($candidate.Prefix) --version *> $null
+    $candidateExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($candidateExitCode -eq 0) {
         $pythonCommand = $resolved.Source
-        if ($candidate -eq 'py') {
-            $pythonPrefix = @('-3')
-        }
+        $pythonPrefix = @($candidate.Prefix)
         break
     }
 }

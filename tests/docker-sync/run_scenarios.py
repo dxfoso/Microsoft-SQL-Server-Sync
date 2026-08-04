@@ -323,6 +323,7 @@ def generate_sql(
     columns=None,
     primary_key_columns=None,
     protect_local_changes_after_version=None,
+    resolve_unique_conflicts_latest_wins=False,
 ):
     columns = columns or COLUMNS
     primary_key_columns = primary_key_columns or ["Id"]
@@ -337,6 +338,7 @@ def generate_sql(
         "uniqueIndexColumnSets": unique_index_column_sets or [],
         "rows": rows or [],
         "deletes": deletes or [],
+        "resolveUniqueConflictsLatestWins": resolve_unique_conflicts_latest_wins,
     }
     if protect_local_changes_after_version is not None:
         request["protectLocalChangesAfterVersion"] = protect_local_changes_after_version
@@ -363,6 +365,7 @@ def apply(
     columns=None,
     primary_key_columns=None,
     protect_local_changes_after_version=None,
+    resolve_unique_conflicts_latest_wins=False,
 ):
     generated = generate_sql(
         database,
@@ -373,6 +376,7 @@ def apply(
         columns=columns,
         primary_key_columns=primary_key_columns,
         protect_local_changes_after_version=protect_local_changes_after_version,
+        resolve_unique_conflicts_latest_wins=resolve_unique_conflicts_latest_wins,
     )
     return execute_generated_sql(generated).stdout
 
@@ -420,11 +424,12 @@ def execute_generated_sql(generated, *, check=True):
         sql_path.unlink(missing_ok=True)
 
 
-def coalesce(rows, *, primary_key_columns=None):
+def coalesce(rows, *, primary_key_columns=None, unique_key_column_sets=None):
     request = {
         "operation": "coalesce",
         "rows": rows,
         "primaryKeyColumns": primary_key_columns or ["Id"],
+        "uniqueKeyColumnSets": unique_key_column_sets or [],
     }
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
         json.dump(request, handle, ensure_ascii=False)
@@ -1628,35 +1633,72 @@ VALUES
         apply(database, rows=multi_writer_rows)
     assert_equal(*DATABASES)
 
-    # Different permanent IDs are independent even when a business unique key
-    # collides. The target constraint must reject the complete incoming table
-    # delta atomically; sync must never coalesce it or partially apply siblings.
+    # Different permanent IDs that collide on a SQL unique/business key use
+    # the same deterministic latest-change winner as ordinary row conflicts.
+    # Only the older conflicting identity is replaced; valid siblings commit
+    # in the same atomic transaction.
     identity_collision = coalesce([
         {**row(34, "SAME-BUSINESS-KEY", "Created by c1"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
         {**row(35, "SAME-BUSINESS-KEY", "Created by c2"), "__sync_modified_at_utc": "2026-07-16T10:00:01Z"},
-    ])
-    if len(identity_collision) != 2:
-        raise AssertionError(f"Different permanent identities were silently collapsed: {identity_collision}")
+    ], unique_key_column_sets=[["Code"]])
+    if len(identity_collision) != 1 or identity_collision[0]["Id"] != 35:
+        raise AssertionError(f"Latest unique-key winner was not selected: {identity_collision}")
     for database in DATABASES:
-        apply(database, rows=[identity_collision[0]])
-        before_collision = table_rows(database)
-        expect_apply_failure(
+        apply(database, rows=[row(34, "SAME-BUSINESS-KEY", "Created by c1")])
+        apply(
             database,
             rows=[
-                identity_collision[1],
-                row(39, "VALID-SIBLING", "Must roll back with collision"),
+                identity_collision[0],
+                row(39, "VALID-SIBLING", "Commits with latest winner"),
             ],
+            unique_index_column_sets=[["Code"]],
+            resolve_unique_conflicts_latest_wins=True,
         )
         current = table_rows(database)
-        if current != before_collision:
-            raise AssertionError(
-                f"Identity collision partially applied its table delta in {database}: "
-                f"before={before_collision}, after={current}"
-            )
-        if not any("34|SAME-BUSINESS-KEY|Created by c1" in value for value in current):
-            raise AssertionError(f"Unique collision replaced the established identity in {database}: {current}")
-        if any("35|SAME-BUSINESS-KEY" in value for value in current):
-            raise AssertionError(f"Unique collision inserted a second invalid identity in {database}: {current}")
+        if any("34|SAME-BUSINESS-KEY" in value for value in current):
+            raise AssertionError(f"Older unique-key identity survived in {database}: {current}")
+        if not any("35|SAME-BUSINESS-KEY|Created by c2" in value for value in current):
+            raise AssertionError(f"Latest unique-key identity is missing in {database}: {current}")
+        if not any("39|VALID-SIBLING|Commits with latest winner" in value for value in current):
+            raise AssertionError(f"Atomic sibling row is missing in {database}: {current}")
+    assert_equal(*DATABASES)
+
+    # A user edit made after this client uploaded protects the older local
+    # business-key identity for the current pass. The incoming replacement is
+    # deferred and will compete normally after that local edit uploads.
+    for database in DATABASES:
+        apply(database, rows=[row(36, "PROTECTED-BUSINESS-KEY", "Before upload")])
+        baseline = scalar_int(database, "SELECT CHANGE_TRACKING_CURRENT_VERSION();")
+        sqlcmd(
+            """
+DISABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+UPDATE dbo.SyncItems SET Name = N'Local after upload' WHERE Id = 36;
+ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+""",
+            database=database,
+        )
+        output = apply(
+            database,
+            rows=[row(37, "PROTECTED-BUSINESS-KEY", "Remote replacement")],
+            unique_index_column_sets=[["Code"]],
+            protect_local_changes_after_version=baseline,
+            resolve_unique_conflicts_latest_wins=True,
+        )
+        if "__SQL_SYNC_PROTECTED__=1" not in output:
+            raise AssertionError(f"Expected protected business-key replacement in {database}: {output}")
+        protected = table_rows(database)
+        if not any("36|PROTECTED-BUSINESS-KEY|Local after upload" in value for value in protected):
+            raise AssertionError(f"Post-upload business-key edit was not preserved in {database}: {protected}")
+        if any("37|PROTECTED-BUSINESS-KEY" in value for value in protected):
+            raise AssertionError(f"Deferred business-key replacement was inserted in {database}: {protected}")
+        sqlcmd(
+            """
+DISABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+DELETE dbo.SyncItems WHERE Id IN (36, 37);
+ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
+""",
+            database=database,
+        )
     assert_equal(*DATABASES)
 
     # Client 3 remains offline while clients 1 and 2 exchange independent
@@ -1774,7 +1816,7 @@ VALUES
             "full-union-does-not-resurrect-durable-delete",
             "independent-multi-writer",
             "offline-peer-online-continuity-and-reconnect-catch-up",
-            "guid-only-identity-unique-collision-atomic-failure",
+            "latest-unique-business-key-winner-atomic-replacement",
             "invoice-line-primary-key-union-explicit-delete-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",
             "complete-reconcile-preserves-target-only-unicode-retry",

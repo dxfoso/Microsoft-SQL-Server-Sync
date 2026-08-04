@@ -5119,6 +5119,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final rows = _snapshotRows(snapshot.snapshotJson);
     final columns = _snapshotColumns(snapshot.snapshotJson);
     final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
+    final uniqueKeyColumnSets = _snapshotUniqueKeyColumnSets(
+      snapshot.snapshotJson,
+    );
     final latestChange = latestSqlSyncDeltaRow(
       rows.map((row) => Map<String, dynamic>.from(row)).toList(growable: false),
     );
@@ -5137,6 +5140,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         table: job.table,
         columns: columns,
         keyColumns: keyColumns,
+        uniqueKeyColumnSets: uniqueKeyColumnSets,
         rows: rows,
         chunkId: '${job.id}-0',
         finalChunk: true,
@@ -5170,6 +5174,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           table: job.table,
           columns: columns,
           keyColumns: keyColumns,
+          uniqueKeyColumnSets: uniqueKeyColumnSets,
           rows: rows.sublist(offset, end),
           chunkId: '${job.id}-$offset',
           finalChunk: isFinalChunk,
@@ -5382,7 +5387,6 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         snapshot: snapshotToApply,
         applyStats: applyStats,
         fullSnapshotApply: authoritativeReconcile || canonicalFullMerge,
-        authoritativeReplace: authoritativeReconcile,
       );
       logAgentDiagnostic(
         'sync.apply.committed',
@@ -5584,6 +5588,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'Snapshot relay for ${tableParts.schema}.${tableParts.table} requires a primary key.',
       );
     }
+    final uniqueKeyColumnSets = await _queryUniqueIndexColumnSets(
+      profile: sourceProfile,
+      database: database,
+      schema: tableParts.schema,
+      table: tableParts.table,
+    );
 
     final rowCountResult = await _queryTableRowCount(
       profile: sourceProfile,
@@ -5745,6 +5755,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           .map((column) => column.name)
           .toList(growable: false),
       'keyColumns': primaryKeyColumns,
+      'uniqueKeyColumnSets': uniqueKeyColumnSets,
       'rows': rows,
       'sourceJobId': job.id,
       'changeTrackingVersion': snapshotChangeTrackingVersion,
@@ -5763,6 +5774,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       checksum: snapshotChecksum,
       changeTrackingVersion: snapshotChangeTrackingVersion,
       keyColumns: primaryKeyColumns,
+      uniqueKeyColumnSets: uniqueKeyColumnSets,
       isDelta: isDelta,
     );
   }
@@ -5805,13 +5817,28 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         .toList(growable: false);
   }
 
+  List<List<String>> _snapshotUniqueKeyColumnSets(String snapshotJson) {
+    final decoded = jsonDecode(snapshotJson);
+    if (decoded is! Map || decoded['uniqueKeyColumnSets'] is! List) {
+      return const <List<String>>[];
+    }
+    return (decoded['uniqueKeyColumnSets'] as List)
+        .whereType<List>()
+        .map(
+          (columnSet) => columnSet
+              .map((column) => column.toString())
+              .toList(growable: false),
+        )
+        .where((columnSet) => columnSet.isNotEmpty)
+        .toList(growable: false);
+  }
+
   Future<int> _applyDownloadedSnapshotToTarget({
     required RemoteSyncJob job,
     required RemoteSnapshot snapshot,
     bool refreshLocalState = true,
     _DeltaApplyStats? applyStats,
     bool fullSnapshotApply = false,
-    bool authoritativeReplace = false,
   }) async {
     final stats = applyStats ?? _DeltaApplyStats();
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
@@ -5872,6 +5899,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
+    final uniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+    );
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     final postUploadChangeTrackingVersion =
@@ -5907,6 +5940,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
                   .map((row) => Map<String, dynamic>.from(row))
                   .toList(growable: false),
               primaryKeyColumns: primaryKeyColumns,
+              uniqueKeyColumnSets: uniqueIndexColumnSets,
             )
             : snapshot.rows;
     stats.seenRowIdentities.addAll(
@@ -5919,7 +5953,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     );
     if (applyDelta && rowsForApply.length != snapshot.rows.length) {
       logStartupEvent(
-        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} version(s) with the same permanent GUID for ${job.table}; policy=commit-version-origin-order.',
+        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} older primary or unique/business-key version(s) for ${job.table}; policy=latest-change-wins.',
       );
     }
     final contentCheckedRows =
@@ -5977,12 +6011,6 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             },
           )
           .toList(growable: false);
-      final uniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
-        profile: targetProfile,
-        database: targetDatabase,
-        schema: targetTable.schema,
-        table: targetTable.table,
-      );
       final applyResult = await _applySourceRowsToTarget(
         profile: targetProfile,
         database: targetDatabase,
@@ -5994,7 +6022,6 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         rows: rows,
         manageTriggers: true,
         insertOnly: false,
-        authoritativeReplace: authoritativeReplace,
       );
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
@@ -6009,17 +6036,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         );
       }
       stats.insertedRows += applyResult.insertedRows;
-      if (authoritativeReplace) {
-        stats.deletedRows += rowCountBefore.value;
-      } else {
-        stats.updatedRows += rows.length - applyResult.insertedRows;
-      }
-      if (authoritativeReplace && rowCountAfter.value != rows.length) {
-        throw StateError(
-          'Authoritative replacement expected ${rows.length} ${job.table} rows but found ${rowCountAfter.value}; the transaction result is invalid.',
-        );
-      }
-      if (!authoritativeReplace && rowCountAfter.value < rowCountBefore.value) {
+      stats.updatedRows += rows.length - applyResult.insertedRows;
+      if (rowCountAfter.value < rowCountBefore.value) {
         throw StateError(
           'Complete snapshot apply reduced ${job.table} from ${rowCountBefore.value} to ${rowCountAfter.value} rows. Snapshot absence is never a delete instruction.',
         );
@@ -6051,11 +6069,13 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         table: targetTable.table,
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
+        uniqueIndexColumnSets: uniqueIndexColumnSets,
         rows: rows,
         deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>(),
         protectLocalChangesAfterVersion: postUploadChangeTrackingVersion,
         manageTriggers: true,
         insertOnly: false,
+        resolveUniqueConflictsLatestWins: true,
       );
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
@@ -7089,7 +7109,7 @@ END
     required List<Map<String, dynamic>> rows,
     bool manageTriggers = true,
     bool insertOnly = false,
-    bool authoritativeReplace = false,
+    bool resolveUniqueConflictsLatestWins = false,
   }) async {
     final stageTableName = _nextTargetSnapshotStageTableName(table);
     final rowCountBefore = await _queryTableRowCount(
@@ -7151,7 +7171,7 @@ END
           protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,
-          authoritativeReplace: authoritativeReplace,
+          resolveUniqueConflictsLatestWins: resolveUniqueConflictsLatestWins,
         ),
         context: 'target snapshot merge',
         timeout: _snapshotSqlCmdTimeout,
@@ -11379,6 +11399,7 @@ class _RelaySnapshotDocument {
     this.checksum = '',
     this.changeTrackingVersion,
     this.keyColumns = const [],
+    this.uniqueKeyColumnSets = const <List<String>>[],
     this.isDelta = false,
   });
 
@@ -11389,6 +11410,7 @@ class _RelaySnapshotDocument {
   final String checksum;
   final int? changeTrackingVersion;
   final List<String> keyColumns;
+  final List<List<String>> uniqueKeyColumnSets;
   final bool isDelta;
 }
 

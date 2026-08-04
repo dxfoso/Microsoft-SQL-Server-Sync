@@ -31,6 +31,10 @@ void main(List<String> arguments) {
     final winners = coalesceSqlSyncDeltaRows(
       rows: rows,
       primaryKeyColumns: _strings(request['primaryKeyColumns']),
+      uniqueKeyColumnSets:
+          (request['uniqueKeyColumnSets'] as List? ?? const [])
+              .map((columns) => _strings(columns))
+              .toList(growable: false),
     );
     stdout.write(jsonEncode(winners));
     return;
@@ -92,6 +96,8 @@ void main(List<String> arguments) {
         protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
         manageTriggers: true,
         insertOnly: false,
+        resolveUniqueConflictsLatestWins:
+            request['resolveUniqueConflictsLatestWins'] == true,
       ),
     );
   }

@@ -391,7 +391,7 @@ class AdminAgent {
       autoSyncIntervalMinutes:
           (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),
       syncDataLimitMb: (json['syncDataLimitMb'] as num? ?? 256).round(),
-      conflictPolicy: json['conflictPolicy'] as String? ?? 'ask',
+      conflictPolicy: json['conflictPolicy'] as String? ?? 'latest_change_wins',
       serverConnected: json['serverConnected'] as bool? ?? false,
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       clientVersion: json['clientVersion'] as String? ?? '',

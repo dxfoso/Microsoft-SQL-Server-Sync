@@ -1358,38 +1358,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("targetClientNames: normalizedTargetClientNames", reconcile_body)
         self.assertIn("create_authoritative_reconcile_batch(", reconcile_body)
 
-    def test_clients_list_exposes_each_online_client_as_authoritative_source(self):
+    def test_clients_list_does_not_offer_destructive_authoritative_source(self):
         source = read_text("frontend/lib/clients_page.dart")
         row_body = source.split("DataRow _buildClientDataRow(", 1)[1].split(
             "String _clientActivityStatus(", 1
         )[0]
-        dialog_body = source.split(
-            "Future<void> _openAuthoritativeReconcileDialog(", 1
-        )[1].split("Future<void> _confirmAndDeleteServerData(", 1)[0]
 
-        self.assertIn("Use as source", row_body)
-        self.assertIn("initialSourceName: agent.clientName", row_body)
-        self.assertIn("widget.authenticatedUser.canManageUsers", row_body)
-        self.assertIn("!agent.isOnline", row_body)
-        self.assertIn("!agent.serverConnected", row_body)
-        self.assertIn("!agent.sqlConnected", row_body)
-        self.assertIn("String? initialSourceName", dialog_body)
-        self.assertIn("agent.clientName != sourceName", dialog_body)
-        self.assertIn("Replace Target Data", dialog_body)
-        self.assertIn("automaticPaused", dialog_body)
-        self.assertIn("acknowledged", dialog_body)
+        self.assertNotIn("Use as source", row_body)
+        self.assertNotIn("initialSourceName: agent.clientName", row_body)
+        self.assertIn("Use the latest database change automatically", source)
 
-    def test_windows_agent_authoritative_reconciliation_is_exact_and_explicit(self):
+    def test_windows_agent_full_reconciliation_is_non_destructive_and_latest_conflicts_are_atomic(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
         merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
 
-        self.assertIn("authoritativeReplace: authoritativeReconcile", agent)
-        self.assertIn("bool authoritativeReplace = false", agent)
-        self.assertIn("bool authoritativeReplace = false", merge)
-        self.assertIn("DELETE FROM $targetTable", merge)
-        self.assertIn("Authoritative replacement row-count verification failed.", merge)
-        self.assertNotIn("THROW 51000", merge)
-        self.assertIn("if (!authoritativeReplace", agent)
+        self.assertNotIn("authoritativeReplace", agent)
+        self.assertNotIn("authoritativeReplace", merge)
+        self.assertNotIn("DELETE FROM $targetTable", merge)
+        self.assertIn("resolveUniqueConflictsLatestWins: true", agent)
+        self.assertIn("_buildLatestUniqueConflictReplacementStatements", merge)
+        self.assertIn("DELETE target", merge)
+        self.assertIn("WHERE NOT ($samePrimaryKey)", merge)
+        self.assertIn("post-upload user change", merge)
 
     def test_retained_full_union_recovery_is_explicit_scoped_and_download_only(self):
         source = read_text("business/control_plane.tru")
@@ -1534,6 +1524,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("acceptedOperationIds", upload_body)
         self.assertIn("serverReceivedAt", upload_body)
         self.assertIn("serverSequence", upload_body)
+        self.assertIn("uniqueKeyColumnSets", upload_body)
+        self.assertIn("sync_row_logical_winner_refs", upload_body)
+        self.assertIn("displacedPrimaryWinnerIds", upload_body)
+        self.assertIn("logicalWinnerIds", upload_body)
+        self.assertIn("clients report different SQL unique-key definitions", upload_body)
         self.assertIn("acceptedOperationIds", download_body)
         self.assertIn("winnerPolicyApplied", download_body)
         self.assertIn("const durableWinners = db.selectMany(SyncRowWinner", download_body)

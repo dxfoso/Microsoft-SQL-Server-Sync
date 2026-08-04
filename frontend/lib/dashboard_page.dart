@@ -1193,7 +1193,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   historyLimit: nextAgentHistoryLimit,
                                   autoSyncIntervalMinutes: nextAutoSyncInterval,
                                   conflictPolicy:
-                                      firstAgent?.conflictPolicy ?? 'ask',
+                                      firstAgent?.conflictPolicy ??
+                                      'latest_change_wins',
                                 );
                               }
                             } catch (error) {

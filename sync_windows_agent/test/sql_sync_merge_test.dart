@@ -40,7 +40,7 @@ void main() {
     expect(sql, isNot(contains('DELETE TOP')));
   });
 
-  test('explicit authoritative replacement atomically replaces target rows', () {
+  test('complete reconciliation has no table-wide replacement path', () {
     final columns = [
       const SqlSyncColumnDefinition(
         name: 'GUID',
@@ -68,29 +68,16 @@ void main() {
       stageTableName: '#stage_ma000',
       columns: columns,
       primaryKeyColumns: const ['GUID'],
-      authoritativeReplace: true,
     );
 
     final begin = sql.indexOf('BEGIN TRANSACTION;');
-    final delete = sql.indexOf('DELETE FROM [db].[dbo].[ma000];');
+    final update = sql.indexOf('UPDATE target');
     final insert = sql.indexOf('INSERT INTO [db].[dbo].[ma000]');
-    final verify = sql.indexOf(
-      'Authoritative replacement row-count verification failed.',
-    );
     final commit = sql.indexOf('COMMIT TRANSACTION;');
-    expect(delete, greaterThan(begin));
-    expect(insert, greaterThan(delete));
-    expect(verify, greaterThan(insert));
-    expect(commit, greaterThan(verify));
-    expect(sql, contains('WITH CHANGE_TRACKING_CONTEXT'));
-    expect(
-      sql,
-      contains(
-        "RAISERROR('Authoritative replacement row-count verification failed.', 16, 1)",
-      ),
-    );
-    expect(sql, isNot(contains('THROW 51000')));
-    expect(sql, isNot(contains('UPDATE target')));
+    expect(update, greaterThan(begin));
+    expect(insert, greaterThan(update));
+    expect(commit, greaterThan(insert));
+    expect(sql, isNot(contains('DELETE FROM [db].[dbo].[ma000];')));
     expect(sql, contains('ROLLBACK TRANSACTION'));
   });
 
@@ -750,4 +737,75 @@ void main() {
       expect(latest?['__sync_origin_client'], 'c2');
     },
   );
+
+  test(
+    'latest change wins across different primary keys sharing a unique key',
+    () {
+      final rows = coalesceSqlSyncDeltaRows(
+        rows: [
+          {
+            'Id': 'older-id',
+            'Code': 'shared-code',
+            '__sync_modified_at_utc': '2026-08-04T01:00:00Z',
+            '__sync_operation_id': 'a',
+          },
+          {
+            'Id': 'newer-id',
+            'Code': 'shared-code',
+            '__sync_modified_at_utc': '2026-08-04T02:00:00Z',
+            '__sync_operation_id': 'b',
+          },
+        ],
+        primaryKeyColumns: const ['Id'],
+        uniqueKeyColumnSets: const [
+          ['Code'],
+        ],
+      );
+
+      expect(rows, hasLength(1));
+      expect(rows.single['Id'], 'newer-id');
+    },
+  );
+
+  test('latest unique-key replacement is atomic and narrowly scoped', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'Db',
+      schema: 'dbo',
+      table: 'Rows',
+      stageTableName: '#stage_rows',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Code',
+          sqlType: 'nvarchar',
+          maxLength: 100,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['Id'],
+      uniqueIndexColumnSets: const [
+        ['Code'],
+      ],
+      protectLocalChangesAfterVersion: 10,
+      resolveUniqueConflictsLatestWins: true,
+    );
+
+    expect(sql, contains('BEGIN TRANSACTION;'));
+    expect(sql, contains('WITH CHANGE_TRACKING_CONTEXT (0x53514C53594E43)'));
+    expect(sql, contains('DELETE target'));
+    expect(sql, contains('WHERE NOT ('));
+    expect(sql, contains('post-upload user change'));
+    expect(sql, isNot(contains('DELETE FROM [Db].[dbo].[Rows];')));
+  });
 }

@@ -1211,6 +1211,7 @@ class AgentControlPlaneClient {
     required String table,
     required List<String> columns,
     required List<String> keyColumns,
+    List<List<String>> uniqueKeyColumnSets = const <List<String>>[],
     required List<Map<String, String?>> rows,
     required String chunkId,
     required bool finalChunk,
@@ -1232,6 +1233,7 @@ class AgentControlPlaneClient {
       'table': table,
       'columns': columns,
       'keyColumns': keyColumns,
+      'uniqueKeyColumnSets': uniqueKeyColumnSets,
       // The relay stores the encoded payload as a blob. Do not send the same
       // rows again in the request or retain them in the control-plane record.
       'rows': const <Map<String, String?>>[],

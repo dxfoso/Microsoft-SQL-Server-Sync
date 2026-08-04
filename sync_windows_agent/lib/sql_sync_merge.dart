@@ -77,7 +77,7 @@ String buildTargetSnapshotStageApplySql({
   int? protectLocalChangesAfterVersion,
   bool manageTriggers = true,
   bool insertOnly = false,
-  bool authoritativeReplace = false,
+  bool resolveUniqueConflictsLatestWins = false,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -155,6 +155,7 @@ String buildTargetSnapshotStageApplySql({
             stageTarget: stageTarget,
             columns: columns,
             primaryKeyColumns: primaryKeyColumns,
+            uniqueIndexColumnSets: uniqueIndexColumnSets,
             deltaDeleteRows: deltaDeleteRows,
             changeTrackingVersion: protectLocalChangesAfterVersion,
           );
@@ -162,26 +163,21 @@ String buildTargetSnapshotStageApplySql({
       protectLocalChangesAfterVersion == null
           ? ''
           : 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;';
-  final targetTable =
-      '${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}';
-  final authoritativeReplaceStatements =
-      authoritativeReplace
-          ? '''
-  DECLARE @SqlSyncExpectedAuthoritativeRows BIGINT =
-    (SELECT COUNT_BIG(*) FROM $stageTarget);
-  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
-  DELETE FROM $targetTable;
-  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
-  INSERT INTO $targetTable ($insertColumnList)
-  SELECT $insertValueList
-  FROM $stageTarget AS source;
-  SET @SqlSyncInsertedRows = @@ROWCOUNT;
-  IF (SELECT COUNT_BIG(*) FROM $targetTable) <> @SqlSyncExpectedAuthoritativeRows
-  BEGIN
-    RAISERROR('Authoritative replacement row-count verification failed.', 16, 1);
-  END;'''
-          : '''
+  final latestUniqueConflictStatements =
+      resolveUniqueConflictsLatestWins
+          ? _buildLatestUniqueConflictReplacementStatements(
+            database: database,
+            schema: schema,
+            table: table,
+            stageTarget: stageTarget,
+            columns: columns,
+            primaryKeyColumns: primaryKeyColumns,
+            uniqueIndexColumnSets: uniqueIndexColumnSets,
+          )
+          : '';
+  final mergeStatements = '''
   $deltaDeleteStatements
+  $latestUniqueConflictStatements
   ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
   SET @SqlSyncInsertedRows += @@ROWCOUNT;''';
@@ -200,7 +196,7 @@ BEGIN TRY
   $triggerDisableStatement
   $identityInsertOn
   DECLARE @SqlSyncInsertedRows INT = 0;
-  $authoritativeReplaceStatements
+  $mergeStatements
   $identityInsertOff
   $triggerEnableStatement
   COMMIT TRANSACTION;
@@ -294,6 +290,45 @@ String _buildStagedDeltaDeleteStatements({
   DROP TABLE #delta_delete_rows;''';
 }
 
+String _buildLatestUniqueConflictReplacementStatements({
+  required String database,
+  required String schema,
+  required String table,
+  required String stageTarget,
+  required List<SqlSyncColumnDefinition> columns,
+  required List<String> primaryKeyColumns,
+  required List<List<String>> uniqueIndexColumnSets,
+}) {
+  final usableSets = uniqueIndexColumnSets
+      .where((columnSet) => columnSet.isNotEmpty)
+      .toList(growable: false);
+  if (usableSets.isEmpty) {
+    return '';
+  }
+  final businessKeyMatch = usableSets
+      .map(
+        (columnSet) =>
+            '(${_nullableMatchClauseForAliases(columnSet, columns, leftAlias: 'target', rightAlias: 'source')})',
+      )
+      .join(' OR ');
+  final samePrimaryKey = _nullableMatchClauseForAliases(
+    primaryKeyColumns,
+    columns,
+    leftAlias: 'target',
+    rightAlias: 'source',
+  );
+  return '''
+  -- A server-approved latest winner may use a different permanent primary key
+  -- while colliding with an older SQL unique/business key. Replace only that
+  -- conflicting identity, inside the same transaction and tracking context.
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  DELETE target
+  FROM ${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)} AS target
+  INNER JOIN $stageTarget AS source
+    ON $businessKeyMatch
+  WHERE NOT ($samePrimaryKey);''';
+}
+
 String _buildPostUploadProtectionStatements({
   required String database,
   required String schema,
@@ -301,6 +336,7 @@ String _buildPostUploadProtectionStatements({
   required String stageTarget,
   required List<SqlSyncColumnDefinition> columns,
   required List<String> primaryKeyColumns,
+  required List<List<String>> uniqueIndexColumnSets,
   required List<Map<String, dynamic>> deltaDeleteRows,
   required int changeTrackingVersion,
 }) {
@@ -366,6 +402,31 @@ String _buildPostUploadProtectionStatements({
   INSERT INTO #sqlsync_incoming_keys ($keyColumnList)
   VALUES
       ${deltaDeleteRows.map((row) => '(${keyColumns.map((column) => sourceBatchTargetLiteral(column, row[column.name])).join(', ')})').join(',\n      ')};''';
+  final usableUniqueSets = uniqueIndexColumnSets
+      .where((columnSet) => columnSet.isNotEmpty)
+      .toList(growable: false);
+  final uniqueConflictProtection =
+      usableUniqueSets.isEmpty
+          ? ''
+          : '''
+  -- A local edit to an older business-key identity after this client uploaded
+  -- outranks the incoming replacement for this pass. Leave it for the next
+  -- upload instead of silently deleting the post-upload user change.
+  DELETE source
+  FROM $stageTarget AS source
+  WHERE EXISTS (
+    SELECT 1
+    FROM $target AS conflict
+    INNER JOIN CHANGETABLE(CHANGES $target, $changeTrackingVersion) AS ct
+      ON ${_matchClauseForAliases(keyColumns, leftAlias: 'conflict', rightAlias: 'ct')}
+    WHERE (${usableUniqueSets.map((columnSet) => '(${_nullableMatchClauseForAliases(columnSet, columns, leftAlias: 'conflict', rightAlias: 'source')})').join(' OR ')})
+      AND NOT (${_nullableMatchClauseForAliases(primaryKeyColumns, columns, leftAlias: 'conflict', rightAlias: 'source')})
+      AND (ct.SYS_CHANGE_CONTEXT IS NULL
+        OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex)
+  );
+  DECLARE @SqlSyncProtectedBusinessRows INT = @@ROWCOUNT;
+  SET @SqlSyncProtectedRows += @SqlSyncProtectedBusinessRows;
+  SET @SqlSyncProtectedUpsertRows += @SqlSyncProtectedBusinessRows;''';
   return '''
   CREATE TABLE #sqlsync_incoming_keys (
     $keyColumnDefinitions
@@ -403,6 +464,7 @@ String _buildPostUploadProtectionStatements({
   INNER JOIN #sqlsync_protected_keys AS protected
     ON $protectedToStageJoin;
   SET @SqlSyncProtectedUpsertRows = @@ROWCOUNT;
+  $uniqueConflictProtection
   DROP TABLE #sqlsync_incoming_keys;''';
 }
 
@@ -420,20 +482,54 @@ END;
 String stageTableReference(String stageTableName) =>
     'tempdb.dbo.${quoteIdentifier(stageTableName)}';
 
-/// Keeps one deterministic version for each permanent primary identity.
-///
-/// Alternate unique/business keys never participate in identity matching.
-/// Different GUIDs therefore remain independent. If the target constraint
-/// detects that they represent the same business row, the client reports a
-/// typed conflict so the control plane can stop the atomic apply and report
-/// that explicit local correction is required.
+/// Keeps one deterministic latest version for each permanent primary identity
+/// and, when supplied, each SQL unique/business identity.
 List<Map<String, dynamic>> coalesceSqlSyncDeltaRows({
   required List<Map<String, dynamic>> rows,
   required List<String> primaryKeyColumns,
+  List<List<String>> uniqueKeyColumnSets = const <List<String>>[],
   Map<String, Map<String, dynamic>>? latestRowByKey,
 }) {
   if (rows.isEmpty || primaryKeyColumns.isEmpty) {
     return rows;
+  }
+  if (uniqueKeyColumnSets.any((columnSet) => columnSet.isNotEmpty)) {
+    final orderedIndexes = List<int>.generate(rows.length, (index) => index)
+      ..sort((left, right) {
+        if (_isLaterSyncRow(rows[left], rows[right])) return -1;
+        if (_isLaterSyncRow(rows[right], rows[left])) return 1;
+        return left.compareTo(right);
+      });
+    final claimedIdentities = <String>{};
+    final acceptedIndexes = <int>[];
+    for (final index in orderedIndexes) {
+      final row = rows[index];
+      final primaryValues = primaryKeyColumns
+          .map((column) => row[column])
+          .toList(growable: false);
+      if (primaryValues.any((value) => value == null)) {
+        continue;
+      }
+      final identities = <String>['primary:${jsonEncode(primaryValues)}'];
+      if ((row['__sync_op']?.toString().trim().toUpperCase() ?? 'S') != 'D') {
+        for (final columnSet in uniqueKeyColumnSets) {
+          if (columnSet.isEmpty) continue;
+          identities.add(
+            'unique:${columnSet.map((column) => column.toLowerCase()).join('|')}:${jsonEncode(columnSet.map((column) => row[column]).toList(growable: false))}',
+          );
+        }
+      }
+      if (identities.any(claimedIdentities.contains)) {
+        continue;
+      }
+      claimedIdentities.addAll(identities);
+      acceptedIndexes.add(index);
+      latestRowByKey?[jsonEncode(primaryValues)] = Map<String, dynamic>.from(
+        row,
+      );
+    }
+    acceptedIndexes.sort();
+    return acceptedIndexes.map((index) => rows[index]).toList(growable: false);
   }
   final candidates = <Map<String, dynamic>>[];
   final candidateIdentities = <String>[];
@@ -776,6 +872,30 @@ String _matchClauseForAliases(
           rightExpression = '$rightExpression COLLATE DATABASE_DEFAULT';
         }
         return '$leftExpression = $rightExpression';
+      })
+      .join(' AND ');
+}
+
+String _nullableMatchClauseForAliases(
+  List<String> matchColumns,
+  List<SqlSyncColumnDefinition> columns, {
+  required String leftAlias,
+  required String rightAlias,
+}) {
+  final definitionsByName = {
+    for (final column in columns) column.name.toLowerCase(): column,
+  };
+  return matchColumns
+      .map((columnName) {
+        final quotedColumn = quoteIdentifier(columnName);
+        var leftExpression = '$leftAlias.$quotedColumn';
+        var rightExpression = '$rightAlias.$quotedColumn';
+        final column = definitionsByName[columnName.toLowerCase()];
+        if (column != null && column.isTextLike) {
+          leftExpression = '$leftExpression COLLATE DATABASE_DEFAULT';
+          rightExpression = '$rightExpression COLLATE DATABASE_DEFAULT';
+        }
+        return '(($leftAlias.$quotedColumn IS NULL AND $rightAlias.$quotedColumn IS NULL) OR $leftExpression = $rightExpression)';
       })
       .join(' AND ');
 }
