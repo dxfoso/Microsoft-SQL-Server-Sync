@@ -599,6 +599,9 @@ function agent_sync_enabled(agent: map<json>): bool {
 // Command delivery only needs a live heartbeat. Database readiness is
 // required for sync scheduling, but must not block updates or diagnostics.
 function agent_command_delivery_online(agent: map<json>): bool {
+  if (agent.isOnline != true) {
+    return false;
+  }
   const heartbeat = string.from(agent.lastHeartbeat ?? '').trim();
   if (heartbeat.length == 0) {
     return false;
@@ -632,30 +635,6 @@ function authenticated_user_client_name(current: map<json>): string {
 
 function authenticated_user_matches_client(current: map<json>, clientName: string): bool {
   return authenticated_user_client_name(current) == normalize_user_name(clientName);
-}
-
-// A Windows installation may run multiple isolated agent instances for
-// different SQL endpoints. Each instance is namespaced under the authenticated
-// client account as <account>--<instance-id>; it is not a separate login.
-function authenticated_user_allows_agent_name(current: map<json>, clientName: string): bool {
-  const normalizedClientName = normalize_user_name(clientName);
-  if (normalizedClientName.length == 0 || normalizedClientName.length > 160) {
-    return false;
-  }
-  let bases = [normalize_user_name(string.from(current.name))];
-  if (current.username != null && string.from(current.username).trim().length != 0) {
-    bases = bases.concat([normalize_user_name(string.from(current.username))]);
-  }
-  for (const base of bases) {
-    if (normalizedClientName == base) {
-      return true;
-    }
-    const prefix = string.concat(base, '--');
-    if (normalizedClientName.length > prefix.length && normalizedClientName.slice(0, prefix.length) == prefix) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function clamp_history_limit(value: int? = null): int {
@@ -5366,9 +5345,6 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   } else {
     resolvedClientName = normalize_user_name(clientName);
   }
-  if (is_client_user(current) && !authenticated_user_allows_agent_name(current, resolvedClientName)) {
-    return raw_json_error(403, 'permission denied');
-  }
   const clientUser = find_user_by_identity(resolvedClientName);
   if (clientUser != null && !can_manage_user(current, clientUser)) {
     return raw_json_error(403, 'permission denied');
@@ -5547,15 +5523,7 @@ function agent_sync_settings_get(clientName: string, token: string? = null): map
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  const normalizedClientName = normalize_user_name(clientName);
-  if (is_client_user(current) && !authenticated_user_allows_agent_name(current, normalizedClientName)) {
-    return raw_json_error(403, 'permission denied');
-  }
-  const existingAgent = db.selectOne(Agent, { clientName: normalizedClientName });
-  if (existingAgent != null && !can_read_agent(current, existingAgent.ownerUserId, existingAgent.clientUserId)) {
-    return raw_json_error(403, 'permission denied');
-  }
-  const user = find_user_by_identity(normalizedClientName);
+  const user = find_user_by_identity(clientName);
   if (user != null && !can_manage_user(current, user)) {
     return raw_json_error(403, 'permission denied');
   }
@@ -5565,11 +5533,7 @@ function agent_sync_settings_get(clientName: string, token: string? = null): map
     userId = user.id;
     ownerUserId = user.ownerUserId;
   }
-  if (is_client_user(current)) {
-    userId = current.id;
-    ownerUserId = owner_namespace_for_user(current);
-  }
-  const agent = ensure_agent(normalizedClientName, userId, ownerUserId);
+  const agent = ensure_agent(clientName, userId, ownerUserId);
   return {
     syncEnabled: agent_sync_enabled(agent),
     syncSettings: sync_settings_payload(agent)
@@ -5584,11 +5548,14 @@ function agent_sync_enabled_set(clientName: string, enabled: bool, token: string
   if (!is_admin_user(current) && !is_owner_user(current)) {
     return raw_json_error(403, 'permission denied');
   }
-  const normalizedClientName = normalize_user_name(clientName);
-  const agent = db.selectOne(Agent, { clientName: normalizedClientName });
-  if (agent == null || !can_read_agent(current, agent.ownerUserId, agent.clientUserId)) {
+  const user = find_user_by_identity(clientName);
+  if (user == null || !is_client_user(user)) {
     return raw_json_error(404, 'client not found');
   }
+  if (!can_manage_user(current, user)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const agent = ensure_agent(clientName, user.id, user.ownerUserId);
   const updated = db.update(Agent, { clientName: agent.clientName }, {
     syncEnabled: enabled,
     updatedAt: now_iso()
@@ -5608,15 +5575,7 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  const normalizedClientName = normalize_user_name(clientName);
-  if (is_client_user(current) && !authenticated_user_allows_agent_name(current, normalizedClientName)) {
-    return raw_json_error(403, 'permission denied');
-  }
-  const existingAgent = db.selectOne(Agent, { clientName: normalizedClientName });
-  if (existingAgent != null && !can_read_agent(current, existingAgent.ownerUserId, existingAgent.clientUserId)) {
-    return raw_json_error(403, 'permission denied');
-  }
-  const user = find_user_by_identity(normalizedClientName);
+  const user = find_user_by_identity(clientName);
   if (user != null && !can_manage_user(current, user)) {
     return raw_json_error(403, 'permission denied');
   }
@@ -5626,15 +5585,11 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
     userId = user.id;
     ownerUserId = user.ownerUserId;
   }
-  if (is_client_user(current)) {
-    userId = current.id;
-    ownerUserId = owner_namespace_for_user(current);
-  }
-  const agent = ensure_agent(normalizedClientName, userId, ownerUserId);
+  const agent = ensure_agent(clientName, userId, ownerUserId);
   const nextSyncDataLimitMb = syncDataLimitMb == null
     ? clamp_sync_data_limit_mb(agent.syncDataLimitMb)
     : clamp_sync_data_limit_mb(syncDataLimitMb);
-  const updated = db.update(Agent, { clientName: normalizedClientName }, {
+  const updated = db.update(Agent, { clientName }, {
     historyLimit: clamp_history_limit(historyLimit),
     autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes),
     syncDataLimitMb: nextSyncDataLimitMb,
@@ -5717,10 +5672,19 @@ function agent_diagnostics_request(clientName: string, token: string? = null): m
     return raw_json_error(403, 'permission denied');
   }
   const normalizedClientName = normalize_user_name(clientName);
-  const existingAgent = db.selectOne(Agent, { clientName: normalizedClientName });
-  if (existingAgent == null || !can_read_agent(current, existingAgent.ownerUserId, existingAgent.clientUserId)) {
-    return raw_json_error(404, 'client not found');
+  const targetUser = find_user_by_identity(normalizedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
   }
+  let targetOwnerUserId = null;
+  if (targetUser != null) {
+    targetOwnerUserId = targetUser.ownerUserId;
+  }
+  let targetClientUserId = null;
+  if (targetUser != null) {
+    targetClientUserId = targetUser.id;
+  }
+  const agent = ensure_agent(normalizedClientName, targetClientUserId, targetOwnerUserId);
   const updated = db.update(Agent, { clientName: normalizedClientName }, {
     diagnosticRequestId: uuid.v4(),
     diagnosticRequestedAt: now_iso(),
@@ -5844,10 +5808,19 @@ function agent_client_update_request(clientName: string, targetVersion: string? 
     return raw_json_error(403, 'permission denied');
   }
   const normalizedClientName = normalize_user_name(clientName);
-  const existingAgent = db.selectOne(Agent, { clientName: normalizedClientName });
-  if (existingAgent == null || !can_read_agent(current, existingAgent.ownerUserId, existingAgent.clientUserId)) {
-    return raw_json_error(404, 'client not found');
+  const targetUser = find_user_by_identity(normalizedClientName);
+  if (targetUser != null && !can_manage_user(current, targetUser)) {
+    return raw_json_error(403, 'permission denied');
   }
+  let targetOwnerUserId = null;
+  if (targetUser != null) {
+    targetOwnerUserId = targetUser.ownerUserId;
+  }
+  let targetClientUserId = null;
+  if (targetUser != null) {
+    targetClientUserId = targetUser.id;
+  }
+  ensure_agent(normalizedClientName, targetClientUserId, targetOwnerUserId);
   const requestedAt = now_iso();
   let normalizedTargetVersion = '';
   if (targetVersion != null) {
@@ -5947,7 +5920,11 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
     resolvedClientName = normalize_user_name(clientName);
   }
   if (is_client_user(current)) {
-    if (!authenticated_user_allows_agent_name(current, resolvedClientName)) {
+    let currentClientName = normalize_user_name(current.name);
+    if (current.username != null) {
+      currentClientName = normalize_user_name(current.username);
+    }
+    if (resolvedClientName != currentClientName) {
       return raw_json_error(403, 'permission denied');
     }
   }
@@ -6073,9 +6050,6 @@ function agent_window_action_ack(clientName: string? = null, requestId: string? 
   } else {
     resolvedClientName = normalize_user_name(clientName);
   }
-  if (is_client_user(current) && !authenticated_user_allows_agent_name(current, resolvedClientName)) {
-    return raw_json_error(403, 'permission denied');
-  }
   const targetUser = find_user_by_identity(resolvedClientName);
   if (targetUser != null && !can_manage_user(current, targetUser)) {
     return raw_json_error(403, 'permission denied');
@@ -6190,7 +6164,10 @@ function agent_data_export_poll(clientName: string? = null, token: string? = nul
     resolvedClientName = normalize_user_name(clientName);
   }
   if (is_client_user(current)) {
-    if (!authenticated_user_allows_agent_name(current, resolvedClientName)) {
+    const currentClientName = current.username == null
+      ? normalize_user_name(current.name)
+      : normalize_user_name(current.username);
+    if (resolvedClientName != currentClientName) {
       return raw_json_error(403, 'permission denied');
     }
   }
@@ -6219,7 +6196,11 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
     resolvedClientName = normalize_user_name(clientName);
   }
   if (is_client_user(current)) {
-    if (!authenticated_user_allows_agent_name(current, resolvedClientName)) {
+    let currentClientName = normalize_user_name(current.name);
+    if (current.username != null) {
+      currentClientName = normalize_user_name(current.username);
+    }
+    if (resolvedClientName != currentClientName) {
       return raw_json_error(403, 'permission denied');
     }
   }
@@ -6305,9 +6286,6 @@ function agent_diagnostics_upload(clientName: string? = null, requestId: string?
     }
   } else {
     resolvedClientName = normalize_user_name(clientName);
-  }
-  if (is_client_user(current) && !authenticated_user_allows_agent_name(current, resolvedClientName)) {
-    return raw_json_error(403, 'permission denied');
   }
   const targetUser = find_user_by_identity(resolvedClientName);
   if (!authenticated_user_matches_client(current, resolvedClientName) && targetUser != null && !can_manage_user(current, targetUser)) {
@@ -8212,22 +8190,15 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
       resolvedClientName = current.username;
     }
   }
-  resolvedClientName = normalize_user_name(resolvedClientName);
-  const schedulerAgents = list_scheduler_agent_rows();
-  const requestedAgent = find_agent_row_by_name(schedulerAgents, resolvedClientName);
-  if (requestedAgent == null) {
-    return raw_json_error(404, 'client not found');
-  }
-  if (!can_read_agent(current, requestedAgent.ownerUserId, requestedAgent.clientUserId)) {
+  const clientUser = find_user_by_identity(resolvedClientName);
+  if (clientUser != null && !can_manage_user(current, clientUser)) {
     return raw_json_error(403, 'permission denied');
   }
-  let ownerId = string.from(requestedAgent.ownerUserId ?? '').trim();
-  if (ownerId.length == 0) {
-    ownerId = string.from(requestedAgent.clientUserId ?? '').trim();
+  if (clientUser == null || !is_client_user(clientUser)) {
+    return raw_json_error(404, 'client not found');
   }
-  if (ownerId.length == 0) {
-    return raw_json_error(409, 'client ownership is unavailable');
-  }
+  const ownerId = owner_namespace_for_user(clientUser);
+  const schedulerAgents = list_scheduler_agent_rows();
   const ownerAgents = schedulerAgents.filter((agent) =>
     string.from(agent.ownerUserId) == ownerId && agent_sync_enabled(agent)
   );
@@ -8353,22 +8324,17 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
     return raw_json_error(403, 'permission denied');
   }
   const normalizedClientName = normalize_user_name(clientName);
-  const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
-  if (targetAgent == null || !can_read_agent(current, targetAgent.ownerUserId, targetAgent.clientUserId)) {
+  const clientUser = find_user_by_identity(normalizedClientName);
+  if (clientUser == null || !is_client_user(clientUser) || !can_manage_user(current, clientUser)) {
     return raw_json_error(403, 'permission denied');
   }
-  let ownerId = string.from(targetAgent.ownerUserId ?? '').trim();
-  if (ownerId.length == 0) {
-    ownerId = string.from(targetAgent.clientUserId ?? '').trim();
-  }
-  if (ownerId.length == 0) {
-    return raw_json_error(409, 'client ownership is unavailable');
-  }
+  const ownerId = owner_namespace_for_user(clientUser);
   refresh_owner_baseline_table_issues(ownerId);
   if (sync_owner_has_blocking_table_issues(ownerId)) {
     return raw_json_error(409, 'Sync is stopped because one or more tables need a user decision.');
   }
-  if (!agent_sync_enabled(targetAgent)) {
+  const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
+  if (targetAgent == null || !agent_sync_enabled(targetAgent)) {
     return raw_json_error(409, 'bootstrap client is unavailable or disabled');
   }
   if (!effective_agent_online(targetAgent)) {

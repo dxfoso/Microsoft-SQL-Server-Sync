@@ -381,15 +381,7 @@ function Update-StartupShortcutToSupervisor {
         return
     }
 
-    $shortcutName = 'SQL Sync Agent.lnk'
-    $instanceConfigPath = Join-Path $TargetInstallDir 'client-instance.json'
-    if (Test-Path -LiteralPath $instanceConfigPath -PathType Leaf) {
-        $instanceId = (Get-Content -LiteralPath $instanceConfigPath -Raw | ConvertFrom-Json).id
-        if (-not [string]::IsNullOrWhiteSpace($instanceId) -and $instanceId -match '^[a-z0-9][a-z0-9-]{0,31}$') {
-            $shortcutName = "SQL Sync Agent ($instanceId).lnk"
-        }
-    }
-    $shortcutPath = Join-Path $appData "Microsoft\Windows\Start Menu\Programs\Startup\$shortcutName"
+    $shortcutPath = Join-Path $appData "Microsoft\Windows\Start Menu\Programs\Startup\SQL Sync Agent.lnk"
     if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
         return
     }
@@ -703,15 +695,7 @@ function Update-StartupShortcutToSupervisor {
         return
     }
 
-    $shortcutName = 'SQL Sync Agent.lnk'
-    $instanceConfigPath = Join-Path $TargetInstallDir 'client-instance.json'
-    if (Test-Path -LiteralPath $instanceConfigPath -PathType Leaf) {
-        $instanceId = (Get-Content -LiteralPath $instanceConfigPath -Raw | ConvertFrom-Json).id
-        if (-not [string]::IsNullOrWhiteSpace($instanceId) -and $instanceId -match '^[a-z0-9][a-z0-9-]{0,31}$') {
-            $shortcutName = "SQL Sync Agent ($instanceId).lnk"
-        }
-    }
-    $shortcutPath = Join-Path $appData "Microsoft\Windows\Start Menu\Programs\Startup\$shortcutName"
+    $shortcutPath = Join-Path $appData "Microsoft\Windows\Start Menu\Programs\Startup\SQL Sync Agent.lnk"
     if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
         return
     }

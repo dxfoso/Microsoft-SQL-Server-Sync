@@ -6,7 +6,6 @@ import 'package:path/path.dart' as path;
 
 import 'agent_page.dart';
 import 'client_version.dart';
-import 'client_instance.dart';
 import 'live_sync_api.dart';
 import 'sync_state.dart';
 import 'startup_log.dart';
@@ -79,7 +78,6 @@ class SyncWindowsAgentApp extends StatefulWidget {
 }
 
 class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
-  final ClientInstanceConfig _instance = currentClientInstance;
   String _clientName = 'Local Agent';
   Map<String, SyncClientState> _syncStatesByClient = {};
   Timer? _saveDebounce;
@@ -124,14 +122,8 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String get _windowTitle {
     final name =
         _clientName.trim().isEmpty ? 'Local Agent' : _clientName.trim();
-    final instanceLabel = _instance.windowLabel;
-    return instanceLabel.isEmpty
-        ? 'SQL Sync Agent - $name'
-        : 'SQL Sync Agent - $instanceLabel - $name';
+    return 'SQL Sync Agent - $name';
   }
-
-  String _effectiveClientName(String baseName) =>
-      _instance.clientNameFor(baseName);
 
   bool get _hasRememberedLoginCredentials {
     return (_rememberedLoginName?.trim().isNotEmpty ?? false) &&
@@ -207,15 +199,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
           WindowsAgentWindowSettings.isStartOnStartupEnabledSync();
       _usernameController.text = _rememberedLoginName ?? '';
       _passwordController.text = _rememberedLoginPassword ?? '';
-      _clientName = _effectiveClientName(
-        (_accountName != null && _accountName!.isNotEmpty)
-            ? _accountName!
-            : (_accountUsername != null && _accountUsername!.isNotEmpty)
-            ? _accountUsername!
-            : (store.lastClientName.trim().isEmpty
-                ? 'Local Agent'
-                : store.lastClientName.trim()),
-      );
+      _clientName =
+          (_accountName != null && _accountName!.isNotEmpty)
+              ? _accountName!
+              : (_accountUsername != null && _accountUsername!.isNotEmpty)
+              ? _accountUsername!
+              : (store.lastClientName.trim().isEmpty
+                  ? 'Local Agent'
+                  : store.lastClientName.trim());
       _syncStatesByClient = store.clients.isEmpty ? {} : store.clients;
       if (_authToken != null && _authToken!.isNotEmpty) {
         _authClient.setAuthToken(_authToken);
@@ -260,7 +251,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       _startOnStartup = false;
       _usernameController.text = '';
       _passwordController.text = '';
-      _clientName = _effectiveClientName('Local Agent');
+      _clientName = 'Local Agent';
       _syncStatesByClient = {};
       _selectedDatabasesByUser = <String, String>{};
       logStartupEvent(
@@ -327,9 +318,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     if (_accountUsername != null && _accountUsername!.isNotEmpty) {
       return;
     }
-    final nextName = _effectiveClientName(
-      value.trim().isEmpty ? 'Local Agent' : value.trim(),
-    );
+    final nextName = value.trim().isEmpty ? 'Local Agent' : value.trim();
     final previousName = _clientName;
     final currentState =
         _syncStatesByClient[previousName] ?? _defaultClientState;
@@ -720,13 +709,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       }
       logStartupEvent('SyncWindowsAgentApp fetchCurrentUser success');
       setState(() {
-        final effectiveName = _effectiveClientName(user.name);
-        _migrateStoredClientState(_clientName, effectiveName);
+        _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
         _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
-        _clientName = effectiveName;
+        _clientName = user.name;
         _restoringSession = false;
         _loginError = null;
       });
@@ -742,7 +730,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
           _accountUsername = null;
           _accountEmail = null;
           _accountName = null;
-          _clientName = _effectiveClientName(_rememberedLoginName!.trim());
+          _clientName = _rememberedLoginName!.trim();
           _restoringSession = true;
           _submittingLogin = true;
           _loginError = null;
@@ -756,7 +744,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _accountUsername = null;
         _accountEmail = null;
         _accountName = null;
-        _clientName = _effectiveClientName('Local Agent');
+        _clientName = 'Local Agent';
         _restoringSession = false;
       });
       _authClient.setAuthToken(null);
@@ -772,7 +760,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
           _accountUsername = null;
           _accountEmail = null;
           _accountName = null;
-          _clientName = _effectiveClientName(_rememberedLoginName!.trim());
+          _clientName = _rememberedLoginName!.trim();
           _restoringSession = true;
           _submittingLogin = true;
           _loginError = null;
@@ -786,7 +774,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _accountUsername = null;
         _accountEmail = null;
         _accountName = null;
-        _clientName = _effectiveClientName('Local Agent');
+        _clientName = 'Local Agent';
         _restoringSession = false;
       });
       _authClient.setAuthToken(null);
@@ -828,15 +816,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       }
       logStartupEvent('SyncWindowsAgentApp remembered login success');
       setState(() {
-        final effectiveName = _effectiveClientName(user.name);
-        _migrateStoredClientState(_clientName, effectiveName);
+        _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
         _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
         _rememberedLoginName = name;
         _rememberedLoginPassword = password;
-        _clientName = effectiveName;
+        _clientName = user.name;
         _restoringSession = false;
         _submittingLogin = false;
         _loginError = null;
@@ -853,7 +840,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         _accountUsername = null;
         _accountEmail = null;
         _accountName = null;
-        _clientName = _effectiveClientName('Local Agent');
+        _clientName = 'Local Agent';
         _restoringSession = false;
         _submittingLogin = false;
         _loginError = 'Automatic login failed. Please sign in again.';
@@ -888,15 +875,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
         return;
       }
       setState(() {
-        final effectiveName = _effectiveClientName(user.name);
-        _migrateStoredClientState(_clientName, effectiveName);
+        _migrateStoredClientState(_clientName, user.name);
         _authToken = user.token;
         _accountUsername = user.username;
         _accountEmail = user.email;
         _accountName = user.name;
         _rememberedLoginName = name;
         _rememberedLoginPassword = password;
-        _clientName = effectiveName;
+        _clientName = user.name;
         _submittingLogin = false;
         _loginError = null;
       });
@@ -920,7 +906,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       _accountUsername = null;
       _accountEmail = null;
       _accountName = null;
-      _clientName = _effectiveClientName('Local Agent');
+      _clientName = 'Local Agent';
       _loginError = null;
       _usernameController.text = _rememberedLoginName ?? '';
       _passwordController.text = _rememberedLoginPassword ?? '';

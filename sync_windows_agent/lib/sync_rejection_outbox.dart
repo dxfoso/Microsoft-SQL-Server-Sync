@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'client_instance.dart';
-
 enum SyncRejectionKind { dependency, permanentBusinessRule, transient }
 
 const syncRejectionApplyPolicyVersion = 4;
@@ -200,7 +198,11 @@ class SyncRejectionOutbox {
   final Directory _directory;
 
   static Directory _defaultDirectory() {
-    return currentClientInstance.stateDirectory();
+    final base =
+        Platform.environment['APPDATA'] ??
+        Platform.environment['LOCALAPPDATA'] ??
+        Directory.current.path;
+    return Directory('$base${Platform.pathSeparator}Microsoft-SQL-Server-Sync');
   }
 
   Future<List<SyncRejectedChange>> loadTable(
