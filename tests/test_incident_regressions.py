@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 32)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 33)}
         observed_ids = set()
 
         for row in rows:
@@ -125,6 +125,13 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("$childProcess.WaitForExit()", runner)
         self.assertIn("$exitCode = $childProcess.ExitCode", runner)
         self.assertNotIn("Wait-Process -Id $childProcess.Id", runner)
+
+    def test_production_docker_context_excludes_local_test_caches(self):
+        dockerignore = read_text(".dockerignore")
+
+        self.assertIn("**/.pytest_cache", dockerignore)
+        self.assertIn("**/__pycache__", dockerignore)
+        self.assertIn("workspace", dockerignore)
 
 
 if __name__ == "__main__":

@@ -2,10 +2,19 @@
 .gitignore
 .vscode
 .cp-images
+.codex-run
+workspace
+artifacts
+d
 branding
 database
 deployment
 sync_windows_agent
+
+**/.pytest_cache
+**/__pycache__
+**/.dart_tool
+**/build
 
 sync_admin_web/.dart_tool
 sync_admin_web/.idea
