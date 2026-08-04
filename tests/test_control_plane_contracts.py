@@ -1325,6 +1325,27 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("reconciliation table is not enabled", reconcile_body)
         self.assertIn("create_authoritative_reconcile_batch(", reconcile_body)
 
+    def test_clients_list_exposes_each_online_client_as_authoritative_source(self):
+        source = read_text("frontend/lib/clients_page.dart")
+        row_body = source.split("DataRow _buildClientDataRow(", 1)[1].split(
+            "String _clientActivityStatus(", 1
+        )[0]
+        dialog_body = source.split(
+            "Future<void> _openAuthoritativeReconcileDialog(", 1
+        )[1].split("Future<void> _confirmAndDeleteServerData(", 1)[0]
+
+        self.assertIn("Use as source", row_body)
+        self.assertIn("initialSourceName: agent.clientName", row_body)
+        self.assertIn("widget.authenticatedUser.canManageUsers", row_body)
+        self.assertIn("!agent.isOnline", row_body)
+        self.assertIn("!agent.serverConnected", row_body)
+        self.assertIn("!agent.sqlConnected", row_body)
+        self.assertIn("String? initialSourceName", dialog_body)
+        self.assertIn("agent.clientName != sourceName", dialog_body)
+        self.assertIn("Replace Target Data", dialog_body)
+        self.assertIn("automaticPaused", dialog_body)
+        self.assertIn("acknowledged", dialog_body)
+
     def test_retained_full_union_recovery_is_explicit_scoped_and_download_only(self):
         source = read_text("business/control_plane.tru")
         recovery_body = source.split(

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-// Legacy compact-layout helpers remain available for future detail navigation.
+// Compact-layout helpers remain available for detail navigation.
 // ignore_for_file: unused_element
 
 import 'package:flutter/material.dart';
@@ -254,7 +254,6 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _bulkLogsBusy = false;
   bool _automaticSyncBusy = false;
   bool _serverResetBusy = false;
-  // Legacy source-reconciliation is intentionally not exposed in the UI.
   bool _reconcileBusy = false;
   AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
@@ -1483,18 +1482,40 @@ class _ClientsPageState extends State<ClientsPage> {
         DataCell(Text(_formatTimestamp(_latestClientSync(agent)))),
         DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
         DataCell(
-          TextButton.icon(
-            onPressed:
-                () => setState(() {
-                  _selectedClientName = agent.clientName;
-                  _screen = _ClientScreen.detail;
-                  _selectedTable = null;
-                  _selectedSyncKey = null;
-                  _selectedJobId = null;
-                  _replaceRoute();
-                }),
-            icon: const Icon(Icons.visibility_outlined, size: 16),
-            label: const Text('View'),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed:
+                    () => setState(() {
+                      _selectedClientName = agent.clientName;
+                      _screen = _ClientScreen.detail;
+                      _selectedTable = null;
+                      _selectedSyncKey = null;
+                      _selectedJobId = null;
+                      _replaceRoute();
+                    }),
+                icon: const Icon(Icons.visibility_outlined, size: 16),
+                label: const Text('View'),
+              ),
+              if (widget.authenticatedUser.canManageUsers)
+                OutlinedButton.icon(
+                  onPressed:
+                      _reconcileBusy ||
+                              !agent.isOnline ||
+                              !agent.serverConnected ||
+                              !agent.sqlConnected
+                          ? null
+                          : () => unawaited(
+                            _openAuthoritativeReconcileDialog(
+                              initialSourceName: agent.clientName,
+                            ),
+                          ),
+                  icon: const Icon(Icons.verified_user_outlined, size: 16),
+                  label: const Text('Use as source'),
+                ),
+            ],
           ),
         ),
       ],
@@ -3429,7 +3450,9 @@ class _ClientsPageState extends State<ClientsPage> {
     }
   }
 
-  Future<void> _openAuthoritativeReconcileDialog() async {
+  Future<void> _openAuthoritativeReconcileDialog({
+    String? initialSourceName,
+  }) async {
     if (_reconcileBusy || !widget.authenticatedUser.canManageUsers) return;
     final onlineAgents =
         (_state?.agents ?? const <AdminAgent>[])
@@ -3449,9 +3472,14 @@ class _ClientsPageState extends State<ClientsPage> {
       return;
     }
 
-    var sourceName = onlineAgents.first.clientName;
+    final requestedSourceName = initialSourceName?.trim() ?? '';
+    var sourceName =
+        onlineAgents.any((agent) => agent.clientName == requestedSourceName)
+            ? requestedSourceName
+            : onlineAgents.first.clientName;
     final selectedTargets = <String>{
-      for (final agent in onlineAgents.skip(1)) agent.clientName,
+      for (final agent in onlineAgents)
+        if (agent.clientName != sourceName) agent.clientName,
     };
     final selectedTables = <String>{};
     var acknowledged = false;
