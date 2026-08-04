@@ -518,6 +518,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         gate = source.split("function sync_gate_payload_for_owners(", 1)[1].split(
             "function automatic_sync_control_set(", 1
         )[0]
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick(", 1
+        )[0]
 
         self.assertIn("sync_owner_has_needs_input_table_issues", scheduler)
         self.assertIn("refresh_owner_baseline_table_issues", scheduler)
@@ -530,6 +533,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("decisionCount", gate)
         self.assertIn("resolvingCount", gate)
         self.assertIn("No user decision is required", gate)
+        self.assertIn("tablesChanged", heartbeat)
+        self.assertIn("sync_owner_has_resolving_table_issues(ownerUserId)", heartbeat)
+        self.assertIn("refresh_owner_baseline_table_issues(ownerUserId)", heartbeat)
 
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
@@ -1323,6 +1329,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("active_job_tables_for_client", reconcile_body)
         self.assertIn("source client cannot also be a reconciliation target", reconcile_body)
         self.assertIn("reconciliation table is not enabled", reconcile_body)
+        self.assertIn("status: 'resolving'", reconcile_body)
+        self.assertIn("action: 'authoritative_reconcile'", reconcile_body)
+        self.assertIn("sourceClientName: normalizedSourceClientName", reconcile_body)
+        self.assertIn("targetClientNames: normalizedTargetClientNames", reconcile_body)
         self.assertIn("create_authoritative_reconcile_batch(", reconcile_body)
 
     def test_clients_list_exposes_each_online_client_as_authoritative_source(self):

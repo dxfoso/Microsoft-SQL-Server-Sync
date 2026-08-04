@@ -3921,6 +3921,15 @@ function sync_owner_has_needs_input_table_issues(ownerUserId: string? = null): b
   return false;
 }
 
+function sync_owner_has_resolving_table_issues(ownerUserId: string? = null): bool {
+  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    if (string.from(issue.status ?? '').trim().toLowerCase() == 'resolving') {
+      return true;
+    }
+  }
+  return false;
+}
+
 function save_sync_table_issues_for_owner(ownerUserId: string, issues: array<json>): void {
   const normalizedOwnerUserId = ownerUserId.trim();
   const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
@@ -5334,6 +5343,13 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   }
   if (nextAgent == null) {
     return raw_json_error(500, 'agent heartbeat state unavailable');
+  }
+  // A confirmed authoritative repair can finish while automatic scheduling is
+  // paused. Re-evaluate only when a heartbeat actually changed table
+  // fingerprints, so the durable Needs input gate clears without adding work
+  // to ordinary lightweight heartbeats.
+  if (tablesChanged && sync_owner_has_resolving_table_issues(ownerUserId)) {
+    refresh_owner_baseline_table_issues(ownerUserId);
   }
   return {
     ok: true,
@@ -8174,6 +8190,23 @@ function jobs_reconcile_authoritative(sourceClientName: string, targetClientName
 
   let createdJobs = [];
   for (const table of requestedTables) {
+    const existingIssue = sync_table_issue_for_owner(ownerId, table);
+    if (existingIssue != null &&
+        string.from(existingIssue.status ?? '').trim().toLowerCase() == 'needs_input') {
+      replace_sync_table_issue(ownerId, {
+        table,
+        status: 'resolving',
+        reason: string.from(existingIssue.reason ?? ''),
+        message: 'Authoritative repair is in progress. No additional user decision is required.',
+        clientName: existingIssue.clientName,
+        action: 'authoritative_reconcile',
+        sourceClientName: normalizedSourceClientName,
+        targetClientNames: normalizedTargetClientNames,
+        detectedAt: existingIssue.detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: null
+      });
+    }
     const jobs = create_authoritative_reconcile_batch(ownerId, table, sourceAgent, targetAgents);
     if (jobs.length > 0) {
       createdJobs = createdJobs.concat(jobs);
