@@ -2143,6 +2143,7 @@ class RemoteSnapshot {
     required this.checksum,
     required this.snapshotBytes,
     required this.columns,
+    this.uniqueKeyColumnSets = const <List<String>>[],
     required this.rows,
     required this.sourceJobId,
     this.changeTrackingVersion,
@@ -2160,6 +2161,7 @@ class RemoteSnapshot {
   final String checksum;
   final int snapshotBytes;
   final List<String> columns;
+  final List<List<String>> uniqueKeyColumnSets;
   final List<Map<String, String?>> rows;
   final String? sourceJobId;
   final int? changeTrackingVersion;
@@ -2180,6 +2182,16 @@ class RemoteSnapshot {
       snapshotBytes: (json['snapshotBytes'] as num? ?? 0).round(),
       columns: (json['columns'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
+          .toList(growable: false),
+      uniqueKeyColumnSets: (json['uniqueKeyColumnSets'] as List<dynamic>? ??
+              const [])
+          .whereType<List>()
+          .map(
+            (columnSet) => columnSet
+                .map((column) => column.toString())
+                .toList(growable: false),
+          )
+          .where((columnSet) => columnSet.isNotEmpty)
           .toList(growable: false),
       rows: rawRows
           .map(
@@ -2229,6 +2241,7 @@ class RemoteSnapshot {
     String? checksum,
     int? snapshotBytes,
     List<String>? columns,
+    List<List<String>>? uniqueKeyColumnSets,
     List<Map<String, String?>>? rows,
     String? sourceJobId,
     int? changeTrackingVersion,
@@ -2246,6 +2259,7 @@ class RemoteSnapshot {
       checksum: checksum ?? this.checksum,
       snapshotBytes: snapshotBytes ?? this.snapshotBytes,
       columns: columns ?? this.columns,
+      uniqueKeyColumnSets: uniqueKeyColumnSets ?? this.uniqueKeyColumnSets,
       rows: rows ?? this.rows,
       sourceJobId: sourceJobId ?? this.sourceJobId,
       changeTrackingVersion:

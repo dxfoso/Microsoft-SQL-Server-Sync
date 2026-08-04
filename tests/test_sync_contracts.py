@@ -790,6 +790,16 @@ class SyncContractsTests(unittest.TestCase):
             apply_body.count("protectLocalChangesAfterVersion: postUploadChangeTrackingVersion"),
             2,
         )
+        self.assertIn("...snapshot.uniqueKeyColumnSets", apply_body)
+        self.assertIn(
+            "final rowsForApply = coalesceSqlSyncDeltaRows(",
+            apply_body,
+        )
+        self.assertNotIn(
+            "applyDelta\n            ? coalesceSqlSyncDeltaRows(",
+            apply_body,
+        )
+        self.assertIn("json['uniqueKeyColumnSets']", client_api)
         self.assertIn("RAISERROR", merge)
         self.assertNotIn("THROW 51000", merge)
         self.assertNotIn("AmnDb048", merge)

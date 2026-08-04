@@ -5899,12 +5899,33 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'Snapshot apply for ${targetTable.schema}.${targetTable.table} requires a primary key.',
       );
     }
-    final uniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
+    final discoveredUniqueIndexColumnSets = await _queryUniqueIndexColumnSets(
       profile: targetProfile,
       database: targetDatabase,
       schema: targetTable.schema,
       table: targetTable.table,
     );
+    final writableColumnNames =
+        syncColumns.map((column) => column.name.toLowerCase()).toSet();
+    final uniqueIndexColumnSets = <List<String>>[];
+    final seenUniqueColumnSets = <String>{};
+    for (final columnSet in <List<String>>[
+      ...discoveredUniqueIndexColumnSets,
+      ...snapshot.uniqueKeyColumnSets,
+    ]) {
+      if (columnSet.isEmpty ||
+          columnSet.any(
+            (column) => !writableColumnNames.contains(column.toLowerCase()),
+          )) {
+        continue;
+      }
+      final identity = columnSet
+          .map((column) => column.toLowerCase())
+          .join('\u001f');
+      if (seenUniqueColumnSets.add(identity)) {
+        uniqueIndexColumnSets.add(columnSet);
+      }
+    }
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     final postUploadChangeTrackingVersion =
@@ -5935,16 +5956,17 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         );
       }
     }
-    final rowsForApply =
-        applyDelta
-            ? coalesceSqlSyncDeltaRows(
-              rows: snapshot.rows
-                  .map((row) => Map<String, dynamic>.from(row))
-                  .toList(growable: false),
-              primaryKeyColumns: primaryKeyColumns,
-              uniqueKeyColumnSets: uniqueIndexColumnSets,
-            )
-            : snapshot.rows;
+    // A canonical full-union page can contain retry copies from several
+    // clients. Collapse primary and unique/business identities for every
+    // snapshot type before loading the SQL staging table. The target-side
+    // replacement below still handles an older identity from an earlier page.
+    final rowsForApply = coalesceSqlSyncDeltaRows(
+      rows: snapshot.rows
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false),
+      primaryKeyColumns: primaryKeyColumns,
+      uniqueKeyColumnSets: uniqueIndexColumnSets,
+    );
     stats.seenRowIdentities.addAll(
       rowsForApply.map(
         (row) => syncRejectedRowIdentity(
@@ -5953,9 +5975,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         ),
       ),
     );
-    if (applyDelta && rowsForApply.length != snapshot.rows.length) {
+    if (rowsForApply.length != snapshot.rows.length) {
       logStartupEvent(
-        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} older primary or unique/business-key version(s) for ${job.table}; policy=latest-change-wins.',
+        'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} older primary or unique/business-key version(s) for ${job.table}; snapshot=${applyDelta ? 'delta' : 'complete'}; policy=latest-change-wins.',
       );
     }
     final contentCheckedRows =
