@@ -3,6 +3,7 @@
 .vscode
 .cp-images
 .codex-run
+.codex-tmp
 workspace
 artifacts
 d
@@ -10,6 +11,12 @@ branding
 database
 deployment
 sync_windows_agent
+sync_windows_agent-windows-portable
+
+frontend/.dart_tool
+frontend/build
+frontend/client-updates
+backend/server/target
 
 **/.pytest_cache
 **/__pycache__

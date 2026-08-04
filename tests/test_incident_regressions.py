@@ -132,6 +132,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("**/.pytest_cache", dockerignore)
         self.assertIn("**/__pycache__", dockerignore)
         self.assertIn("workspace", dockerignore)
+        self.assertIn("frontend/client-updates", dockerignore)
+        self.assertIn("backend/server/target", dockerignore)
 
 
 if __name__ == "__main__":
