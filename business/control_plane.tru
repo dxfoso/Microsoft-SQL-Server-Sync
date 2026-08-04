@@ -8891,6 +8891,15 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
       });
     }
   }
+  if (status.trim().toLowerCase() == 'completed' &&
+      string.from(job.sourceClientName).trim() == 'server-authoritative-reconcile' &&
+      completedBatchId.length != 0 &&
+      sync_batch_all_jobs_completed(completedBatchId)) {
+    // This also handles an idempotent repair whose fingerprint was already
+    // equal before the target heartbeat, so no table-state heartbeat change
+    // is required to release a stale Needs input gate.
+    refresh_owner_baseline_table_issues(string.from(job.ownerUserId));
+  }
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   return { job: public_job_payload(nextJob) };
 }

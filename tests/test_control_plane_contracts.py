@@ -521,6 +521,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
             "function auto_sync_tick(", 1
         )[0]
+        complete = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail(", 1
+        )[0]
 
         self.assertIn("sync_owner_has_needs_input_table_issues", scheduler)
         self.assertIn("refresh_owner_baseline_table_issues", scheduler)
@@ -536,6 +539,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("tablesChanged", heartbeat)
         self.assertIn("sync_owner_has_resolving_table_issues(ownerUserId)", heartbeat)
         self.assertIn("refresh_owner_baseline_table_issues(ownerUserId)", heartbeat)
+        self.assertIn("'server-authoritative-reconcile'", complete)
+        self.assertIn("sync_batch_all_jobs_completed(completedBatchId)", complete)
+        self.assertIn(
+            "refresh_owner_baseline_table_issues(string.from(job.ownerUserId))",
+            complete,
+        )
 
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
