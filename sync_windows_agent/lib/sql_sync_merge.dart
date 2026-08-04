@@ -77,6 +77,7 @@ String buildTargetSnapshotStageApplySql({
   int? protectLocalChangesAfterVersion,
   bool manageTriggers = true,
   bool insertOnly = false,
+  bool authoritativeReplace = false,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -161,6 +162,29 @@ String buildTargetSnapshotStageApplySql({
       protectLocalChangesAfterVersion == null
           ? ''
           : 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;';
+  final targetTable =
+      '${quoteIdentifier(database)}.${quoteIdentifier(schema)}.${quoteIdentifier(table)}';
+  final authoritativeReplaceStatements =
+      authoritativeReplace
+          ? '''
+  DECLARE @SqlSyncExpectedAuthoritativeRows BIGINT =
+    (SELECT COUNT_BIG(*) FROM $stageTarget);
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  DELETE FROM $targetTable;
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  INSERT INTO $targetTable ($insertColumnList)
+  SELECT $insertValueList
+  FROM $stageTarget AS source;
+  SET @SqlSyncInsertedRows = @@ROWCOUNT;
+  IF (SELECT COUNT_BIG(*) FROM $targetTable) <> @SqlSyncExpectedAuthoritativeRows
+  BEGIN
+    THROW 51000, 'Authoritative replacement row-count verification failed.', 1;
+  END;'''
+          : '''
+  $deltaDeleteStatements
+  ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
+  ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
+  SET @SqlSyncInsertedRows += @@ROWCOUNT;''';
 
   return '''
 SET NOCOUNT ON;
@@ -176,10 +200,7 @@ BEGIN TRY
   $triggerDisableStatement
   $identityInsertOn
   DECLARE @SqlSyncInsertedRows INT = 0;
-  $deltaDeleteStatements
-  ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
-  ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
-  SET @SqlSyncInsertedRows += @@ROWCOUNT;
+  $authoritativeReplaceStatements
   $identityInsertOff
   $triggerEnableStatement
   COMMIT TRANSACTION;

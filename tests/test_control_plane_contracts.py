@@ -1346,6 +1346,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("automaticPaused", dialog_body)
         self.assertIn("acknowledged", dialog_body)
 
+    def test_windows_agent_authoritative_reconciliation_is_exact_and_explicit(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+
+        self.assertIn("authoritativeReplace: authoritativeReconcile", agent)
+        self.assertIn("bool authoritativeReplace = false", agent)
+        self.assertIn("bool authoritativeReplace = false", merge)
+        self.assertIn("DELETE FROM $targetTable", merge)
+        self.assertIn("Authoritative replacement row-count verification failed.", merge)
+        self.assertIn("if (!authoritativeReplace", agent)
+
     def test_retained_full_union_recovery_is_explicit_scoped_and_download_only(self):
         source = read_text("business/control_plane.tru")
         recovery_body = source.split(

@@ -40,6 +40,56 @@ void main() {
     expect(sql, isNot(contains('DELETE TOP')));
   });
 
+  test(
+    'explicit authoritative replacement atomically replaces target rows',
+    () {
+      final columns = [
+        const SqlSyncColumnDefinition(
+          name: 'GUID',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        const SqlSyncColumnDefinition(
+          name: 'Name',
+          sqlType: 'nvarchar',
+          maxLength: 100,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ];
+      final sql = buildTargetSnapshotStageApplySql(
+        database: 'db',
+        schema: 'dbo',
+        table: 'ma000',
+        stageTableName: '#stage_ma000',
+        columns: columns,
+        primaryKeyColumns: const ['GUID'],
+        authoritativeReplace: true,
+      );
+
+      final begin = sql.indexOf('BEGIN TRANSACTION;');
+      final delete = sql.indexOf('DELETE FROM [db].[dbo].[ma000];');
+      final insert = sql.indexOf('INSERT INTO [db].[dbo].[ma000]');
+      final verify = sql.indexOf(
+        'Authoritative replacement row-count verification failed.',
+      );
+      final commit = sql.indexOf('COMMIT TRANSACTION;');
+      expect(delete, greaterThan(begin));
+      expect(insert, greaterThan(delete));
+      expect(verify, greaterThan(insert));
+      expect(commit, greaterThan(verify));
+      expect(sql, contains('WITH CHANGE_TRACKING_CONTEXT'));
+      expect(sql, isNot(contains('UPDATE target')));
+      expect(sql, contains('ROLLBACK TRANSACTION'));
+    },
+  );
+
   test('text match columns keep database collation handling', () {
     final columns = [
       const SqlSyncColumnDefinition(

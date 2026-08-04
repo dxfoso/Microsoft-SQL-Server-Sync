@@ -781,7 +781,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("TABLOCKX", merge)
         self.assertNotIn("DELETE TOP", merge)
         self.assertIn("explicit-tombstones-only", merge)
-        self.assertNotIn("THROW 51000", merge)
+        self.assertIn("bool authoritativeReplace = false", merge)
+        self.assertIn("authoritativeReplace\n          ?", merge)
+        self.assertIn("Authoritative replacement row-count verification failed.", merge)
         self.assertNotIn("AmnDb048", merge)
 
     def test_change_tracking_baselines_accept_enabled_initial_version_zero(self):

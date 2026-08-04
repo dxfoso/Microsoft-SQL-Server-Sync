@@ -5382,6 +5382,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         snapshot: snapshotToApply,
         applyStats: applyStats,
         fullSnapshotApply: authoritativeReconcile || canonicalFullMerge,
+        authoritativeReplace: authoritativeReconcile,
       );
       logAgentDiagnostic(
         'sync.apply.committed',
@@ -5810,6 +5811,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     bool refreshLocalState = true,
     _DeltaApplyStats? applyStats,
     bool fullSnapshotApply = false,
+    bool authoritativeReplace = false,
   }) async {
     final stats = applyStats ?? _DeltaApplyStats();
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
@@ -5992,6 +5994,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         rows: rows,
         manageTriggers: true,
         insertOnly: false,
+        authoritativeReplace: authoritativeReplace,
       );
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
@@ -6006,8 +6009,17 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         );
       }
       stats.insertedRows += applyResult.insertedRows;
-      stats.updatedRows += rows.length - applyResult.insertedRows;
-      if (rowCountAfter.value < rowCountBefore.value) {
+      if (authoritativeReplace) {
+        stats.deletedRows += rowCountBefore.value;
+      } else {
+        stats.updatedRows += rows.length - applyResult.insertedRows;
+      }
+      if (authoritativeReplace && rowCountAfter.value != rows.length) {
+        throw StateError(
+          'Authoritative replacement expected ${rows.length} ${job.table} rows but found ${rowCountAfter.value}; the transaction result is invalid.',
+        );
+      }
+      if (!authoritativeReplace && rowCountAfter.value < rowCountBefore.value) {
         throw StateError(
           'Complete snapshot apply reduced ${job.table} from ${rowCountBefore.value} to ${rowCountAfter.value} rows. Snapshot absence is never a delete instruction.',
         );
@@ -7077,6 +7089,7 @@ END
     required List<Map<String, dynamic>> rows,
     bool manageTriggers = true,
     bool insertOnly = false,
+    bool authoritativeReplace = false,
   }) async {
     final stageTableName = _nextTargetSnapshotStageTableName(table);
     final rowCountBefore = await _queryTableRowCount(
@@ -7138,6 +7151,7 @@ END
           protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
           manageTriggers: manageTriggers,
           insertOnly: insertOnly,
+          authoritativeReplace: authoritativeReplace,
         ),
         context: 'target snapshot merge',
         timeout: _snapshotSqlCmdTimeout,
