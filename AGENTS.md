@@ -16,6 +16,15 @@ Use this from the repository root:
 
 Use the launcher when a local stack restart is actually needed.
 
+## Issue Documentation and Regression Rule
+
+- Every discovered defect, production incident, failed deployment, unexpected client behavior, or synchronization safety gap must be documented in the root `issue.md` incident matrix before the work is considered complete.
+- Each `issue.md` entry must record the observed symptom, root cause, required long-term behavior, implemented resolution, and exact automated regression coverage.
+- Every issue fix must add or extend an automated unit, contract, integration, or isolated fake-client regression test that fails for the original defect and passes with the fix. A manual check alone is not sufficient.
+- Register new regression tests in the appropriate repository test runner, including `tests/run_sync_verification.ps1` when the issue affects the synchronization architecture or its safety invariants, so the defect is checked in future standard runs.
+- Keep `tests/test_incident_regressions.py` aligned with the complete `issue.md` incident ID sequence and coverage references. Do not remove an incident or its regression coverage merely because the implementation has changed.
+- Never use active production client databases to reproduce an issue. Use unit tests, disposable local Docker clients, or explicitly isolated fake live clients.
+
 ## Windows Background Execution Rule
 
 - Never run long tests, builds, deployment scripts, Docker suites, update helpers, or repeated native child processes in a visible Windows console. They must not steal focus or interrupt the person using the PC.

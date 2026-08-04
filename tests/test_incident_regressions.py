@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 27)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 28)}
         observed_ids = set()
 
         for row in rows:
@@ -87,7 +87,16 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("never justify testing against active production databases", document)
         self.assertIn("tests/test_incident_regressions.py", runner)
 
+    def test_agents_requires_issue_documentation_and_automated_regression(self):
+        rules = read_text("AGENTS.md")
+
+        self.assertIn("## Issue Documentation and Regression Rule", rules)
+        self.assertIn("must be documented in the root `issue.md` incident matrix", rules)
+        self.assertIn("must add or extend an automated unit, contract, integration", rules)
+        self.assertIn("A manual check alone is not sufficient", rules)
+        self.assertIn("tests/run_sync_verification.ps1", rules)
+        self.assertIn("Never use active production client databases to reproduce an issue", rules)
+
 
 if __name__ == "__main__":
     unittest.main()
-
