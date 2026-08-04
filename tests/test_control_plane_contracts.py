@@ -489,7 +489,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertIn("syncGate,", live_state)
 
-    def test_unique_key_conflicts_require_explicit_user_deletion(self):
+    def test_unique_key_conflicts_become_automatic_latest_change_retries(self):
         source = read_text("business/control_plane.tru")
         upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
             "function jobs_multi_writer_download(", 1
@@ -497,6 +497,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         complete = source.split("function jobs_complete(", 1)[1].split(
             "function jobs_fail(", 1
         )[0]
+        clear_retryable = source.split(
+            "function clear_retryable_sync_failure_issues(", 1
+        )[1].split("function sync_owner_has_blocking_table_issues(", 1)[0]
 
         self.assertIn("field conflictPolicy: string? min=0 max=32", source)
         self.assertIn("latestModifiedAtUtc: latestModifiedAtUtc.trim()", upload)
@@ -506,6 +509,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("conflictKind.trim().toLowerCase() == 'unique_business_key'", complete)
         self.assertIn("? 'unique_business_key'", complete)
         self.assertIn("raise_sync_table_issue(", complete)
+        self.assertIn("reason != 'unique_business_key'", clear_retryable)
+        self.assertIn("latest-change policy", clear_retryable)
+        self.assertIn("No user decision", clear_retryable)
 
     def test_automatic_repair_finishes_for_online_participants_without_user_input(self):
         source = read_text("business/control_plane.tru")

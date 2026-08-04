@@ -3880,8 +3880,9 @@ function sync_table_issue_is_blocking(issue: map<json>): bool {
 
 function clear_retryable_sync_failure_issues(ownerUserId: string): void {
   for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    const reason = string.from(issue.reason ?? '').trim();
     if (string.from(issue.status ?? '').trim() != 'needs_input' ||
-        string.from(issue.reason ?? '').trim() != 'sync_failed' ||
+        (reason != 'sync_failed' && reason != 'unique_business_key') ||
         sync_owner_table_has_active_jobs(ownerUserId, string.from(issue.table))) {
       continue;
     }
@@ -3889,7 +3890,9 @@ function clear_retryable_sync_failure_issues(ownerUserId: string): void {
       table: issue.table,
       status: 'ready',
       reason: '',
-      message: 'Previous technical failure is ready for an automatic atomic retry. No Change Tracking baseline was advanced.',
+      message: reason == 'unique_business_key'
+        ? 'The latest-change policy will retry this unique-key conflict automatically and atomically. No user decision or baseline change is required.'
+        : 'Previous technical failure is ready for an automatic atomic retry. No Change Tracking baseline was advanced.',
       clientName: issue.clientName,
       action: 'retry_sync',
       sourceClientName: '',
