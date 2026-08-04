@@ -5112,10 +5112,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       throw _SyncJobCancelled(job.id);
     }
 
-    // Keep each control-plane call well below the backend's memory-pressure
-    // threshold. TRU/Wasm JSON conversion temporarily amplifies encoded
-    // payloads, especially for wide SQL tables.
+    // Bound both encoded bytes and row count. The backend materializes the
+    // business-key identities for a chunk while choosing latest-change
+    // winners, so narrow rows with many unique keys can consume more memory
+    // than their JSON size suggests.
     const maxDeltaPayloadBytes = 128000;
+    const maxDeltaRowsPerChunk = 25;
     final rows = _snapshotRows(snapshot.snapshotJson);
     final columns = _snapshotColumns(snapshot.snapshotJson);
     final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
@@ -5157,7 +5159,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     } else {
       for (var offset = 0; offset < rows.length;) {
         _checkSyncJobNotCancelled(job.id);
-        var end = math.min(offset + 100, rows.length);
+        var end = math.min(offset + maxDeltaRowsPerChunk, rows.length);
         while (end > offset + 1 &&
             utf8.encode(jsonEncode(rows.sublist(offset, end))).length >
                 maxDeltaPayloadBytes) {
