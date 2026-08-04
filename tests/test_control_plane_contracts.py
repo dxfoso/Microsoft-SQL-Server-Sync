@@ -1355,6 +1355,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("bool authoritativeReplace = false", merge)
         self.assertIn("DELETE FROM $targetTable", merge)
         self.assertIn("Authoritative replacement row-count verification failed.", merge)
+        self.assertNotIn("THROW 51000", merge)
         self.assertIn("if (!authoritativeReplace", agent)
 
     def test_retained_full_union_recovery_is_explicit_scoped_and_download_only(self):

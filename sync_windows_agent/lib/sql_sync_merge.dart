@@ -178,7 +178,7 @@ String buildTargetSnapshotStageApplySql({
   SET @SqlSyncInsertedRows = @@ROWCOUNT;
   IF (SELECT COUNT_BIG(*) FROM $targetTable) <> @SqlSyncExpectedAuthoritativeRows
   BEGIN
-    THROW 51000, 'Authoritative replacement row-count verification failed.', 1;
+    RAISERROR('Authoritative replacement row-count verification failed.', 16, 1);
   END;'''
           : '''
   $deltaDeleteStatements

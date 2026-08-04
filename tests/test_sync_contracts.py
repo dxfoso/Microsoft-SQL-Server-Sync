@@ -784,6 +784,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("bool authoritativeReplace = false", merge)
         self.assertIn("authoritativeReplace\n          ?", merge)
         self.assertIn("Authoritative replacement row-count verification failed.", merge)
+        self.assertIn("RAISERROR", merge)
+        self.assertNotIn("THROW 51000", merge)
         self.assertNotIn("AmnDb048", merge)
 
     def test_change_tracking_baselines_accept_enabled_initial_version_zero(self):
