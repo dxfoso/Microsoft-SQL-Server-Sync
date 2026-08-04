@@ -633,7 +633,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
 
-    def test_unique_business_key_failure_requests_typed_atomic_recovery(self):
+    def test_unique_business_key_failure_is_retryable_without_user_input(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         failure_body = agent_page.split(
             "Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {",
@@ -644,13 +644,9 @@ class SyncContractsTests(unittest.TestCase):
             "job.direction == 'download' && isSyncIdentityCollision(error)",
             failure_body,
         )
-        self.assertIn("await _controlPlaneClient.completeJob(", failure_body)
-        self.assertIn("status: 'failed'", failure_body)
-        self.assertIn("rejectedRowCount: 1", failure_body)
-        self.assertIn("conflictKind: 'unique_business_key'", failure_body)
-        self.assertIn("atomic_rollback=true", failure_body)
-        self.assertIn("automatic_delete=false", failure_body)
-        self.assertIn("explicit Change Tracking tombstone", failure_body)
+        self.assertNotIn("await _controlPlaneClient.completeJob(", failure_body)
+        self.assertNotIn("conflictKind: 'unique_business_key'", failure_body)
+        self.assertIn("can be retried without user input", failure_body)
         self.assertIn("return;", failure_body)
         self.assertIn("await _controlPlaneClient.failJob(", failure_body)
 
@@ -767,6 +763,9 @@ class SyncContractsTests(unittest.TestCase):
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
         control_plane = read_text("business/control_plane.tru")
+        apply_body = agent_page.split(
+            "Future<int> _applyDownloadedSnapshotToTarget({", 1
+        )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
 
         self.assertIn("!unionBootstrapSnapshot", agent_page)
         self.assertIn("downloadedSnapshot.canonicalFullMerge", agent_page)
@@ -784,6 +783,13 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("authoritativeReplace", merge)
         self.assertNotIn("DELETE FROM $targetTable", merge)
         self.assertIn("resolveUniqueConflictsLatestWins", merge)
+        self.assertGreaterEqual(
+            apply_body.count("resolveUniqueConflictsLatestWins: true"), 2
+        )
+        self.assertGreaterEqual(
+            apply_body.count("protectLocalChangesAfterVersion: postUploadChangeTrackingVersion"),
+            2,
+        )
         self.assertIn("RAISERROR", merge)
         self.assertNotIn("THROW 51000", merge)
         self.assertNotIn("AmnDb048", merge)

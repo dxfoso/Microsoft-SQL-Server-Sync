@@ -5908,7 +5908,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final applyDelta =
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     final postUploadChangeTrackingVersion =
-        applyDelta ? snapshot.changeTrackingVersions[widget.clientName] : null;
+        job.batchId?.trim().isNotEmpty == true
+            ? snapshot.changeTrackingVersions[widget.clientName]
+            : null;
     if (fullSnapshotApply && snapshot.isDelta) {
       throw StateError(
         'Authoritative reconciliation requires a complete source snapshot.',
@@ -6020,8 +6022,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         primaryKeyColumns: primaryKeyColumns,
         uniqueIndexColumnSets: uniqueIndexColumnSets,
         rows: rows,
+        protectLocalChangesAfterVersion: postUploadChangeTrackingVersion,
         manageTriggers: true,
         insertOnly: false,
+        resolveUniqueConflictsLatestWins: true,
       );
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
@@ -6036,7 +6040,28 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         );
       }
       stats.insertedRows += applyResult.insertedRows;
-      stats.updatedRows += rows.length - applyResult.insertedRows;
+      stats.updatedRows += math.max(
+        0,
+        rows.length -
+            applyResult.protectedUpsertRows -
+            applyResult.insertedRows,
+      );
+      stats.protectedUpsertRows += applyResult.protectedUpsertRows;
+      if (applyResult.protectedRows > 0) {
+        logAgentDiagnostic(
+          'sync.apply.protected_post_upload_changes',
+          level: AgentLogLevel.warning,
+          context: {
+            'jobId': job.id,
+            'batchId': job.batchId,
+            'table': job.table,
+            'protectedRows': applyResult.protectedRows,
+            'protectedUpsertRows': applyResult.protectedUpsertRows,
+            'protectedDeleteRows': applyResult.protectedDeleteRows,
+            'snapshotType': 'complete',
+          },
+        );
+      }
       if (rowCountAfter.value < rowCountBefore.value) {
         throw StateError(
           'Complete snapshot apply reduced ${job.table} from ${rowCountBefore.value} to ${rowCountAfter.value} rows. Snapshot absence is never a delete instruction.',
@@ -6238,18 +6263,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
   Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {
     try {
       if (job.direction == 'download' && isSyncIdentityCollision(error)) {
-        final detail = error.toString();
-        await _controlPlaneClient.completeJob(
+        await _controlPlaneClient.failJob(
           job.id,
-          status: 'failed',
+          'Automatic latest-change reconciliation for ${job.table} rolled back atomically and can be retried without user input. $error',
           progress: 100,
-          message:
-              'A unique business key matched a different primary identity while applying ${job.table}. The atomic transaction was rolled back. Sync cannot delete either identity automatically; remove the unwanted row through Al-Ameen on its client, then retry so its explicit Change Tracking tombstone can synchronize. $detail',
-          rowCount: 0,
-          rejectedRowCount: 1,
-          rejectionSummary:
-              'unique_business_key=1; atomic_rollback=true; automatic_delete=false; resolution=explicit_local_delete',
-          conflictKind: 'unique_business_key',
         );
         return;
       }
