@@ -9036,6 +9036,23 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
   }
   targetNames = unique_string_values(targetNames);
 
+  // A manual Sync All queue is one durable operation that drains in bounded
+  // batches. Cancelling its active jobs must also cancel the unstarted tail,
+  // including the brief gap between batches when no active job exists.
+  let cancelledOwnerUserIds = [];
+  for (const agent of visible_agent_rows_for(current)) {
+    const agentClientName = normalize_user_name(agent.clientName);
+    if (targetNames.length != 0 &&
+        !string_array_contains(targetNames, agentClientName)) {
+      continue;
+    }
+    const ownerUserId = string.from(agent.ownerUserId ?? '').trim();
+    if (ownerUserId.length != 0 &&
+        !string_array_contains(cancelledOwnerUserIds, ownerUserId)) {
+      cancelledOwnerUserIds = cancelledOwnerUserIds.concat([ownerUserId]);
+    }
+  }
+
   let cancelledJobs = [];
   let cancelledJobIds = [];
   let cancelledBatchIds = [];
@@ -9096,10 +9113,14 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
     // batches so failed large syncs cannot consume memory on later startups.
     cleanup_multi_writer_batches_storage(cancelledBatchIds);
   }
+  for (const ownerUserId of cancelledOwnerUserIds) {
+    set_manual_sync_pending_tables_for_owner(ownerUserId, []);
+  }
 
   return {
     ok: true,
     cancelledJobCount: cancelledJobs.length,
+    clearedManualQueueOwnerCount: cancelledOwnerUserIds.length,
     jobs: cancelledJobs
   };
 }

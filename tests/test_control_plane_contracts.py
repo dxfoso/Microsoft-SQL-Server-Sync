@@ -561,6 +561,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);",
             body,
         )
+
+    def test_cancel_active_sync_also_clears_durable_manual_queue(self):
+        source = read_text("business/control_plane.tru")
+        cancel = source.split("function jobs_cancel_active(", 1)[1].split(
+            "function cleanup_multi_writer_batches_storage(", 1
+        )[0]
+
+        self.assertIn("visible_agent_rows_for(current)", cancel)
+        self.assertIn("cancelledOwnerUserIds", cancel)
+        self.assertIn(
+            "set_manual_sync_pending_tables_for_owner(ownerUserId, []);",
+            cancel,
+        )
+        self.assertIn("clearedManualQueueOwnerCount", cancel)
         claim_body = source.split(
             "function claim_periodic_sync_scheduler_for_owner(", 1
         )[1].split("function manual_sync_pending_tables_for_owner(", 1)[0]
