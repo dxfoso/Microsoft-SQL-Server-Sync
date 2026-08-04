@@ -48,6 +48,7 @@ Use the launcher when a local stack restart is actually needed.
 - Treat exception code `0xc0000005` with `Faulting module name: unknown` during startup as a native Windows runner crash, not a Dart/Flutter screen error.
 - Make sure the client is rebuilt from a commit that includes guarded Windows theme API handling in `sync_windows_agent/windows/runner/win32_window.cpp` (`DwmSetWindowAttribute` must be loaded dynamically and called only when available).
 - Do not validate a downloaded portable build after this crash without rebuilding or replacing it from the latest source; older portable builds can still contain the unguarded startup crash.
+- Treat each SQL Server/database endpoint on one Windows device as an isolated portable client instance. Each instance must keep its own client alias, state/outbox, cursors, logs, Startup shortcut, supervisor, and update target; one installation must never stop or overwrite another installation. Create secondary instances only with `create_client_instance.ps1` and keep their aliases owned by the authenticated client account.
 
 ## Explicit Delete Sync Rule
 

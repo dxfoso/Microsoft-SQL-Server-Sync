@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'client_instance.dart';
+
 const int kDefaultHistoryLimit = 5;
 const int kMaxHistoryLimit = 100;
 const int kDefaultAutoSyncIntervalMinutes = 15;
@@ -314,11 +316,7 @@ class SyncAppStateStore {
   final String? lastAutoUpdateAttemptedAt;
 
   static Directory _stateDirectory() {
-    final base =
-        Platform.environment['APPDATA'] ??
-        Platform.environment['LOCALAPPDATA'] ??
-        Directory.current.path;
-    return Directory('$base${Platform.pathSeparator}Microsoft-SQL-Server-Sync');
+    return currentClientInstance.stateDirectory();
   }
 
   static File _stateFile() {

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import 'startup_log.dart';
+import 'client_instance.dart';
 
 class WindowsAgentWindowSettings {
   const WindowsAgentWindowSettings._();
@@ -10,7 +11,6 @@ class WindowsAgentWindowSettings {
   static const MethodChannel _channel = MethodChannel(
     'sync_windows_agent/window',
   );
-  static const String _shortcutName = 'SQL Sync Agent.lnk';
   static const String _supervisorScriptName =
       'sync_windows_agent_supervisor.ps1';
 
@@ -87,7 +87,7 @@ class WindowsAgentWindowSettings {
       '${Platform.pathSeparator}Start Menu'
       '${Platform.pathSeparator}Programs'
       '${Platform.pathSeparator}Startup'
-      '${Platform.pathSeparator}$_shortcutName',
+      '${Platform.pathSeparator}${currentClientInstance.startupShortcutFileName}',
     );
   }
 
@@ -185,6 +185,52 @@ class WindowsAgentWindowSettings {
       '-File',
       supervisorScript.path,
     ], mode: ProcessStartMode.detached);
+  }
+
+  static Future<String> createClientInstance({
+    required String instanceId,
+    required String displayName,
+    required String server,
+    required String database,
+  }) async {
+    if (!Platform.isWindows) {
+      throw StateError('Additional client instances are supported on Windows.');
+    }
+    final installDirectory = File(Platform.resolvedExecutable).parent;
+    final creator = File(
+      '${installDirectory.path}${Platform.pathSeparator}create_client_instance.ps1',
+    );
+    if (!await creator.exists()) {
+      throw StateError(
+        'The client instance creator is missing. Install the latest client update.',
+      );
+    }
+    final result = await Process.run('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-WindowStyle',
+      'Hidden',
+      '-File',
+      creator.path,
+      '-InstanceId',
+      instanceId,
+      '-DisplayName',
+      displayName,
+      '-Server',
+      server,
+      '-Database',
+      database,
+      '-SourceInstallDir',
+      installDirectory.path,
+    ]);
+    if (result.exitCode != 0) {
+      final detail = result.stderr.toString().trim();
+      throw StateError(
+        detail.isEmpty ? 'Could not create the additional client.' : detail,
+      );
+    }
+    return result.stdout.toString().trim();
   }
 
   static String _quotePowerShellString(String value) {

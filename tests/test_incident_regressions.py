@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 30)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 32)}
         observed_ids = set()
 
         for row in rows:
@@ -108,6 +108,23 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("tests/run_local_test_standard.ps1", documentation)
         self.assertIn("workspace/tests/local-standard/", documentation)
         self.assertIn("run_local_test_standard.ps1", readme)
+
+    def test_same_windows_device_supports_isolated_sql_client_instances(self):
+        runner = read_text("tests/run_sync_verification.ps1")
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        documentation = read_text("docs/windows-multi-instance.md")
+
+        self.assertIn("test_windows_multi_instance.ps1", runner)
+        self.assertIn("Never stop their supervisors or agent executables", supervisor)
+        self.assertIn("DESKTOP-6MQFNA3\\SQL8", documentation)
+        self.assertIn("DESKTOP-ALDNHIH\\SQLEXPRESS", documentation)
+
+    def test_hidden_local_runner_reports_child_exit_code_reliably(self):
+        runner = read_text("tests/run_local_test_standard.ps1")
+
+        self.assertIn("$childProcess.WaitForExit()", runner)
+        self.assertIn("$exitCode = $childProcess.ExitCode", runner)
+        self.assertNotIn("Wait-Process -Id $childProcess.Id", runner)
 
 
 if __name__ == "__main__":

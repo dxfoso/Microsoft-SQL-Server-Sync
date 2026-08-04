@@ -46,6 +46,8 @@ The single repeatable local test entry point is:
 .\tests\run_local_test_standard.ps1
 ```
 
+To connect two SQL Server/database endpoints on one Windows device as separate clients, use the packaged instance creator described in [docs/windows-multi-instance.md](docs/windows-multi-instance.md).
+
 It runs the standard gate in a hidden background process and retains logs and
 machine-readable results under `workspace/tests/local-standard/`. The complete
 test matrix and safety rules are documented in `docs/local-testing.md`.

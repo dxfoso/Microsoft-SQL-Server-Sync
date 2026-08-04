@@ -633,7 +633,8 @@ function Get-PortableRequiredFiles {
         'flutter_windows.dll',
         'run_portable.bat',
         'update.ps1',
-        'sync_windows_agent_supervisor.ps1'
+        'sync_windows_agent_supervisor.ps1',
+        'create_client_instance.ps1'
     )
 }
 
@@ -829,6 +830,7 @@ function Assert-PortableZipContents {
             "$PortableName/run_portable.bat",
             "$PortableName/update.ps1",
             "$PortableName/sync_windows_agent_supervisor.ps1",
+            "$PortableName/create_client_instance.ps1",
             "$PortableName/portable-manifest.txt"
         )
         if ($RequireVCRuntime) {
@@ -1167,6 +1169,7 @@ try {
     New-PortableLauncher -Destination $portableDir -ExeName $exeName
     Copy-Item -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'update.ps1') -Destination (Join-Path -Path $portableDir -ChildPath 'update.ps1') -Force
     Copy-Item -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent_supervisor.ps1') -Destination (Join-Path -Path $portableDir -ChildPath 'sync_windows_agent_supervisor.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'create_client_instance.ps1') -Destination (Join-Path -Path $portableDir -ChildPath 'create_client_instance.ps1') -Force
     Write-PortableManifest -PortableDir $portableDir -ZipPath $zipPath -RepoRoot $PSScriptRoot -BackendBaseUrl $BackendBaseUrl -FlutterVersionInfo $flutterVersionInfo
     Assert-PortablePayload -ReleaseDir $releaseDir -PortableDir $portableDir -ExeName $exeName -RequireVCRuntime
 

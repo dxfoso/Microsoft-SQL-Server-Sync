@@ -74,47 +74,14 @@ function Get-AgentProcesses {
 }
 
 function Stop-ObsoleteInstallProcesses {
-    $stoppedSupervisors = 0
-    $stoppedAgents = 0
-
-    $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
-            $_.ProcessId -ne $PID -and
-            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
-            (
-                $_.CommandLine.IndexOf('sync_windows_agent_supervisor.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $_.CommandLine.IndexOf('sync_windows_agent_watchdog.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-            ) -and
-            $_.CommandLine.IndexOf($scriptPath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0
-        })
-    foreach ($process in $powershellProcesses) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-        $stoppedSupervisors += 1
-    }
+    # Other installation directories are intentional independent client
+    # instances. Never stop their supervisors or agent executables.
     $legacyWatchdogPath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent_watchdog.ps1'
     if (Test-Path -LiteralPath $legacyWatchdogPath -PathType Leaf) {
         Remove-Item -LiteralPath $legacyWatchdogPath -Force -ErrorAction SilentlyContinue
         Write-SupervisorLog "Removed obsolete generated watchdog script: $legacyWatchdogPath"
     }
 
-    $targetPrefix = $installDir.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
-    $agentProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {
-            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
-            -not ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith(
-                $targetPrefix,
-                [System.StringComparison]::OrdinalIgnoreCase
-            )
-        })
-    foreach ($process in $agentProcesses) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-        $stoppedAgents += 1
-    }
-
-    if ($stoppedSupervisors -gt 0 -or $stoppedAgents -gt 0) {
-        Write-SupervisorLog "Retired obsolete installs. supervisors=$stoppedSupervisors agents=$stoppedAgents"
-    }
 }
 
 function Ensure-AgentRunning {

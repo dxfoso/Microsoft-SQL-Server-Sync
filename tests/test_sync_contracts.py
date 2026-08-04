@@ -1341,7 +1341,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertEqual(loop_body.count("Invoke-IndependentUpdateCheck"), 1)
         self.assertNotIn("-NoStart", supervisor)
 
-    def test_new_install_retires_obsolete_agent_install_processes(self):
+    def test_independent_agent_installs_do_not_stop_each_other(self):
         supervisor = read_text("sync_windows_agent_supervisor.ps1")
         self.assertIn(
             "function Stop-ObsoleteInstallProcesses {",
@@ -1351,19 +1351,41 @@ class SyncContractsTests(unittest.TestCase):
             "$scriptPath = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)",
             supervisor,
         )
-        self.assertIn("sync_windows_agent_supervisor.ps1", supervisor)
-        self.assertIn(
-            "Name = 'sync_windows_agent.exe'",
-            supervisor,
-        )
+        retirement_body = supervisor.split(
+            "function Stop-ObsoleteInstallProcesses {", 1
+        )[1].split("function Ensure-AgentRunning", 1)[0]
+        self.assertIn("Other installation directories are intentional", retirement_body)
+        self.assertNotIn("Get-CimInstance Win32_Process", retirement_body)
+        self.assertNotIn("Stop-Process", retirement_body)
+        self.assertNotIn("Retired obsolete installs", retirement_body)
         self.assertIn(
             "[System.StringComparison]::OrdinalIgnoreCase",
             supervisor,
         )
-        self.assertIn(
-            "Retired obsolete installs.",
-            supervisor,
-        )
+
+    def test_windows_client_packages_isolated_multi_instance_support(self):
+        app = read_text("sync_windows_agent/lib/app.dart")
+        instance = read_text("sync_windows_agent/lib/client_instance.dart")
+        creator = read_text("create_client_instance.ps1")
+        dashboard = read_text("sync_windows_agent/lib/agent_page.dart")
+        window_settings = read_text("sync_windows_agent/lib/window_settings.dart")
+        builder = read_text("build_portable.ps1")
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+        backend = read_text("business/control_plane.tru")
+
+        self.assertIn("currentClientInstance", app)
+        self.assertIn("'$normalized--$id'", instance)
+        self.assertIn("instances", instance)
+        self.assertIn("client-instance.json", creator)
+        self.assertIn("-WindowStyle Hidden", creator)
+        self.assertIn("Add separate SQL client", dashboard)
+        self.assertIn("createClientInstance(", dashboard)
+        self.assertIn("create_client_instance.ps1", window_settings)
+        self.assertIn("'-WindowStyle',\n      'Hidden'", window_settings)
+        self.assertIn("create_client_instance.ps1", builder)
+        self.assertIn("create_client_instance.ps1", publisher)
+        self.assertIn("authenticated_user_allows_agent_name", backend)
+        self.assertIn("string.concat(base, '--')", backend)
 
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")

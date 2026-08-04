@@ -187,6 +187,13 @@ try {
                 '-File', (Join-Path $repoRoot 'tests\test_windows_updater_paths.ps1')
             )
         }
+        Invoke-VerificationStep 'Windows multi-instance isolation' {
+            Invoke-NativeChecked -Executable 'powershell.exe' -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', (Join-Path $repoRoot 'tests\test_windows_multi_instance.ps1')
+            )
+        }
     }
 
     if ($Profile -in @('Quick', 'Standard', 'All')) {

@@ -76,7 +76,9 @@ $childProcess = Start-Process -FilePath 'powershell.exe' `
 Set-Content -LiteralPath (Join-Path $resultsRoot 'launcher.pid') -Value $childProcess.Id -Encoding ascii
 
 try {
-    Wait-Process -Id $childProcess.Id
+    # WaitForExit refreshes the Process object before ExitCode is read. The
+    # Wait-Process cmdlet can leave ExitCode unset even after a successful run.
+    $childProcess.WaitForExit()
     $exitCode = $childProcess.ExitCode
 }
 finally {
