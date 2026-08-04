@@ -1863,6 +1863,11 @@ def main():
     if args.soak_seconds < 1 or args.fuzz_rounds < 1 or args.scale_rows < 1:
         raise SystemExit("soak-seconds, fuzz-rounds, and scale-rows must be positive.")
     if not args.external:
+        # A prior interrupted run can leave the disposable SQL volume or
+        # container behind. Reset only this harness-owned Compose project so
+        # every invocation starts with fresh client databases and cannot fail
+        # on stale tables from an earlier local run.
+        run(COMPOSE + ["down", "-v"], check=False)
         run(COMPOSE + ["up", "-d"])
     try:
         wait_for_sql()

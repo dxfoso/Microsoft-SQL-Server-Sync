@@ -128,6 +128,18 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("mssql/server:2022-latest", task)
         self.assertIn("workspace/tests/sync-verification/task-status.json", settings)
 
+    def test_local_sql_harness_resets_only_its_disposable_volume_before_start(self):
+        runner = (ROOT / "tests/docker-sync/run_scenarios.py").read_text(
+            encoding="utf-8"
+        )
+
+        cleanup = 'run(COMPOSE + ["down", "-v"], check=False)'
+        startup = 'run(COMPOSE + ["up", "-d"])'
+        self.assertIn(cleanup, runner)
+        self.assertIn(startup, runner)
+        self.assertLess(runner.index(cleanup), runner.index(startup))
+        self.assertIn("disposable SQL volume", runner)
+
 
 if __name__ == "__main__":
     unittest.main()
