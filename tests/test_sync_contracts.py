@@ -303,6 +303,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("serverActivities:", clients_page)
         self.assertIn("clientActivities", clients_page)
         self.assertIn("return 'Ready';", clients_page)
+
         self.assertIn("'Cleaning…'", clients_page)
         self.assertIn("'Cleaned · Automatic sync paused'", clients_page)
         self.assertIn("Live client connectivity was preserved.", clients_page)
@@ -346,6 +347,26 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_ClientSortField.lastSync", clients_page)
         self.assertIn("_latestClientSync(agent)", clients_page)
         self.assertIn("_showBulkActionsInLegacyDashboard => false", dashboard)
+
+    def test_mobile_client_filter_is_compact_and_integrated_in_card_header(self):
+        clients_page = read_text("frontend/lib/clients_page.dart")
+        client_list = clients_page.split(
+            "Widget _buildClientList() {", 1
+        )[1].split("Widget _buildClientFilters()", 1)[0]
+        compact_sheet = clients_page.split(
+            "Future<void> _showCompactClientFilters() async {", 1
+        )[1].split("Widget _buildClientFilters()", 1)[0]
+
+        self.assertIn(
+            "final compactFilters = MediaQuery.sizeOf(context).width < 680;",
+            client_list,
+        )
+        self.assertIn("_buildCompactClientFilterButton()", client_list)
+        self.assertIn("if (!compactFilters)", client_list)
+        self.assertIn("mobile-client-filter-button", client_list)
+        self.assertIn("showModalBottomSheet<void>", compact_sheet)
+        self.assertIn("Filter and sort clients", client_list)
+        self.assertIn("MediaQuery.viewInsetsOf(context).bottom", compact_sheet)
 
     def test_control_plane_exposes_protocol_v2_jobs_and_explicit_bootstrap(self):
         control_plane = read_text("business/control_plane.tru")

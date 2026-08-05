@@ -1106,6 +1106,7 @@ class _ClientsPageState extends State<ClientsPage> {
 
   Widget _buildClientList() {
     final clients = _filteredClients();
+    final compactFilters = MediaQuery.sizeOf(context).width < 680;
     return _panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1122,6 +1123,10 @@ class _ClientsPageState extends State<ClientsPage> {
                 '${clients.length} shown',
                 style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
               ),
+              if (compactFilters) ...[
+                const SizedBox(width: 4),
+                _buildCompactClientFilterButton(),
+              ],
             ],
           ),
           const SizedBox(height: 10),
@@ -1129,8 +1134,10 @@ class _ClientsPageState extends State<ClientsPage> {
             _buildBulkActions(),
             const SizedBox(height: 10),
           ],
-          _buildClientFilters(),
-          const SizedBox(height: 10),
+          if (!compactFilters) ...[
+            _buildClientFilters(),
+            const SizedBox(height: 10),
+          ],
           if (clients.isEmpty)
             _buildEmpty(
               _filter.isEmpty
@@ -1167,6 +1174,128 @@ class _ClientsPageState extends State<ClientsPage> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildCompactClientFilterButton() {
+    final active =
+        _filter.isNotEmpty ||
+        _sortField != _ClientSortField.name ||
+        !_sortAscending;
+    return IconButton(
+      key: const ValueKey('mobile-client-filter-button'),
+      tooltip: 'Filter and sort clients',
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+      padding: EdgeInsets.zero,
+      style: IconButton.styleFrom(
+        foregroundColor:
+            active ? const Color(0xFF0F766E) : const Color(0xFF475467),
+        backgroundColor:
+            active ? const Color(0xFFCCFBEF) : const Color(0xFFF2F4F7),
+      ),
+      onPressed: () => unawaited(_showCompactClientFilters()),
+      icon: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Icon(Icons.tune_rounded, size: 18),
+          if (active)
+            const Positioned(
+              right: -3,
+              top: -3,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Color(0xFF12B76A),
+                  shape: BoxShape.circle,
+                ),
+                child: SizedBox(width: 7, height: 7),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showCompactClientFilters() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder:
+          (sheetContext) => StatefulBuilder(
+            builder:
+                (context, setSheetState) => SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      0,
+                      16,
+                      16 + MediaQuery.viewInsetsOf(context).bottom,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Filter clients',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            if (_filter.isNotEmpty)
+                              TextButton(
+                                onPressed: () {
+                                  _filterController.clear();
+                                  setState(() => _filter = '');
+                                  setSheetState(() {});
+                                },
+                                child: const Text('Clear'),
+                              ),
+                            IconButton(
+                              tooltip: 'Close filters',
+                              onPressed: () => Navigator.of(sheetContext).pop(),
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _filterController,
+                          autofocus: true,
+                          onChanged: (value) {
+                            setState(() => _filter = value.trim());
+                            setSheetState(() {});
+                          },
+                          decoration: const InputDecoration(
+                            hintText: 'Name, machine, database, or status',
+                            prefixIcon: Icon(Icons.search_rounded),
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSortMenu(
+                                afterChanged: () => setSheetState(() {}),
+                              ),
+                            ),
+                            _buildSortDirectionButton(
+                              afterChanged: () => setSheetState(() {}),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+          ),
     );
   }
 
@@ -1352,7 +1481,7 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
-  Widget _buildSortMenu() {
+  Widget _buildSortMenu({VoidCallback? afterChanged}) {
     return DropdownButtonFormField<_ClientSortField>(
       initialValue: _sortField,
       isExpanded: true,
@@ -1382,15 +1511,21 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       ],
       onChanged: (value) {
-        if (value != null) setState(() => _sortField = value);
+        if (value != null) {
+          setState(() => _sortField = value);
+          afterChanged?.call();
+        }
       },
     );
   }
 
-  Widget _buildSortDirectionButton() {
+  Widget _buildSortDirectionButton({VoidCallback? afterChanged}) {
     return IconButton(
       tooltip: _sortAscending ? 'Ascending' : 'Descending',
-      onPressed: () => setState(() => _sortAscending = !_sortAscending),
+      onPressed: () {
+        setState(() => _sortAscending = !_sortAscending);
+        afterChanged?.call();
+      },
       icon: Icon(
         _sortAscending
             ? Icons.arrow_upward_rounded
