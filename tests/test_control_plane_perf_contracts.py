@@ -11,6 +11,24 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlanePerfContractsTests(unittest.TestCase):
+    def test_live_state_preloads_active_jobs_instead_of_querying_per_table(self):
+        control_plane = read_text("business/control_plane.tru")
+        live_state_body = control_plane.split(
+            "function live_state(token: string? = null): map<json> {", 1
+        )[1].split("function agents_heartbeat", 1)[0]
+        bounded_agents_body = control_plane.split(
+            "function bounded_public_agent_payloads(", 1
+        )[1].split("function bounded_public_job_payloads", 1)[0]
+        normalize_tables_body = control_plane.split(
+            "function normalize_agent_tables_payload(", 1
+        )[1].split("function enabled_sync_tables_for_agent", 1)[0]
+
+        self.assertIn("const activeJobRows = live_state_active_job_rows_for(current);", live_state_body)
+        self.assertIn("activeJobRows", live_state_body)
+        self.assertIn("public_agent_payload(row, activeJobs)", bounded_agents_body)
+        self.assertIn("normalize_agent_table_payload_state(agent, tableState, activeJobs)", normalize_tables_body)
+        self.assertNotIn("active_job_for_client_table(", normalize_tables_body)
+
     def test_server_request_budget_covers_atomic_bulk_preflight(self):
         config = json.loads(read_text("business/tru.json"))
         self.assertGreaterEqual(config["settings"]["requestTimeoutMs"], 30_000)

@@ -1686,7 +1686,7 @@ function client_has_offline_sync_debt(agent: map<json>): bool {
   return rows != null && rows.length > 0;
 }
 
-function client_runtime_status_payload(agent: map<json>): map<json> {
+function client_runtime_status_payload(agent: map<json>, activeJobs: array<json>? = null): map<json> {
   const heartbeatAgeMs = safe_date_diff_ms_since(string.from(agent.lastHeartbeat ?? ''));
   let heartbeatAgeSeconds = null;
   if (heartbeatAgeMs != null && heartbeatAgeMs >= 0) {
@@ -1717,18 +1717,24 @@ function client_runtime_status_payload(agent: map<json>): map<json> {
     };
   }
 
-  const activeJobs = db.selectMany(SyncJob, {
-    where: {
-      clientName: string.from(agent.clientName),
-      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
-    },
-    orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['status'],
-    limit: 100
-  });
+  let clientActiveJobs = activeJobs;
+  if (clientActiveJobs == null) {
+    clientActiveJobs = db.selectMany(SyncJob, {
+      where: {
+        clientName: string.from(agent.clientName),
+        status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+      },
+      orderBy: { field: 'updatedAt', dir: 'desc' },
+      fields: ['clientName', 'status'],
+      limit: 100
+    });
+  }
   const priorities = ['applying', 'downloading', 'uploading', 'snapshotting', 'running', 'waiting', 'queued'];
   for (const phase of priorities) {
-    for (const job of activeJobs ?? []) {
+    for (const job of clientActiveJobs ?? []) {
+      if (string.from(job.clientName).trim() != string.from(agent.clientName).trim()) {
+        continue;
+      }
       if (string.from(job.status).trim().toLowerCase() != phase) {
         continue;
       }
@@ -1772,7 +1778,7 @@ function client_runtime_status_payload(agent: map<json>): map<json> {
   };
 }
 
-function public_agent_payload(agent: map<json>): map<json> {
+function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
     const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
@@ -1783,8 +1789,8 @@ function public_agent_payload(agent: map<json>): map<json> {
       policies
     );
   }
-  nextTables = normalize_agent_tables_payload(agent, nextTables);
-  const runtimeStatus = client_runtime_status_payload(agent);
+  nextTables = normalize_agent_tables_payload(agent, nextTables, activeJobs);
+  const runtimeStatus = client_runtime_status_payload(agent, activeJobs);
   return {
     clientName: agent.clientName,
     machineName: agent.machineName,
@@ -2291,6 +2297,34 @@ function live_state_client_activity_rows_for(current: map<json>): array<json> {
   return rows;
 }
 
+function live_state_active_job_rows_for(current: map<json>): array<json> {
+  let where = {
+    status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+  };
+  if (is_client_user(current)) {
+    where = {
+      clientUserId: current.id,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    };
+  }
+  if (is_owner_user(current)) {
+    where = {
+      ownerUserId: current.id,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    };
+  }
+  const rows = db.selectMany(SyncJob, {
+    where,
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'table', 'status', 'progress', 'rowCount', 'updatedAt', 'message'],
+    limit: 1000
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
 function public_client_activity_payloads(rows: array<json>): array<json> {
   return rows.map((row) => {
     return {
@@ -2306,13 +2340,13 @@ function public_client_activity_payloads(rows: array<json>): array<json> {
   });
 }
 
-function bounded_public_agent_payloads(rows: array<json>, limit: int): map<json> {
+function bounded_public_agent_payloads(rows: array<json>, limit: int, activeJobs: array<json>? = null): map<json> {
   let items = [];
   let seen = 0;
   for (const row of rows) {
     seen += 1;
     if (items.length < limit) {
-      items = items.concat([public_agent_payload(row)]);
+      items = items.concat([public_agent_payload(row, activeJobs)]);
     }
   }
   return {
@@ -2911,7 +2945,7 @@ function active_job_for_client_table(clientName: string, table: string): map<jso
   return null;
 }
 
-function normalize_agent_table_payload_state(agent: map<json>, tableState: map<json>): map<json> {
+function normalize_agent_table_payload_state(agent: map<json>, tableState: map<json>, activeJobs: array<json>? = null): map<json> {
   if (tableState.table == null) {
     return tableState;
   }
@@ -2919,7 +2953,18 @@ function normalize_agent_table_payload_state(agent: map<json>, tableState: map<j
   if (table.length == 0) {
     return tableState;
   }
-  const activeJob = active_job_for_client_table(string.from(agent.clientName), table);
+  let activeJob = null;
+  if (activeJobs == null) {
+    activeJob = active_job_for_client_table(string.from(agent.clientName), table);
+  } else {
+    for (const job of activeJobs) {
+      if (string.from(job.clientName).trim() == string.from(agent.clientName).trim() &&
+          string.from(job.table).trim() == table && is_active_job_status(string.from(job.status).trim())) {
+        activeJob = job;
+        break;
+      }
+    }
+  }
   if (activeJob != null) {
     return {
       table: tableState.table,
@@ -2961,10 +3006,10 @@ function normalize_agent_table_payload_state(agent: map<json>, tableState: map<j
   return tableState;
 }
 
-function normalize_agent_tables_payload(agent: map<json>, tables: array<json>): array<json> {
+function normalize_agent_tables_payload(agent: map<json>, tables: array<json>, activeJobs: array<json>? = null): array<json> {
   let normalized = [];
   for (const tableState of tables) {
-    normalized = normalized.concat([normalize_agent_table_payload_state(agent, tableState)]);
+    normalized = normalized.concat([normalize_agent_table_payload_state(agent, tableState, activeJobs)]);
   }
   return normalized;
 }
@@ -5289,9 +5334,11 @@ function live_state(token: string? = null): map<json> {
   const agentLimit = live_state_agent_limit();
   const jobLimit = live_state_job_limit();
   const agentRows = live_state_agent_rows_for(current, agentLimit);
+  const activeJobRows = live_state_active_job_rows_for(current);
   const agentPage = bounded_public_agent_payloads(
     agentRows,
-    agentLimit
+    agentLimit,
+    activeJobRows
   );
   const jobPage = bounded_public_job_payloads(
     live_state_job_rows_for(current, jobLimit),
