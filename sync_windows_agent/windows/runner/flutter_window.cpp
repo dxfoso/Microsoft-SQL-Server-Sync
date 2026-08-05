@@ -1,6 +1,8 @@
 #include "flutter_window.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -10,6 +12,32 @@
 #include "startup_log.h"
 
 namespace {
+
+std::filesystem::path GetUserStoppedMarkerPath() {
+  wchar_t executable_path[MAX_PATH];
+  const DWORD length = GetModuleFileNameW(nullptr, executable_path, MAX_PATH);
+  if (length == 0 || length >= MAX_PATH) {
+    return {};
+  }
+  return std::filesystem::path(executable_path).parent_path() /
+         L"sync_windows_agent.user-stopped";
+}
+
+void MarkUserRequestedStop() {
+  const auto marker_path = GetUserStoppedMarkerPath();
+  if (marker_path.empty()) {
+    LogStartupEvent(L"Unable to resolve the user-stopped marker path.");
+    return;
+  }
+  std::ofstream marker(marker_path, std::ios::out | std::ios::trunc);
+  if (!marker.is_open()) {
+    LogStartupEvent(L"Unable to create the user-stopped marker.");
+    return;
+  }
+  marker << "User requested close.";
+  marker.close();
+  LogStartupEvent(L"User-stopped marker created; supervisor restart is paused.");
+}
 
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayIconId = 1;
@@ -440,7 +468,7 @@ bool FlutterWindow::HandleCloseRequest() {
   const int choice = MessageBoxW(
       window_handle,
       L"Do you want to minimize SQL Sync Agent to the tray instead of closing it?\n\n"
-      L"Yes: minimize to tray\nNo: close the app\nCancel: keep the window open",
+      L"Yes: minimize to tray\nNo: close and keep the app stopped\nCancel: keep the window open",
       L"Close SQL Sync Agent",
       MB_ICONQUESTION | MB_YESNOCANCEL | MB_DEFBUTTON1);
 
@@ -451,6 +479,7 @@ bool FlutterWindow::HandleCloseRequest() {
   if (choice == IDCANCEL) {
     return true;
   }
+  MarkUserRequestedStop();
   return false;
 }
 

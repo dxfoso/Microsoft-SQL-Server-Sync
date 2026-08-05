@@ -172,6 +172,21 @@ void ReleaseSingleInstanceMutex() {
   }
 }
 
+void ResumeAfterManualLaunch() {
+  const auto marker_path =
+      GetExecutableDirectory() / L"sync_windows_agent.user-stopped";
+  std::error_code error;
+  const bool removed = std::filesystem::remove(marker_path, error);
+  if (error) {
+    const auto message = error.message();
+    LogStartupEvent(L"Unable to clear the user-stopped marker: " +
+                    std::wstring(message.begin(), message.end()));
+  } else if (removed) {
+    LogStartupEvent(
+        L"Manual launch cleared the user-stopped marker; supervision resumed.");
+  }
+}
+
 bool ConsumeStartMinimizedFlag(std::vector<std::string>* arguments) {
   if (arguments == nullptr) {
     return false;
@@ -198,6 +213,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   LogStartupEvent(L"Native wWinMain starting");
   LogWindowsVersion();
+  std::vector<std::string> command_line_arguments =
+      GetCommandLineArguments();
+  const bool start_minimized =
+      ConsumeStartMinimizedFlag(&command_line_arguments);
+  if (!start_minimized) {
+    ResumeAfterManualLaunch();
+  }
   StartIndependentSupervisor();
   ConfigureEngineSwitches();
   if (!AcquireSingleInstanceMutex()) {
@@ -217,11 +239,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   const auto data_path = GetExecutableDirectory() / L"data";
   LogStartupEvent(L"Flutter data path: " + data_path.wstring());
   flutter::DartProject project(data_path.wstring());
-
-  std::vector<std::string> command_line_arguments =
-      GetCommandLineArguments();
-  const bool start_minimized =
-      ConsumeStartMinimizedFlag(&command_line_arguments);
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 

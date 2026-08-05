@@ -17,6 +17,7 @@ $executablePath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent.exe
 $updateScriptPath = Join-Path -Path $installDir -ChildPath 'update.ps1'
 $supervisorLogPath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent_supervisor.log'
 $requestLogPath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent_update_requests.log'
+$userStoppedMarkerPath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent.user-stopped'
 
 if ($env:SYNC_WINDOWS_AGENT_SUPERVISOR_SKIP_UPDATE -eq '1') {
     $SkipUpdate = $true
@@ -118,6 +119,9 @@ function Stop-ObsoleteInstallProcesses {
 }
 
 function Ensure-AgentRunning {
+    if (Test-Path -LiteralPath $userStoppedMarkerPath -PathType Leaf) {
+        return
+    }
     if ($SkipAgentStart -or @(Get-AgentProcesses).Count -gt 0) {
         return
     }

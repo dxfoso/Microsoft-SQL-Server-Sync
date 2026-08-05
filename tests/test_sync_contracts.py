@@ -1243,6 +1243,27 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("VersionInfo.ProductVersion", publish_script)
         self.assertIn("does not match pubspec/manifest version", publish_script)
 
+    def test_user_close_pauses_supervisor_until_manual_client_launch(self):
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        runner_main = read_text("sync_windows_agent/windows/runner/main.cpp")
+        flutter_window = read_text(
+            "sync_windows_agent/windows/runner/flutter_window.cpp"
+        )
+        marker_name = "sync_windows_agent.user-stopped"
+
+        self.assertIn(marker_name, supervisor)
+        ensure_body = supervisor.split("function Ensure-AgentRunning {", 1)[1].split(
+            "function Invoke-IndependentUpdateCheck", 1
+        )[0]
+        self.assertIn("Test-Path -LiteralPath $userStoppedMarkerPath", ensure_body)
+        self.assertIn(marker_name, flutter_window)
+        self.assertIn("MarkUserRequestedStop();", flutter_window)
+        self.assertIn("close and keep the app stopped", flutter_window)
+        self.assertIn(marker_name, runner_main)
+        self.assertIn("if (!start_minimized)", runner_main)
+        self.assertIn("ResumeAfterManualLaunch();", runner_main)
+        self.assertIn("std::filesystem::remove(marker_path", runner_main)
+
     def test_windows_agent_can_apply_server_requested_client_updates(self):
         control_plane = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
