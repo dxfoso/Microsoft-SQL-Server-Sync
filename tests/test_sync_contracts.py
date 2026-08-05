@@ -1225,6 +1225,24 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("_dashboardSessionActive", shell_apply_body)
         self.assertIn("Applying shell client update automatically:", app_source)
 
+    def test_windows_updater_owns_shutdown_and_published_version_matches_binary(self):
+        app_source = read_text("sync_windows_agent/lib/app.dart")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        publish_script = read_text("scripts/publish_windows_client_update.ps1")
+        shell_apply_body = app_source.split(
+            "Future<void> _maybeAutoApplyShellClientUpdate(", 1
+        )[1].split("void _migrateStoredClientState(", 1)[0]
+        client_apply_body = agent_page.split(
+            "Future<void> _maybeAutoApplyClientUpdate(", 1
+        )[1].split("Future<void> _checkClientUpdate()", 1)[0]
+
+        self.assertNotIn("exit(0)", shell_apply_body)
+        self.assertNotIn("exit(0)", client_apply_body)
+        self.assertIn("the updater owns shutdown and restart", shell_apply_body)
+        self.assertIn("the updater owns shutdown and restart", client_apply_body)
+        self.assertIn("VersionInfo.ProductVersion", publish_script)
+        self.assertIn("does not match pubspec/manifest version", publish_script)
+
     def test_windows_agent_can_apply_server_requested_client_updates(self):
         control_plane = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

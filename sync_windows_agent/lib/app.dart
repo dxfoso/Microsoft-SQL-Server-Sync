@@ -658,15 +658,14 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       );
       // Launch PowerShell directly so a successful cmd.exe start cannot hide
       // a failed updater process from the client.
-      await Process.start(
+      final updater = await Process.start(
         'powershell.exe',
         psArgs,
         mode: ProcessStartMode.detached,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 750));
-      if (mounted) {
-        exit(0);
-      }
+      logStartupEvent(
+        'Shell client updater launched with pid=${updater.pid}; the updater owns shutdown and restart.',
+      );
     } catch (error) {
       logStartupEvent('Shell automatic client update failed: $error');
       if (!mounted) {

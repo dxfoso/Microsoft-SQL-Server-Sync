@@ -2798,10 +2798,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       // Launch PowerShell directly. Going through `cmd start` can return
       // successfully while the hidden updater never starts.
-      await Process.start(
+      final updater = await Process.start(
         'powershell.exe',
         psArgs,
         mode: ProcessStartMode.detached,
+      );
+      logStartupEvent(
+        'Client updater launched with pid=${updater.pid}; the updater owns shutdown and restart.',
       );
       if (!mounted) {
         return;
@@ -2813,10 +2816,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           ),
         ),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 750));
-      if (mounted) {
-        exit(0);
-      }
     } catch (error) {
       logStartupEvent('Automatic client update failed: $error');
       if (!mounted) {

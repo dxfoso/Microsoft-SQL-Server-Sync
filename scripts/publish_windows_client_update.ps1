@@ -69,7 +69,10 @@ function Invoke-CheckedNative {
 }
 
 function Assert-ClientUpdateZipContents {
-    param([Parameter(Mandatory = $true)][string] $ZipPath)
+    param(
+        [Parameter(Mandatory = $true)][string] $ZipPath,
+        [Parameter(Mandatory = $true)][string] $ExpectedVersion
+    )
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
@@ -89,6 +92,35 @@ function Assert-ClientUpdateZipContents {
             if (-not $entryNames.Contains($requiredEntry)) {
                 throw "Portable client update ZIP is missing required entry: $requiredEntry"
             }
+        }
+
+        $expectedExecutableEntry = "$PortableName/sync_windows_agent.exe"
+        $executableEntry = $archive.Entries |
+            Where-Object { $_.FullName.Replace('\', '/') -eq $expectedExecutableEntry } |
+            Select-Object -First 1
+        if ($null -eq $executableEntry) {
+            throw 'Portable client update ZIP is missing its versioned executable.'
+        }
+        $versionCheckRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("sql-sync-client-version-{0}" -f ([guid]::NewGuid().ToString('N')))
+        New-Item -Path $versionCheckRoot -ItemType Directory -Force | Out-Null
+        $versionCheckExe = Join-Path -Path $versionCheckRoot -ChildPath 'sync_windows_agent.exe'
+        try {
+            $entryStream = $executableEntry.Open()
+            $targetStream = [System.IO.File]::Open($versionCheckExe, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            try {
+                $entryStream.CopyTo($targetStream)
+            }
+            finally {
+                $targetStream.Dispose()
+                $entryStream.Dispose()
+            }
+            $packagedVersion = [string] (Get-Item -LiteralPath $versionCheckExe).VersionInfo.ProductVersion
+            if ($packagedVersion -ne $ExpectedVersion) {
+                throw "Portable executable version $packagedVersion does not match pubspec/manifest version $ExpectedVersion. Rebuild the client before publishing."
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $versionCheckRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
     finally {
@@ -337,14 +369,14 @@ if (-not $SkipBuild) {
     }
 }
 
+$version = Get-PubspecVersion
 if (-not (Test-Path -LiteralPath $PortableZip -PathType Leaf)) {
     throw "Missing portable ZIP: $PortableZip"
 }
-Assert-ClientUpdateZipContents -ZipPath $PortableZip
+Assert-ClientUpdateZipContents -ZipPath $PortableZip -ExpectedVersion $version
 
 New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
 
-$version = Get-PubspecVersion
 $commit = Get-GitCommit
 $releaseDate = [DateTime]::UtcNow.ToString('o')
 $safeVersion = $version -replace '[^A-Za-z0-9._-]', '-'
