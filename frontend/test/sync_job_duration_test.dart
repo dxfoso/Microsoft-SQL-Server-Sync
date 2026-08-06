@@ -57,4 +57,15 @@ void main() {
       const Duration(seconds: 12),
     );
   });
+
+  test('client exposes its durable latest completed sync duration', () {
+    final agent = AdminAgent.fromJson({
+      'clientName': 'client-a',
+      'lastSyncCompletedAt': '2026-08-06T22:20:16Z',
+      'lastSyncDurationMs': 95250,
+    });
+
+    expect(agent.lastSyncDuration, const Duration(milliseconds: 95250));
+    expect(formatSyncDuration(agent.lastSyncDuration), '1m 35s');
+  });
 }

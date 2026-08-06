@@ -116,7 +116,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
     def test_public_agent_payload_does_not_refetch_agent_rows(self):
         source = read_text("business/control_plane.tru")
         match = re.search(
-            r"function public_agent_payload\(agent: map<json>, activeJobs: array<json>\? = null\): map<json> \{(?P<body>.*?)\n\}",
+            r"function public_agent_payload\(agent: map<json>, activeJobs: array<json>\? = null, completedJobs: array<json>\? = null\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )

@@ -338,6 +338,8 @@ class AdminAgent {
     required this.sqlConnected,
     required this.clientVersion,
     required this.lastHeartbeat,
+    this.lastSyncCompletedAt = '',
+    this.lastSyncDurationMs,
     required this.selectedTable,
     required this.diagnostics,
     required this.clientUpdate,
@@ -364,6 +366,8 @@ class AdminAgent {
   final bool sqlConnected;
   final String clientVersion;
   final String lastHeartbeat;
+  final String lastSyncCompletedAt;
+  final int? lastSyncDurationMs;
   final String runtimeStatusCode;
   final String runtimeStatusLabel;
   final bool runtimeReady;
@@ -396,6 +400,8 @@ class AdminAgent {
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       clientVersion: json['clientVersion'] as String? ?? '',
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
+      lastSyncCompletedAt: json['lastSyncCompletedAt'] as String? ?? '',
+      lastSyncDurationMs: (json['lastSyncDurationMs'] as num?)?.round(),
       runtimeStatusCode: status['code'] as String? ?? '',
       runtimeStatusLabel: status['label'] as String? ?? '',
       runtimeReady: status['ready'] as bool? ?? false,
@@ -422,6 +428,11 @@ class AdminAgent {
           .toList(growable: false),
     );
   }
+
+  Duration? get lastSyncDuration =>
+      lastSyncDurationMs == null
+          ? null
+          : Duration(milliseconds: lastSyncDurationMs!);
 }
 
 class AdminAgentClientUpdate {
