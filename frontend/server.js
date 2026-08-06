@@ -192,7 +192,12 @@ async function tryServeClientUpdate(pathname, res) {
         "Content-Type": contentType,
         "Content-Length": buffer.length,
       };
-      if (requestedPath === "update.ps1") {
+      if (
+        requestedPath === "update.ps1" ||
+        requestedPath === "latest-files.json" ||
+        requestedPath === "sync_windows_agent_latest.zip" ||
+        requestedPath.startsWith("packages/latest-package/")
+      ) {
         headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
         headers.Pragma = "no-cache";
       }

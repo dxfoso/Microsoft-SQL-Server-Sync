@@ -457,6 +457,11 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
       '/client/sync_windows_agent_latest.zip';
   int _selectedIndex = 0;
 
+  void _downloadWindowsClient() {
+    final releaseNonce = DateTime.now().millisecondsSinceEpoch;
+    openBrowserTab('$_windowsClientDownloadPath?release=$releaseNonce');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -629,13 +634,13 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
     if (compact) {
       return IconButton(
         tooltip: 'Download Windows Client',
-        onPressed: () => openBrowserTab(_windowsClientDownloadPath),
+        onPressed: _downloadWindowsClient,
         icon: const Icon(Icons.download_for_offline_outlined),
         color: color,
       );
     }
     return OutlinedButton.icon(
-      onPressed: () => openBrowserTab(_windowsClientDownloadPath),
+      onPressed: _downloadWindowsClient,
       icon: const Icon(Icons.download_for_offline_outlined, size: 18),
       label: const Text('Download Windows Client'),
       style: OutlinedButton.styleFrom(

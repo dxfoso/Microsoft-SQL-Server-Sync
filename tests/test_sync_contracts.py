@@ -417,17 +417,26 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("direction: 'sync'", control_plane)
         self.assertNotIn("Queued SymmetricDS sync", control_plane)
 
-    def test_web_header_exposes_the_stable_windows_client_download(self):
+    def test_web_header_cache_busts_the_mutable_windows_client_download(self):
         app = read_text("frontend/lib/app.dart")
+        server = read_text("frontend/server.js")
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
 
         self.assertIn(
             "'/client/sync_windows_agent_latest.zip'",
             app,
         )
         self.assertIn("'Download Windows Client'", app)
-        self.assertIn("openBrowserTab(_windowsClientDownloadPath)", app)
+        self.assertIn("final releaseNonce = DateTime.now().millisecondsSinceEpoch", app)
+        self.assertIn("?release=$releaseNonce", app)
+        self.assertIn("onPressed: _downloadWindowsClient", app)
         self.assertIn("_downloadWindowsClientButton(compact: false)", app)
         self.assertIn("_downloadWindowsClientButton(compact: true)", app)
+        self.assertIn('requestedPath === "sync_windows_agent_latest.zip"', server)
+        self.assertIn('requestedPath === "latest-files.json"', server)
+        self.assertIn('requestedPath.startsWith("packages/latest-package/")', server)
+        self.assertIn('zipUrl = "$publicRoot/$zipName"', publisher)
+        self.assertNotIn('zipUrl = "$publicRoot/sync_windows_agent_latest.zip"', publisher)
 
     def test_windows_snapshot_apply_uses_only_permanent_primary_identity(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
