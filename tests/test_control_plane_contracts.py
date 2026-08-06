@@ -11,7 +11,7 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
-    def test_first_time_table_auto_enrollment_preserves_explicit_opt_outs(self):
+    def test_eligible_table_auto_enrollment_reactivates_disabled_policies(self):
         source = read_text("business/control_plane.tru")
         body = source.split(
             "function table_sync_policy_auto_enroll(", 1
@@ -28,9 +28,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn(".take(", body)
         self.assertIn("find_table_sync_policy(ownerUserId, normalizedTable)", body)
         self.assertIn("if (policy == null)", body)
+        self.assertIn("else if (policy.enabled != true)", body)
         self.assertIn("upsert_table_sync_policy(", body)
         self.assertNotIn("upsert_table_sync_policy(\n        ownerUserId,\n        normalizedTable,\n        false", body)
         self.assertIn("createdTables", body)
+        self.assertIn("reactivatedTables", body)
+        self.assertIn("reactivatedTableCount: reactivatedTables.length", body)
 
     def test_public_jobs_expose_authoritative_changed_row_count(self):
         source = read_text("business/control_plane.tru")

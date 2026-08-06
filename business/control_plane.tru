@@ -2065,6 +2065,7 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
   }
   let policies = [];
   let createdTables = [];
+  let reactivatedTables = [];
   for (const normalizedTable of normalizedTables) {
     let policy = find_table_sync_policy(ownerUserId, normalizedTable);
     if (policy == null) {
@@ -2075,6 +2076,14 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
         current.username
       );
       createdTables = createdTables.concat([normalizedTable]);
+    } else if (policy.enabled != true) {
+      policy = upsert_table_sync_policy(
+        ownerUserId,
+        normalizedTable,
+        true,
+        current.username
+      );
+      reactivatedTables = reactivatedTables.concat([normalizedTable]);
     }
     policies = policies.concat([table_sync_policy_payload(policy)]);
   }
@@ -2082,8 +2091,10 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
     ok: true,
     policies,
     createdTables,
+    reactivatedTables,
     evaluatedTableCount: normalizedTables.length,
-    createdTableCount: createdTables.length
+    createdTableCount: createdTables.length,
+    reactivatedTableCount: reactivatedTables.length
   };
 }
 
