@@ -3,6 +3,38 @@ import 'package:sync_windows_agent/sql_sync_merge.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
 
 void main() {
+  test(
+    'large snapshot staging uses one script with bounded SQL statements',
+    () {
+      const columns = [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ];
+      final rows = List<Map<String, dynamic>>.generate(
+        2501,
+        (index) => {'Id': index + 1},
+      );
+
+      final sql = buildTargetSnapshotStageLoadSql(
+        stageTableName: 'sqlsync_items_stage',
+        columns: columns,
+        rows: rows,
+      );
+
+      expect(targetSnapshotInsertRowsPerStatement, 1000);
+      expect(RegExp(r'CREATE TABLE').allMatches(sql), hasLength(1));
+      expect(RegExp(r'INSERT INTO').allMatches(sql), hasLength(3));
+      expect(RegExp(r"CAST\(N'2501' AS int\)").allMatches(sql), hasLength(1));
+    },
+  );
+
   test('complete snapshot verification defers only protected hot rows', () {
     expect(
       unexpectedCompleteSnapshotMismatchCount(

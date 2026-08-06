@@ -129,7 +129,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
   static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);
   static const int _heartbeatTablePayloadLimit = 150;
-  static const int _targetSnapshotStageInsertBatchSize = 100;
 
   late final TextEditingController _serverController;
   final TextEditingController _userController = TextEditingController();
@@ -7176,37 +7175,32 @@ END
       );
     }
     try {
+      final stageLoadStopwatch = Stopwatch()..start();
       await _runSqlCmdOrThrow(
         profile: profile,
         database: database,
-        query: buildTargetSnapshotStageSetupSql(
+        query: buildTargetSnapshotStageLoadSql(
           stageTableName: stageTableName,
           columns: columns,
+          rows: rows,
         ),
-        context: 'target snapshot stage setup',
+        context: 'target snapshot stage load',
         timeout: _snapshotSqlCmdTimeout,
       );
-      for (
-        var offset = 0;
-        offset < rows.length;
-        offset += _targetSnapshotStageInsertBatchSize
-      ) {
-        final batch = rows
-            .skip(offset)
-            .take(_targetSnapshotStageInsertBatchSize)
-            .toList(growable: false);
-        await _runSqlCmdOrThrow(
-          profile: profile,
-          database: database,
-          query: buildTargetSnapshotStageInsertSql(
-            stageTableName: stageTableName,
-            columns: columns,
-            rows: batch,
-          ),
-          context: 'target snapshot stage load',
-          timeout: _snapshotSqlCmdTimeout,
-        );
-      }
+      stageLoadStopwatch.stop();
+      logAgentDiagnostic(
+        'sync.apply.stage_loaded',
+        context: {
+          'database': database,
+          'table': '$schema.$table',
+          'rowCount': rows.length,
+          'insertStatementCount':
+              (rows.length + targetSnapshotInsertRowsPerStatement - 1) ~/
+              targetSnapshotInsertRowsPerStatement,
+          'sqlcmdLaunchCount': 1,
+          'elapsedMs': stageLoadStopwatch.elapsedMilliseconds,
+        },
+      );
       final mergeResult = await _runSqlCmdOrThrow(
         profile: profile,
         database: database,

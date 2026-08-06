@@ -455,7 +455,13 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged(", agent_page)
         self.assertIn("targetHash == null || targetHash != incomingHash", agent_page)
         self.assertIn("Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged", agent_page)
-        self.assertIn("_targetSnapshotStageInsertBatchSize = 100", agent_page)
+        self.assertIn("buildTargetSnapshotStageLoadSql(", agent_page)
+        self.assertIn("targetSnapshotInsertRowsPerStatement = 1000", merge_helper)
+        self.assertIn("'sqlcmdLaunchCount': 1", agent_page)
+        stage_apply = agent_page.split(
+            "Future<_TargetApplyResult> _applySourceRowsToTarget(", 1
+        )[1].split("String _nextTargetSnapshotStageTableName", 1)[0]
+        self.assertNotIn("offset += _targetSnapshotStageInsertBatchSize", stage_apply)
         self.assertIn("_buildSourceTempIndexStatements(", merge_helper)
 
     def test_table_fingerprints_only_hash_writable_sync_columns(self):

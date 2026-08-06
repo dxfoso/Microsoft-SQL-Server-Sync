@@ -11,6 +11,11 @@ const sqlSyncChangeTrackingContextHex = '0x53514C53594E43';
 /// delete instruction.
 const sqlSyncDeletePolicy = 'explicit-tombstones-only';
 
+// SQL Server accepts at most 1,000 rows in one INSERT ... VALUES statement.
+// Keep that server-side bound while sending every statement through one
+// sqlcmd input file, so a large snapshot does not reconnect once per page.
+const targetSnapshotInsertRowsPerStatement = 1000;
+
 int unexpectedCompleteSnapshotMismatchCount({
   required int unappliedRowCount,
   required int protectedUpsertRowCount,
@@ -74,6 +79,36 @@ INSERT INTO ${stageTableReference(stageTableName)} ($sourceColumnList)
 VALUES
     $sourceValueTuples;
 ''';
+}
+
+String buildTargetSnapshotStageLoadSql({
+  required String stageTableName,
+  required List<SqlSyncColumnDefinition> columns,
+  required List<Map<String, dynamic>> rows,
+}) {
+  final statements = <String>[
+    buildTargetSnapshotStageSetupSql(
+      stageTableName: stageTableName,
+      columns: columns,
+    ),
+  ];
+  for (
+    var offset = 0;
+    offset < rows.length;
+    offset += targetSnapshotInsertRowsPerStatement
+  ) {
+    statements.add(
+      buildTargetSnapshotStageInsertSql(
+        stageTableName: stageTableName,
+        columns: columns,
+        rows: rows
+            .skip(offset)
+            .take(targetSnapshotInsertRowsPerStatement)
+            .toList(growable: false),
+      ),
+    );
+  }
+  return statements.join('\n');
 }
 
 String buildTargetSnapshotStageApplySql({
