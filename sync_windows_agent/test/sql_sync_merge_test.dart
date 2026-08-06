@@ -3,6 +3,30 @@ import 'package:sync_windows_agent/sql_sync_merge.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
 
 void main() {
+  test('complete snapshot verification defers only protected hot rows', () {
+    expect(
+      unexpectedCompleteSnapshotMismatchCount(
+        unappliedRowCount: 1,
+        protectedUpsertRowCount: 1,
+      ),
+      0,
+    );
+    expect(
+      unexpectedCompleteSnapshotMismatchCount(
+        unappliedRowCount: 2,
+        protectedUpsertRowCount: 1,
+      ),
+      1,
+    );
+    expect(
+      unexpectedCompleteSnapshotMismatchCount(
+        unappliedRowCount: 1,
+        protectedUpsertRowCount: 0,
+      ),
+      1,
+    );
+  });
+
   test('complete snapshot apply never deletes target-only rows', () {
     final columns = [
       const SqlSyncColumnDefinition(

@@ -10,6 +10,30 @@ def read_text(relative_path: str) -> str:
 
 
 class SyncContractsTests(unittest.TestCase):
+    def test_complete_snapshot_verification_accepts_only_protected_hot_rows(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        apply_body = agent_page.split(
+            "Future<int> _applyDownloadedSnapshotToTarget({", 1
+        )[1].split("Future<int> _refreshTargetStateAfterRemoteApply(", 1)[0]
+
+        self.assertIn("var protectedFullSnapshotUpsertRows = 0;", apply_body)
+        self.assertIn(
+            "protectedFullSnapshotUpsertRows = applyResult.protectedUpsertRows;",
+            apply_body,
+        )
+        self.assertIn(
+            "unexpectedCompleteSnapshotMismatchCount(",
+            apply_body,
+        )
+        self.assertIn(
+            "were not applied and were not protected local changes",
+            apply_body,
+        )
+        self.assertIn(
+            "the next delta will upload them",
+            apply_body,
+        )
+
     def test_first_time_eligible_tables_are_enrolled_automatically(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         api = read_text("sync_windows_agent/lib/live_sync_api.dart")

@@ -11,6 +11,17 @@ const sqlSyncChangeTrackingContextHex = '0x53514C53594E43';
 /// delete instruction.
 const sqlSyncDeletePolicy = 'explicit-tombstones-only';
 
+int unexpectedCompleteSnapshotMismatchCount({
+  required int unappliedRowCount,
+  required int protectedUpsertRowCount,
+}) {
+  final safeUnappliedRows = unappliedRowCount < 0 ? 0 : unappliedRowCount;
+  final safeProtectedRows =
+      protectedUpsertRowCount < 0 ? 0 : protectedUpsertRowCount;
+  final unexpected = safeUnappliedRows - safeProtectedRows;
+  return unexpected < 0 ? 0 : unexpected;
+}
+
 String buildTargetSnapshotStageSetupSql({
   required String stageTableName,
   required List<SqlSyncColumnDefinition> columns,

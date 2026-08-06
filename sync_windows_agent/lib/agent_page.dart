@@ -6011,6 +6011,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final upsertRows = contentCheckedRows
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
+    var protectedFullSnapshotUpsertRows = 0;
     if (fullSnapshotApply) {
       if (deleteRows.isNotEmpty) {
         throw StateError(
@@ -6070,6 +6071,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             applyResult.insertedRows,
       );
       stats.protectedUpsertRows += applyResult.protectedUpsertRows;
+      protectedFullSnapshotUpsertRows = applyResult.protectedUpsertRows;
       if (applyResult.protectedRows > 0) {
         logAgentDiagnostic(
           'sync.apply.protected_post_upload_changes',
@@ -6211,9 +6213,18 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         primaryKeyColumns: primaryKeyColumns,
         rows: rowsForApply,
       );
-      if (unappliedRows.isNotEmpty) {
+      final unexpectedUnappliedRows = unexpectedCompleteSnapshotMismatchCount(
+        unappliedRowCount: unappliedRows.length,
+        protectedUpsertRowCount: protectedFullSnapshotUpsertRows,
+      );
+      if (unexpectedUnappliedRows > 0) {
         throw StateError(
-          'Complete snapshot verification failed for ${job.table}; ${unappliedRows.length} incoming row(s) were not applied. Existing target-only rows were preserved.',
+          'Complete snapshot verification failed for ${job.table}; $unexpectedUnappliedRows incoming row(s) were not applied and were not protected local changes. Existing target-only rows were preserved.',
+        );
+      }
+      if (unappliedRows.isNotEmpty) {
+        logStartupEvent(
+          'Complete snapshot verification deferred ${unappliedRows.length} protected post-upload local row change(s) for ${job.table}; the next delta will upload them.',
         );
       }
     }
