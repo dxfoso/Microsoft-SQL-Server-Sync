@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 40)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 41)}
         observed_ids = set()
 
         for row in rows:
@@ -110,6 +110,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("tests/run_local_test_standard.ps1", documentation)
         self.assertIn("workspace/tests/local-standard/", documentation)
         self.assertIn("run_local_test_standard.ps1", readme)
+
+    def test_production_image_builder_excludes_local_caches_by_construction(self):
+        builder = read_text("scripts/build_production_images.ps1")
+
+        self.assertIn("git -C (Join-Path $repoRoot 'backend') archive", builder)
+        self.assertIn("git -C $repoRoot archive", builder)
+        self.assertIn("$commit business", builder)
+        self.assertIn("$commit frontend", builder)
+        self.assertNotIn("Copy-Item -LiteralPath 'backend/server'", builder)
+        self.assertIn("sync_windows_agent_latest.zip", builder)
+        self.assertIn('backend:$commit', builder)
+        self.assertIn('frontend:$commit', builder)
+        self.assertIn("docker push $backendImage", builder)
+        self.assertIn("docker push $frontendImage", builder)
 
 
 if __name__ == "__main__":
