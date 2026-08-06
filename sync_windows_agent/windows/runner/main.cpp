@@ -217,14 +217,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       GetCommandLineArguments();
   const bool start_minimized =
       ConsumeStartMinimizedFlag(&command_line_arguments);
+  if (!AcquireSingleInstanceMutex()) {
+    return EXIT_SUCCESS;
+  }
   if (!start_minimized) {
     ResumeAfterManualLaunch();
   }
   StartIndependentSupervisor();
   ConfigureEngineSwitches();
-  if (!AcquireSingleInstanceMutex()) {
-    return EXIT_SUCCESS;
-  }
 
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.

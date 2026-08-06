@@ -28,6 +28,22 @@ param([string] $ManifestUrl, [string] $InstallDir, [switch] $NoStart)
 exit 0
 '@ | Set-Content -LiteralPath (Join-Path $testInstall 'update.ps1') -Encoding ASCII
 
+    $userStoppedMarker = Join-Path $testInstall 'sync_windows_agent.user-stopped'
+    Set-Content -LiteralPath $userStoppedMarker -Value 'test user stop' -Encoding ASCII
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+        -File $testSupervisor `
+        -RunOnce `
+        -SkipAgentStart `
+        -SkipObsoleteRetirement
+    if ($LASTEXITCODE -ne 0) {
+        throw "Stopped supervisor RunOnce failed with exit code $LASTEXITCODE."
+    }
+    $stoppedRequestLog = Get-Content -LiteralPath (Join-Path $testInstall 'sync_windows_agent_update_requests.log') -Raw
+    if ($stoppedRequestLog -notmatch 'only a manual launch may resume it' -or $stoppedRequestLog -match 'Update request started') {
+        throw 'The user-stopped marker did not suppress the independent updater.'
+    }
+    Remove-Item -LiteralPath $userStoppedMarker -Force
+
     & powershell.exe -NoProfile -ExecutionPolicy Bypass `
         -File $testSupervisor `
         -RunOnce `
@@ -64,7 +80,7 @@ exit 0
         throw 'The supervisor did not log missing-client survival.'
     }
 
-    Write-Host "PASS independent request logging and missing-client survival pid=$($supervisorProcess.Id)"
+    Write-Host "PASS user-stop update suppression, independent request logging, and missing-client survival pid=$($supervisorProcess.Id)"
 }
 finally {
     if ($null -ne $supervisorProcess -and -not $supervisorProcess.HasExited) {

@@ -415,6 +415,12 @@ function Start-UpdatedClient {
         [Parameter(Mandatory = $true)][string] $LogPath
     )
 
+    $userStoppedMarkerPath = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.user-stopped'
+    if (Test-Path -LiteralPath $userStoppedMarkerPath -PathType Leaf) {
+        Write-UpdateLog -Message 'Updated client remains stopped because the user closed it. A manual launch is required.' -LogPath $LogPath
+        return
+    }
+
     Write-UpdateLog -Message "Starting updated client executable: $ExecutablePath" -LogPath $LogPath
     try {
         Stop-SupervisorProcesses -TargetInstallDir $InstallDir
@@ -634,6 +640,12 @@ function Start-UpdatedClient {
         [Parameter(Mandatory = $true)][string] $InstallDir,
         [Parameter(Mandatory = $true)][string] $LogPath
     )
+
+    $userStoppedMarkerPath = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.user-stopped'
+    if (Test-Path -LiteralPath $userStoppedMarkerPath -PathType Leaf) {
+        Write-UpdateLog -Message 'Updated client remains stopped because the user closed it. A manual launch is required.' -LogPath $LogPath
+        return
+    }
 
     Write-UpdateLog -Message "Starting updated client through independent supervisor: $ExecutablePath" -LogPath $LogPath
     try {

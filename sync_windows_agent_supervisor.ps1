@@ -148,6 +148,10 @@ function Invoke-IndependentUpdateCheck {
     if ($SkipUpdate) {
         return
     }
+    if (Test-Path -LiteralPath $userStoppedMarkerPath -PathType Leaf) {
+        Write-RequestLog 'Update process skipped; the user closed the client and only a manual launch may resume it.'
+        return
+    }
     if (@(Get-AgentProcesses).Count -gt 0) {
         Write-RequestLog 'Update process skipped; the healthy client performs lightweight manifest checks in-process.'
         return

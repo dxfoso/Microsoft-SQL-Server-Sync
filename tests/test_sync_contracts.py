@@ -1275,6 +1275,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("does not match pubspec/manifest version", publish_script)
 
     def test_user_close_pauses_supervisor_until_manual_client_launch(self):
+        update_script = read_text("update.ps1")
         supervisor = read_text("sync_windows_agent_supervisor.ps1")
         runner_main = read_text("sync_windows_agent/windows/runner/main.cpp")
         flutter_window = read_text(
@@ -1287,6 +1288,11 @@ class SyncContractsTests(unittest.TestCase):
             "function Invoke-IndependentUpdateCheck", 1
         )[0]
         self.assertIn("Test-Path -LiteralPath $userStoppedMarkerPath", ensure_body)
+        update_check_body = supervisor.split(
+            "function Invoke-IndependentUpdateCheck {", 1
+        )[1].split("$mutexName =", 1)[0]
+        self.assertIn("Test-Path -LiteralPath $userStoppedMarkerPath", update_check_body)
+        self.assertIn("only a manual launch may resume it", update_check_body)
         self.assertIn(marker_name, flutter_window)
         self.assertIn("MarkUserRequestedStop();", flutter_window)
         self.assertIn("close and keep the app stopped", flutter_window)
@@ -1294,6 +1300,17 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("if (!start_minimized)", runner_main)
         self.assertIn("ResumeAfterManualLaunch();", runner_main)
         self.assertIn("std::filesystem::remove(marker_path", runner_main)
+        self.assertLess(
+            runner_main.index("if (!AcquireSingleInstanceMutex())"),
+            runner_main.index("ResumeAfterManualLaunch();"),
+        )
+        self.assertGreaterEqual(update_script.count(marker_name), 2)
+        self.assertGreaterEqual(
+            update_script.count(
+                "Updated client remains stopped because the user closed it. A manual launch is required."
+            ),
+            2,
+        )
 
     def test_windows_agent_can_apply_server_requested_client_updates(self):
         control_plane = read_text("business/control_plane.tru")
