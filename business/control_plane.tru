@@ -5587,6 +5587,57 @@ function agent_sync_settings_get(clientName: string, token: string? = null): map
   };
 }
 
+function cancel_active_sync_batches_for_client(agent: map<json>, message: string): int {
+  const ownerUserId = string.from(agent.ownerUserId ?? '').trim();
+  const clientName = normalize_user_name(agent.clientName);
+  const activeJobs = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id', 'batchId', 'clientName', 'sourceClientName', 'subscriberClientName'],
+    limit: 1000
+  });
+  let affectedBatchIds = [];
+  for (const job of activeJobs) {
+    const participates =
+      normalize_user_name(job.clientName) == clientName ||
+      normalize_user_name(job.sourceClientName ?? '') == clientName ||
+      normalize_user_name(job.subscriberClientName ?? '') == clientName;
+    const batchId = string.from(job.batchId ?? '').trim();
+    if (participates && batchId.length != 0 && !string_array_contains(affectedBatchIds, batchId)) {
+      affectedBatchIds = affectedBatchIds.concat([batchId]);
+    }
+  }
+  let cancelledJobIds = [];
+  for (const job of activeJobs) {
+    const batchId = string.from(job.batchId ?? '').trim();
+    const participates =
+      normalize_user_name(job.clientName) == clientName ||
+      normalize_user_name(job.sourceClientName ?? '') == clientName ||
+      normalize_user_name(job.subscriberClientName ?? '') == clientName;
+    if (participates || (batchId.length != 0 && string_array_contains(affectedBatchIds, batchId))) {
+      cancelledJobIds = cancelledJobIds.concat([job.id]);
+    }
+  }
+  if (cancelledJobIds.length != 0) {
+    const completedAt = now_iso();
+    db.updateMany(SyncJob, { id: { in: cancelledJobIds } }, {
+      status: 'cancelled',
+      progress: 100,
+      completedAt,
+      message,
+      error: message,
+      updatedAt: completedAt
+    });
+  }
+  if (affectedBatchIds.length != 0) {
+    cleanup_multi_writer_batches_storage(affectedBatchIds);
+  }
+  return cancelledJobIds.length;
+}
+
 function agent_sync_enabled_set(clientName: string, enabled: bool, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -5610,10 +5661,68 @@ function agent_sync_enabled_set(clientName: string, enabled: bool, token: string
   if (updated == null) {
     return raw_json_error(404, 'agent not found');
   }
+  let cancelledJobCount = 0;
+  if (!enabled) {
+    cancelledJobCount = cancel_active_sync_batches_for_client(
+      updated,
+      'Cancelled because this client was disabled from the clients page.'
+    );
+  }
   return {
     ok: true,
     clientName: updated.clientName,
-    syncEnabled: agent_sync_enabled(updated)
+    syncEnabled: agent_sync_enabled(updated),
+    cancelledJobCount
+  };
+}
+
+function agent_registration_delete(clientName: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const agent = find_agent_row_by_name(visible_agent_rows_for(current), normalizedClientName);
+  if (agent == null) {
+    return raw_json_error(404, 'client registration not found');
+  }
+  const clientUser = find_user_by_identity(normalizedClientName);
+  if (clientUser != null) {
+    return raw_json_error(409, 'delete the client account instead of only its live registration');
+  }
+  if (agent_command_delivery_online(agent)) {
+    return raw_json_error(409, 'an online client registration cannot be deleted; disable or sign out the client first');
+  }
+  const cancelledJobCount = cancel_active_sync_batches_for_client(
+    agent,
+    'Cancelled because an obsolete client registration was removed.'
+  );
+  const debtRows = db.selectMany(OfflineSyncDebt, {
+    where: {
+      ownerUserId: string.from(agent.ownerUserId ?? '').trim(),
+      clientName: normalizedClientName
+    },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id'],
+    limit: 1000
+  });
+  const debtIds = debtRows.map((row) => string.from(row.id));
+  let deletedDebtCount = 0;
+  if (debtIds.length != 0) {
+    deletedDebtCount = db.deleteMany(OfflineSyncDebt, { id: { in: debtIds } });
+  }
+  const deleted = db.delete(Agent, { clientName: normalizedClientName });
+  if (deleted == 0) {
+    return raw_json_error(404, 'client registration not found');
+  }
+  return {
+    ok: true,
+    clientName: normalizedClientName,
+    cancelledJobCount,
+    deletedDebtCount
   };
 }
 

@@ -1244,6 +1244,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("final preserveChangeTrackingBaseline =", agent_page)
         self.assertIn("final appliedVersion =", agent_page)
 
+    def test_orphan_client_registration_deletion_is_scoped_and_refuses_live_accounts(self):
+        source = read_text("business/control_plane.tru")
+        body = source.split("function agent_registration_delete(", 1)[1].split(
+            "function agent_sync_settings_post(", 1
+        )[0]
+
+        self.assertIn("visible_agent_rows_for(current)", body)
+        self.assertIn("if (clientUser != null)", body)
+        self.assertIn("delete the client account instead", body)
+        self.assertIn("if (agent_command_delivery_online(agent))", body)
+        self.assertIn("cancel_active_sync_batches_for_client(", body)
+        self.assertIn("db.delete(Agent, { clientName: normalizedClientName })", body)
+        self.assertNotIn("db.deleteMany(SyncJob", body)
+
     def test_offline_debt_status_distinguishes_paused_from_active_catchup(self):
         source = read_text("business/control_plane.tru")
         status_body = source.split(
@@ -1316,6 +1330,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("preserveChangeTrackingBaselines", source)
         self.assertIn("function mark_offline_sync_debt(", source)
         self.assertIn("function due_offline_catchup_tables(", source)
+        toggle_body = source.split(
+            "function agent_sync_enabled_set(", 1
+        )[1].split("function agent_registration_delete(", 1)[0]
+        self.assertIn("cancel_active_sync_batches_for_client(", toggle_body)
+        self.assertIn("if (!enabled)", toggle_body)
+        cancellation_body = source.split(
+            "function cancel_active_sync_batches_for_client(", 1
+        )[1].split("function agent_sync_enabled_set(", 1)[0]
+        self.assertIn("affectedBatchIds", cancellation_body)
+        self.assertIn("status: 'cancelled'", cancellation_body)
+        self.assertIn(
+            "cleanup_multi_writer_batches_storage(affectedBatchIds)",
+            cancellation_body,
+        )
 
     def test_explicit_bootstrap_is_single_enabled_client_and_retry_safe(self):
         source = read_text("business/control_plane.tru")

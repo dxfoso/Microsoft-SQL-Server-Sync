@@ -255,6 +255,7 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _automaticSyncBusy = false;
   bool _serverResetBusy = false;
   bool _reconcileBusy = false;
+  final Set<String> _clientActivationBusy = <String>{};
   AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
   String _tableFilter = '';
@@ -1160,6 +1161,7 @@ class _ClientsPageState extends State<ClientsPage> {
                         dataRowMaxHeight: 72,
                         columns: const [
                           DataColumn(label: Text('Client')),
+                          DataColumn(label: Text('Active')),
                           DataColumn(label: Text('Status')),
                           DataColumn(label: Text('Database')),
                           DataColumn(label: Text('Tables')),
@@ -1545,6 +1547,7 @@ class _ClientsPageState extends State<ClientsPage> {
                 agent.machineName,
                 agent.database,
                 agent.server,
+                agent.syncEnabled ? 'active enabled' : 'inactive disabled',
                 agent.isOnline ? 'online' : 'offline',
               ].join(' ').toLowerCase();
           return searchable.contains(query);
@@ -1604,6 +1607,7 @@ class _ClientsPageState extends State<ClientsPage> {
             ),
           ),
         ),
+        DataCell(_buildClientActiveCheckbox(agent)),
         DataCell(
           _statusChip(activityStatus, _clientActivityColor(activityStatus)),
         ),
@@ -1641,12 +1645,68 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
+  Widget _buildClientActiveCheckbox(AdminAgent agent) {
+    final busy = _clientActivationBusy.contains(agent.clientName);
+    if (busy) {
+      return const SizedBox(
+        width: 40,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    return Tooltip(
+      message:
+          agent.syncEnabled
+              ? 'Active: this client participates in synchronization'
+              : 'Inactive: this client is excluded until checked again',
+      child: Checkbox(
+        key: ValueKey('client-active-${agent.clientName}'),
+        value: agent.syncEnabled,
+        onChanged:
+            widget.authenticatedUser.canManageUsers
+                ? (value) =>
+                    unawaited(_setClientSyncEnabled(agent, value == true))
+                : null,
+      ),
+    );
+  }
+
+  Future<void> _setClientSyncEnabled(AdminAgent agent, bool enabled) async {
+    if (_clientActivationBusy.contains(agent.clientName)) return;
+    setState(() => _clientActivationBusy.add(agent.clientName));
+    try {
+      final confirmed = await _api.setAgentSyncEnabled(
+        clientName: agent.clientName,
+        enabled: enabled,
+      );
+      if (!mounted) return;
+      _showActionMessage(
+        confirmed
+            ? '${agent.clientName} is active and can participate in synchronization.'
+            : '${agent.clientName} is inactive. It will not synchronize until checked again.',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) {
+        setState(() => _clientActivationBusy.remove(agent.clientName));
+      }
+    }
+  }
+
   String _clientActivityStatus(
     AdminAgent agent,
     List<AdminJob> jobs, {
     Iterable<AdminClientActivity> serverActivities =
         const <AdminClientActivity>[],
   }) {
+    if (!agent.syncEnabled) return 'Disabled';
     if (!agent.isOnline) return 'Offline';
     final ownerIssues =
         (_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).where(
@@ -1710,6 +1770,7 @@ class _ClientsPageState extends State<ClientsPage> {
       case 'queued':
         return const Color(0xFF7A5D00);
       case 'offline':
+      case 'disabled':
       case 'server offline':
       case 'sql offline':
       case 'needs input':
