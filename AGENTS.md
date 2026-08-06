@@ -19,6 +19,7 @@ Use the launcher when a local stack restart is actually needed.
 ## Issue Documentation and Regression Rule
 
 - Every discovered defect, production incident, failed deployment, unexpected client behavior, or synchronization safety gap must be documented in the root `issue.md` incident matrix before the work is considered complete.
+- When any issue is discovered during development, testing, monitoring, deployment, or live verification, do not merely report it: document it in `issue.md`, implement the long-term fix, and add automated regression coverage before considering the task complete. If a safe fix requires missing authority or is outside the authorized scope, document the issue and report the exact blocker instead of ignoring it or applying an unsafe workaround.
 - Each `issue.md` entry must record the observed symptom, root cause, required long-term behavior, implemented resolution, and exact automated regression coverage.
 - Every issue fix must add or extend an automated unit, contract, integration, or isolated fake-client regression test that fails for the original defect and passes with the fix. A manual check alone is not sufficient.
 - Register new regression tests in the appropriate repository test runner, including `tests/run_sync_verification.ps1` when the issue affects the synchronization architecture or its safety invariants, so the defect is checked in future standard runs.

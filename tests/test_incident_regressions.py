@@ -92,6 +92,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertIn("## Issue Documentation and Regression Rule", rules)
         self.assertIn("must be documented in the root `issue.md` incident matrix", rules)
+        self.assertIn("do not merely report it: document it in `issue.md`, implement the long-term fix", rules)
+        self.assertIn("report the exact blocker instead of ignoring it or applying an unsafe workaround", rules)
         self.assertIn("must add or extend an automated unit, contract, integration", rules)
         self.assertIn("A manual check alone is not sufficient", rules)
         self.assertIn("tests/run_sync_verification.ps1", rules)
