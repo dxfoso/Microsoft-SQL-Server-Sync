@@ -21,11 +21,19 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "const deliveryAgent = db.selectOne(Agent, { clientName: resolvedClientName });",
             heartbeat,
         )
-        self.assertIn("agent_diagnostics_payload(deliveryAgent)", heartbeat)
-        self.assertIn("agent_client_update_payload(deliveryAgent)", heartbeat)
-        self.assertIn("agent_window_action_payload(deliveryAgent)", heartbeat)
+        self.assertIn("agent_diagnostics_payload(deliveryAgent, false, true)", heartbeat)
+        self.assertIn("agent_client_update_payload(deliveryAgent, true)", heartbeat)
+        self.assertIn("agent_window_action_payload(deliveryAgent, true)", heartbeat)
         self.assertIn("agent_data_export_payload(deliveryAgent, true)", heartbeat)
         self.assertNotIn("agent_client_update_payload(nextAgent)", heartbeat)
+        self.assertIn(
+            "function agent_client_update_payload(agent: map<json>, authenticatedClientPoll: bool = false)",
+            source,
+        )
+        self.assertIn(
+            "const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);",
+            source,
+        )
 
     def test_eligible_table_auto_enrollment_reactivates_disabled_policies(self):
         source = read_text("business/control_plane.tru")
@@ -181,7 +189,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field replicationUseWindowsAuth: bool?", agent_schema)
         self.assertIn("field replicationUser: string? min=0 max=256", agent_schema)
         self.assertIn("field replicationPassword: string? min=0 max=256", agent_schema)
-        self.assertIn("clientUpdate: agent_client_update_payload(deliveryAgent)", source)
+        self.assertIn("clientUpdate: agent_client_update_payload(deliveryAgent, true)", source)
         self.assertNotIn("symmetricDsStatus", source)
         self.assertNotIn("agent_symmetricds_status_post", source)
 
@@ -190,7 +198,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("field clientUpdateRequestId: string? min=0 max=64", source)
         self.assertIn("field clientUpdateStatus: string min=0 max=32", source)
-        self.assertIn("function agent_client_update_payload(agent: map<json>): map<json> {", source)
+        self.assertIn("function agent_client_update_payload(agent: map<json>, authenticatedClientPoll: bool = false): map<json> {", source)
         self.assertIn("function agent_client_update_request(clientName: string, targetVersion: string? = null, token: string? = null): map<json> {", source)
         self.assertIn("function agent_client_update_request_all(targetVersion: string? = null, token: string? = null): map<json> {", source)
         self.assertIn("function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', token: string? = null): map<json> {", source)
@@ -200,7 +208,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("field windowActionRequestId: string? min=0 max=64", source)
         self.assertIn("field windowActionName: string? min=0 max=32", source)
-        self.assertIn("function agent_window_action_payload(agent: map<json>): map<json> {", source)
+        self.assertIn("function agent_window_action_payload(agent: map<json>, authenticatedClientPoll: bool = false): map<json> {", source)
         self.assertIn("function agent_window_action_request_all(action: string = 'minimize', token: string? = null): map<json> {", source)
         self.assertIn("function agent_window_action_ack(clientName: string? = null, requestId: string? = null, action: string = '', status: string = 'completed', message: string = '', token: string? = null): map<json> {", source)
 
@@ -218,7 +226,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
 
         payload_match = re.search(
-            r"function agent_client_update_payload\(agent: map<json>\): map<json> \{(?P<body>.*?)\n\}",
+            r"function agent_client_update_payload\(agent: map<json>, authenticatedClientPoll: bool = false\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
@@ -226,7 +234,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         payload_body = payload_match.group("body")
 
         self.assertIn("const pending = client_update_request_pending(agent);", payload_body)
-        self.assertIn("const waitingForClient = pending_request_awaits_online_client(agent, pending);", payload_body)
+        self.assertIn("const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);", payload_body)
         self.assertIn("pending: pending && !waitingForClient,", payload_body)
         self.assertIn("requestId: agent.clientUpdateRequestId,", payload_body)
         self.assertIn("targetVersion: agent.clientUpdateTargetVersion,", payload_body)
@@ -734,7 +742,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
 
         payload_match = re.search(
-            r"function agent_window_action_payload\(agent: map<json>\): map<json> \{(?P<body>.*?)\n\}",
+            r"function agent_window_action_payload\(agent: map<json>, authenticatedClientPoll: bool = false\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
@@ -742,7 +750,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         payload_body = payload_match.group("body")
 
         self.assertIn("const pending = window_action_request_pending(agent);", payload_body)
-        self.assertIn("const waitingForClient = pending_request_awaits_online_client(agent, pending);", payload_body)
+        self.assertIn("const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);", payload_body)
         self.assertIn("pending: pending && !waitingForClient,", payload_body)
         self.assertIn("const actionValue = agent.windowActionName == null ? '' : string.from(agent.windowActionName);", payload_body)
         self.assertIn("let statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);", payload_body)
@@ -759,7 +767,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
 
         payload_match = re.search(
-            r"function agent_diagnostics_payload\(agent: map<json>, includePayload: bool = false\): map<json> \{(?P<body>.*?)\n\}",
+            r"function agent_diagnostics_payload\(agent: map<json>, includePayload: bool = false, authenticatedClientPoll: bool = false\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
@@ -767,7 +775,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         payload_body = payload_match.group("body")
 
         self.assertIn("const pending = diagnostic_request_pending(agent);", payload_body)
-        self.assertIn("const waitingForClient = pending_request_awaits_online_client(agent, pending);", payload_body)
+        self.assertIn("const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);", payload_body)
         self.assertIn("pending: pending && !waitingForClient,", payload_body)
         self.assertIn("statusValue = 'client_offline';", payload_body)
         self.assertIn("Waiting for the client to heartbeat before diagnostics can upload.", payload_body)
@@ -1712,6 +1720,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("dataExport: agent_data_export_payload(agent)", public_payload)
         self.assertNotIn("includeUploadCredentials: true", public_payload)
         self.assertIn("agent_data_export_payload(deliveryAgent, true)", heartbeat)
+        self.assertIn("agent_diagnostics_payload(deliveryAgent, false, true)", heartbeat)
         self.assertIn("export database must match the client selected database", request)
         self.assertIn("https://sync.velvet-leaf.com/private-export", request)
         self.assertIn("dataExportUploadToken", source)

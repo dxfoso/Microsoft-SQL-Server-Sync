@@ -1878,13 +1878,13 @@ function pending_request_awaits_online_client(agent: map<json>, pending: bool): 
   return pending && !agent_command_delivery_online(agent);
 }
 
-function agent_diagnostics_payload(agent: map<json>, includePayload: bool = false): map<json> {
+function agent_diagnostics_payload(agent: map<json>, includePayload: bool = false, authenticatedClientPoll: bool = false): map<json> {
   let payload = null;
   if (includePayload && agent.diagnosticPayload != null) {
     payload = agent.diagnosticPayload;
   }
   const pending = diagnostic_request_pending(agent);
-  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);
   let statusValue = agent.diagnosticStatus == null ? 'idle' : string.from(agent.diagnosticStatus);
   let summaryValue = agent.diagnosticSummary == null ? '' : string.from(agent.diagnosticSummary);
   if (waitingForClient) {
@@ -1920,9 +1920,9 @@ function client_update_request_pending(agent: map<json>): bool {
   return string.from(agent.clientUpdateLastRequestId).trim() != requestId;
 }
 
-function agent_client_update_payload(agent: map<json>): map<json> {
+function agent_client_update_payload(agent: map<json>, authenticatedClientPoll: bool = false): map<json> {
   const pending = client_update_request_pending(agent);
-  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);
   let statusValue = agent.clientUpdateStatus == null ? 'idle' : string.from(agent.clientUpdateStatus);
   let messageValue = agent.clientUpdateMessage == null ? '' : string.from(agent.clientUpdateMessage);
   if (waitingForClient) {
@@ -1958,10 +1958,10 @@ function window_action_request_pending(agent: map<json>): bool {
   return string.from(agent.windowActionLastRequestId).trim() != requestId;
 }
 
-function agent_window_action_payload(agent: map<json>): map<json> {
+function agent_window_action_payload(agent: map<json>, authenticatedClientPoll: bool = false): map<json> {
   const actionValue = agent.windowActionName == null ? '' : string.from(agent.windowActionName);
   const pending = window_action_request_pending(agent);
-  const waitingForClient = pending_request_awaits_online_client(agent, pending);
+  const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);
   let statusValue = agent.windowActionStatus == null ? 'idle' : string.from(agent.windowActionStatus);
   let messageValue = agent.windowActionMessage == null ? '' : string.from(agent.windowActionMessage);
   if (waitingForClient) {
@@ -5578,9 +5578,9 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
     tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),
     jobs: active_jobs_for_client(resolvedClientName),
-    diagnostics: agent_diagnostics_payload(deliveryAgent),
-    clientUpdate: agent_client_update_payload(deliveryAgent),
-    windowAction: agent_window_action_payload(deliveryAgent),
+    diagnostics: agent_diagnostics_payload(deliveryAgent, false, true),
+    clientUpdate: agent_client_update_payload(deliveryAgent, true),
+    windowAction: agent_window_action_payload(deliveryAgent, true),
     dataExport: agent_data_export_payload(deliveryAgent, true)
   };
 }
