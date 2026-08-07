@@ -36,7 +36,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         )[1].split("function agents_heartbeat", 1)[0]
         completed_rows_body = control_plane.split(
             "function live_state_completed_job_rows_for(", 1
-        )[1].split("function public_client_activity_payloads", 1)[0]
+        )[1].split("function live_state_manual_sync_rows_for_owner_ids", 1)[0]
         summary_body = control_plane.split(
             "function latest_completed_sync_summary_for_client(", 1
         )[1].split("function public_agent_payload", 1)[0]
@@ -49,6 +49,21 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("limit: 1000", completed_rows_body)
         self.assertNotIn("db.", summary_body)
         self.assertIn("string.from(job.direction).trim().toLowerCase() != 'download'", summary_body)
+
+    def test_live_state_preloads_sync_all_operations_in_one_bounded_read(self):
+        control_plane = read_text("business/control_plane.tru")
+        rows_body = control_plane.split(
+            "function live_state_manual_sync_rows_for_owner_ids(", 1
+        )[1].split("function public_client_activity_payloads", 1)[0]
+        live_state_body = control_plane.split(
+            "function live_state(token: string? = null): map<json> {", 1
+        )[1].split("function agents_heartbeat", 1)[0]
+
+        self.assertEqual(rows_body.count("db.selectMany("), 1)
+        self.assertIn("ownerUserId: { in: ownerUserIds }", rows_body)
+        self.assertIn("limit: 100", rows_body)
+        self.assertIn("live_state_manual_sync_rows_for_owner_ids", live_state_body)
+        self.assertIn("syncAllOperations", live_state_body)
 
     def test_server_request_budget_covers_atomic_bulk_preflight(self):
         config = json.loads(read_text("business/tru.json"))

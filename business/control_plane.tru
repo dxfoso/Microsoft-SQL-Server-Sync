@@ -274,6 +274,10 @@ class PeriodicSyncState {
   field ownerUserId: string min=0 max=64
   field lastCheckedAt: datetime
   field manualPendingTables: array<json>?
+  field manualSyncStatus: string? min=0 max=16
+  field manualSyncStartedAt: datetime?
+  field manualSyncCompletedAt: datetime?
+  field manualSyncTableCount: int?
   field scheduledTableAttempts: array<json>?
   field tableIssues: array<json>?
   field updatedAt: datetime
@@ -2398,6 +2402,22 @@ function live_state_completed_job_rows_for(current: map<json>): array<json> {
   return rows;
 }
 
+function live_state_manual_sync_rows_for_owner_ids(ownerUserIds: array<string>): array<json> {
+  if (ownerUserIds.length == 0) {
+    return [];
+  }
+  const rows = db.selectMany(PeriodicSyncState, {
+    where: { ownerUserId: { in: ownerUserIds } },
+    orderBy: { field: 'ownerUserId', dir: 'asc' },
+    fields: ['ownerUserId', 'manualPendingTables', 'manualSyncStatus', 'manualSyncStartedAt', 'manualSyncCompletedAt', 'manualSyncTableCount'],
+    limit: 100
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
 function public_client_activity_payloads(rows: array<json>): array<json> {
   return rows.map((row) => {
     return {
@@ -3594,23 +3614,32 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   // missed range to the returning client.
   const preserveChangeTrackingBaselines = ownerAgents.length != allOwnerAgents.length;
 
-  // Clients execute table jobs sequentially. Do not refill this owner's queue
-  // until the current bounded group has fully crossed upload and download.
+  const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
+  // Keep at most four table barriers active for any one client, but refill a
+  // completed slot immediately during a durable manual Sync All operation.
+  // This preserves bounded server/client work while removing the old wait for
+  // the next minute-level scheduler tick between otherwise independent tables.
   const activeTableCaches = ownerAgents.map((agent) => ({
     clientName: agent.clientName,
     tables: active_job_tables_for_client(string.from(agent.clientName))
   }));
+  let activeTableCapacityUsed = 0;
   for (const cache of activeTableCaches) {
-    if (cache.tables.length > 0) {
-      return [];
+    if (cache.tables.length > activeTableCapacityUsed) {
+      activeTableCapacityUsed = cache.tables.length;
     }
+  }
+  if (activeTableCapacityUsed > 0 && manualPendingTables.length == 0) {
+    return [];
+  }
+  if (activeTableCapacityUsed >= periodic_sync_scheduler_table_limit()) {
+    return [];
   }
 
   // Periodic sync uses the same all-client protocol-v4 barrier as manual Sync
   // All: every registered client uploads first, then every client downloads.
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const recentUploadModes = latest_completed_upload_modes_for_owner(normalizedOwnerUserId);
-  const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);
   const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
   let dueTables = unique_string_values(
     manualPendingTables.concat(due_offline_catchup_tables(normalizedOwnerUserId, ownerAgents))
@@ -3638,7 +3667,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
 
   let createdJobs = [];
   let queuedTables = [];
-  let queuedTableCount = 0;
+  let queuedTableCount = activeTableCapacityUsed;
   for (const table of dueTables) {
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
       break;
@@ -5425,6 +5454,9 @@ function live_state(token: string? = null): map<json> {
   const visibleOwnerUserIds = unique_string_values(
     agentRows.map((agent) => string.from(agent.ownerUserId))
   );
+  const syncAllOperations = live_state_manual_sync_rows_for_owner_ids(visibleOwnerUserIds)
+    .filter((state) => string.from(state.manualSyncStartedAt ?? '').trim().length != 0)
+    .map((state) => manual_sync_operation_payload(state));
   // Baseline discovery can update issue state and cancel unsafe work, so it
   // belongs in the manual/automatic scheduler preflight rather than this
   // high-frequency read endpoint. The UI reads the last durable gate state;
@@ -5434,6 +5466,7 @@ function live_state(token: string? = null): map<json> {
     generatedAt: now_iso(),
     automaticSyncPaused: automatic_sync_is_paused_for_user(current),
     syncGate,
+    syncAllOperations,
     agents: agentPage.items,
     jobs: jobPage.items,
     clientActivities,
@@ -5583,6 +5616,84 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     windowAction: agent_window_action_payload(deliveryAgent, true),
     dataExport: agent_data_export_payload(deliveryAgent, true)
   };
+}
+
+function begin_manual_sync_operation(ownerUserId: string, tableCount: int, requestedAt: string? = null): void {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  const startedAt = requestedAt ?? now_iso();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing != null && string.from(existing.manualSyncStatus ?? '').trim() == 'running') {
+    return;
+  }
+  if (existing != null) {
+    db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+      manualSyncStatus: 'running',
+      manualSyncStartedAt: startedAt,
+      manualSyncCompletedAt: null,
+      manualSyncTableCount: tableCount,
+      updatedAt: startedAt
+    });
+    return;
+  }
+  db.insert(PeriodicSyncState, {
+    ownerUserId: normalizedOwnerUserId,
+    lastCheckedAt: startedAt,
+    manualPendingTables: [],
+    manualSyncStatus: 'running',
+    manualSyncStartedAt: startedAt,
+    manualSyncCompletedAt: null,
+    manualSyncTableCount: tableCount,
+    updatedAt: startedAt
+  });
+}
+
+function finish_manual_sync_operation(ownerUserId: string, status: string, completedAt: string? = null): void {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing == null || string.from(existing.manualSyncStatus ?? '').trim() != 'running') {
+    return;
+  }
+  db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+    manualSyncStatus: status.trim(),
+    manualSyncCompletedAt: completedAt ?? now_iso(),
+    updatedAt: completedAt ?? now_iso()
+  });
+}
+
+function manual_sync_operation_payload(state: map<json>): map<json> {
+  const startedAt = string.from(state.manualSyncStartedAt ?? '').trim();
+  const completedAt = string.from(state.manualSyncCompletedAt ?? '').trim();
+  let durationMs = null;
+  if (startedAt.length != 0 && completedAt.length != 0) {
+    try {
+      const measuredMs = date.diff(completedAt, startedAt, 'ms');
+      if (measuredMs >= 0) {
+        durationMs = measuredMs;
+      }
+    } catch (err) {
+      durationMs = null;
+    }
+  }
+  return {
+    ownerUserId: state.ownerUserId,
+    status: state.manualSyncStatus ?? '',
+    startedAt,
+    completedAt,
+    durationMs,
+    tableCount: state.manualSyncTableCount ?? 0,
+    remainingTableCount: manual_sync_pending_tables_from_values(state.manualPendingTables ?? []).length
+  };
+}
+
+function manual_sync_pending_tables_from_values(values: array<json>): array<string> {
+  let tables = [];
+  for (const value of values) {
+    const table = string.from(value).trim();
+    if (table.length != 0 && table != '__automatic_sync_paused__') {
+      tables = tables.concat([table]);
+    }
+  }
+  return unique_string_values(tables);
 }
 
 function auto_sync_tick(token: string? = null): map<json> {
@@ -6588,6 +6699,7 @@ function agent_diagnostics_get(clientName: string, token: string? = null): map<j
 }
 
 function jobs_create_all_enabled(token: string? = null): map<json> {
+  const syncAllRequestedAt = now_iso();
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -6645,6 +6757,9 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       );
     }
     enabledTables = unique_string_values(enabledTables);
+    if (enabledTables.length > 0) {
+      begin_manual_sync_operation(ownerUserId, enabledTables.length, syncAllRequestedAt);
+    }
     let ownerDeferredTables = [];
     const activeOwnerTables = active_job_tables_for_owner(ownerUserId);
     const tableCaches = onlineAgents.map((agent) =>
@@ -6737,6 +6852,9 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       }
     }
     set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);
+    if (queuedTablesForOwner == 0 && ownerDeferredTables.length == 0) {
+      finish_manual_sync_operation(ownerUserId, 'completed');
+    }
   }
   return {
     ok: true,
@@ -9403,6 +9521,16 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     refresh_owner_baseline_table_issues(string.from(job.ownerUserId));
   }
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
+  if (completedBatchId.length != 0 && sync_batch_all_jobs_completed(completedBatchId)) {
+    const remainingManualTables = manual_sync_pending_tables_for_owner(string.from(job.ownerUserId));
+    if (remainingManualTables.length > 0) {
+      if (claim_periodic_sync_scheduler_for_owner(string.from(job.ownerUserId), true)) {
+        queue_due_periodic_sync_jobs_for_owner(string.from(job.ownerUserId));
+      }
+    } else if (active_job_tables_for_owner(string.from(job.ownerUserId)).length == 0) {
+      finish_manual_sync_operation(string.from(job.ownerUserId), 'completed', completedAt);
+    }
+  }
   return { job: public_job_payload(nextJob) };
 }
 
@@ -9617,6 +9745,7 @@ function jobs_cancel_active(clientNames: array<string>? = null, message: string 
   }
   for (const ownerUserId of cancelledOwnerUserIds) {
     set_manual_sync_pending_tables_for_owner(ownerUserId, []);
+    finish_manual_sync_operation(ownerUserId, 'cancelled', completedAt);
   }
 
   return {

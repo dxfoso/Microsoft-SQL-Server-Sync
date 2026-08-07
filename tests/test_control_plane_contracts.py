@@ -380,7 +380,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const sourceAgents = allAgents ?? list_scheduler_agent_rows();", owner_body)
         self.assertIn("for (const agent of ownerAgents) {", owner_body)
         self.assertIn("const activeTableCaches = ownerAgents.map", owner_body)
-        self.assertIn("if (cache.tables.length > 0)", owner_body)
+        self.assertIn("if (cache.tables.length > activeTableCapacityUsed)", owner_body)
+        self.assertIn(
+            "activeTableCapacityUsed >= periodic_sync_scheduler_table_limit()",
+            owner_body,
+        )
         self.assertIn("return [];", owner_body)
         self.assertIn("const agentTables = due_periodic_sync_tables_for_agent_with_policies(", owner_body)
 
@@ -1165,6 +1169,39 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("onlineAgents.length != ownerAgents.length", source)
         self.assertIn("Change Tracking cursors are preserved until offline clients catch up", source)
         self.assertIn("skippedOfflineClients", source)
+
+    def test_sync_all_tracks_whole_operation_and_refills_bounded_slots(self):
+        source = read_text("business/control_plane.tru")
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
+        complete = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail(", 1
+        )[0]
+        live_state = source.split("function live_state(", 1)[1].split(
+            "function agents_heartbeat(", 1
+        )[0]
+
+        self.assertIn("field manualSyncStartedAt: datetime?", source)
+        self.assertIn("field manualSyncCompletedAt: datetime?", source)
+        self.assertIn("const syncAllRequestedAt = now_iso();", source)
+        self.assertIn(
+            "begin_manual_sync_operation(ownerUserId, enabledTables.length, syncAllRequestedAt)",
+            source,
+        )
+        self.assertIn("activeTableCapacityUsed", scheduler)
+        self.assertIn(
+            "queuedTableCount = activeTableCapacityUsed",
+            scheduler,
+        )
+        self.assertIn(
+            "activeTableCapacityUsed >= periodic_sync_scheduler_table_limit()",
+            scheduler,
+        )
+        self.assertIn("queue_due_periodic_sync_jobs_for_owner", complete)
+        self.assertIn("finish_manual_sync_operation", complete)
+        self.assertIn("syncAllOperations", live_state)
+        self.assertIn("manual_sync_operation_payload", live_state)
 
     def test_sync_scheduling_is_scoped_to_each_agents_selected_database(self):
         source = read_text("business/control_plane.tru")

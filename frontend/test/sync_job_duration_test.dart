@@ -68,4 +68,30 @@ void main() {
     expect(agent.lastSyncDuration, const Duration(milliseconds: 95250));
     expect(formatSyncDuration(agent.lastSyncDuration), '1m 35s');
   });
+
+  test('Sync All duration covers the complete durable operation', () {
+    final completed = AdminSyncAllOperation.fromJson({
+      'ownerUserId': 'owner-a',
+      'status': 'completed',
+      'startedAt': '2026-08-07T07:38:09Z',
+      'completedAt': '2026-08-07T07:47:09Z',
+      'durationMs': 540000,
+      'tableCount': 31,
+      'remainingTableCount': 0,
+    });
+    final running = AdminSyncAllOperation.fromJson({
+      'ownerUserId': 'owner-a',
+      'status': 'running',
+      'startedAt': '2026-08-07T07:38:09Z',
+      'tableCount': 31,
+      'remainingTableCount': 12,
+    });
+
+    expect(completed.duration(), const Duration(minutes: 9));
+    expect(formatSyncDuration(completed.duration()), '9m 0s');
+    expect(
+      running.duration(now: DateTime.parse('2026-08-07T07:40:39Z')),
+      const Duration(minutes: 2, seconds: 30),
+    );
+  });
 }

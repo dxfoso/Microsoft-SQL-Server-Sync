@@ -73,6 +73,7 @@ class AdminLiveState {
     required this.generatedAt,
     required this.automaticSyncPaused,
     required this.syncGate,
+    required this.syncAllOperations,
     required this.agents,
     required this.jobs,
     required this.clientActivities,
@@ -81,6 +82,7 @@ class AdminLiveState {
   final String generatedAt;
   final bool automaticSyncPaused;
   final AdminSyncGate syncGate;
+  final List<AdminSyncAllOperation> syncAllOperations;
   final List<AdminAgent> agents;
   final List<AdminJob> jobs;
   final List<AdminClientActivity> clientActivities;
@@ -92,6 +94,14 @@ class AdminLiveState {
       syncGate: AdminSyncGate.fromJson(
         Map<String, dynamic>.from(json['syncGate'] as Map? ?? const {}),
       ),
+      syncAllOperations: (json['syncAllOperations'] as List<dynamic>? ??
+              const [])
+          .map(
+            (item) => AdminSyncAllOperation.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
       agents: (json['agents'] as List<dynamic>? ?? const [])
           .map(
             (item) =>
@@ -111,6 +121,53 @@ class AdminLiveState {
           )
           .toList(growable: false),
     );
+  }
+}
+
+class AdminSyncAllOperation {
+  const AdminSyncAllOperation({
+    required this.ownerUserId,
+    required this.status,
+    required this.startedAt,
+    required this.completedAt,
+    required this.durationMs,
+    required this.tableCount,
+    required this.remainingTableCount,
+  });
+
+  final String ownerUserId;
+  final String status;
+  final String startedAt;
+  final String completedAt;
+  final int? durationMs;
+  final int tableCount;
+  final int remainingTableCount;
+
+  bool get isRunning => status.toLowerCase() == 'running';
+
+  factory AdminSyncAllOperation.fromJson(Map<String, dynamic> json) =>
+      AdminSyncAllOperation(
+        ownerUserId: json['ownerUserId'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        startedAt: json['startedAt'] as String? ?? '',
+        completedAt: json['completedAt'] as String? ?? '',
+        durationMs: (json['durationMs'] as num?)?.round(),
+        tableCount: (json['tableCount'] as num? ?? 0).round(),
+        remainingTableCount: (json['remainingTableCount'] as num? ?? 0).round(),
+      );
+
+  Duration? duration({DateTime? now}) {
+    if (!isRunning && durationMs != null) {
+      return Duration(milliseconds: durationMs!);
+    }
+    final start = DateTime.tryParse(startedAt);
+    if (start == null) return null;
+    final end =
+        isRunning
+            ? (now ?? DateTime.now().toUtc())
+            : DateTime.tryParse(completedAt);
+    if (end == null || end.isBefore(start)) return null;
+    return end.difference(start);
   }
 }
 

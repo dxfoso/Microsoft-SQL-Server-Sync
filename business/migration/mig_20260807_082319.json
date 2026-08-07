@@ -1,0 +1,61 @@
+{
+  "name": "mig_20260807_082319",
+  "timestamp": "2026-08-07T08:23:19.428021+00:00",
+  "objects": [
+    {
+      "object": "PeriodicSyncState",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "manualSyncStatus",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "16",
+            "default": null
+          }
+        },
+        {
+          "field": "manualSyncTableCount",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "manualSyncStartedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "manualSyncCompletedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

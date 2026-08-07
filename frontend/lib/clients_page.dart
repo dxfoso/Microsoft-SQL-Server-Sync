@@ -445,6 +445,29 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
+  AdminSyncAllOperation? _syncAllOperationForAgent(AdminAgent agent) {
+    for (final operation
+        in _state?.syncAllOperations ?? const <AdminSyncAllOperation>[]) {
+      if (operation.ownerUserId == agent.ownerUserId) return operation;
+    }
+    return null;
+  }
+
+  AdminSyncAllOperation? _visibleSyncAllOperation() {
+    AdminSyncAllOperation? latest;
+    for (final operation
+        in _state?.syncAllOperations ?? const <AdminSyncAllOperation>[]) {
+      if (operation.isRunning) return operation;
+      if (latest == null ||
+          _timestamp(
+            operation.startedAt,
+          ).isAfter(_timestamp(latest.startedAt))) {
+        latest = operation;
+      }
+    }
+    return latest;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -1166,7 +1189,7 @@ class _ClientsPageState extends State<ClientsPage> {
                           DataColumn(label: Text('Database')),
                           DataColumn(label: Text('Tables')),
                           DataColumn(label: Text('Last synced')),
-                          DataColumn(label: Text('Last sync duration')),
+                          DataColumn(label: Text('Sync All total')),
                           DataColumn(label: Text('Last heartbeat')),
                           DataColumn(label: Text('Actions')),
                         ],
@@ -1355,6 +1378,20 @@ class _ClientsPageState extends State<ClientsPage> {
           icon: _actionIcon(busy: _bulkSyncBusy, icon: Icons.sync_rounded),
           label: Text(syncBlocked ? 'Sync stopped' : 'Sync All'),
         ),
+        if (_visibleSyncAllOperation() case final operation?)
+          Chip(
+            avatar: Icon(
+              operation.isRunning
+                  ? Icons.timelapse_rounded
+                  : Icons.timer_outlined,
+              size: 17,
+            ),
+            label: Text(
+              operation.isRunning
+                  ? 'Sync All total: ${formatSyncDuration(operation.duration())} elapsed'
+                  : 'Last Sync All total: ${formatSyncDuration(operation.duration())}',
+            ),
+          ),
         FilledButton.tonalIcon(
           onPressed:
               _bulkMinimizeBusy
@@ -1620,7 +1657,11 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(Text('${agent.tables.length}')),
         DataCell(Text(_formatTimestamp(_latestClientSync(agent)))),
-        DataCell(Text(formatSyncDuration(agent.lastSyncDuration))),
+        DataCell(
+          Text(
+            formatSyncDuration(_syncAllOperationForAgent(agent)?.duration()),
+          ),
+        ),
         DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
         DataCell(
           Wrap(
