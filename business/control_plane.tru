@@ -9798,6 +9798,12 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   db.delete(UploadSession, { jobId });
   db.delete(DownloadSession, { jobId });
   const completedAt = now_iso();
+  let failureError = null;
+  let batchFailureError = null;
+  if (!baselineReplan) {
+    failureError = message;
+    batchFailureError = string.concat('Atomic batch failed: ', message);
+  }
   const updated = db.update(SyncJob, { id: jobId }, {
     clientName: job.clientName,
     sourceClientName: job.sourceClientName,
@@ -9818,7 +9824,7 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt,
-    error: baselineReplan ? null : message,
+    error: failureError,
     message: baselineReplan
       ? 'Delta cancelled safely because its Change Tracking cursor was unavailable; queued for an all-client baseline replan.'
       : message,
@@ -9843,7 +9849,7 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
         status: baselineReplan ? 'cancelled' : 'failed',
         progress: 100,
         completedAt,
-        error: baselineReplan ? null : string.concat('Atomic batch failed: ', message),
+        error: batchFailureError,
         message: baselineReplan
           ? 'Atomic delta batch cancelled safely and queued for an all-client baseline replan.'
           : string.concat('Atomic batch failed: ', message),
