@@ -422,13 +422,13 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("direction: 'sync'", control_plane)
         self.assertNotIn("Queued SymmetricDS sync", control_plane)
 
-    def test_web_header_cache_busts_the_mutable_windows_client_download(self):
+    def test_web_download_resolves_the_latest_immutable_windows_client(self):
         app = read_text("frontend/lib/app.dart")
         server = read_text("frontend/server.js")
         publisher = read_text("scripts/publish_windows_client_update.ps1")
 
         self.assertIn(
-            "'/client/sync_windows_agent_latest.zip'",
+            "'/client/download'",
             app,
         )
         self.assertIn("'Download Windows Client'", app)
@@ -437,11 +437,21 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("onPressed: _downloadWindowsClient", app)
         self.assertIn("_downloadWindowsClientButton(compact: false)", app)
         self.assertIn("_downloadWindowsClientButton(compact: true)", app)
+        self.assertIn('requestedPath === "download"', server)
+        self.assertIn("readLatestClientManifest(roots)", server)
+        self.assertIn("Location: location", server)
+        self.assertIn("clientDownloadLocation(manifest)", server)
+        self.assertIn('return "/client/sync_windows_agent_latest.zip"', server)
         self.assertIn('requestedPath === "sync_windows_agent_latest.zip"', server)
         self.assertIn('requestedPath === "latest-files.json"', server)
         self.assertIn('requestedPath.startsWith("packages/latest-package/")', server)
         self.assertIn('zipUrl = "$publicRoot/$zipName"', publisher)
         self.assertNotIn('zipUrl = "$publicRoot/sync_windows_agent_latest.zip"', publisher)
+
+    def test_web_header_cache_busts_the_mutable_windows_client_download(self):
+        # Preserve the original INC-038 selector while the stronger INC-047
+        # regression proves that the click resolves the immutable live ZIP.
+        self.test_web_download_resolves_the_latest_immutable_windows_client()
 
     def test_windows_snapshot_apply_uses_only_permanent_primary_identity(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

@@ -454,7 +454,7 @@ class _AdminWorkspace extends StatefulWidget {
 
 class _AdminWorkspaceState extends State<_AdminWorkspace> {
   static const _windowsClientDownloadPath =
-      '/client/sync_windows_agent_latest.zip';
+      '/client/download';
   int _selectedIndex = 0;
 
   void _downloadWindowsClient() {

@@ -120,6 +120,45 @@ function resolveSafePath(rootDir, requestedPath) {
   return candidatePath;
 }
 
+async function readLatestClientManifest(roots) {
+  const manifests = [];
+  for (const rootDir of roots) {
+    const candidatePath = resolveSafePath(rootDir, "latest.json");
+    if (!candidatePath) continue;
+    try {
+      const payload = JSON.parse(await fs.readFile(candidatePath, "utf8"));
+      if (payload && typeof payload === "object") {
+        manifests.push(payload);
+      }
+    } catch {
+      // Ignore an unavailable or malformed manifest and try the other source.
+    }
+  }
+  manifests.sort((left, right) => {
+    const versionOrder = compareClientVersions(left.version, right.version);
+    if (versionOrder !== 0) {
+      return versionOrder;
+    }
+    return String(left.releaseDate || "").localeCompare(
+      String(right.releaseDate || ""),
+    );
+  });
+  return manifests.length > 0 ? manifests[manifests.length - 1] : null;
+}
+
+function clientDownloadLocation(manifest) {
+  const zipUrl = String(manifest?.zipUrl || "").trim();
+  if (
+    /^https:\/\/sync\.velvet-leaf\.com\/client\/[A-Za-z0-9._-]+\.zip$/.test(
+      zipUrl,
+    ) ||
+    /^\/client\/[A-Za-z0-9._-]+\.zip$/.test(zipUrl)
+  ) {
+    return zipUrl;
+  }
+  return "/client/sync_windows_agent_latest.zip";
+}
+
 async function tryServeClientUpdate(pathname, res) {
   if (pathname !== "/client" && !pathname.startsWith("/client/")) {
     return false;
@@ -137,33 +176,21 @@ async function tryServeClientUpdate(pathname, res) {
     return true;
   }
   const roots = [CLIENT_UPDATES_DIR, FALLBACK_CLIENT_UPDATES_DIR];
+  if (requestedPath === "download") {
+    const manifest = await readLatestClientManifest(roots);
+    const location = clientDownloadLocation(manifest);
+    res.writeHead(302, {
+      Location: location,
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      Pragma: "no-cache",
+    });
+    res.end();
+    return true;
+  }
   if (requestedPath === "latest.json") {
-    const manifests = [];
-    for (const rootDir of roots) {
-      const candidatePath = resolveSafePath(rootDir, requestedPath);
-      if (!candidatePath) continue;
-      try {
-        const payload = JSON.parse(await fs.readFile(candidatePath, "utf8"));
-        if (payload && typeof payload === "object") {
-          manifests.push(payload);
-        }
-      } catch {
-        // Ignore an unavailable or malformed manifest and try the other source.
-      }
-    }
-    if (manifests.length > 0) {
-      manifests.sort((left, right) => {
-        const versionOrder = compareClientVersions(left.version, right.version);
-        if (versionOrder !== 0) {
-          return versionOrder;
-        }
-        // Persistent updates can temporarily share a version with the image
-        // fallback. Prefer the newest publication metadata in that case.
-        return String(left.releaseDate || "").localeCompare(
-          String(right.releaseDate || ""),
-        );
-      });
-      const body = Buffer.from(JSON.stringify(manifests[manifests.length - 1]));
+    const manifest = await readLatestClientManifest(roots);
+    if (manifest) {
+      const body = Buffer.from(JSON.stringify(manifest));
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": body.length,
