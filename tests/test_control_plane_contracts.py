@@ -1203,6 +1203,33 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("syncAllOperations", live_state)
         self.assertIn("manual_sync_operation_payload", live_state)
 
+    def test_sync_all_finishes_when_a_table_has_no_current_peer_target(self):
+        source = read_text("business/control_plane.tru")
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
+        create_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
+            "function reset_all_agent_saved_state", 1
+        )[0]
+
+        self.assertIn("let unavailableManualTables = [];", scheduler)
+        self.assertIn(
+            "string_array_contains(unavailableManualTables, table)", scheduler
+        )
+        self.assertIn(
+            "reduce_manual_sync_table_count_for_owner(ownerUserId, unavailableManualTables.length)",
+            scheduler,
+        )
+        self.assertIn(
+            "remainingManualTables.length == 0", scheduler
+        )
+        self.assertIn("finish_manual_sync_operation", scheduler)
+        self.assertIn("let ownerUnavailableTableCount = 0;", create_all)
+        self.assertIn(
+            "reduce_manual_sync_table_count_for_owner(ownerUserId, ownerUnavailableTableCount)",
+            create_all,
+        )
+
     def test_sync_scheduling_is_scoped_to_each_agents_selected_database(self):
         source = read_text("business/control_plane.tru")
 

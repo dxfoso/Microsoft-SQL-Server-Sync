@@ -3667,6 +3667,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
 
   let createdJobs = [];
   let queuedTables = [];
+  let unavailableManualTables = [];
   let queuedTableCount = activeTableCapacityUsed;
   for (const table of dueTables) {
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
@@ -3681,9 +3682,13 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       recentUploadModes
     );
     const tableAgents = plan.participants ?? [];
-    if (tableAgents.length == 0 ||
-        string.from(plan.mode) == 'needs_input' ||
-        string.from(plan.mode) == 'unavailable') {
+    if (tableAgents.length == 0 || string.from(plan.mode) == 'unavailable') {
+      if (string_array_contains(manualPendingTables, table)) {
+        unavailableManualTables = unavailableManualTables.concat([table]);
+      }
+      continue;
+    }
+    if (string.from(plan.mode) == 'needs_input') {
       continue;
     }
     let busy = false;
@@ -3748,6 +3753,13 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       if (string_array_contains(queuedTables, table)) {
         continue;
       }
+      // A table enabled on only one current client has no peer target. It is
+      // not syncable in this operation and must not leave Sync All running
+      // forever with zero jobs. A later heartbeat/client installation makes
+      // it eligible for a future Sync All without changing its table policy.
+      if (string_array_contains(unavailableManualTables, table)) {
+        continue;
+      }
       let stillEnabled = false;
       for (const agent of ownerAgents) {
         const cache = scheduler_agent_table_state_cache_for_agent(
@@ -3767,6 +3779,11 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       }
     }
     set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);
+    reduce_manual_sync_table_count_for_owner(ownerUserId, unavailableManualTables.length);
+    if (remainingManualTables.length == 0 &&
+        active_job_tables_for_owner(normalizedOwnerUserId).length == 0) {
+      finish_manual_sync_operation(normalizedOwnerUserId, 'completed');
+    }
   }
   return createdJobs;
 }
@@ -5660,6 +5677,27 @@ function finish_manual_sync_operation(ownerUserId: string, status: string, compl
   });
 }
 
+function reduce_manual_sync_table_count_for_owner(ownerUserId: string, removedCount: int): void {
+  if (removedCount <= 0) {
+    return;
+  }
+  const normalizedOwnerUserId = ownerUserId.trim();
+  const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
+  if (existing == null || string.from(existing.manualSyncStatus ?? '').trim() != 'running') {
+    return;
+  }
+  let nextTableCount = existing.manualSyncTableCount ?? 0;
+  if (nextTableCount >= removedCount) {
+    nextTableCount -= removedCount;
+  } else {
+    nextTableCount = 0;
+  }
+  db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
+    manualSyncTableCount: nextTableCount,
+    updatedAt: now_iso()
+  });
+}
+
 function manual_sync_operation_payload(state: map<json>): map<json> {
   const startedAt = string.from(state.manualSyncStartedAt ?? '').trim();
   const completedAt = string.from(state.manualSyncCompletedAt ?? '').trim();
@@ -6761,6 +6799,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       begin_manual_sync_operation(ownerUserId, enabledTables.length, syncAllRequestedAt);
     }
     let ownerDeferredTables = [];
+    let ownerUnavailableTableCount = 0;
     const activeOwnerTables = active_job_tables_for_owner(ownerUserId);
     const tableCaches = onlineAgents.map((agent) =>
       scheduler_agent_table_state_cache(agent, ownerPolicies)
@@ -6793,10 +6832,14 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       );
       const tableAgents = plan.participants ?? [];
       if (tableAgents.length == 0) {
+        ownerUnavailableTableCount += 1;
         continue;
       }
-      if (string.from(plan.mode) == 'unavailable' ||
-          string.from(plan.mode) == 'needs_input') {
+      if (string.from(plan.mode) == 'unavailable') {
+        ownerUnavailableTableCount += 1;
+        continue;
+      }
+      if (string.from(plan.mode) == 'needs_input') {
         ownerDeferredTables = ownerDeferredTables.concat([table]);
         deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
         continue;
@@ -6852,6 +6895,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       }
     }
     set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);
+    reduce_manual_sync_table_count_for_owner(ownerUserId, ownerUnavailableTableCount);
     if (queuedTablesForOwner == 0 && ownerDeferredTables.length == 0) {
       finish_manual_sync_operation(ownerUserId, 'completed');
     }
