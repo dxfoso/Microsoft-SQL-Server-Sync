@@ -1,8 +1,8 @@
 # Current Status
 
-Updated: 2026-08-07 23:31 Europe/Berlin
+Updated: 2026-08-08 00:08 Europe/Berlin
 
-**Progress: 90% complete**
+**Progress: 100% complete**
 
 - The requested one-time live Sync All finished in 4m 35s. Automatic scheduling is paused; no second live sync will be started during verification.
 - 25 runnable tables completed. `Connections` converged on both clients. Three stale-baseline delta batches (`BPOptions000`, `BPOptionsDetails000`, and `BillRel000`) were rejected atomically before upload/apply.
@@ -11,5 +11,9 @@ Updated: 2026-08-07 23:31 Europe/Berlin
 - INC-050 and focused client/control-plane regressions are implemented and passing. Windows client version is bumped to `1.0.245+249`.
 - The hidden Standard safety gate passed in 634 seconds: all repository contracts, 180 Windows tests, 24 three-client Docker scenarios, 11 robustness/fault scenarios, 5,000-row scale, and a 60-second soak passed.
 - Commit `1dcbed48f6eb` is pushed. Windows client `1.0.245+249` is published, its live manifest and portable startup were verified, and it uses only `https://sync.velvet-leaf.com` endpoints.
-- Current work: production deployment stopped safely before changing the server because the backend image gate found an invalid nullable/string ternary in `jobs_fail`. The failure path is corrected, and validate-only now prints exact file, line, and message details. INC-051 records the incident and regression.
-- Remaining: rerun the compiler and required safety tests, build/push exact immutable images locally, deploy through `velvet-leaf-1`, verify public health and client update state. Real-client sync remains stopped.
+- INC-051 is resolved: the invalid nullable/string ternary in `jobs_fail` is removed, and validate-only now prints exact compiler file, line, and message details. Its targeted Rust regression passes.
+- The corrected commit passed production TRU validation and the full Standard safety gate in 843 seconds: 24 three-client SQL scenarios, 11 fault/robustness scenarios, 5,000-row scale, and a 60-second soak all passed.
+- Immutable backend/frontend commit `49c7e236c52d027047c1ba809250dde2bf9fc507` is deployed. Public health reports `ready=true`, `compile_errors=0`, and the exact commit; both Kubernetes deployments are ready.
+- Live verification: `alshallan2` and `velvet factory` have 67 enabled tables in `Completed`, zero active jobs, and zero unresolved failed jobs. All real clients report Windows version `1.0.245+249`.
+- Automatic synchronization remains paused as intended. No second real Sync All was started.
+- Remaining: none for this change. A future sync begins only when the user starts it from the web UI.
