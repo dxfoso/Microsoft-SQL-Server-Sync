@@ -18,6 +18,15 @@ class AutomaticChangeProbe {
   bool get baselineExpired => status == 'expired';
 }
 
+bool automaticBaselineMustWaitForUnion({
+  required String probeStatus,
+  required String currentTrackingStatus,
+  required int rowCount,
+}) {
+  return currentTrackingStatus == 'baseline_pending' ||
+      (probeStatus == 'baseline' && rowCount > 0);
+}
+
 String _quoteIdentifier(String value) => '[${value.replaceAll(']', ']]')}]';
 
 String _escapeSqlLiteral(String value) => value.replaceAll("'", "''");

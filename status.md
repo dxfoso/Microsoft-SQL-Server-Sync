@@ -1,13 +1,13 @@
 # Current Status
 
-Updated: 2026-08-07
+Updated: 2026-08-07 23:59 Europe/Berlin
 
-**Progress: 100% complete**
+**Progress: 90% complete**
 
-- Live data is synchronized: all 31 enabled tables match, with no active or failed jobs.
-- The 20+ minute baseline delay was caused by about 140 repeated SQL connections. Client `1.0.241+245` now stages the same rows through one connection; atomic merge and delete safety are unchanged.
-- All unit, three-client Docker, fault, restart, concurrency, 5,000-row, fuzz, and soak tests passed.
-- Backend and frontend commit `baf3738` are live and healthy (`ready=true`, `compile_errors=0`); client `1.0.242+246` is published and verified.
-- Velvet Factory and `alshallan2` are online on `1.0.242+246`; both update requests are acknowledged.
-- Automatic sync is resumed. All 31 enabled table fingerprints match, with zero active jobs, recent failures, or missing fingerprints.
-- Final public checks pass: web HTTP 200, backend `ready=true`, `compile_errors=0`, deployed commit `baf3738`.
+- The requested one-time live Sync All finished in 4m 35s. Automatic scheduling is paused; no second live sync will be started during verification.
+- 25 runnable tables completed. `Connections` converged on both clients. Three stale-baseline delta batches (`BPOptions000`, `BPOptionsDetails000`, and `BillRel000`) were rejected atomically before upload/apply.
+- Both clients are healthy with zero active or failed local tables. The three affected tables now have identical row counts and checksums on both clients, so no partial data or divergence was left behind.
+- Long-term fix: non-empty tables cannot treat a newly discovered SQL cursor as a synchronized baseline. Missing/expired cursors now cancel safely and return to the same durable operation for an automatic all-client, insert/update-only union replan.
+- INC-050 and focused client/control-plane regressions are implemented and passing. Windows client version is bumped to `1.0.245+249`.
+- The hidden Standard safety gate passed in 634 seconds: all repository contracts, 180 Windows tests, 24 three-client Docker scenarios, 11 robustness/fault scenarios, 5,000-row scale, and a 60-second soak passed.
+- Remaining: commit/push, publish and verify Windows client `1.0.245+249`, build/deploy exact immutable server images, and recheck production health. Real-client sync will remain stopped.

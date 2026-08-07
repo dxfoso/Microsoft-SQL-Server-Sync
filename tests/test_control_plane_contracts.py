@@ -1212,6 +1212,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("Change Tracking cursors are preserved until offline clients catch up", source)
         self.assertIn("skippedOfflineClients", source)
 
+    def test_missing_or_expired_baseline_replans_as_safe_all_client_union(self):
+        source = read_text("business/control_plane.tru")
+        ready = source.split(
+            "function scheduler_table_change_tracking_ready(", 1
+        )[1].split("function sync_agents_enabled_for_table", 1)[0]
+        planner = source.split("function sync_table_baseline_plan(", 1)[1].split(
+            "function sync_owner_has_blocking_table_issues", 1
+        )[0]
+        failure = source.split("function jobs_fail(", 1)[1].split(
+            "function jobs_cancel_active", 1
+        )[0]
+
+        self.assertIn("trackingStatus == 'enabled'", ready)
+        self.assertIn("readyAgents.length != participants.length", planner)
+        self.assertIn("reportedRowCountClientCount == participants.length", planner)
+        self.assertIn("mode: 'union_bootstrap'", planner)
+        self.assertIn("failureKind: string = ''", source)
+        self.assertIn("failureKind.trim().toLowerCase() == 'baseline_required'", failure)
+        self.assertIn("status: baselineReplan ? 'cancelled' : 'failed'", failure)
+        self.assertIn("mark_agent_table_baseline_pending", failure)
+        self.assertIn("pendingTables.concat([string.from(job.table)])", failure)
+
     def test_sync_all_tracks_whole_operation_and_refills_bounded_slots(self):
         source = read_text("business/control_plane.tru")
         scheduler = source.split(

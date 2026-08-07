@@ -3224,6 +3224,43 @@ function scheduler_agent_table_state_cache_for_agent(clientName: string, caches:
   return null;
 }
 
+function mark_agent_table_baseline_pending(clientName: string, table: string, reason: string = ''): void {
+  const agent = db.selectOne(Agent, { clientName });
+  if (agent == null || agent.tables == null) {
+    return;
+  }
+  let nextTables = [];
+  let changed = false;
+  for (const tableState of agent.tables) {
+    if (string.from(tableState.table).trim() != table.trim()) {
+      nextTables = nextTables.concat([tableState]);
+      continue;
+    }
+    nextTables = nextTables.concat([{
+      table: tableState.table,
+      enabled: tableState.enabled,
+      status: 'Queued',
+      lastSync: tableState.lastSync,
+      progress: 0,
+      rowCount: tableState.rowCount,
+      tableChecksum: tableState.tableChecksum,
+      changeTrackingVersion: tableState.changeTrackingVersion,
+      changeTrackingOwner: tableState.changeTrackingOwner,
+      changeTrackingStatus: 'baseline_pending',
+      changeTrackingMessage: truncate_text(reason, 1000),
+      message: 'Waiting for a safe all-client baseline.',
+      history: tableState.history
+    }]);
+    changed = true;
+  }
+  if (changed) {
+    db.update(Agent, { clientName }, {
+      tables: nextTables,
+      updatedAt: now_iso()
+    });
+  }
+}
+
 function scheduler_table_change_tracking_ready(agent: map<json>, table: string, tableCache: map<json>? = null): bool {
   let states = [];
   if (tableCache != null && tableCache.tables != null) {
@@ -3240,11 +3277,7 @@ function scheduler_table_change_tracking_ready(agent: map<json>, table: string, 
   const trackingStatus = string.from(state.changeTrackingStatus ?? '').trim().toLowerCase();
   return version >= 0
     && owner == string.from(agent.clientName)
-    && trackingStatus != 'expired'
-    && trackingStatus != 'failed'
-    && trackingStatus != 'missing'
-    && trackingStatus != 'no_primary_key'
-    && trackingStatus != 'not_tracked';
+    && trackingStatus == 'enabled';
 }
 
 function sync_agents_enabled_for_table(agents: array<json>, table: string, policies: array<json>? = null, tableCaches: array<json>? = null): array<json> {
@@ -3410,6 +3443,24 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       sourceAgent: null,
       targetAgents: participants,
       message: 'Clients report different complete table fingerprints; every client will upload a complete snapshot and receive the primary-key union.'
+    };
+  }
+  // A non-empty client without a proven synchronized cursor must never be
+  // promoted to an ordinary delta merely because a local discovery pass
+  // established a fresh SQL Change Tracking version. Every online client
+  // contributes a complete insert/update-only snapshot so historical rows
+  // and durable tombstones can converge without inferring any deletion.
+  if (participants.length >= 2 &&
+      readyAgents.length != participants.length &&
+      reportedRowCountClientCount == participants.length &&
+      establishedInventoryCanUnion) {
+    return {
+      mode: 'union_bootstrap',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: participants,
+      message: 'At least one non-empty client needs a synchronized Change Tracking baseline; every online client will upload a complete snapshot and receive the safe primary-key union.'
     };
   }
   if (readyAgents.length == participants.length) {
@@ -9728,7 +9779,7 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_fail(jobId: string, message: string, progress: int? = null, token: string? = null): map<json> {
+function jobs_fail(jobId: string, message: string, progress: int? = null, token: string? = null, failureKind: string = ''): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -9743,6 +9794,7 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   if (progress != null) {
     nextProgress = progress;
   }
+  const baselineReplan = failureKind.trim().toLowerCase() == 'baseline_required';
   db.delete(UploadSession, { jobId });
   db.delete(DownloadSession, { jobId });
   const completedAt = now_iso();
@@ -9757,7 +9809,7 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
-    status: 'failed',
+    status: baselineReplan ? 'cancelled' : 'failed',
     progress: nextProgress,
     rowCount: job.rowCount,
     snapshotBytes: job.snapshotBytes,
@@ -9766,8 +9818,10 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt,
-    error: message,
-    message,
+    error: baselineReplan ? null : message,
+    message: baselineReplan
+      ? 'Delta cancelled safely because its Change Tracking cursor was unavailable; queued for an all-client baseline replan.'
+      : message,
     clientUserId: job.clientUserId,
     ownerUserId: job.ownerUserId,
     updatedAt: completedAt
@@ -9786,11 +9840,13 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     const activeBatchJobIds = activeBatchJobs.map((batchJob) => string.from(batchJob.id));
     if (activeBatchJobIds.length != 0) {
       db.updateMany(SyncJob, { id: { in: activeBatchJobIds } }, {
-        status: 'failed',
+        status: baselineReplan ? 'cancelled' : 'failed',
         progress: 100,
         completedAt,
-        error: string.concat('Atomic batch failed: ', message),
-        message: string.concat('Atomic batch failed: ', message),
+        error: baselineReplan ? null : string.concat('Atomic batch failed: ', message),
+        message: baselineReplan
+          ? 'Atomic delta batch cancelled safely and queued for an all-client baseline replan.'
+          : string.concat('Atomic batch failed: ', message),
         updatedAt: completedAt
       });
     }
@@ -9830,6 +9886,20 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   let nextJob = job;
   if (updated != null) {
     nextJob = updated;
+  }
+  if (baselineReplan) {
+    mark_agent_table_baseline_pending(
+      string.from(job.clientName),
+      string.from(job.table),
+      message
+    );
+    const pendingTables = manual_sync_pending_tables_for_owner(
+      string.from(job.ownerUserId)
+    );
+    set_manual_sync_pending_tables_for_owner(
+      string.from(job.ownerUserId),
+      unique_string_values(pendingTables.concat([string.from(job.table)]))
+    );
   }
   // Unexpected transport/runtime failures are safe to retry because the
   // client applies a complete table delta in one SQL transaction and only

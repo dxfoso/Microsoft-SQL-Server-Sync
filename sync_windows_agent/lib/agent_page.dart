@@ -1912,7 +1912,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         tableBaselines: states.map(
           (table, state) => MapEntry(
             table,
-            state.changeTrackingOwner == widget.clientName
+            state.changeTrackingOwner == widget.clientName &&
+                    state.changeTrackingStatus != 'baseline_pending'
                 ? state.changeTrackingVersion
                 : null,
           ),
@@ -1950,14 +1951,27 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         final syncKey = _syncTableKey(probe.table, database: database);
         final current = nextTables[syncKey] ?? _defaultSyncTableState(syncKey);
         if (probe.canAdvanceBaseline && probe.currentVersion != null) {
+          final baselinePending = automaticBaselineMustWaitForUnion(
+            probeStatus: probe.status,
+            currentTrackingStatus: current.changeTrackingStatus,
+            rowCount: current.rowCount,
+          );
           nextTables[syncKey] = current.copyWith(
             changeTrackingVersion: probe.currentVersion,
             changeTrackingOwner: widget.clientName,
-            changeTrackingStatus: 'enabled',
+            changeTrackingStatus:
+                baselinePending ? 'baseline_pending' : 'enabled',
             changeTrackingMessage:
-                probe.status == 'baseline'
+                baselinePending
+                    ? 'A non-empty table has no synchronized Change Tracking baseline. The next sync will safely union every online client snapshot.'
+                    : probe.status == 'baseline'
                     ? 'Automatic Change Tracking baseline established.'
                     : 'Automatic change scan is current.',
+            status: baselinePending ? 'Queued' : current.status,
+            message:
+                baselinePending
+                    ? 'Waiting for a safe all-client baseline.'
+                    : current.message,
           );
           stateChanged = true;
           continue;
@@ -4854,6 +4868,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             stackTrace: stackTrace,
           );
           await _markRemoteJobFailed(job, error);
+          final baselineReplan = error is _SyncBaselineReplanRequired;
           final failedJob = RemoteSyncJob(
             id: job.id,
             clientName: job.clientName,
@@ -4866,7 +4881,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             publisherUseWindowsAuth: job.publisherUseWindowsAuth,
             publisherUser: job.publisherUser,
             publisherPassword: job.publisherPassword,
-            status: 'failed',
+            status: baselineReplan ? 'cancelled' : 'failed',
             progress: 100,
             rowCount: job.rowCount,
             snapshotBytes: job.snapshotBytes,
@@ -4886,7 +4901,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             failedJob,
             appendHistory: true,
             success: false,
-            overrideMessage: errorMessage,
+            overrideMessage:
+                baselineReplan
+                    ? 'Delta cancelled safely; waiting for automatic all-client baseline replan.'
+                    : errorMessage,
           );
           if (job.direction == 'download') {
             unawaited(_refreshLocalRowCounts());
@@ -5246,6 +5264,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
                   : current.tableChecksum,
           changeTrackingVersion: uploadedVersion,
           changeTrackingOwner: widget.clientName,
+          changeTrackingStatus: 'enabled',
+          changeTrackingMessage:
+              'Synchronized Change Tracking baseline is current.',
         ),
       );
       unawaited(_syncWithControlPlane());
@@ -5509,6 +5530,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         current.copyWith(
           changeTrackingVersion: appliedVersion,
           changeTrackingOwner: widget.clientName,
+          changeTrackingStatus: 'enabled',
+          changeTrackingMessage:
+              'Synchronized Change Tracking baseline is current.',
         ),
       );
     }
@@ -5693,8 +5717,27 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       // bootstrap mode. The server selects either an authoritative one-client
       // repair or the guarded all-client union used for an initial baseline.
       if (rowCount != 0 || tracking == null) {
-        throw StateError(
-          'Protocol-v3 sync for ${job.table} requires a deliberate one-source bootstrap because this non-empty database has no valid Change Tracking baseline.',
+        final current =
+            _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
+        _updateSyncTableState(
+          job.table,
+          current.copyWith(
+            changeTrackingVersion: tracking?.currentVersion,
+            changeTrackingOwner: widget.clientName,
+            changeTrackingStatus: 'baseline_pending',
+            changeTrackingMessage:
+                'The saved cursor is unavailable or older than SQL Server retention. The current delta was cancelled before upload and will be replanned as a safe all-client baseline.',
+            status: 'Queued',
+            progress: 0,
+            message: 'Waiting for a safe all-client baseline.',
+          ),
+        );
+        unawaited(_syncWithControlPlane());
+        throw _SyncBaselineReplanRequired(
+          table: job.table,
+          previousVersion: previousVersion,
+          currentVersion: tracking?.currentVersion,
+          minValidVersion: tracking?.minValidVersion,
         );
       }
       isDelta = true;
@@ -6292,6 +6335,15 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
 
   Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {
     try {
+      if (error is _SyncBaselineReplanRequired) {
+        await _controlPlaneClient.failJob(
+          job.id,
+          error.toString(),
+          progress: 100,
+          failureKind: 'baseline_required',
+        );
+        return;
+      }
       if (job.direction == 'download' && isSyncIdentityCollision(error)) {
         await _controlPlaneClient.failJob(
           job.id,
@@ -11484,6 +11536,27 @@ class _ChangeTrackingState {
 
   final int currentVersion;
   final int minValidVersion;
+}
+
+class _SyncBaselineReplanRequired implements Exception {
+  const _SyncBaselineReplanRequired({
+    required this.table,
+    required this.previousVersion,
+    required this.currentVersion,
+    required this.minValidVersion,
+  });
+
+  final String table;
+  final int? previousVersion;
+  final int? currentVersion;
+  final int? minValidVersion;
+
+  @override
+  String toString() =>
+      'Change Tracking baseline replan required for $table '
+      '(saved=${previousVersion ?? 'missing'}, '
+      'minimum=${minValidVersion ?? 'unavailable'}, '
+      'current=${currentVersion ?? 'unavailable'}). No rows were uploaded or applied.';
 }
 
 class _DeltaApplyStats {

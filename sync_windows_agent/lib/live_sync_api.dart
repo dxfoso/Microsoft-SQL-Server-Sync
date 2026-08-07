@@ -919,11 +919,18 @@ class AgentControlPlaneClient {
     return _parseJobPayload(response, 'job completion');
   }
 
-  Future<void> failJob(String jobId, String message, {int? progress}) async {
+  Future<void> failJob(
+    String jobId,
+    String message, {
+    int? progress,
+    String? failureKind,
+  }) async {
     await _invokeFunction('jobs_fail', {
       'jobId': jobId,
       'message': message,
       if (progress != null) 'progress': progress,
+      if (failureKind != null && failureKind.trim().isNotEmpty)
+        'failureKind': failureKind.trim(),
     }, 'failing job');
   }
 

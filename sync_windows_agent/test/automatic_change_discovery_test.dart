@@ -43,4 +43,31 @@ void main() {
     expect(query, contains("N'odd''schema'"));
     expect(query, contains("N'ta''ble'"));
   });
+
+  test('non-empty unsynchronized baselines stay pending until union', () {
+    expect(
+      automaticBaselineMustWaitForUnion(
+        probeStatus: 'baseline',
+        currentTrackingStatus: 'unknown',
+        rowCount: 12,
+      ),
+      isTrue,
+    );
+    expect(
+      automaticBaselineMustWaitForUnion(
+        probeStatus: 'baseline',
+        currentTrackingStatus: 'unknown',
+        rowCount: 0,
+      ),
+      isFalse,
+    );
+    expect(
+      automaticBaselineMustWaitForUnion(
+        probeStatus: 'unchanged',
+        currentTrackingStatus: 'baseline_pending',
+        rowCount: 12,
+      ),
+      isTrue,
+    );
+  });
 }

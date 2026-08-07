@@ -152,6 +152,37 @@ void main() {
     },
   );
 
+  test('baseline failure requests a safe server replan', () async {
+    final client = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        expect(name, 'jobs_fail');
+        expect(args['jobId'], 'job-baseline');
+        expect(args['failureKind'], 'baseline_required');
+        expect(args['progress'], 100);
+        return (
+          statusCode: 200,
+          body: {
+            'status': 'success',
+            'value': {'ok': true},
+          },
+        );
+      },
+    );
+    final api = AgentControlPlaneClient(
+      client: client,
+      baseUrl: 'https://example.com/call',
+    );
+
+    await api.failJob(
+      'job-baseline',
+      'cursor expired',
+      progress: 100,
+      failureKind: 'baseline_required',
+    );
+
+    expect(client.requests, hasLength(1));
+  });
+
   test('multi-writer upload uses the snapshot transfer timeout', () async {
     final client = AgentControlPlaneClient(
       client: _DelayedClient(
