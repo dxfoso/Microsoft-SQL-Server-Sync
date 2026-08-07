@@ -11,6 +11,22 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
+    def test_heartbeat_rereads_fresh_command_delivery_state_before_response(self):
+        source = read_text("business/control_plane.tru")
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick", 1
+        )[0]
+
+        self.assertIn(
+            "const deliveryAgent = db.selectOne(Agent, { clientName: resolvedClientName });",
+            heartbeat,
+        )
+        self.assertIn("agent_diagnostics_payload(deliveryAgent)", heartbeat)
+        self.assertIn("agent_client_update_payload(deliveryAgent)", heartbeat)
+        self.assertIn("agent_window_action_payload(deliveryAgent)", heartbeat)
+        self.assertIn("agent_data_export_payload(deliveryAgent, true)", heartbeat)
+        self.assertNotIn("agent_client_update_payload(nextAgent)", heartbeat)
+
     def test_eligible_table_auto_enrollment_reactivates_disabled_policies(self):
         source = read_text("business/control_plane.tru")
         body = source.split(
@@ -165,7 +181,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field replicationUseWindowsAuth: bool?", agent_schema)
         self.assertIn("field replicationUser: string? min=0 max=256", agent_schema)
         self.assertIn("field replicationPassword: string? min=0 max=256", agent_schema)
-        self.assertIn("clientUpdate: agent_client_update_payload(nextAgent)", source)
+        self.assertIn("clientUpdate: agent_client_update_payload(deliveryAgent)", source)
         self.assertNotIn("symmetricDsStatus", source)
         self.assertNotIn("agent_symmetricds_status_post", source)
 
@@ -1695,7 +1711,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("dataExport: agent_data_export_payload(agent)", public_payload)
         self.assertNotIn("includeUploadCredentials: true", public_payload)
-        self.assertIn("agent_data_export_payload(nextAgent, true)", heartbeat)
+        self.assertIn("agent_data_export_payload(deliveryAgent, true)", heartbeat)
         self.assertIn("export database must match the client selected database", request)
         self.assertIn("https://sync.velvet-leaf.com/private-export", request)
         self.assertIn("dataExportUploadToken", source)

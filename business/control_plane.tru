@@ -5564,17 +5564,24 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   if (tablesChanged && sync_owner_has_resolving_table_issues(ownerUserId)) {
     refresh_owner_baseline_table_issues(ownerUserId);
   }
+  // Administrative commands can be written while a heartbeat is processing
+  // its bounded table inventory. Re-read the row immediately before forming
+  // the response so a command cannot be hidden by the earlier Agent snapshot.
+  const deliveryAgent = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (deliveryAgent == null) {
+    return raw_json_error(500, 'agent command delivery state unavailable');
+  }
   return {
     ok: true,
     serverTimeUtc: now_iso(),
-    syncSettings: sync_settings_payload(nextAgent),
+    syncSettings: sync_settings_payload(deliveryAgent),
     tablePolicies: table_sync_policy_payloads_for_database(ownerUserId, database),
     tableDependencies: table_dependency_payloads_for_database(ownerUserId, database),
     jobs: active_jobs_for_client(resolvedClientName),
-    diagnostics: agent_diagnostics_payload(nextAgent),
-    clientUpdate: agent_client_update_payload(nextAgent),
-    windowAction: agent_window_action_payload(nextAgent),
-    dataExport: agent_data_export_payload(nextAgent, true)
+    diagnostics: agent_diagnostics_payload(deliveryAgent),
+    clientUpdate: agent_client_update_payload(deliveryAgent),
+    windowAction: agent_window_action_payload(deliveryAgent),
+    dataExport: agent_data_export_payload(deliveryAgent, true)
   };
 }
 
