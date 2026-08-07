@@ -3634,7 +3634,7 @@ void main() {
   );
 
   test(
-    'multi-writer upload sends base64 JSON payloads for storage-backed relay',
+    'multi-writer upload sends bounded gzip JSON payloads for storage-backed relay',
     () async {
       final client = _ScriptedClient(
         responseForRequest: (name, args, callIndex) {
@@ -3642,11 +3642,16 @@ void main() {
           expect(args['rows'], isEmpty);
           expect(args['payloadBase64'], isNotEmpty);
           expect(args['payloadRowCount'], 1);
+          expect(args['payloadEncoding'], 'gzip-json');
+          expect(args['payloadUncompressedBytes'], greaterThan(0));
+          expect(args['payloadCompressedBytes'], greaterThan(0));
           expect(args['snapshotChecksum'], '1:0123456789abcdef');
           expect(args['protocolVersion'], 2);
           expect(args['syncEpoch'], 'epoch-test');
           final decoded = jsonDecode(
-            utf8.decode(base64Decode(args['payloadBase64'] as String)),
+            utf8.decode(
+              gzip.decode(base64Decode(args['payloadBase64'] as String)),
+            ),
           );
           expect(decoded, [
             {'Id': '1', 'Name': 'Arabic مرحبا'},
@@ -3707,86 +3712,80 @@ void main() {
     },
   );
 
-  test(
-    'multi-writer download decodes a storage-backed base64 payload',
-    () async {
-      final encoded = base64Encode(
-        utf8.encode(
-          jsonEncode([
-            {'Id': '1', 'Name': 'Arabic مرحبا'},
-          ]),
-        ),
-      );
-      final client = _ScriptedClient(
-        responseForRequest: (name, args, callIndex) {
-          expect(name, 'jobs_multi_writer_download');
-          return (
-            statusCode: 200,
-            body: {
-              'status': 'success',
-              'value': {
-                'done': true,
-                'nextCursor': null,
-                'payloadBase64': encoded,
-                'snapshot': {
-                  'id': 'batch-1-c2-first',
-                  'clientName': 'server-merge',
-                  'subscriberClientName': 'c2',
-                  'table': 'db::mt000',
-                  'createdAt': '2026-07-10T03:05:00Z',
-                  'rowCount': 1,
-                  'checksum': 'checksum-1',
-                  'snapshotBytes': 32,
-                  'columns': ['Id', 'Name'],
-                  'uniqueKeyColumnSets': [
-                    ['Name'],
-                  ],
-                  'rows': const [],
-                  'sourceJobId': 'job-mw-download',
-                  'clientChangeTrackingVersions': const [],
-                },
+  test('multi-writer download decodes a storage-backed gzip payload', () async {
+    final payloadBytes = utf8.encode(
+      jsonEncode([
+        {'Id': '1', 'Name': 'Arabic مرحبا'},
+      ]),
+    );
+    final encoded = base64Encode(gzip.encode(payloadBytes));
+    final client = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        expect(name, 'jobs_multi_writer_download');
+        return (
+          statusCode: 200,
+          body: {
+            'status': 'success',
+            'value': {
+              'done': true,
+              'nextCursor': null,
+              'payloadBase64': encoded,
+              'payloadEncoding': 'gzip-json',
+              'snapshot': {
+                'id': 'batch-1-c2-first',
+                'clientName': 'server-merge',
+                'subscriberClientName': 'c2',
+                'table': 'db::mt000',
+                'createdAt': '2026-07-10T03:05:00Z',
+                'rowCount': 1,
+                'checksum': 'checksum-1',
+                'snapshotBytes': payloadBytes.length,
+                'columns': ['Id', 'Name'],
+                'uniqueKeyColumnSets': [
+                  ['Name'],
+                ],
+                'rows': const [],
+                'sourceJobId': 'job-mw-download',
+                'clientChangeTrackingVersions': const [],
               },
             },
-          );
-        },
-      );
-      final api = AgentControlPlaneClient(
-        client: client,
-        baseUrl: 'https://example.com/call',
-      );
+          },
+        );
+      },
+    );
+    final api = AgentControlPlaneClient(
+      client: client,
+      baseUrl: 'https://example.com/call',
+    );
 
-      final snapshot = await api.downloadMultiWriterDelta(
-        'job-mw-download',
-        batchId: 'batch-1',
-        protocolVersion: 2,
-        syncEpoch: 'epoch-test',
-      );
+    final snapshot = await api.downloadMultiWriterDelta(
+      'job-mw-download',
+      batchId: 'batch-1',
+      protocolVersion: 2,
+      syncEpoch: 'epoch-test',
+    );
 
-      expect(snapshot.rows, [
-        {'Id': '1', 'Name': 'Arabic مرحبا'},
-      ]);
-    },
-  );
+    expect(snapshot.rows, [
+      {'Id': '1', 'Name': 'Arabic مرحبا'},
+    ]);
+  });
 
   test(
     'multi-writer download streams pages without retaining all rows',
     () async {
-      final payloads = [
-        base64Encode(
-          utf8.encode(
-            jsonEncode([
-              {'Id': '1', 'Name': 'first'},
-            ]),
-          ),
+      final payloadBytes = [
+        utf8.encode(
+          jsonEncode([
+            {'Id': '1', 'Name': 'first'},
+          ]),
         ),
-        base64Encode(
-          utf8.encode(
-            jsonEncode([
-              {'Id': '2', 'Name': 'second'},
-            ]),
-          ),
+        utf8.encode(
+          jsonEncode([
+            {'Id': '2', 'Name': 'second'},
+          ]),
         ),
       ];
+      final payloads = payloadBytes.map(base64Encode).toList();
       final client = _ScriptedClient(
         responseForRequest: (name, args, callIndex) {
           expect(name, 'jobs_multi_writer_download');
@@ -3807,7 +3806,7 @@ void main() {
                   'createdAt': '2026-07-10T03:05:00Z',
                   'rowCount': 1,
                   'checksum': 'checksum-$callIndex',
-                  'snapshotBytes': 32,
+                  'snapshotBytes': payloadBytes[callIndex].length,
                   'columns': ['Id', 'Name'],
                   'rows': const [],
                   'sourceJobId': 'job-mw-download',
@@ -3855,6 +3854,7 @@ void main() {
         'Name': 'shared',
         '__sync_operation_id': operationId,
       };
+      final payloadBytes = utf8.encode(jsonEncode([row]));
       final client = _ScriptedClient(
         responseForRequest: (name, args, callIndex) {
           final done = callIndex == 1;
@@ -3865,7 +3865,7 @@ void main() {
               'value': {
                 'done': done,
                 'nextCursor': done ? null : 'next',
-                'payloadBase64': base64Encode(utf8.encode(jsonEncode([row]))),
+                'payloadBase64': base64Encode(payloadBytes),
                 'snapshot': {
                   'id': 'batch-union-$callIndex',
                   'clientName': 'server-merge',
@@ -3873,7 +3873,7 @@ void main() {
                   'createdAt': '2026-08-03T10:00:00Z',
                   'rowCount': 1,
                   'checksum': 'participant-checksum-$callIndex',
-                  'snapshotBytes': 64,
+                  'snapshotBytes': payloadBytes.length,
                   'columns': ['Id', 'Name'],
                   'uniqueKeyColumnSets': [
                     ['Name'],
@@ -3922,18 +3922,17 @@ void main() {
     () async {
       final acceptedId = 'a' * 64;
       final rejectedId = 'b' * 64;
-      final encoded = base64Encode(
-        utf8.encode(
-          jsonEncode([
-            {'Id': '1', 'Name': 'newest', '__sync_operation_id': acceptedId},
-            {
-              'Id': '1',
-              'Name': 'stale offline value',
-              '__sync_operation_id': rejectedId,
-            },
-          ]),
-        ),
+      final payloadBytes = utf8.encode(
+        jsonEncode([
+          {'Id': '1', 'Name': 'newest', '__sync_operation_id': acceptedId},
+          {
+            'Id': '1',
+            'Name': 'stale offline value',
+            '__sync_operation_id': rejectedId,
+          },
+        ]),
       );
+      final encoded = base64Encode(payloadBytes);
       final client = _ScriptedClient(
         responseForRequest: (name, args, callIndex) {
           expect(name, 'jobs_multi_writer_download');
@@ -3963,7 +3962,7 @@ void main() {
                   ],
                   'rowCount': 1,
                   'checksum': 'winner-checksum',
-                  'snapshotBytes': 64,
+                  'snapshotBytes': payloadBytes.length,
                   'columns': ['Id', 'Name'],
                   'rows': const [],
                   'sourceJobId': 'job-winner',

@@ -15,6 +15,7 @@ import 'change_tracking_cursor_policy.dart';
 import 'client_version.dart';
 import 'database_access.dart';
 import 'data_export_policy.dart';
+import 'delta_package.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_sync_merge.dart';
@@ -5129,17 +5130,20 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       throw _SyncJobCancelled(job.id);
     }
 
-    // Bound both encoded bytes and row count. The backend materializes the
-    // business-key identities for a chunk while choosing latest-change
-    // winners, so narrow rows with many unique keys can consume more memory
-    // than their JSON size suggests.
-    const maxDeltaPayloadBytes = 128000;
-    const maxDeltaRowsPerChunk = 25;
+    // Stream bounded gzip packages. Each request carries up to 250 narrow
+    // changes instead of the historical 25-row JSON request, while byte caps
+    // still fail closed for unusually wide rows and protect backend memory.
     final rows = _snapshotRows(snapshot.snapshotJson);
     final columns = _snapshotColumns(snapshot.snapshotJson);
     final keyColumns = _snapshotKeyColumns(snapshot.snapshotJson);
     final uniqueKeyColumnSets = _snapshotUniqueKeyColumnSets(
       snapshot.snapshotJson,
+    );
+    final maxPackageRowsByWinnerIdentities =
+        500 ~/ (uniqueKeyColumnSets.length + 1);
+    final maxPackageRows = math.max(
+      1,
+      math.min(kDeltaPackageMaxRows, maxPackageRowsByWinnerIdentities),
     );
     final latestChange = latestSqlSyncDeltaRow(
       rows.map((row) => Map<String, dynamic>.from(row)).toList(growable: false),
@@ -5150,7 +5154,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         latestChange?['__sync_operation_id']?.toString() ?? '';
     RemoteSyncJob? uploadedJob;
     var uploadedChunkCount = 0;
-    if (rows.isEmpty) {
+    for (final package in buildCompressedDeltaPackages(
+      rows,
+      maxRows: maxPackageRows,
+    )) {
       _checkSyncJobNotCancelled(job.id);
       uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
         job.id,
@@ -5160,10 +5167,14 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         columns: columns,
         keyColumns: keyColumns,
         uniqueKeyColumnSets: uniqueKeyColumnSets,
-        rows: rows,
-        chunkId: '${job.id}-0',
-        finalChunk: true,
+        rows: rows.sublist(package.startOffset, package.endOffset),
+        chunkId: '${job.id}-${package.startOffset}',
+        finalChunk: package.endOffset == rows.length,
         changeTrackingVersion: snapshot.changeTrackingVersion,
+        payloadBase64: package.payloadBase64,
+        payloadEncoding: 'gzip-json',
+        payloadUncompressedBytes: package.uncompressedBytes,
+        payloadCompressedBytes: package.compressedBytes,
         payloadIsDelta: snapshot.isDelta,
         snapshotChecksum: snapshot.checksum,
         protocolVersion: job.protocolVersion,
@@ -5171,60 +5182,26 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         latestModifiedAtUtc: latestModifiedAtUtc,
         latestOperationId: latestOperationId,
       );
-      uploadedChunkCount = 1;
+      uploadedChunkCount += 1;
+      logAgentDiagnostic(
+        'sync.upload.chunk.completed',
+        level: AgentLogLevel.debug,
+        context: {
+          'jobId': job.id,
+          'batchId': job.batchId,
+          'table': job.table,
+          'chunkIndex': uploadedChunkCount - 1,
+          'rowOffset': package.startOffset,
+          'rowEnd': package.endOffset,
+          'rowCount': package.rowCount,
+          'uncompressedBytes': package.uncompressedBytes,
+          'compressedBytes': package.compressedBytes,
+          'maxPackageRows': maxPackageRows,
+          'payloadBase64Chars': package.payloadBase64.length,
+          'finalChunk': package.endOffset == rows.length,
+        },
+      );
       _checkSyncJobNotCancelled(job.id);
-    } else {
-      for (var offset = 0; offset < rows.length;) {
-        _checkSyncJobNotCancelled(job.id);
-        var end = math.min(offset + maxDeltaRowsPerChunk, rows.length);
-        while (end > offset + 1 &&
-            utf8.encode(jsonEncode(rows.sublist(offset, end))).length >
-                maxDeltaPayloadBytes) {
-          end--;
-        }
-        final isFinalChunk = end == rows.length;
-        final payloadBase64 = base64Encode(
-          utf8.encode(jsonEncode(rows.sublist(offset, end))),
-        );
-        uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
-          job.id,
-          batchId: job.batchId!,
-          clientName: widget.clientName,
-          table: job.table,
-          columns: columns,
-          keyColumns: keyColumns,
-          uniqueKeyColumnSets: uniqueKeyColumnSets,
-          rows: rows.sublist(offset, end),
-          chunkId: '${job.id}-$offset',
-          finalChunk: isFinalChunk,
-          changeTrackingVersion: snapshot.changeTrackingVersion,
-          payloadBase64: payloadBase64,
-          payloadIsDelta: snapshot.isDelta,
-          snapshotChecksum: snapshot.checksum,
-          protocolVersion: job.protocolVersion,
-          syncEpoch: job.syncEpoch,
-          latestModifiedAtUtc: latestModifiedAtUtc,
-          latestOperationId: latestOperationId,
-        );
-        uploadedChunkCount += 1;
-        logAgentDiagnostic(
-          'sync.upload.chunk.completed',
-          level: AgentLogLevel.debug,
-          context: {
-            'jobId': job.id,
-            'batchId': job.batchId,
-            'table': job.table,
-            'chunkIndex': uploadedChunkCount - 1,
-            'rowOffset': offset,
-            'rowEnd': end,
-            'rowCount': end - offset,
-            'payloadBase64Chars': payloadBase64.length,
-            'finalChunk': isFinalChunk,
-          },
-        );
-        _checkSyncJobNotCancelled(job.id);
-        offset = end;
-      }
     }
     _applyRemoteJobState(
       uploadedJob!,

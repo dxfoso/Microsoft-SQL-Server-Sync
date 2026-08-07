@@ -899,6 +899,7 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_snapshot_upload_job_advances_through_start_progress_and_chunk_upload_only(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        delta_packages = read_text("sync_windows_agent/lib/delta_package.dart")
         upload_body = agent_page.split(
             "Future<void> _processSnapshotRelayUploadJob(RemoteSyncJob job) async {", 1
         )[1].split("Future<void> _processSnapshotRelayDownloadJob(RemoteSyncJob job) async {", 1)[0]
@@ -910,10 +911,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("status: 'uploading',", upload_body)
         self.assertIn("progress: 35,", upload_body)
         self.assertIn("await _controlPlaneClient.uploadMultiWriterDelta(", upload_body)
-        self.assertIn("const maxDeltaPayloadBytes = 128000;", upload_body)
-        self.assertIn("const maxDeltaRowsPerChunk = 25;", upload_body)
+        self.assertIn("buildCompressedDeltaPackages(", upload_body)
+        self.assertIn("maxRows: maxPackageRows", upload_body)
+        self.assertIn("payloadEncoding: 'gzip-json'", upload_body)
+        self.assertIn("payloadUncompressedBytes: package.uncompressedBytes", upload_body)
+        self.assertIn("payloadCompressedBytes: package.compressedBytes", upload_body)
+        self.assertIn("const int kDeltaPackageMaxRows = 250;", delta_packages)
         self.assertIn(
-            "math.min(offset + maxDeltaRowsPerChunk, rows.length)", upload_body
+            "const int kDeltaPackageMaxUncompressedBytes = 512000;",
+            delta_packages,
+        )
+        self.assertIn(
+            "const int kDeltaPackageMaxCompressedBytes = 384000;",
+            delta_packages,
         )
         self.assertNotIn("await _controlPlaneClient.uploadSnapshot(", upload_body)
         self.assertIn("_applyRemoteJobState(", upload_body)

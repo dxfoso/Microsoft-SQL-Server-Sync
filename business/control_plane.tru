@@ -7275,7 +7275,7 @@ function jobs_upload_chunk_start(jobId: string, uploadId: string, clientName: st
   });
 }
 
-function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, uniqueKeyColumnSets: array<json>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadIsDelta: bool = true, snapshotChecksum: string = '', protocolVersion: int = 0, syncEpoch: string = '', latestModifiedAtUtc: string = '', latestOperationId: string = ''): map<json> {
+function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: string, table: string, columns: array<string>? = null, keyColumns: array<string>? = null, uniqueKeyColumnSets: array<json>? = null, rows: array<json>? = null, chunkId: string = '', finalChunk: bool = true, changeTrackingVersion: int? = null, token: string? = null, payloadBase64: string? = null, payloadRowCount: int? = null, payloadEncoding: string = 'json', payloadUncompressedBytes: int? = null, payloadCompressedBytes: int? = null, payloadIsDelta: bool = true, snapshotChecksum: string = '', protocolVersion: int = 0, syncEpoch: string = '', latestModifiedAtUtc: string = '', latestOperationId: string = ''): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
   if (job == null) {
@@ -7335,7 +7335,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (payloadRowCount != null && payloadRowCount >= 0) {
     incomingRowCount = payloadRowCount;
   }
-  if (incomingRowCount > 500) {
+  if (incomingRowCount > 250) {
     return raw_json_error(413, 'multi-writer chunk is too large');
   }
   const encodedPayload = string.from(payloadBase64 ?? '').trim();
@@ -7343,9 +7343,24 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (payloadIsDelta && !hasStoredPayload) {
     return raw_json_error(426, 'protocol upgrade required: delta payload metadata is missing');
   }
+  const normalizedPayloadEncoding = payloadEncoding.trim().toLowerCase();
+  if (normalizedPayloadEncoding != 'json' && normalizedPayloadEncoding != 'gzip-json') {
+    return raw_json_error(415, 'unsupported multi-writer payload encoding');
+  }
+  if (normalizedPayloadEncoding == 'gzip-json' &&
+      (payloadUncompressedBytes == null || payloadCompressedBytes == null)) {
+    return raw_json_error(400, 'compressed multi-writer payload byte manifests are required');
+  }
+  if (encodedPayload.length > 1024000) {
+    return raw_json_error(413, 'compressed multi-writer payload exceeds the 750 KB transport limit');
+  }
   let effectiveIncomingRows = incomingRows;
+  let decodedPayloadText = '';
   if (hasStoredPayload) {
-    const decodedPayload = json.parse(string.base64Utf8Decode(encodedPayload));
+    decodedPayloadText = normalizedPayloadEncoding == 'gzip-json'
+      ? string.gzipBase64Utf8Decode(encodedPayload)
+      : string.base64Utf8Decode(encodedPayload);
+    const decodedPayload = json.parse(decodedPayloadText);
     if (decodedPayload == null) {
       return raw_json_error(400, 'multi-writer payload is not valid JSON');
     }
@@ -7355,11 +7370,19 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     }
   }
   let incomingBytes = json.stringify(incomingRows).length;
+  let incomingCompressedBytes = incomingBytes;
   if (hasStoredPayload) {
-    incomingBytes = int.from((encodedPayload.length * 3) / 4);
+    incomingCompressedBytes = payloadCompressedBytes ?? int.from((encodedPayload.length * 3) / 4);
+    incomingBytes = payloadUncompressedBytes ?? decodedPayloadText.length;
   }
-  if (incomingBytes > 750000) {
-    return raw_json_error(413, 'multi-writer chunk exceeds the 750 KB payload limit; retry with smaller chunks');
+  if (hasStoredPayload && incomingBytes < decodedPayloadText.length) {
+    return raw_json_error(400, 'multi-writer payload byte manifest is smaller than its decoded content');
+  }
+  if (incomingBytes < 0 || incomingBytes > 2000000) {
+    return raw_json_error(413, 'multi-writer package exceeds the 2 MB decompressed limit');
+  }
+  if (incomingCompressedBytes < 0 || incomingCompressedBytes > 750000) {
+    return raw_json_error(413, 'multi-writer package exceeds the 750 KB compressed limit');
   }
   const receivedBytes = int.from(batch.receivedBytes ?? 0);
   if (receivedBytes + incomingBytes > 128000000) {
@@ -7399,6 +7422,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       return raw_json_error(409, 'clients report different SQL unique-key definitions for this table');
     }
     resolvedUniqueKeyColumnSets = batchUniqueKeyColumnSets;
+  }
+  if (incomingRowCount * (resolvedUniqueKeyColumnSets.length + 1) > 500) {
+    return raw_json_error(413, 'multi-writer package has too many row and unique-key identities; retry with fewer rows');
   }
   if (payloadIsDelta && resolvedKeyColumns.length == 0) {
     return raw_json_error(409, 'latest-change sync requires permanent primary key columns');
@@ -7460,9 +7486,17 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   let storageId = '';
   if (hasStoredPayload) {
     const storedPayload = storage.put({
-      name: string.concat('multi-writer-', batch.id, '-', normalizedChunkId, '.json'),
+      name: string.concat(
+        'multi-writer-',
+        batch.id,
+        '-',
+        normalizedChunkId,
+        normalizedPayloadEncoding == 'gzip-json' ? '.json.gz' : '.json'
+      ),
       content_base64: encodedPayload,
-      content_type: 'application/json'
+      content_type: normalizedPayloadEncoding == 'gzip-json'
+        ? 'application/gzip'
+        : 'application/json'
     });
     storageId = string.from(storedPayload.id ?? '').trim();
     if (storageId.length == 0) {
@@ -7611,9 +7645,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     columns: resolvedColumns,
     rows: storedRows,
     previewRows: [{ winnerPolicyApplied }],
-    compressedBytes: 0,
+    compressedBytes: incomingCompressedBytes,
     chunkCount: 1,
-    encoding: 'json',
+    encoding: normalizedPayloadEncoding,
     storageId,
     isDelta: payloadIsDelta,
     sourceJobId: batch.id,
@@ -7991,13 +8025,14 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       { field: 'createdAt', dir: 'asc' },
       { field: 'id', dir: 'asc' }
     ],
-    fields: ['id', 'sourceJobId', 'clientUserId', 'subscriberClientName', 'columns', 'rows', 'previewRows', 'rowCount', 'checksum', 'snapshotBytes', 'storageId', 'isDelta', 'createdAt'],
+    fields: ['id', 'sourceJobId', 'clientUserId', 'subscriberClientName', 'columns', 'rows', 'previewRows', 'rowCount', 'checksum', 'snapshotBytes', 'compressedBytes', 'encoding', 'storageId', 'isDelta', 'createdAt'],
     limit: 1,
     cursor
   });
   const storedChunks = storedChunkPage.rows;
   let chunkRows = [];
   let chunkPayloadBase64 = '';
+  let chunkPayloadEncoding = 'json';
   let chunkIsDelta = true;
   let candidateAcceptedOperationIds = [];
   let candidateAcceptedOperations = [];
@@ -8021,6 +8056,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       if (storedPayloadId.length != 0) {
         const storedPayload = storage.get(storedPayloadId);
         chunkPayloadBase64 = string.from(storedPayload.content_base64 ?? '').trim();
+        chunkPayloadEncoding = string.from(storedChunk.encoding ?? 'json').trim();
         for (const acceptedRow of storedChunk.rows ?? []) {
           const acceptedOperationId = string.from(acceptedRow.operationId ?? '').trim();
           if (acceptedOperationId.length != 0) {
@@ -8111,9 +8147,11 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       : string.from(storedChunks[0].checksum),
     createdAt: batch.updatedAt,
     snapshotBytes: json.stringify(chunkRows).length,
-    compressedBytes: 0,
+    compressedBytes: storedChunks.length == 0
+      ? 0
+      : int.from(storedChunks[0].compressedBytes ?? 0),
     chunkCount: 0,
-    encoding: 'json',
+    encoding: chunkPayloadEncoding,
     sourceJobId: job.id,
     columns: batch.columns,
     keyColumns: batch.keyColumns,
@@ -8145,7 +8183,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     snapshot.rows = [];
     snapshot.snapshotBytes = int.from(storedChunks[0].snapshotBytes ?? 0);
   }
-  return raw_json_success({ snapshot, cursor, nextCursor, totalRowCount, done, payloadBase64: chunkPayloadBase64, isDelta: chunkIsDelta });
+  return raw_json_success({ snapshot, cursor, nextCursor, totalRowCount, done, payloadBase64: chunkPayloadBase64, payloadEncoding: chunkPayloadEncoding, isDelta: chunkIsDelta });
 }
 
 function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {

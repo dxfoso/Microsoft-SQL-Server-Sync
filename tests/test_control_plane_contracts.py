@@ -1105,7 +1105,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field revision: int min=0", source)
         self.assertIn("field clientChangeTrackingVersions: array<json>", source)
         self.assertIn("function jobs_multi_writer_upload(", source)
-        self.assertIn("if (incomingRowCount > 500)", source)
+        self.assertIn("if (incomingRowCount > 250)", source)
         self.assertIn("let incomingBytes = json.stringify(incomingRows).length", source)
         self.assertIn("receivedBytes + incomingBytes > 128000000", source)
         self.assertIn("const ready = uploadedClients.length >= batch.expectedClients.length;", source)
@@ -1541,6 +1541,42 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("'server-authoritative-reconcile'", upload_body)
         self.assertIn("'checksum'", download_body)
         self.assertIn("string.from(storedChunks[0].checksum)", download_body)
+
+    def test_multi_writer_transport_uses_bounded_compressed_resumable_packages(self):
+        source = read_text("business/control_plane.tru")
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+        download_body = source.split(
+            "function jobs_multi_writer_download(", 1
+        )[1].split("function jobs_upload_chunk(", 1)[0]
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        packages = read_text("sync_windows_agent/lib/delta_package.dart")
+
+        self.assertIn("payloadEncoding: string = 'json'", upload_body)
+        self.assertIn("string.gzipBase64Utf8Decode(encodedPayload)", upload_body)
+        self.assertIn(
+            "compressed multi-writer payload byte manifests are required", upload_body
+        )
+        self.assertIn(
+            "payload byte manifest is smaller than its decoded content", upload_body
+        )
+        self.assertIn("incomingRowCount > 250", upload_body)
+        self.assertIn("incomingBytes > 2000000", upload_body)
+        self.assertIn("incomingCompressedBytes > 750000", upload_body)
+        self.assertIn(
+            "incomingRowCount * (resolvedUniqueKeyColumnSets.length + 1) > 500",
+            upload_body,
+        )
+        self.assertIn("content_type: normalizedPayloadEncoding == 'gzip-json'", upload_body)
+        self.assertIn("encoding: normalizedPayloadEncoding", upload_body)
+        self.assertIn("payloadEncoding: chunkPayloadEncoding", download_body)
+        self.assertIn("'gzip-json' => gzip.decode(encodedBytes)", api)
+        self.assertIn("encodedBytes.length > maxCompressedPackageBytes", api)
+        self.assertIn("decodedBytes.length > maxDecompressedPackageBytes", api)
+        self.assertIn("decodedBytes.length", api)
+        self.assertIn("Iterable<CompressedDeltaPackage>", packages)
+        self.assertIn(") sync* {", packages)
 
     def test_server_reset_rotates_protocol_v2_epoch(self):
         source = read_text("business/control_plane.tru")

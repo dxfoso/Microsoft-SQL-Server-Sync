@@ -1217,6 +1217,9 @@ class AgentControlPlaneClient {
     required bool finalChunk,
     int? changeTrackingVersion,
     String? payloadBase64,
+    String payloadEncoding = 'gzip-json',
+    int? payloadUncompressedBytes,
+    int? payloadCompressedBytes,
     bool payloadIsDelta = true,
     String snapshotChecksum = '',
     required int protocolVersion,
@@ -1224,8 +1227,11 @@ class AgentControlPlaneClient {
     String latestModifiedAtUtc = '',
     String latestOperationId = '',
   }) async {
+    final uncompressedPayload = utf8.encode(jsonEncode(rows));
     final encodedPayload =
-        payloadBase64 ?? base64Encode(utf8.encode(jsonEncode(rows)));
+        payloadBase64 ?? base64Encode(gzip.encode(uncompressedPayload));
+    final compressedPayloadBytes =
+        payloadCompressedBytes ?? base64Decode(encodedPayload).length;
     final decoded = await _invokeFunctionWithRetry('jobs_multi_writer_upload', {
       'jobId': jobId,
       'batchId': batchId,
@@ -1243,6 +1249,10 @@ class AgentControlPlaneClient {
         'changeTrackingVersion': changeTrackingVersion,
       'payloadBase64': encodedPayload,
       'payloadRowCount': rows.length,
+      'payloadEncoding': payloadEncoding,
+      'payloadUncompressedBytes':
+          payloadUncompressedBytes ?? uncompressedPayload.length,
+      'payloadCompressedBytes': compressedPayloadBytes,
       'payloadIsDelta': payloadIsDelta,
       if (snapshotChecksum.trim().isNotEmpty)
         'snapshotChecksum': snapshotChecksum.trim(),
@@ -1298,7 +1308,39 @@ class AgentControlPlaneClient {
       );
       final encodedChunk = decoded['payloadBase64']?.toString() ?? '';
       if (encodedChunk.isNotEmpty) {
-        final chunkJson = utf8.decode(base64Decode(encodedChunk));
+        const maxCompressedPackageBytes = 750000;
+        const maxDecompressedPackageBytes = 2000000;
+        final payloadEncoding =
+            decoded['payloadEncoding']?.toString() ??
+            snapshotPayload['encoding']?.toString() ??
+            'json';
+        final encodedBytes = base64Decode(encodedChunk);
+        if (encodedBytes.length > maxCompressedPackageBytes) {
+          throw const AgentControlPlaneException(
+            'Compressed multi-writer payload exceeds its safe byte limit.',
+          );
+        }
+        final decodedBytes = switch (payloadEncoding) {
+          'gzip-json' => gzip.decode(encodedBytes),
+          'json' => encodedBytes,
+          _ =>
+            throw AgentControlPlaneException(
+              'Unsupported multi-writer payload encoding: $payloadEncoding.',
+            ),
+        };
+        if (decodedBytes.length > maxDecompressedPackageBytes) {
+          throw const AgentControlPlaneException(
+            'Decompressed multi-writer payload exceeds its safe byte limit.',
+          );
+        }
+        final declaredSnapshotBytes = snapshotPayload['snapshotBytes'];
+        if (declaredSnapshotBytes is! num ||
+            declaredSnapshotBytes.toInt() != decodedBytes.length) {
+          throw const AgentControlPlaneException(
+            'Multi-writer payload byte count does not match its manifest.',
+          );
+        }
+        final chunkJson = utf8.decode(decodedBytes);
         final chunkRows = jsonDecode(chunkJson);
         if (chunkRows is! List) {
           throw const AgentControlPlaneException(

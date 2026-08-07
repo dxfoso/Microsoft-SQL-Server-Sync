@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 45)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 46)}
         observed_ids = set()
 
         for row in rows:
@@ -67,12 +67,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
     def test_upload_and_backend_execution_memory_are_bounded(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        packages = read_text("sync_windows_agent/lib/delta_package.dart")
         values = read_text("deployment/chart/values.yaml")
         deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
 
-        self.assertIn("const maxDeltaPayloadBytes = 128000;", agent)
-        self.assertIn("const maxDeltaRowsPerChunk = 25;", agent)
-        self.assertIn("offset + maxDeltaRowsPerChunk", agent)
+        self.assertIn("500 ~/ (uniqueKeyColumnSets.length + 1)", agent)
+        self.assertIn("math.min(kDeltaPackageMaxRows", agent)
+        self.assertIn("const int kDeltaPackageMaxRows = 250;", packages)
+        self.assertIn(
+            "const int kDeltaPackageMaxUncompressedBytes = 512000;", packages
+        )
+        self.assertIn(
+            "const int kDeltaPackageMaxCompressedBytes = 384000;", packages
+        )
         self.assertIn('truExecutionMemoryMaxBytes: "134217728"', values)
         self.assertIn("TRU_EXECUTION_MEMORY_MAX_BYTES", deployment)
         self.assertIn(".Values.backend.env.truExecutionMemoryMaxBytes", deployment)
