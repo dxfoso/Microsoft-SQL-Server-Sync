@@ -83,7 +83,6 @@ void main() {
         historyLimit: 10,
         autoSyncIntervalMinutes: 30,
         syncDataLimitMb: 128,
-        conflictPolicy: 'latest_change_wins',
       );
 
       expect(updatedCount, 2);
@@ -92,12 +91,46 @@ void main() {
         'historyLimit': 10,
         'autoSyncIntervalMinutes': 30,
         'syncDataLimitMb': 128,
-        'conflictPolicy': 'latest_change_wins',
         'token': 'test-token',
       });
       api.dispose();
     },
   );
+
+  test('conflict source selection posts one exclusive client choice', () async {
+    late Map<String, dynamic> requestPayload;
+    final api = LiveSyncApiClient(
+      baseUrl: 'https://sync.example/call',
+      client: MockClient((request) async {
+        requestPayload = Map<String, dynamic>.from(
+          jsonDecode(request.body) as Map,
+        );
+        return http.Response(
+          jsonEncode({
+            'status': 'success',
+            'value': {'ok': true, 'selectedClientName': 'velvet factory'},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    api.setAuthToken('test-token');
+
+    final selected = await api.setConflictSource(
+      clientName: 'velvet factory',
+      selected: true,
+    );
+
+    expect(selected, 'velvet factory');
+    expect(requestPayload['name'], 'agent_conflict_source_set');
+    expect(requestPayload['args'], {
+      'clientName': 'velvet factory',
+      'selected': true,
+      'token': 'test-token',
+    });
+    api.dispose();
+  });
 
   test(
     'authoritative reconciliation posts exact source targets and tables',

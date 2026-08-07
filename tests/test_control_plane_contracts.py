@@ -544,6 +544,48 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("latest-change policy", clear_retryable)
         self.assertIn("No user decision", clear_retryable)
 
+    def test_conflict_source_selection_is_exclusive_and_primary_only_on_conflict(self):
+        source = read_text("business/control_plane.tru")
+        selector = source.split("function agent_conflict_source_set(", 1)[1].split(
+            "function agent_sync_settings_post(", 1
+        )[0]
+        comparator = source.split("function sync_row_candidate_is_later(", 1)[1].split(
+            "function sync_row_effective_modified_at(", 1
+        )[0]
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+
+        self.assertIn("visible_agent_rows_for(current)", selector)
+        self.assertIn("db.atomicTransaction(() =>", selector)
+        self.assertIn("conflictPolicy: 'latest_change_wins'", selector)
+        self.assertIn("conflictPolicy: 'primary_source'", selector)
+        self.assertLess(
+            selector.index("conflictPolicy: 'latest_change_wins'"),
+            selector.index("conflictPolicy: 'primary_source'"),
+        )
+        self.assertIn("candidateIsConflictSource != currentIsConflictSource", comparator)
+        self.assertIn("return candidateIsConflictSource", comparator)
+        self.assertLess(
+            comparator.index("candidateIsConflictSource != currentIsConflictSource"),
+            comparator.index("candidateModifiedAt"),
+        )
+        self.assertIn("conflict_source_client_for_owner(winnerOwnerUserId)", upload)
+        self.assertIn("conflictSourceClient", upload)
+        self.assertIn("field conflictSourceClient: string? min=0 max=128", source)
+        create_batch = source.split("function create_multi_writer_batch(", 1)[1].split(
+            "function table_comparison_job_rows(", 1
+        )[0]
+        self.assertIn(
+            "conflictSourceClient: conflict_source_client_for_owner(ownerUserId)",
+            create_batch,
+        )
+
+        settings = source.split("function agent_sync_settings_post(", 1)[1].split(
+            "function agent_jobs(", 1
+        )[0]
+        self.assertNotIn("conflictPolicy:", settings)
+
     def test_automatic_repair_finishes_for_online_participants_without_user_input(self):
         source = read_text("business/control_plane.tru")
         scheduler = source.split(
@@ -1491,7 +1533,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertNotIn("Use as source", row_body)
         self.assertNotIn("initialSourceName: agent.clientName", row_body)
-        self.assertIn("Use the latest database change automatically", source)
+        self.assertIn("wins only when synchronized changes conflict", row_body)
+        self.assertIn("Normal non-conflicting changes still upload from every active client", source)
+        self.assertNotIn("Replace Target Data", row_body)
 
     def test_windows_agent_full_reconciliation_is_non_destructive_and_latest_conflicts_are_atomic(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

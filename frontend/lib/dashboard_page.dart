@@ -1192,9 +1192,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                 await _api.updateAllAgentSyncSettings(
                                   historyLimit: nextAgentHistoryLimit,
                                   autoSyncIntervalMinutes: nextAutoSyncInterval,
-                                  conflictPolicy:
-                                      firstAgent?.conflictPolicy ??
-                                      'latest_change_wins',
                                 );
                               }
                             } catch (error) {

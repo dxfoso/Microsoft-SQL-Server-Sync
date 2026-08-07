@@ -1,0 +1,25 @@
+{
+  "name": "mig_20260807_200411",
+  "timestamp": "2026-08-07T20:04:11.146620600+00:00",
+  "objects": [
+    {
+      "object": "SyncBatch",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "conflictSourceClient",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "128",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

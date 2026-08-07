@@ -5648,6 +5648,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
         previousVersion: previousVersion,
+        snapshotVersion: tracking.currentVersion,
       );
       rows.addAll(deltaRows);
       isDelta = true;
@@ -6692,6 +6693,7 @@ SELECT
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
     required int previousVersion,
+    required int snapshotVersion,
   }) async {
     final source =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
@@ -6761,6 +6763,9 @@ END'''
       final encodedProjection = encodedFields.join(" + '|' +\n  ");
       return '''
 SET NOCOUNT ON;
+SET XACT_ABORT ON;
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+BEGIN TRANSACTION;
 ;WITH encoded_rows AS (
 SELECT
   ROW_NUMBER() OVER (ORDER BY ct.SYS_CHANGE_VERSION, (SELECT 0)) AS row_order,
@@ -6768,8 +6773,11 @@ SELECT
 FROM CHANGETABLE(CHANGES $source, $previousVersion) AS ct
 LEFT JOIN $source AS existing_row ON $join
 $commitJoin
-WHERE ct.SYS_CHANGE_CONTEXT IS NULL
-   OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
+WHERE (
+  ct.SYS_CHANGE_CONTEXT IS NULL
+  OR ct.SYS_CHANGE_CONTEXT <> $sqlSyncChangeTrackingContextHex
+)
+AND ct.SYS_CHANGE_VERSION <= $snapshotVersion
 ),
 payload_chunks AS (
   SELECT row_order, 1 AS payload_offset, payload
@@ -6786,6 +6794,7 @@ SELECT CONVERT(
 FROM payload_chunks
 ORDER BY row_order, payload_offset
 OPTION (MAXRECURSION 0);
+COMMIT TRANSACTION;
 ''';
     }
 

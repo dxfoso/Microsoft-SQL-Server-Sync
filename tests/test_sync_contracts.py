@@ -380,6 +380,13 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("It will not synchronize until checked again.", clients_page)
         self.assertIn("if (!agent.syncEnabled) return 'Disabled';", clients_page)
         self.assertIn("setAgentSyncEnabled(", clients_page)
+        self.assertIn("DataColumn(label: Text('Conflict source'))", clients_page)
+        self.assertIn("_buildConflictSourceCheckbox(agent)", clients_page)
+        self.assertIn("ValueKey('client-conflict-source-${agent.clientName}')", clients_page)
+        self.assertIn("_api.setConflictSource(", clients_page)
+        self.assertIn("client-conflict-policy-footer", clients_page)
+        self.assertIn("no source client is selected", clients_page)
+        self.assertNotIn("labelText: 'Duplicate business-key conflicts'", clients_page)
         self.assertIn("_ClientSortField.lastSync", clients_page)
         self.assertIn("_latestClientSync(agent)", clients_page)
         self.assertIn("_showBulkActionsInLegacyDashboard => false", dashboard)
@@ -1723,6 +1730,23 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("INSERT INTO", merge_helper)
         self.assertIn("$deltaDeleteStatements", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
+
+    def test_change_tracking_upload_captures_a_fixed_version_bounded_snapshot(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        capture = agent.split(
+            "Future<List<Map<String, String?>>> _fetchChangeTrackingRows(", 1
+        )[1].split("String? _decodeHexTransportField(", 1)[0]
+        caller = agent.split(
+            "final deltaRows = await _fetchChangeTrackingRows(", 1
+        )[1].split("rows.addAll(deltaRows);", 1)[0]
+
+        self.assertIn("snapshotVersion: tracking.currentVersion", caller)
+        self.assertIn("required int snapshotVersion", capture)
+        self.assertIn("SET XACT_ABORT ON;", capture)
+        self.assertIn("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;", capture)
+        self.assertIn("BEGIN TRANSACTION;", capture)
+        self.assertIn("AND ct.SYS_CHANGE_VERSION <= $snapshotVersion", capture)
+        self.assertIn("COMMIT TRANSACTION;", capture)
 
     def test_windows_client_delta_sync_reconciles_changes_and_advances_checkpoint(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

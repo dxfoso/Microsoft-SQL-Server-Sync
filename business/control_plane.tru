@@ -139,6 +139,7 @@ class SyncBatch {
   field table: string min=1 max=256
   field revision: int min=0
   field ownerUserId: string? min=0 max=64
+  field conflictSourceClient: string? min=0 max=128
   field expectedClients: array<json>
   field uploadedClients: array<json>
   field receivedChunks: array<json>
@@ -672,7 +673,33 @@ function clamp_sync_data_limit_mb(value: int? = null): int {
 }
 
 function normalize_conflict_policy(value: string? = null): string {
+  if (string.from(value ?? '').trim().toLowerCase() == 'primary_source') {
+    return 'primary_source';
+  }
   return 'latest_change_wins';
+}
+
+function conflict_source_client_for_owner(ownerUserId: string): string {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  if (normalizedOwnerUserId.length == 0) {
+    return '';
+  }
+  const selected = db.selectMany(Agent, {
+    where: {
+      ownerUserId: normalizedOwnerUserId,
+      conflictPolicy: 'primary_source'
+    },
+    orderBy: { field: 'clientName', dir: 'asc' },
+    fields: ['clientName'],
+    limit: 2
+  });
+  if (selected.length != 1) {
+    // Zero selections means latest-change-wins. More than one is an invalid
+    // legacy state and must fail safely back to latest-change-wins until the
+    // exclusive selector repairs it.
+    return '';
+  }
+  return normalize_user_name(string.from(selected[0].clientName));
 }
 
 function kSyncTableKeySeparator(): string {
@@ -4626,7 +4653,18 @@ function sync_timestamp_compare_ms(left: string, right: string): int {
   return 0;
 }
 
-function sync_row_candidate_is_later(row: map<json>, current: map<json>, serverReceivedAtUtc: string, serverSequence: string, originClient: string): bool {
+function sync_row_candidate_is_later(row: map<json>, current: map<json>, serverReceivedAtUtc: string, serverSequence: string, originClient: string, conflictSourceClient: string = ''): bool {
+  const normalizedConflictSource = normalize_user_name(conflictSourceClient);
+  const candidateOrigin = normalize_user_name(originClient);
+  const currentOrigin = normalize_user_name(string.from(current.originClient));
+  if (normalizedConflictSource.length != 0) {
+    const candidateIsConflictSource = candidateOrigin == normalizedConflictSource;
+    const currentIsConflictSource = currentOrigin == normalizedConflictSource;
+    if (candidateIsConflictSource != currentIsConflictSource) {
+      return candidateIsConflictSource;
+    }
+  }
+
   const candidateModifiedAt = sync_row_effective_modified_at(row, serverReceivedAtUtc);
   const currentModifiedAt = string.from(current.modifiedAtUtc ?? '').trim();
   if (candidateModifiedAt.length != 0 || currentModifiedAt.length != 0) {
@@ -4642,8 +4680,6 @@ function sync_row_candidate_is_later(row: map<json>, current: map<json>, serverR
     }
   }
 
-  const candidateOrigin = normalize_user_name(originClient);
-  const currentOrigin = normalize_user_name(string.from(current.originClient));
   const candidateVersion = int.from(row.__sync_change_version ?? -1);
   const currentVersion = int.from(current.changeVersion ?? -1);
   if (candidateOrigin == currentOrigin && candidateVersion != currentVersion) {
@@ -5044,6 +5080,7 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     table,
     revision: 0,
     ownerUserId,
+    conflictSourceClient: conflict_source_client_for_owner(ownerUserId),
     expectedClients: clientNames,
     uploadedClients: [],
     receivedChunks: [],
@@ -5134,6 +5171,7 @@ function create_table_comparison_batch(ownerUserId: string, table: string, agent
     table,
     revision: 0,
     ownerUserId,
+    conflictSourceClient: conflict_source_client_for_owner(ownerUserId),
     expectedClients: clientNames,
     uploadedClients: [],
     receivedChunks: [],
@@ -5246,6 +5284,7 @@ function create_authoritative_reconcile_batch(ownerUserId: string, table: string
     table,
     revision: 0,
     ownerUserId,
+    conflictSourceClient: conflict_source_client_for_owner(ownerUserId),
     expectedClients: [sourceClientName],
     uploadedClients: [],
     receivedChunks: [],
@@ -5957,7 +5996,77 @@ function agent_registration_delete(clientName: string, token: string? = null): m
   };
 }
 
-function agent_sync_settings_post(clientName: string, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, conflictPolicy: string? = null, token: string? = null): map<json> {
+function agent_conflict_source_set(clientName: string, selected: bool, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (is_client_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const normalizedClientName = normalize_user_name(clientName);
+  const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
+  if (targetAgent == null) {
+    return raw_json_error(404, 'client registration not found');
+  }
+  const visibleAgents = visible_agent_rows_for(current);
+  let targetVisible = false;
+  for (const visibleAgent of visibleAgents) {
+    if (normalize_user_name(string.from(visibleAgent.clientName)) == normalizedClientName) {
+      targetVisible = true;
+    }
+  }
+  if (!targetVisible) {
+    return raw_json_error(403, 'permission denied');
+  }
+
+  const ownerUserId = string.from(targetAgent.ownerUserId ?? '').trim();
+  if (ownerUserId.length == 0) {
+    return raw_json_error(409, 'client owner is unavailable');
+  }
+  let ownerClientNames = [];
+  for (const visibleAgent of visibleAgents) {
+    if (string.from(visibleAgent.ownerUserId ?? '').trim() == ownerUserId) {
+      const visibleClientName = normalize_user_name(string.from(visibleAgent.clientName));
+      if (visibleClientName.length != 0) {
+        ownerClientNames = ownerClientNames.concat([visibleClientName]);
+      }
+    }
+  }
+  if (ownerClientNames.length == 0) {
+    return raw_json_error(409, 'no clients are available for this owner');
+  }
+
+  const updatedAt = now_iso();
+  const applied = db.atomicTransaction(() => {
+    db.updateMany(Agent, { clientName: { in: ownerClientNames } }, {
+      conflictPolicy: 'latest_change_wins',
+      updatedAt
+    });
+    if (selected) {
+      const selectedCount = db.update(Agent, { clientName: normalizedClientName }, {
+        conflictPolicy: 'primary_source',
+        updatedAt
+      });
+      if (selectedCount == null) {
+        return false;
+      }
+    }
+    return true;
+  });
+  if (applied != true) {
+    return raw_json_error(409, 'conflict source selection changed concurrently; retry');
+  }
+  return {
+    ok: true,
+    selectedClientName: selected ? normalizedClientName : '',
+    conflictPolicy: selected ? 'primary_source' : 'latest_change_wins',
+    updatedClients: ownerClientNames
+  };
+}
+
+function agent_sync_settings_post(clientName: string, historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -5980,9 +6089,6 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
     historyLimit: clamp_history_limit(historyLimit),
     autoSyncIntervalMinutes: clamp_auto_sync_interval(autoSyncIntervalMinutes),
     syncDataLimitMb: nextSyncDataLimitMb,
-    conflictPolicy: conflictPolicy == null
-      ? normalize_conflict_policy(agent.conflictPolicy)
-      : normalize_conflict_policy(conflictPolicy),
     updatedAt: now_iso()
   });
   if (updated == null) {
@@ -5991,7 +6097,7 @@ function agent_sync_settings_post(clientName: string, historyLimit: int? = null,
   return { ok: true, syncSettings: sync_settings_payload(updated) };
 }
 
-function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, conflictPolicy: string? = null, token: string? = null): map<json> {
+function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, syncDataLimitMb: int? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -6003,7 +6109,6 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
   const nextHistoryLimit = clamp_history_limit(historyLimit);
   const nextAutoSyncIntervalMinutes = clamp_auto_sync_interval(autoSyncIntervalMinutes);
   const nextSyncDataLimitMb = clamp_sync_data_limit_mb(syncDataLimitMb);
-  const nextConflictPolicy = normalize_conflict_policy(conflictPolicy);
   let targetClientNames = [];
   for (const agent of visible_agent_rows_for(current)) {
     if (agent.clientName == null) {
@@ -6021,14 +6126,12 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
       syncDataLimitMb: nextSyncDataLimitMb,
-      conflictPolicy: nextConflictPolicy,
       updatedAt: now_iso()
     });
   } else if (targetClientNames.length != 0) {
     db.updateMany(Agent, { clientName: { in: targetClientNames } }, {
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
-      conflictPolicy: nextConflictPolicy,
       updatedAt: now_iso()
     });
   }
@@ -6040,8 +6143,7 @@ function agent_sync_settings_post_all(historyLimit: int? = null, autoSyncInterva
     syncSettings: {
       historyLimit: nextHistoryLimit,
       autoSyncIntervalMinutes: nextAutoSyncIntervalMinutes,
-      syncDataLimitMb: nextSyncDataLimitMb,
-      conflictPolicy: nextConflictPolicy
+      syncDataLimitMb: nextSyncDataLimitMb
     }
   };
 }
@@ -7513,6 +7615,12 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   const winnerPolicyApplied = payloadIsDelta || multiClientUnionBootstrap;
   const winnerOwnerUserId = string.from(batch.ownerUserId ?? '').trim();
   const winnerTable = string.from(batch.table);
+  let conflictSourceClient = '';
+  if (batch.conflictSourceClient == null) {
+    conflictSourceClient = conflict_source_client_for_owner(winnerOwnerUserId);
+  } else {
+    conflictSourceClient = normalize_user_name(string.from(batch.conflictSourceClient));
+  }
   let candidateWinnerIds = [];
   let candidatePhysicalKeys = [];
   if (winnerPolicyApplied) {
@@ -7795,7 +7903,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
                   relevantWinner,
                   string.from(serverReceivedAt),
                   serverSequence,
-                  normalizedClientName
+                  normalizedClientName,
+                  conflictSourceClient
                 )) {
               accepted = false;
             }
@@ -9064,6 +9173,9 @@ function jobs_replay_retained_union(batchId: string, clientNames: array<string>,
     table: batch.table,
     revision: 0,
     ownerUserId,
+    conflictSourceClient: batch.conflictSourceClient == null
+      ? conflict_source_client_for_owner(ownerUserId)
+      : normalize_user_name(string.from(batch.conflictSourceClient)),
     expectedClients: [normalizedSourceClientName],
     uploadedClients: [normalizedSourceClientName],
     receivedChunks: recoveryReceivedChunks,

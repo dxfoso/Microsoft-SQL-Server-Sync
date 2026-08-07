@@ -503,14 +503,12 @@ class LiveSyncApiClient {
     required int historyLimit,
     required int autoSyncIntervalMinutes,
     int? syncDataLimitMb,
-    required String conflictPolicy,
   }) async {
     await _invokeFunction('agent_sync_settings_post', {
       'clientName': clientName,
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
       if (syncDataLimitMb != null) 'syncDataLimitMb': syncDataLimitMb,
-      'conflictPolicy': conflictPolicy,
     });
   }
 
@@ -518,13 +516,11 @@ class LiveSyncApiClient {
     required int historyLimit,
     required int autoSyncIntervalMinutes,
     int? syncDataLimitMb,
-    required String conflictPolicy,
   }) async {
     final decoded = await _invokeFunction('agent_sync_settings_post_all', {
       'historyLimit': historyLimit,
       'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
       if (syncDataLimitMb != null) 'syncDataLimitMb': syncDataLimitMb,
-      'conflictPolicy': conflictPolicy,
     });
     if (decoded is! Map) {
       throw const LiveSyncApiException(
@@ -532,6 +528,22 @@ class LiveSyncApiClient {
       );
     }
     return (decoded['updatedCount'] as num? ?? 0).round();
+  }
+
+  Future<String> setConflictSource({
+    required String clientName,
+    required bool selected,
+  }) async {
+    final decoded = await _invokeFunction('agent_conflict_source_set', {
+      'clientName': clientName.trim(),
+      'selected': selected,
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected conflict source selection payload.',
+      );
+    }
+    return decoded['selectedClientName']?.toString() ?? '';
   }
 
   Future<AdminSyncJobDataPage> fetchSyncJobData({

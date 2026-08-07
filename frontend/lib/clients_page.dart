@@ -256,6 +256,7 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _serverResetBusy = false;
   bool _reconcileBusy = false;
   final Set<String> _clientActivationBusy = <String>{};
+  final Set<String> _conflictSourceBusy = <String>{};
   AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
   String _tableFilter = '';
@@ -807,12 +808,6 @@ class _ClientsPageState extends State<ClientsPage> {
     );
     final intervalValues =
         agents.map((agent) => agent.autoSyncIntervalMinutes).toSet();
-    final conflictPolicyValues =
-        agents.map((agent) => agent.conflictPolicy).toSet();
-    var conflictPolicy =
-        conflictPolicyValues.length == 1
-            ? conflictPolicyValues.first
-            : 'latest_change_wins';
     var saving = false;
     String? intervalError;
     String? historyError;
@@ -842,8 +837,7 @@ class _ClientsPageState extends State<ClientsPage> {
                             height: 1.4,
                           ),
                         ),
-                        if (intervalValues.length > 1 ||
-                            conflictPolicyValues.length > 1) ...[
+                        if (intervalValues.length > 1) ...[
                           const SizedBox(height: 8),
                           const Text(
                             'Clients currently have mixed settings. Saving will make them consistent.',
@@ -866,42 +860,6 @@ class _ClientsPageState extends State<ClientsPage> {
                             errorText: intervalError,
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          initialValue: conflictPolicy,
-                          decoration: const InputDecoration(
-                            labelText: 'Duplicate business-key conflicts',
-                            helperText:
-                                'Applies to every synchronized table. Other errors still stop for review.',
-                          ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: 'latest_change_wins',
-                              child: Text(
-                                'Use the latest database change automatically',
-                              ),
-                            ),
-                          ],
-                          onChanged:
-                              saving
-                                  ? null
-                                  : (value) => setDialogState(
-                                    () =>
-                                        conflictPolicy =
-                                            value ?? 'latest_change_wins',
-                                  ),
-                        ),
-                        if (conflictPolicy == 'latest_change_wins') ...[
-                          const SizedBox(height: 8),
-                          const Text(
-                            'The server keeps a durable winner for every changed row. SQL commit times are normalized to server UTC; server receipt order resolves exact ties. Older offline changes are rejected even when they arrive in a later sync job. Unsafe schema or permission errors still stop for review.',
-                            style: TextStyle(
-                              color: Color(0xFF93451A),
-                              fontSize: 12,
-                              height: 1.4,
-                            ),
-                          ),
-                        ],
                         const SizedBox(height: 12),
                         TextField(
                           controller: historyController,
@@ -1006,7 +964,6 @@ class _ClientsPageState extends State<ClientsPage> {
                                         historyLimit: history,
                                         autoSyncIntervalMinutes: interval,
                                         syncDataLimitMb: syncDataLimitMb,
-                                        conflictPolicy: conflictPolicy,
                                       );
                                   if (!mounted || !context.mounted) return;
                                   Navigator.of(context).pop();
@@ -1017,7 +974,7 @@ class _ClientsPageState extends State<ClientsPage> {
                                   ).showSnackBar(
                                     SnackBar(
                                       content: Text(
-                                        'Saved sync settings for $updatedCount clients. Conflict policy: ${conflictPolicy == 'latest_change_wins' ? 'latest change wins' : 'ask for a decision'}.',
+                                        'Saved sync settings for $updatedCount clients.',
                                       ),
                                     ),
                                   );
@@ -1185,6 +1142,7 @@ class _ClientsPageState extends State<ClientsPage> {
                         columns: const [
                           DataColumn(label: Text('Client')),
                           DataColumn(label: Text('Active')),
+                          DataColumn(label: Text('Conflict source')),
                           DataColumn(label: Text('Status')),
                           DataColumn(label: Text('Database')),
                           DataColumn(label: Text('Tables')),
@@ -1198,6 +1156,8 @@ class _ClientsPageState extends State<ClientsPage> {
                     ),
                   ),
             ),
+          const SizedBox(height: 10),
+          _buildConflictPolicyFooter(),
         ],
       ),
     );
@@ -1646,6 +1606,7 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(_buildClientActiveCheckbox(agent)),
+        DataCell(_buildConflictSourceCheckbox(agent)),
         DataCell(
           _statusChip(activityStatus, _clientActivityColor(activityStatus)),
         ),
@@ -1685,6 +1646,95 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildConflictSourceCheckbox(AdminAgent agent) {
+    final busy = _conflictSourceBusy.contains(agent.clientName);
+    final selected = agent.conflictPolicy == 'primary_source';
+    if (busy) {
+      return const SizedBox(
+        width: 40,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    return Tooltip(
+      message:
+          selected
+              ? 'This client wins only when synchronized changes conflict'
+              : 'Select this client as the exclusive conflict source',
+      child: Checkbox(
+        key: ValueKey('client-conflict-source-${agent.clientName}'),
+        value: selected,
+        onChanged:
+            widget.authenticatedUser.canManageUsers
+                ? (value) => unawaited(
+                  _setConflictSource(agent, selected: value == true),
+                )
+                : null,
+      ),
+    );
+  }
+
+  Future<void> _setConflictSource(
+    AdminAgent agent, {
+    required bool selected,
+  }) async {
+    if (_conflictSourceBusy.isNotEmpty) return;
+    setState(() => _conflictSourceBusy.add(agent.clientName));
+    try {
+      final selectedClientName = await _api.setConflictSource(
+        clientName: agent.clientName,
+        selected: selected,
+      );
+      if (!mounted) return;
+      _showActionMessage(
+        selectedClientName.isEmpty
+            ? 'No conflict source is selected. The most recent committed change wins.'
+            : '$selectedClientName is the conflict source. It wins only when rows conflict.',
+      );
+      await _refresh(silent: true);
+    } catch (error) {
+      if (mounted) _showActionError(error);
+    } finally {
+      if (mounted) {
+        setState(() => _conflictSourceBusy.remove(agent.clientName));
+      }
+    }
+  }
+
+  Widget _buildConflictPolicyFooter() {
+    final selectedSources = (_state?.agents ?? const <AdminAgent>[])
+        .where((agent) => agent.conflictPolicy == 'primary_source')
+        .map((agent) => agent.clientName)
+        .toList(growable: false);
+    final hasSingleSource = selectedSources.length == 1;
+    return Container(
+      key: const ValueKey('client-conflict-policy-footer'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE4E7EC)),
+      ),
+      child: Text(
+        hasSingleSource
+            ? 'Conflict policy: ${selectedSources.single} is the source of truth only when the same row or unique business key conflicts. Normal non-conflicting changes still upload from every active client.'
+            : 'Conflict policy: no source client is selected. The server accepts the most recent committed change; exact timestamp ties use deterministic server receipt order.',
+        style: const TextStyle(
+          color: Color(0xFF475467),
+          fontSize: 12,
+          height: 1.4,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 
