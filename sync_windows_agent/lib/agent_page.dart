@@ -139,6 +139,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Timer? _connectionCheckTimer;
   Timer? _syncPollTimer;
   Timer? _clientUpdateCheckTimer;
+  Timer? _clientUpdateApplyRetryTimer;
   Timer? _automaticChangeDiscoveryTimer;
 
   final bool _useWindowsAuth = true;
@@ -259,6 +260,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _connectionCheckTimer?.cancel();
     _syncPollTimer?.cancel();
     _clientUpdateCheckTimer?.cancel();
+    _clientUpdateApplyRetryTimer?.cancel();
     _automaticChangeDiscoveryTimer?.cancel();
     _controlPlaneClient.dispose();
     _serverController.dispose();
@@ -2752,6 +2754,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     unawaited(_maybeAutoApplyClientUpdate(updateInfo));
   }
 
+  void _scheduleAutomaticClientUpdateRetry(ClientUpdateInfo updateInfo) {
+    _clientUpdateApplyRetryTimer?.cancel();
+    _clientUpdateApplyRetryTimer = Timer(_autoUpdateRetryCooldown, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _applyingClientUpdate = false;
+      });
+      logStartupEvent(
+        'Client updater did not replace this process within the retry window; retrying the detached update safely.',
+      );
+      unawaited(_maybeAutoApplyClientUpdate(updateInfo, force: true));
+    });
+  }
+
   Future<void> _maybeAutoApplyClientUpdate(
     ClientUpdateInfo updateInfo, {
     bool force = false,
@@ -2805,6 +2823,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       logStartupEvent(
         'Client updater launched with pid=${updater.pid}; the updater owns shutdown and restart.',
       );
+      _scheduleAutomaticClientUpdateRetry(updateInfo);
       if (!mounted) {
         return;
       }

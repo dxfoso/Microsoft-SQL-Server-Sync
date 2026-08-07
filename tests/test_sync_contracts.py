@@ -1349,6 +1349,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("unawaited(_maybeAutoApplyClientUpdate(forcedUpdateInfo, force: true));", agent_page)
         self.assertIn("await _maybeAutoApplyClientUpdate(updateInfo, force: true);", agent_page)
         self.assertIn("_pendingForcedClientUpdateInfo = updateInfo;", agent_page)
+        self.assertIn("_scheduleAutomaticClientUpdateRetry(updateInfo);", agent_page)
+        self.assertIn("_clientUpdateApplyRetryTimer = Timer(_autoUpdateRetryCooldown", agent_page)
+        self.assertIn("_applyingClientUpdate = false;", agent_page)
+        self.assertIn("_shellClientUpdateApplyRetryTimer = Timer(", app_source)
+        self.assertIn("_applyingShellClientUpdate = false;", app_source)
         self.assertIn("if (!force &&", agent_page)
         self.assertIn("if (_applyingClientUpdate || _checkingClientUpdate) {", agent_page)
         self.assertIn("if (force) {", agent_page)
@@ -1461,11 +1466,24 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("-Wait", supervisor)
         self.assertIn("-PassThru", supervisor)
         self.assertNotIn("& powershell.exe -NoProfile", supervisor)
-        self.assertIn("[int] $UpdateCheckSeconds = 1800", supervisor)
-        self.assertIn("the healthy client performs lightweight manifest checks in-process", supervisor)
+        self.assertIn("[int] $UpdateCheckSeconds = 600", supervisor)
+        self.assertNotIn("the healthy client performs lightweight manifest checks in-process", supervisor)
         loop_body = supervisor.split("while ($true) {", 1)[1]
         self.assertEqual(loop_body.count("Invoke-IndependentUpdateCheck"), 1)
         self.assertNotIn("-NoStart", supervisor)
+
+    def test_windows_agent_supervisor_runs_hidden_bounded_update_checks(self):
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        update_check_body = supervisor.split(
+            "function Invoke-IndependentUpdateCheck {", 1
+        )[1].split("$mutexName =", 1)[0]
+
+        self.assertIn("[int] $UpdateCheckSeconds = 600", supervisor)
+        self.assertIn("-WindowStyle Hidden", update_check_body)
+        self.assertIn("-Wait", update_check_body)
+        self.assertNotIn("Get-AgentProcesses).Count -gt 0", update_check_body)
+        self.assertIn("Test-Path -LiteralPath $userStoppedMarkerPath", update_check_body)
+        self.assertIn("WaitOne(0)", read_text("update.ps1"))
 
     def test_new_install_retires_obsolete_agent_install_processes(self):
         supervisor = read_text("sync_windows_agent_supervisor.ps1")

@@ -1,7 +1,7 @@
 param(
     [string] $ManifestUrl = 'https://sync.velvet-leaf.com/client/latest.json',
     [ValidateRange(5, 3600)][int] $AgentCheckSeconds = 15,
-    [ValidateRange(300, 86400)][int] $UpdateCheckSeconds = 1800,
+    [ValidateRange(300, 86400)][int] $UpdateCheckSeconds = 600,
     [switch] $RunOnce,
     [switch] $SkipUpdate,
     [switch] $SkipAgentStart,
@@ -150,10 +150,6 @@ function Invoke-IndependentUpdateCheck {
     }
     if (Test-Path -LiteralPath $userStoppedMarkerPath -PathType Leaf) {
         Write-RequestLog 'Update process skipped; the user closed the client and only a manual launch may resume it.'
-        return
-    }
-    if (@(Get-AgentProcesses).Count -gt 0) {
-        Write-RequestLog 'Update process skipped; the healthy client performs lightweight manifest checks in-process.'
         return
     }
     if (-not (Test-Path -LiteralPath $updateScriptPath -PathType Leaf)) {

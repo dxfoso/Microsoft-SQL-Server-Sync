@@ -108,6 +108,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   bool _didLogFirstBuild = false;
   String? _lastWindowTitle;
   Timer? _clientUpdateCheckTimer;
+  Timer? _shellClientUpdateApplyRetryTimer;
 
   static const SyncClientState _defaultClientState = SyncClientState(
     historyLimit: kDefaultHistoryLimit,
@@ -417,6 +418,7 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   void dispose() {
     _saveDebounce?.cancel();
     _clientUpdateCheckTimer?.cancel();
+    _shellClientUpdateApplyRetryTimer?.cancel();
     _authClient.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
@@ -665,6 +667,22 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
       );
       logStartupEvent(
         'Shell client updater launched with pid=${updater.pid}; the updater owns shutdown and restart.',
+      );
+      _shellClientUpdateApplyRetryTimer?.cancel();
+      _shellClientUpdateApplyRetryTimer = Timer(
+        _shellAutoUpdateRetryCooldown,
+        () {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _applyingShellClientUpdate = false;
+          });
+          logStartupEvent(
+            'Shell updater did not replace this process within the retry window; retrying the detached update safely.',
+          );
+          unawaited(_maybeAutoApplyShellClientUpdate(updateInfo));
+        },
       );
     } catch (error) {
       logStartupEvent('Shell automatic client update failed: $error');
