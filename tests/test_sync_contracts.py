@@ -1195,6 +1195,23 @@ class SyncContractsTests(unittest.TestCase):
             client_api,
         )
 
+    def test_atomic_stage_load_separates_sqlcmd_batches_to_bound_server_memory(self):
+        merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        load_body = merge_helper.split(
+            "String buildTargetSnapshotStageLoadSql(", 1
+        )[1].split("String buildTargetSnapshotStageApplySql(", 1)[0]
+        apply_body = agent_page.split(
+            "Future<_TargetApplyResult> _applySourceRowsToTarget(", 1
+        )[1].split("String _nextTargetSnapshotStageTableName(", 1)[0]
+
+        self.assertIn("targetSnapshotInsertRowsPerStatement = 1000", merge_helper)
+        self.assertIn("return statements.join('\\nGO\\n');", load_body)
+        self.assertIn("buildTargetSnapshotStageLoadSql(", apply_body)
+        self.assertIn("context: 'target snapshot stage load'", apply_body)
+        self.assertIn("'sqlcmdLaunchCount': 1", apply_body)
+
     def test_unused_business_info_route_is_removed(self):
         self.assertFalse((ROOT / "business" / "sql_sync_api.tru").exists())
 

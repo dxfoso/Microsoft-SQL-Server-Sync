@@ -31,9 +31,37 @@ void main() {
       expect(targetSnapshotInsertRowsPerStatement, 1000);
       expect(RegExp(r'CREATE TABLE').allMatches(sql), hasLength(1));
       expect(RegExp(r'INSERT INTO').allMatches(sql), hasLength(3));
+      expect(RegExp(r'^GO$', multiLine: true).allMatches(sql), hasLength(3));
       expect(RegExp(r"CAST\(N'2501' AS int\)").allMatches(sql), hasLength(1));
     },
   );
+
+  test('large snapshot staging separates SQL Server batches in one script', () {
+    const columns = [
+      SqlSyncColumnDefinition(
+        name: 'Id',
+        sqlType: 'int',
+        maxLength: 4,
+        precision: 10,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    final sql = buildTargetSnapshotStageLoadSql(
+      stageTableName: 'sqlsync_memory_bounded_stage',
+      columns: columns,
+      rows: List<Map<String, dynamic>>.generate(
+        2501,
+        (index) => {'Id': index + 1},
+      ),
+    );
+
+    // Setup plus three INSERT statements are four independent SQL Server
+    // compilation batches, while sqlcmd still reads one input script.
+    expect(RegExp(r'^GO$', multiLine: true).allMatches(sql), hasLength(3));
+    expect(RegExp(r'INSERT INTO').allMatches(sql), hasLength(3));
+  });
 
   test('complete snapshot verification defers only protected hot rows', () {
     expect(

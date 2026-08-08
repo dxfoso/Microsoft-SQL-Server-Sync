@@ -12,8 +12,10 @@ const sqlSyncChangeTrackingContextHex = '0x53514C53594E43';
 const sqlSyncDeletePolicy = 'explicit-tombstones-only';
 
 // SQL Server accepts at most 1,000 rows in one INSERT ... VALUES statement.
-// Keep that server-side bound while sending every statement through one
-// sqlcmd input file, so a large snapshot does not reconnect once per page.
+// Keep that server-side bound and separate statements with sqlcmd's GO batch
+// delimiter. This preserves one sqlcmd process/connection without asking SQL
+// Server (especially memory-limited Express installations) to compile the
+// complete snapshot as one enormous batch.
 const targetSnapshotInsertRowsPerStatement = 1000;
 
 int unexpectedCompleteSnapshotMismatchCount({
@@ -108,7 +110,7 @@ String buildTargetSnapshotStageLoadSql({
       ),
     );
   }
-  return statements.join('\n');
+  return statements.join('\nGO\n');
 }
 
 String buildTargetSnapshotStageApplySql({
