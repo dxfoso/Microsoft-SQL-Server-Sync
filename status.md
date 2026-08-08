@@ -1,15 +1,15 @@
 # Current Status
 
-Updated: 2026-08-08 04:01 Europe/Berlin
+Updated: 2026-08-08 19:56 Europe/Berlin
 
-**Progress: 100% complete for the requested follow-up run, diagnosis, fix, testing, and deployment**
+**Progress: 100% complete for the requested one-time sync, incident fix, deployment, and production verification**
 
-- The requested follow-up Sync All started at 02:58:37 and was safely cancelled at 03:32:19 after 33m 41s when a repeat loop was confirmed. Automatic scheduling stayed paused.
-- `BillRel000` and `POSOrder000`, which failed in the preceding run, passed with the corrected 100-row transport bound.
-- INC-054: Alshallan2's complete `bi000` baseline apply exceeded the ordinary ten-minute SQL command timeout. Its atomic transaction rolled back safely and retried the same batch repeatedly; no partial apply or inferred deletion occurred.
-- The large atomic stage-load and merge now use a dedicated finite four-hour timeout. Ordinary SQL reads retain their two/ten-minute bounds, cancellation remains safe, and first-time non-empty tables still enter automatic all-client union baseline recovery without user input.
-- The full hidden Standard verification gate passed in 624 seconds: 180 Flutter tests, repository contracts, Windows updater/supervisor tests, 24 three-client SQL scenarios, 11 fault/recovery scenarios, 5,000-row scale, and a 60-second soak.
-- Commit `9f5d790dc7cbe003986c62609bc17cc267328447` is pushed and deployed as exact immutable backend/frontend images. Both Kubernetes deployments are ready.
-- Windows client `1.0.247+251` is published and installed on `alshallan2`, `velvet factory`, and `velvet home`; all report `current` with no update pending.
-- Public health reports `ready=true`, `compile_errors=0`, zero failed requests, and the exact deployed commit. The public client manifest identifies `1.0.247+251` and the same commit.
-- Live state is safe: zero active jobs, no pending decisions, and automatic synchronization paused. A new manual Sync All is required later to finish the remaining first-time baselines; no third production run was started automatically.
+- The controlled Sync All completed successfully from 17:04:50 to 17:55:20 UTC (50m 30s total) across 31 eligible tables.
+- All jobs completed: zero active jobs, zero visible failures, zero pending decisions, and the sync gate reports every table ready.
+- Both participating clients (`alshallan2` and `velvet factory`) are online on Windows client `1.0.248+252`, current, and connected to SQL Server and the control plane.
+- INC-055 was found and fixed during the run: large snapshot staging previously compiled thousands of inserts as one SQL Server batch and exhausted the internal memory pool. The loader now keeps one connection but separates bounded inserts with `GO` batches.
+- The corrected large `mt000` apply completed on both clients without partial writes, inferred deletes, timeout, or memory failure. Queued tables resumed afterward and completed normally.
+- The full hidden Standard verification gate passed, including 181 Flutter tests, repository contracts, 24 three-client Docker scenarios, 11 fault/recovery scenarios, 5,000-row scale, and bounded soak.
+- Commit `320433ed0d3ad1f9a6dd5240bdf41a389b6d0775` is pushed and deployed as exact immutable backend/frontend images; Windows client `1.0.248+252` is published and installed on participating clients.
+- Public health is stable on the exact commit: `ready=true`, `compile_errors=0`, failed requests `0`, database available, and no degraded reasons.
+- Automatic synchronization remains paused, so this completed one-time run will not repeat automatically.
