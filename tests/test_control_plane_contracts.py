@@ -1147,7 +1147,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field revision: int min=0", source)
         self.assertIn("field clientChangeTrackingVersions: array<json>", source)
         self.assertIn("function jobs_multi_writer_upload(", source)
-        self.assertIn("if (incomingRowCount > 250)", source)
+        self.assertIn("if (incomingRowCount > 100)", source)
         self.assertIn("let incomingBytes = json.stringify(incomingRows).length", source)
         self.assertIn("receivedBytes + incomingBytes > 128000000", source)
         self.assertIn("const ready = uploadedClients.length >= batch.expectedClients.length;", source)
@@ -1627,11 +1627,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn(
             "payload byte manifest is smaller than its decoded content", upload_body
         )
-        self.assertIn("incomingRowCount > 250", upload_body)
+        self.assertIn("incomingRowCount > 100", upload_body)
         self.assertIn("incomingBytes > 2000000", upload_body)
         self.assertIn("incomingCompressedBytes > 750000", upload_body)
         self.assertIn(
-            "incomingRowCount * (resolvedUniqueKeyColumnSets.length + 1) > 500",
+            "incomingRowCount * (resolvedUniqueKeyColumnSets.length + 1) > 100",
             upload_body,
         )
         self.assertIn("content_type: normalizedPayloadEncoding == 'gzip-json'", upload_body)
@@ -1643,6 +1643,16 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("decodedBytes.length", api)
         self.assertIn("Iterable<CompressedDeltaPackage>", packages)
         self.assertIn(") sync* {", packages)
+
+    def test_sync_all_reports_completed_with_errors_when_any_batch_failed(self):
+        source = read_text("business/control_plane.tru")
+        finish = source.split("function finish_manual_sync_operation(", 1)[1].split(
+            "function reduce_manual_sync_table_count_for_owner(", 1
+        )[0]
+
+        self.assertIn("status: 'failed'", finish)
+        self.assertIn("createdAt: { gte:", finish)
+        self.assertIn("resolvedStatus = 'completed_errors'", finish)
 
     def test_server_reset_rotates_protocol_v2_epoch(self):
         source = read_text("business/control_plane.tru")

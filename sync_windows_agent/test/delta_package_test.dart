@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sync_windows_agent/delta_package.dart';
 
 void main() {
-  test('1200 changed rows use five bounded compressed packages', () {
+  test('1200 changed rows use twelve memory-bounded compressed packages', () {
     final rows = List.generate(
       1200,
       (index) => <String, String?>{
@@ -18,8 +18,8 @@ void main() {
 
     final packages = buildCompressedDeltaPackages(rows);
 
-    expect(packages, hasLength(5));
-    expect(packages.map((value) => value.rowCount), [250, 250, 250, 250, 200]);
+    expect(packages, hasLength(12));
+    expect(packages.every((value) => value.rowCount == 100), isTrue);
     expect(
       packages.every(
         (value) =>

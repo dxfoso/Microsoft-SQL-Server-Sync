@@ -5148,7 +5148,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       throw _SyncJobCancelled(job.id);
     }
 
-    // Stream bounded gzip packages. Each request carries up to 250 narrow
+    // Stream bounded gzip packages. Each request carries up to 100 narrow
     // changes instead of the historical 25-row JSON request, while byte caps
     // still fail closed for unusually wide rows and protect backend memory.
     final rows = _snapshotRows(snapshot.snapshotJson);
@@ -5158,7 +5158,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       snapshot.snapshotJson,
     );
     final maxPackageRowsByWinnerIdentities =
-        500 ~/ (uniqueKeyColumnSets.length + 1);
+        100 ~/ (uniqueKeyColumnSets.length + 1);
     final maxPackageRows = math.max(
       1,
       math.min(kDeltaPackageMaxRows, maxPackageRowsByWinnerIdentities),

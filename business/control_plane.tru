@@ -5760,8 +5760,24 @@ function finish_manual_sync_operation(ownerUserId: string, status: string, compl
   if (existing == null || string.from(existing.manualSyncStatus ?? '').trim() != 'running') {
     return;
   }
+  let resolvedStatus = status.trim();
+  if (resolvedStatus == 'completed') {
+    const failedJobs = db.selectMany(SyncJob, {
+      where: {
+        ownerUserId: normalizedOwnerUserId,
+        status: 'failed',
+        createdAt: { gte: string.from(existing.manualSyncStartedAt ?? '') }
+      },
+      orderBy: { field: 'createdAt', dir: 'desc' },
+      fields: ['id'],
+      limit: 1
+    });
+    if (failedJobs.length > 0) {
+      resolvedStatus = 'completed_errors';
+    }
+  }
   db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
-    manualSyncStatus: status.trim(),
+    manualSyncStatus: resolvedStatus,
     manualSyncCompletedAt: completedAt ?? now_iso(),
     updatedAt: completedAt ?? now_iso()
   });
@@ -7488,7 +7504,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   if (payloadRowCount != null && payloadRowCount >= 0) {
     incomingRowCount = payloadRowCount;
   }
-  if (incomingRowCount > 250) {
+  if (incomingRowCount > 100) {
     return raw_json_error(413, 'multi-writer chunk is too large');
   }
   const encodedPayload = string.from(payloadBase64 ?? '').trim();
@@ -7576,7 +7592,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     }
     resolvedUniqueKeyColumnSets = batchUniqueKeyColumnSets;
   }
-  if (incomingRowCount * (resolvedUniqueKeyColumnSets.length + 1) > 500) {
+  if (incomingRowCount * (resolvedUniqueKeyColumnSets.length + 1) > 100) {
     return raw_json_error(413, 'multi-writer package has too many row and unique-key identities; retry with fewer rows');
   }
   if (payloadIsDelta && resolvedKeyColumns.length == 0) {

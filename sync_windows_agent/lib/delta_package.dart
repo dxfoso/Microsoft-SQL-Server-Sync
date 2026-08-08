@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-const int kDeltaPackageMaxRows = 250;
+// The server's durable winner evaluation keeps several identity projections
+// per row. Keep each request bounded below the 128 MiB interpreter budget.
+const int kDeltaPackageMaxRows = 100;
 const int kDeltaPackageMaxUncompressedBytes = 512000;
 const int kDeltaPackageMaxCompressedBytes = 384000;
 

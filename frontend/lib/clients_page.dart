@@ -1349,7 +1349,9 @@ class _ClientsPageState extends State<ClientsPage> {
             label: Text(
               operation.isRunning
                   ? 'Sync All total: ${formatSyncDuration(operation.duration())} elapsed'
-                  : 'Last Sync All total: ${formatSyncDuration(operation.duration())}',
+                  : operation.hasErrors
+                  ? 'Last Sync All total: ${formatSyncDuration(operation.duration())} · Completed with errors'
+                  : 'Last Sync All total: ${formatSyncDuration(operation.duration())} · Completed',
             ),
           ),
         FilledButton.tonalIcon(
@@ -3641,7 +3643,10 @@ class _ClientsPageState extends State<ClientsPage> {
     if (value == 'completed' || value == 'complete' || value == 'idle') {
       return const Color(0xFF0F766E);
     }
-    if (value == 'failed' || value == 'cancelled' || value == 'offline') {
+    if (value == 'failed' ||
+        value == 'completed_errors' ||
+        value == 'cancelled' ||
+        value == 'offline') {
       return const Color(0xFFB42318);
     }
     if (value == 'queued' || value == 'waiting' || value == 'paused') {

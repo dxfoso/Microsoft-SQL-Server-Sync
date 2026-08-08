@@ -89,6 +89,18 @@ void main() {
 
     expect(completed.duration(), const Duration(minutes: 9));
     expect(formatSyncDuration(completed.duration()), '9m 0s');
+    expect(completed.hasErrors, isFalse);
+
+    final completedWithErrors = AdminSyncAllOperation.fromJson({
+      'ownerUserId': 'owner-1',
+      'status': 'completed_errors',
+      'startedAt': '2026-08-07T07:38:09Z',
+      'completedAt': '2026-08-07T07:47:09Z',
+      'durationMs': 540000,
+      'tableCount': 31,
+      'remainingTableCount': 0,
+    });
+    expect(completedWithErrors.hasErrors, isTrue);
     expect(
       running.duration(now: DateTime.parse('2026-08-07T07:40:39Z')),
       const Duration(minutes: 2, seconds: 30),

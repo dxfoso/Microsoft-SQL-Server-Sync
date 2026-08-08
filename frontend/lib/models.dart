@@ -144,6 +144,7 @@ class AdminSyncAllOperation {
   final int remainingTableCount;
 
   bool get isRunning => status.toLowerCase() == 'running';
+  bool get hasErrors => status.toLowerCase() == 'completed_errors';
 
   factory AdminSyncAllOperation.fromJson(Map<String, dynamic> json) =>
       AdminSyncAllOperation(

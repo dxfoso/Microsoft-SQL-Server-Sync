@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 52)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 54)}
         observed_ids = set()
 
         for row in rows:
@@ -71,9 +71,9 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         values = read_text("deployment/chart/values.yaml")
         deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
 
-        self.assertIn("500 ~/ (uniqueKeyColumnSets.length + 1)", agent)
+        self.assertIn("100 ~/ (uniqueKeyColumnSets.length + 1)", agent)
         self.assertIn("math.min(kDeltaPackageMaxRows", agent)
-        self.assertIn("const int kDeltaPackageMaxRows = 250;", packages)
+        self.assertIn("const int kDeltaPackageMaxRows = 100;", packages)
         self.assertIn(
             "const int kDeltaPackageMaxUncompressedBytes = 512000;", packages
         )

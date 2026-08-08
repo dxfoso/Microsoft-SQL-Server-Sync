@@ -370,7 +370,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("DataColumn(label: Text('Last synced'))", clients_page)
         self.assertIn("DataColumn(label: Text('Sync All total'))", clients_page)
         self.assertIn("_syncAllOperationForAgent(agent)?.duration()", clients_page)
-        self.assertIn("'Last Sync All total: ${formatSyncDuration(operation.duration())}'", clients_page)
+        self.assertIn("'Last Sync All total: ${formatSyncDuration(operation.duration())}", clients_page)
+        self.assertIn("Completed with errors", clients_page)
         self.assertIn("class AdminSyncAllOperation", web_models)
         self.assertIn("lastSyncDurationMs: (json['lastSyncDurationMs'] as num?)?.round()", web_models)
         self.assertIn("DataColumn(label: Text('Active'))", clients_page)
@@ -941,7 +942,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("payloadEncoding: 'gzip-json'", upload_body)
         self.assertIn("payloadUncompressedBytes: package.uncompressedBytes", upload_body)
         self.assertIn("payloadCompressedBytes: package.compressedBytes", upload_body)
-        self.assertIn("const int kDeltaPackageMaxRows = 250;", delta_packages)
+        self.assertIn("const int kDeltaPackageMaxRows = 100;", delta_packages)
         self.assertIn(
             "const int kDeltaPackageMaxUncompressedBytes = 512000;",
             delta_packages,

@@ -1,8 +1,8 @@
 # Current Status
 
-Updated: 2026-08-08 00:08 Europe/Berlin
+Updated: 2026-08-08 01:56 Europe/Berlin
 
-**Progress: 100% complete**
+**Progress: 80% complete**
 
 - The requested one-time live Sync All finished in 4m 35s. Automatic scheduling is paused; no second live sync will be started during verification.
 - 25 runnable tables completed. `Connections` converged on both clients. Three stale-baseline delta batches (`BPOptions000`, `BPOptionsDetails000`, and `BillRel000`) were rejected atomically before upload/apply.
@@ -16,4 +16,7 @@ Updated: 2026-08-08 00:08 Europe/Berlin
 - Immutable backend/frontend commit `49c7e236c52d027047c1ba809250dde2bf9fc507` is deployed. Public health reports `ready=true`, `compile_errors=0`, and the exact commit; both Kubernetes deployments are ready.
 - Live verification: `alshallan2` and `velvet factory` have 67 enabled tables in `Completed`, zero active jobs, and zero unresolved failed jobs. All real clients report Windows version `1.0.245+249`.
 - Automatic synchronization remains paused as intended. No second real Sync All was started.
-- Remaining: none for this change. A future sync begins only when the user starts it from the web UI.
+- The requested production Sync All ran once from 01:45:58 to 01:53:04 Berlin time (7m 6s). It drained all eligible work with no active jobs or decisions, while automatic scheduling stayed paused.
+- INC-052 found two atomically rejected uploads (`BillRel000` and `POSOrder000`) at the 128 MiB backend execution-memory limit. No partial apply or deletion occurred. Packages are now bounded to 100 rows/winner identities instead of 250/500; focused regressions pass.
+- INC-053 found that the operation summary incorrectly said `completed` despite those failures. Finalization now records `completed_errors`, and the web shows `Completed with errors` beside the total duration.
+- Remaining: the full Standard gate is running against both fixes; then publish client `1.0.246+250`, deploy immutable server images, verify health/client updates, and keep real sync paused. No second live Sync All will be started.
