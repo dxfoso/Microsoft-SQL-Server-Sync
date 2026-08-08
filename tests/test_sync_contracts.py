@@ -1116,6 +1116,10 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("const Duration _defaultSqlCmdTimeout = Duration(minutes: 2);", agent_page)
         self.assertIn("const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);", agent_page)
+        self.assertIn(
+            "const Duration _atomicSnapshotApplySqlCmdTimeout = Duration(hours: 4);",
+            agent_page,
+        )
         self.assertIn("await process.exitCode.timeout(timeout);", agent_page)
         self.assertIn("sqlcmd timed out after ${_formatDurationForLog(timeout)}.", agent_page)
         self.assertIn("timeout: _snapshotSqlCmdTimeout,", agent_page)
@@ -1146,6 +1150,26 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn(
             "const Duration _diagnosticsChangeTrackingTimeout = Duration(seconds: 20);",
             agent_page,
+        )
+
+    def test_atomic_full_snapshot_apply_does_not_retry_at_ten_minutes(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        apply_body = agent_page.split(
+            "Future<_TargetApplyResult> _applySourceRowsToTarget(", 1
+        )[1].split("String _nextTargetSnapshotStageTableName(", 1)[0]
+
+        self.assertEqual(
+            apply_body.count("timeout: _atomicSnapshotApplySqlCmdTimeout,"),
+            2,
+        )
+        self.assertNotIn(
+            "context: 'target snapshot stage load',\n        timeout: _snapshotSqlCmdTimeout,",
+            apply_body,
+        )
+        self.assertNotIn(
+            "context: 'target snapshot merge',\n        timeout: _snapshotSqlCmdTimeout,",
+            apply_body,
         )
         self.assertIn(
             "const int _maxDiagnosticsUploadPayloadChars = 60000;",

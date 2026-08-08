@@ -46,6 +46,10 @@ const String _agentBuildReleaseDate = String.fromEnvironment(
 );
 const Duration _defaultSqlCmdTimeout = Duration(minutes: 2);
 const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);
+// A complete atomic bootstrap can legitimately exceed the ordinary snapshot
+// query bound on older SQL Server machines. Keep the transaction bounded, but
+// do not kill and restart the same all-or-nothing stage/merge every ten minutes.
+const Duration _atomicSnapshotApplySqlCmdTimeout = Duration(hours: 4);
 const Duration _diagnosticsChangeTrackingTimeout = Duration(seconds: 20);
 const int _maxDiagnosticsUploadPayloadChars = 60000;
 const int _dataExportChunkBytes = 4 * 1024 * 1024;
@@ -7242,7 +7246,7 @@ END
           rows: rows,
         ),
         context: 'target snapshot stage load',
-        timeout: _snapshotSqlCmdTimeout,
+        timeout: _atomicSnapshotApplySqlCmdTimeout,
       );
       stageLoadStopwatch.stop();
       logAgentDiagnostic(
@@ -7276,7 +7280,7 @@ END
           resolveUniqueConflictsLatestWins: resolveUniqueConflictsLatestWins,
         ),
         context: 'target snapshot merge',
-        timeout: _snapshotSqlCmdTimeout,
+        timeout: _atomicSnapshotApplySqlCmdTimeout,
         captureOutputFile: true,
       );
       final reportedInsertedRows = _insertedRowCountFromSqlOutput(
