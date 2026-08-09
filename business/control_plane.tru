@@ -3271,14 +3271,8 @@ function scheduler_agent_table_states(agent: map<json>, policies: array<json>? =
   if (agent.tables == null) {
     return [];
   }
-  const tables = apply_table_sync_policies_with_policies(
-    agent.ownerUserId,
-    agent.tables,
-    string.from(agent.database),
-    policies
-  );
   let selectedDatabaseTables = [];
-  for (const tableState of tables) {
+  for (const tableState of agent.tables) {
     if (tableState.table != null &&
         sync_table_belongs_to_database(
           string.from(tableState.table),
@@ -3305,14 +3299,19 @@ function scheduler_agent_table_state(agentTables: array<json>, table: string): m
 function scheduler_agent_table_state_cache(agent: map<json>, policies: array<json>? = null): map<json> {
   const tables = scheduler_agent_table_states(agent, policies);
   let enabledTables = [];
-  for (const tableState of tables) {
-    if (tableState.enabled == true && tableState.table != null) {
-      enabledTables = enabledTables.concat([string.from(tableState.table)]);
+  // Automatic enrollment gives every scheduler-visible table a durable
+  // database-qualified policy. When policies are preloaded, use that compact
+  // authoritative list directly instead of applying every policy separately
+  // to every table state (up to 600 x 1,000 comparisons per client).
+  if (policies != null) {
+    enabledTables = enabled_sync_policy_tables_for_agent(agent, policies);
+  } else {
+    for (const tableState of tables) {
+      if (tableState.enabled == true && tableState.table != null) {
+        enabledTables = enabledTables.concat([string.from(tableState.table)]);
+      }
     }
   }
-  enabledTables = unique_string_values(
-    enabledTables.concat(enabled_sync_policy_tables_for_agent(agent, policies))
-  );
   return {
     clientName: agent.clientName,
     tables,
@@ -3665,7 +3664,10 @@ function enabled_sync_policy_tables_for_agent(agent: map<json>, policies: array<
       }
     }
   }
-  return unique_string_values(enabledTables);
+  // TableSyncPolicy has a durable owner/database/table uniqueness contract;
+  // auto-enrollment writes database-qualified rows. Do not quadratically
+  // deduplicate this already-unique ordered projection in the request arena.
+  return enabledTables;
 }
 
 function sync_table_state_due_for_interval(tableState: map<json>? = null, intervalMinutes: int? = null): bool {
@@ -7063,14 +7065,27 @@ function begin_manual_sync_all_for_owner(ownerUserId: string, requestedAt: strin
   }
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
   let enabledTables = [];
-  for (const agent of onlineAgents) {
-    enabledTables = enabledTables.concat(
-      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-      )
-    );
+  // Auto-enrolled policy rows are already unique and database-qualified.
+  // Traverse them once for the whole owner instead of producing the same
+  // 551-table list once per client and quadratically deduplicating the union.
+  for (const policy of ownerPolicies) {
+    if (policy.enabled != true) {
+      continue;
+    }
+    const table = table_sync_policy_sync_key(policy);
+    if (table.trim().length == 0) {
+      continue;
+    }
+    let belongsToOnlineDatabase = false;
+    for (const agent of onlineAgents) {
+      if (sync_table_belongs_to_database(table, string.from(agent.database))) {
+        belongsToOnlineDatabase = true;
+      }
+    }
+    if (belongsToOnlineDatabase) {
+      enabledTables = enabledTables.concat([table]);
+    }
   }
-  enabledTables = unique_string_values(enabledTables);
   if (enabledTables.length > 0) {
     begin_manual_sync_operation(ownerUserId, enabledTables.length, requestedAt);
     set_manual_sync_pending_tables_for_owner(ownerUserId, enabledTables);

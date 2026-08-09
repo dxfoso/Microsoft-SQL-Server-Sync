@@ -227,6 +227,15 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         pending_normalizer = control_plane.split(
             "function manual_sync_pending_tables_from_values(", 1
         )[1].split("function auto_sync_tick", 1)[0]
+        cache_builder = control_plane.split(
+            "function scheduler_agent_table_state_cache(", 1
+        )[1].split("function scheduler_agent_table_state_cache_for_agent", 1)[0]
+        scheduler_states = control_plane.split(
+            "function scheduler_agent_table_states(", 1
+        )[1].split("function scheduler_agent_table_state(", 1)[0]
+        begin_sync = control_plane.split(
+            "function begin_manual_sync_all_for_owner(", 1
+        )[1].split("function jobs_create_all_enabled", 1)[0]
 
         self.assertIn("let dueTables = manualPendingTables;", scheduler)
         self.assertIn(
@@ -240,6 +249,15 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertNotIn("unique_string_values", pending_normalizer)
         self.assertIn(".map((value) => string.from(value).trim())", pending_normalizer)
         self.assertIn(".filter((table) =>", pending_normalizer)
+        self.assertNotIn("apply_table_sync_policies_with_policies", scheduler_states)
+        self.assertIn(
+            "enabledTables = enabled_sync_policy_tables_for_agent(agent, policies)",
+            cache_builder,
+        )
+        self.assertNotIn("unique_string_values", cache_builder)
+        self.assertIn("for (const policy of ownerPolicies)", begin_sync)
+        self.assertNotIn("for (const agent of onlineAgents) {\n    enabledTables", begin_sync)
+        self.assertNotIn("unique_string_values(enabledTables)", begin_sync)
 
     def test_change_tracking_preflight_does_not_rebuild_supplied_table_cache(self):
         control_plane = read_text("business/control_plane.tru")
