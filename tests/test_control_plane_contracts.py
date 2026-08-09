@@ -490,7 +490,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("sync_owner_has_blocking_table_issues(", scheduler)
         self.assertIn("return [];", scheduler)
 
-        manual_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
+        manual_all = source.split("function jobs_create_all_enabled_for_current(", 1)[1].split(
             "function reset_all_agent_saved_state(", 1
         )[0]
         manual_prepare = source.split("function begin_manual_sync_all_for_owner(", 1)[1].split(
@@ -1200,7 +1200,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
     def test_sync_all_queues_one_batch_for_online_peers(self):
         source = read_text("business/control_plane.tru")
-        sync_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
+        sync_all = source.split("function jobs_create_all_enabled_for_current(", 1)[1].split(
             "function reset_all_agent_saved_state", 1
         )[0]
 
@@ -1492,7 +1492,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "agent.ownerUserId == ownerUserId && agent_sync_enabled(agent)",
             source,
         )
-        sync_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
+        sync_all = source.split("function jobs_create_all_enabled_for_current(", 1)[1].split(
             "function reset_all_agent_saved_state", 1
         )[0]
         manual_prepare = source.split("function begin_manual_sync_all_for_owner(", 1)[1].split(

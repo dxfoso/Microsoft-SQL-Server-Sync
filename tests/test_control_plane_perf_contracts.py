@@ -180,7 +180,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
     def test_sync_all_loads_large_agent_table_state_one_owner_at_a_time(self):
         control_plane = read_text("business/control_plane.tru")
         sync_all = control_plane.split(
-            "function jobs_create_all_enabled(", 1
+            "function jobs_create_all_enabled_for_current(", 1
         )[1].split("function reset_all_agent_saved_state", 1)[0]
         scoped_loader = control_plane.split(
             "function list_scheduler_agent_rows_for_owner(", 1
