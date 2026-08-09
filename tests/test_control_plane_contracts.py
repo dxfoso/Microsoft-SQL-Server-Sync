@@ -1495,10 +1495,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "agent.ownerUserId == ownerUserId && agent_sync_enabled(agent)",
             source,
         )
-        self.assertIn(
-            "string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)",
-            source,
-        )
+        sync_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
+            "function reset_all_agent_saved_state", 1
+        )[0]
+        self.assertIn("list_scheduler_agent_rows_for_owner(ownerUserId)", sync_all)
+        self.assertIn("agent_sync_enabled(agent)", sync_all)
         self.assertIn("preserveChangeTrackingBaselines", source)
         self.assertIn("function mark_offline_sync_debt(", source)
         self.assertIn("function due_offline_catchup_tables(", source)

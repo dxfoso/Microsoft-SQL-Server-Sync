@@ -2466,6 +2466,32 @@ function live_state_active_job_rows_for(current: map<json>): array<json> {
   return rows;
 }
 
+function list_scheduler_agent_owner_rows(): array<json> {
+  const rows = db.selectMany(Agent, {
+    where: { clientName: { gte: '' } },
+    orderBy: { field: 'ownerUserId', dir: 'asc' },
+    fields: ['ownerUserId'],
+    limit: 1000
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
+function list_scheduler_agent_rows_for_owner(ownerUserId: string): array<json> {
+  const rows = db.selectMany(Agent, {
+    where: { ownerUserId },
+    orderBy: { field: 'clientName', dir: 'asc' },
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'autoSyncIntervalMinutes', 'serverConnected', 'sqlConnected', 'lastHeartbeat', 'tables', 'clientUserId', 'ownerUserId'],
+    limit: 100
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
 function live_state_completed_job_rows_for(current: map<json>): array<json> {
   let where = { status: 'completed' };
   if (is_client_user(current)) {
@@ -6978,11 +7004,17 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   let skippedBusyTables = [];
   let sourceResolutionTables = [];
   let deferredTables = [];
-  const visibleAgents = visible_agent_rows_for(current);
-  const ownerUserIds = unique_string_values(visibleAgents.map((agent) => string.from(agent.ownerUserId)));
+  let ownerUserIds = [];
+  if (is_owner_user(current)) {
+    ownerUserIds = [string.from(current.id)];
+  } else {
+    ownerUserIds = unique_string_values(
+      list_scheduler_agent_owner_rows().map((agent) => string.from(agent.ownerUserId))
+    );
+  }
   for (const ownerUserId of ownerUserIds) {
-    const ownerAgents = visibleAgents.filter((agent) =>
-      string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)
+    const ownerAgents = list_scheduler_agent_rows_for_owner(ownerUserId).filter((agent) =>
+      agent_sync_enabled(agent)
     );
     if (ownerAgents.length == 0) {
       continue;
