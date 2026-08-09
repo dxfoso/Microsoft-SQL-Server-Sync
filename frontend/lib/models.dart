@@ -396,6 +396,7 @@ class AdminAgent {
     required this.sqlConnected,
     required this.clientVersion,
     required this.lastHeartbeat,
+    this.lastChangeCheckAt = '',
     this.lastSyncCompletedAt = '',
     this.lastSyncDurationMs,
     required this.selectedTable,
@@ -424,6 +425,7 @@ class AdminAgent {
   final bool sqlConnected;
   final String clientVersion;
   final String lastHeartbeat;
+  final String lastChangeCheckAt;
   final String lastSyncCompletedAt;
   final int? lastSyncDurationMs;
   final String runtimeStatusCode;
@@ -458,6 +460,7 @@ class AdminAgent {
       sqlConnected: json['sqlConnected'] as bool? ?? false,
       clientVersion: json['clientVersion'] as String? ?? '',
       lastHeartbeat: json['lastHeartbeat'] as String? ?? '',
+      lastChangeCheckAt: json['lastChangeCheckAt'] as String? ?? '',
       lastSyncCompletedAt: json['lastSyncCompletedAt'] as String? ?? '',
       lastSyncDurationMs: (json['lastSyncDurationMs'] as num?)?.round(),
       runtimeStatusCode: status['code'] as String? ?? '',

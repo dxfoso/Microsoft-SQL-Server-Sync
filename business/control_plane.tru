@@ -1845,7 +1845,17 @@ function latest_completed_sync_summary_for_client(clientName: string, completedJ
   return { completedAt, durationMs };
 }
 
-function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null, completedJobs: array<json>? = null): map<json> {
+function periodic_sync_last_checked_at_for_owner(ownerUserId: string, periodicStates: array<json>? = null): string {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  for (const state of periodicStates ?? []) {
+    if (string.from(state.ownerUserId ?? '').trim() == normalizedOwnerUserId) {
+      return string.from(state.lastCheckedAt ?? '').trim();
+    }
+  }
+  return '';
+}
+
+function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
     const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
@@ -1877,6 +1887,10 @@ function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null,
     sqlConnected: agent.sqlConnected,
     clientVersion: agent.clientVersion ?? '',
     lastHeartbeat: agent.lastHeartbeat,
+    lastChangeCheckAt: periodic_sync_last_checked_at_for_owner(
+      string.from(agent.ownerUserId ?? ''),
+      periodicStates
+    ),
     lastSyncCompletedAt: lastCompletedSync.completedAt,
     lastSyncDurationMs: lastCompletedSync.durationMs,
     status: runtimeStatus,
@@ -2519,7 +2533,7 @@ function live_state_manual_sync_rows_for_owner_ids(ownerUserIds: array<string>):
   const rows = db.selectMany(PeriodicSyncState, {
     where: { ownerUserId: { in: ownerUserIds } },
     orderBy: { field: 'ownerUserId', dir: 'asc' },
-    fields: ['ownerUserId', 'manualPendingTables', 'manualSyncStatus', 'manualSyncStartedAt', 'manualSyncCompletedAt', 'manualSyncTableCount'],
+    fields: ['ownerUserId', 'lastCheckedAt', 'manualPendingTables', 'manualSyncStatus', 'manualSyncStartedAt', 'manualSyncCompletedAt', 'manualSyncTableCount'],
     limit: 100
   });
   if (rows == null) {
@@ -2543,13 +2557,13 @@ function public_client_activity_payloads(rows: array<json>): array<json> {
   });
 }
 
-function bounded_public_agent_payloads(rows: array<json>, limit: int, activeJobs: array<json>? = null, completedJobs: array<json>? = null): map<json> {
+function bounded_public_agent_payloads(rows: array<json>, limit: int, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null): map<json> {
   let items = [];
   let seen = 0;
   for (const row of rows) {
     seen += 1;
     if (items.length < limit) {
-      items = items.concat([public_agent_payload(row, activeJobs, completedJobs)]);
+      items = items.concat([public_agent_payload(row, activeJobs, completedJobs, periodicStates)]);
     }
   }
   return {
@@ -5665,11 +5679,16 @@ function live_state(token: string? = null): map<json> {
   const agentRows = live_state_agent_rows_for(current, agentLimit);
   const activeJobRows = live_state_active_job_rows_for(current);
   const completedJobRows = live_state_completed_job_rows_for(current);
+  const visibleOwnerUserIds = unique_string_values(
+    agentRows.map((agent) => string.from(agent.ownerUserId))
+  );
+  const periodicSyncRows = live_state_manual_sync_rows_for_owner_ids(visibleOwnerUserIds);
   const agentPage = bounded_public_agent_payloads(
     agentRows,
     agentLimit,
     activeJobRows,
-    completedJobRows
+    completedJobRows,
+    periodicSyncRows
   );
   const jobPage = bounded_public_job_payloads(
     live_state_job_rows_for(current, jobLimit),
@@ -5678,10 +5697,7 @@ function live_state(token: string? = null): map<json> {
   const clientActivities = public_client_activity_payloads(
     live_state_client_activity_rows_for(current)
   );
-  const visibleOwnerUserIds = unique_string_values(
-    agentRows.map((agent) => string.from(agent.ownerUserId))
-  );
-  const syncAllOperations = live_state_manual_sync_rows_for_owner_ids(visibleOwnerUserIds)
+  const syncAllOperations = periodicSyncRows
     .filter((state) => string.from(state.manualSyncStartedAt ?? '').trim().length != 0)
     .map((state) => manual_sync_operation_payload(state));
   // Baseline discovery can update issue state and cancel unsafe work, so it

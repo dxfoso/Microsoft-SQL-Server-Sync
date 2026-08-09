@@ -69,6 +69,17 @@ void main() {
     expect(formatSyncDuration(agent.lastSyncDuration), '1m 35s');
   });
 
+  test('client keeps change-check time separate from completed sync time', () {
+    final agent = AdminAgent.fromJson({
+      'clientName': 'client-a',
+      'lastChangeCheckAt': '2026-08-09T19:52:03Z',
+      'lastSyncCompletedAt': '2026-08-09T19:20:33Z',
+    });
+
+    expect(agent.lastChangeCheckAt, '2026-08-09T19:52:03Z');
+    expect(agent.lastSyncCompletedAt, '2026-08-09T19:20:33Z');
+  });
+
   test('Sync All duration covers the complete durable operation', () {
     final completed = AdminSyncAllOperation.fromJson({
       'ownerUserId': 'owner-a',

@@ -157,7 +157,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
     def test_public_agent_payload_does_not_refetch_agent_rows(self):
         source = read_text("business/control_plane.tru")
         match = re.search(
-            r"function public_agent_payload\(agent: map<json>, activeJobs: array<json>\? = null, completedJobs: array<json>\? = null\): map<json> \{(?P<body>.*?)\n\}",
+            r"function public_agent_payload\(agent: map<json>, activeJobs: array<json>\? = null, completedJobs: array<json>\? = null, periodicStates: array<json>\? = null\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
@@ -170,6 +170,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("apply_table_sync_policies(agent.ownerUserId", body)
         self.assertIn("agent_client_update_payload(agent)", body)
         self.assertIn("agent_window_action_payload(agent)", body)
+
+    def test_live_state_distinguishes_scheduler_check_from_completed_data_sync(self):
+        source = read_text("business/control_plane.tru")
+        frontend = read_text("frontend/lib/clients_page.dart")
+        models = read_text("frontend/lib/models.dart")
+        live_state = source.split(
+            "function live_state(token: string? = null): map<json> {", 1
+        )[1].split("function agents_heartbeat", 1)[0]
+        periodic_rows = source.split(
+            "function live_state_manual_sync_rows_for_owner_ids(", 1
+        )[1].split("function public_client_activity_payloads", 1)[0]
+
+        self.assertIn("'lastCheckedAt'", periodic_rows)
+        self.assertIn("const periodicSyncRows = live_state_manual_sync_rows_for_owner_ids", live_state)
+        self.assertEqual(live_state.count("live_state_manual_sync_rows_for_owner_ids"), 1)
+        self.assertIn("lastChangeCheckAt: periodic_sync_last_checked_at_for_owner", source)
+        self.assertIn("lastChangeCheckAt", models)
+        self.assertIn("DataColumn(label: Text('Last change check'))", frontend)
+        self.assertIn("DataCell(Text(_formatTimestamp(agent.lastChangeCheckAt)))", frontend)
 
     def test_command_delivery_uses_recent_heartbeat_not_database_readiness(self):
         source = read_text("business/control_plane.tru")

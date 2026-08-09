@@ -25,7 +25,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
 
         self.assertIn("const activeJobRows = live_state_active_job_rows_for(current);", live_state_body)
         self.assertIn("activeJobRows", live_state_body)
-        self.assertIn("public_agent_payload(row, activeJobs, completedJobs)", bounded_agents_body)
+        self.assertIn("public_agent_payload(row, activeJobs, completedJobs, periodicStates)", bounded_agents_body)
         self.assertIn("normalize_agent_table_payload_state(agent, tableState, activeJobs)", normalize_tables_body)
         self.assertNotIn("active_job_for_client_table(", normalize_tables_body)
 
