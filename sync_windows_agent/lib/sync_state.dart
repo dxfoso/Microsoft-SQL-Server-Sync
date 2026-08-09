@@ -404,10 +404,6 @@ class SyncAppStateStore {
 
   Future<void> save({Directory? stateDirectory}) async {
     final dir = _stateDirectory(stateDirectory);
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-
     final file = _stateFile(stateDirectory);
     final payload = jsonEncode({
       'lastClientName': lastClientName,
@@ -427,7 +423,12 @@ class SyncAppStateStore {
       'clients': clients.map((key, value) => MapEntry(key, value.toJson())),
     });
     final pending = _saveQueue.then(
-      (_) => _writeAtomically(dir: dir, file: file, payload: payload),
+      (_) async {
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        await _writeAtomically(dir: dir, file: file, payload: payload);
+      },
     );
     _saveQueue = pending.catchError((Object _) {});
     await pending;
