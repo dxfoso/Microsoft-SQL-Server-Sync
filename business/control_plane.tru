@@ -7047,45 +7047,69 @@ function jobs_create_all_enabled_for_current(current: map<json>? = null): map<js
   if (current == null) {
     return raw_json_error(401, 'permission denied');
   }
-  if (!is_admin_user(current) && !is_owner_user(current)) {
-    return raw_json_error(403, 'permission denied');
-  }
-
-  let ownerUserIds = [];
   if (is_owner_user(current)) {
-    ownerUserIds = [string.from(current.id)];
-  } else {
-    ownerUserIds = unique_string_values(
-      list_scheduler_agent_owner_rows().map((agent) => string.from(agent.ownerUserId))
-    );
+    return jobs_create_all_enabled_for_owner(string.from(current.id), now_iso());
   }
+  if (is_admin_user(current)) {
+    return jobs_create_all_enabled_for_admin(now_iso());
+  }
+  return raw_json_error(403, 'permission denied');
+}
 
-  const requestedAt = now_iso();
+function jobs_create_all_enabled_for_admin(requestedAt: string): map<json> {
   let queuedJobCount = 0;
   let queuedClientCount = 0;
   let skippedOfflineClientCount = 0;
   let skippedSourceResolutionTableCount = 0;
   let deferredTableCount = 0;
-  for (const ownerUserId of ownerUserIds) {
-    const prepared = begin_manual_sync_all_for_owner(ownerUserId, requestedAt);
-    skippedOfflineClientCount += prepared.offlineClientCount;
-    skippedSourceResolutionTableCount += prepared.sourceResolutionTableCount;
-    if (prepared.eligibleTableCount == 0) {
+  let previousOwnerUserId = '';
+  for (const ownerRow of list_scheduler_agent_owner_rows()) {
+    const ownerUserId = string.from(ownerRow.ownerUserId);
+    if (ownerUserId == previousOwnerUserId) {
       continue;
     }
-    deferredTableCount += prepared.eligibleTableCount;
-    if (!claim_periodic_sync_scheduler_for_owner(ownerUserId, true)) {
-      continue;
-    }
+    previousOwnerUserId = ownerUserId;
+    const ownerResult = jobs_create_all_enabled_for_owner(ownerUserId, requestedAt);
+    queuedJobCount += ownerResult.queuedJobCount;
+    queuedClientCount += ownerResult.queuedClientCount;
+    skippedOfflineClientCount += ownerResult.skippedOfflineClientCount;
+    skippedSourceResolutionTableCount += ownerResult.skippedSourceResolutionTableCount;
+    deferredTableCount += ownerResult.deferredTableCount;
+  }
+  return jobs_create_all_enabled_result(
+    queuedJobCount,
+    queuedClientCount,
+    skippedOfflineClientCount,
+    skippedSourceResolutionTableCount,
+    deferredTableCount
+  );
+}
+
+function jobs_create_all_enabled_for_owner(ownerUserId: string, requestedAt: string): map<json> {
+  const prepared = begin_manual_sync_all_for_owner(ownerUserId, requestedAt);
+  let queuedJobCount = 0;
+  let queuedClientCount = 0;
+  if (prepared.eligibleTableCount > 0 &&
+      claim_periodic_sync_scheduler_for_owner(ownerUserId, true)) {
     const ownerJobs = queue_due_periodic_sync_jobs_for_owner(
       ownerUserId,
       list_scheduler_agent_rows_for_owner(ownerUserId)
     );
-    queuedJobCount += ownerJobs.length;
-    if (ownerJobs.length > 0) {
-      queuedClientCount += prepared.onlineClientCount;
+    queuedJobCount = ownerJobs.length;
+    if (queuedJobCount > 0) {
+      queuedClientCount = prepared.onlineClientCount;
     }
   }
+  return {
+    queuedJobCount,
+    queuedClientCount,
+    skippedOfflineClientCount: prepared.offlineClientCount,
+    skippedSourceResolutionTableCount: prepared.sourceResolutionTableCount,
+    deferredTableCount: prepared.eligibleTableCount
+  };
+}
+
+function jobs_create_all_enabled_result(queuedJobCount: int, queuedClientCount: int, skippedOfflineClientCount: int, skippedSourceResolutionTableCount: int, deferredTableCount: int): map<json> {
   return {
     ok: true,
     mode: 'multi-writer',
