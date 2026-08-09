@@ -204,9 +204,11 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("queue_due_periodic_sync_jobs_for_owner(", sync_all)
         self.assertIn("where: { ownerUserId }", scoped_loader)
         self.assertIn("limit: 100", scoped_loader)
-        self.assertIn("sync_all_authenticated_user_role(token)", entrypoint)
-        self.assertIn("sync_all_authenticated_user_id(token)", entrypoint)
+        self.assertEqual(entrypoint.count("db.selectMany(Session"), 1)
+        self.assertIn("fields: ['userId', 'userRole', 'app', 'revokedAt']", entrypoint)
+        self.assertIn("limit: 1", entrypoint)
         self.assertNotIn("current_user_record(token)", entrypoint)
+        self.assertNotIn("find_active_session_by_token(token)", entrypoint)
 
     def test_change_tracking_preflight_does_not_rebuild_supplied_table_cache(self):
         control_plane = read_text("business/control_plane.tru")
