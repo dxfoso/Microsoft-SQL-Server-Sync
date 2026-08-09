@@ -3957,6 +3957,12 @@ function periodic_sync_scheduler_owner_limit(): int {
   return 2;
 }
 
+function automatic_sync_admin_resume_owner_limit(): int {
+  // set_owner_automatic_sync_paused performs at most one read and one write.
+  // One hundred owners therefore remain below the 256-operation request cap.
+  return 100;
+}
+
 function periodic_sync_scheduler_table_limit(): int {
   return 4;
 }
@@ -4677,7 +4683,7 @@ function automatic_sync_control_set(paused: bool, token: string? = null): map<js
       previousOwnerUserId = ownerUserId;
       set_owner_automatic_sync_paused(ownerUserId, false);
       resumedOwnerCount += 1;
-      if (resumedOwnerCount >= periodic_sync_scheduler_owner_limit()) {
+      if (resumedOwnerCount >= automatic_sync_admin_resume_owner_limit()) {
         break;
       }
     }
