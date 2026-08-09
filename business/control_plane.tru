@@ -6988,8 +6988,61 @@ function agent_diagnostics_get(clientName: string, token: string? = null): map<j
   };
 }
 
+function begin_manual_sync_all_for_owner(
+  ownerUserId: string,
+  requestedAt: string
+): map<json> {
+  const ownerAgents = list_scheduler_agent_rows_for_owner(ownerUserId).filter((agent) =>
+    agent_sync_enabled(agent)
+  );
+  let onlineAgents = [];
+  let offlineClientCount = 0;
+  for (const agent of ownerAgents) {
+    if (effective_agent_online(agent)) {
+      onlineAgents = onlineAgents.concat([agent]);
+    } else {
+      offlineClientCount += 1;
+    }
+  }
+  if (onlineAgents.length == 0) {
+    return {
+      eligibleTableCount: 0,
+      onlineClientCount: 0,
+      offlineClientCount,
+      sourceResolutionTableCount: 0
+    };
+  }
+  if (sync_owner_has_blocking_table_issues(ownerUserId)) {
+    return {
+      eligibleTableCount: 0,
+      onlineClientCount: onlineAgents.length,
+      offlineClientCount,
+      sourceResolutionTableCount: sync_table_issues_for_owner(ownerUserId).length
+    };
+  }
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  let enabledTables = [];
+  for (const agent of onlineAgents) {
+    enabledTables = enabledTables.concat(
+      enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
+        enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
+      )
+    );
+  }
+  enabledTables = unique_string_values(enabledTables);
+  if (enabledTables.length > 0) {
+    begin_manual_sync_operation(ownerUserId, enabledTables.length, requestedAt);
+    set_manual_sync_pending_tables_for_owner(ownerUserId, enabledTables);
+  }
+  return {
+    eligibleTableCount: enabledTables.length,
+    onlineClientCount: onlineAgents.length,
+    offlineClientCount,
+    sourceResolutionTableCount: 0
+  };
+}
+
 function jobs_create_all_enabled(token: string? = null): map<json> {
-  const syncAllRequestedAt = now_iso();
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -6998,10 +7051,6 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     return raw_json_error(403, 'permission denied');
   }
 
-  let createdJobs = [];
-  let skippedOfflineClientCount = 0;
-  let sourceResolutionTableCount = 0;
-  let deferredTableCount = 0;
   let ownerUserIds = [];
   if (is_owner_user(current)) {
     ownerUserIds = [string.from(current.id)];
@@ -7010,164 +7059,50 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       list_scheduler_agent_owner_rows().map((agent) => string.from(agent.ownerUserId))
     );
   }
+
+  const requestedAt = now_iso();
+  let queuedJobCount = 0;
+  let queuedClientCount = 0;
+  let skippedOfflineClientCount = 0;
+  let skippedSourceResolutionTableCount = 0;
+  let deferredTableCount = 0;
   for (const ownerUserId of ownerUserIds) {
-    const ownerAgents = list_scheduler_agent_rows_for_owner(ownerUserId).filter((agent) =>
-      agent_sync_enabled(agent)
+    const prepared = begin_manual_sync_all_for_owner(ownerUserId, requestedAt);
+    skippedOfflineClientCount += prepared.offlineClientCount;
+    skippedSourceResolutionTableCount += prepared.sourceResolutionTableCount;
+    if (prepared.eligibleTableCount == 0) {
+      continue;
+    }
+    deferredTableCount += prepared.eligibleTableCount;
+    if (!claim_periodic_sync_scheduler_for_owner(ownerUserId, true)) {
+      continue;
+    }
+    const ownerJobs = queue_due_periodic_sync_jobs_for_owner(
+      ownerUserId,
+      list_scheduler_agent_rows_for_owner(ownerUserId)
     );
-    if (ownerAgents.length == 0) {
-      continue;
-    }
-    let onlineAgents = [];
-    for (const agent of ownerAgents) {
-      if (effective_agent_online(agent)) {
-        onlineAgents = onlineAgents.concat([agent]);
-      } else {
-        skippedOfflineClientCount += 1;
-      }
-    }
-    if (onlineAgents.length == 0) {
-      continue;
-    }
-    // The bounded table loop below runs the same baseline planner before it
-    // creates each batch. Avoid a second full-owner refresh here: large live
-    // inventories can exceed the per-request database operation budget before
-    // Sync All reaches its intentionally bounded scheduling wave.
-    if (sync_owner_has_blocking_table_issues(ownerUserId)) {
-      sourceResolutionTableCount += sync_table_issues_for_owner(ownerUserId).length;
-      continue;
-    }
-    const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
-    const preserveChangeTrackingBaselines = onlineAgents.length != ownerAgents.length;
-    let enabledTables = [];
-    for (const agent of onlineAgents) {
-      enabledTables = enabledTables.concat(
-        enabled_sync_tables_for_agent_with_policies(agent, ownerPolicies).concat(
-          enabled_sync_policy_tables_for_agent(agent, ownerPolicies)
-        )
-      );
-    }
-    enabledTables = unique_string_values(enabledTables);
-    if (enabledTables.length > 0) {
-      begin_manual_sync_operation(ownerUserId, enabledTables.length, syncAllRequestedAt);
-    }
-    let ownerDeferredTables = [];
-    let ownerUnavailableTableCount = 0;
-    const activeOwnerTables = active_job_tables_for_owner(ownerUserId);
-    const tableCaches = onlineAgents.map((agent) =>
-      scheduler_agent_table_state_cache(agent, ownerPolicies)
-    );
-    const recentUploadModes = latest_completed_upload_modes_for_owner(ownerUserId);
-    if (activeOwnerTables.length > 0) {
-      ownerDeferredTables = enabledTables;
-      deferredTableCount += enabledTables.length;
-      set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);
-      continue;
-    }
-    // Keep a manual all-sync bounded while allowing the automatic scheduler
-    // to drain the remaining tables without another user click.
-    let queuedTablesForOwner = 0;
-    for (const table of enabledTables) {
-      if (queuedTablesForOwner >= periodic_sync_scheduler_table_limit()) {
-        ownerDeferredTables = ownerDeferredTables.concat([table]);
-        deferredTableCount += 1;
-        continue;
-      }
-      const plan = sync_table_baseline_plan(
-        table,
-        onlineAgents,
-        ownerPolicies,
-        tableCaches,
-        !preserveChangeTrackingBaselines,
-        recentUploadModes
-      );
-      const tableAgents = plan.participants ?? [];
-      if (tableAgents.length == 0) {
-        ownerUnavailableTableCount += 1;
-        continue;
-      }
-      if (string.from(plan.mode) == 'unavailable') {
-        ownerUnavailableTableCount += 1;
-        continue;
-      }
-      if (string.from(plan.mode) == 'needs_input') {
-        ownerDeferredTables = ownerDeferredTables.concat([table]);
-        deferredTableCount += 1;
-        continue;
-      }
-      let jobs = [];
-      if (string.from(plan.mode) == 'reconcile' &&
-          plan.sourceAgent != null &&
-          (plan.targetAgents ?? []).length > 0) {
-        if (preserveChangeTrackingBaselines) {
-          ownerDeferredTables = ownerDeferredTables.concat([table]);
-          deferredTableCount += 1;
-          continue;
-        }
-        jobs = create_authoritative_reconcile_batch(
-          ownerUserId,
-          table,
-          plan.sourceAgent,
-          plan.targetAgents
-        );
-        sourceResolutionTableCount += 1;
-      } else if (string.from(plan.mode) == 'delta' ||
-          string.from(plan.mode) == 'union_bootstrap') {
-        if (string.from(plan.mode) == 'union_bootstrap' && preserveChangeTrackingBaselines) {
-          ownerDeferredTables = ownerDeferredTables.concat([table]);
-          deferredTableCount += 1;
-          continue;
-        }
-        jobs = create_multi_writer_batch(
-          ownerUserId,
-          table,
-          tableAgents,
-          '',
-          preserveChangeTrackingBaselines,
-          string.from(plan.mode) == 'union_bootstrap',
-          ownerPolicies
-        );
-      }
-      if (jobs.length > 0) {
-        if (preserveChangeTrackingBaselines) {
-          mark_offline_sync_debt(
-            ownerUserId,
-            table,
-            ownerAgents,
-            onlineAgents,
-            ownerPolicies
-          );
-        }
-        createdJobs = createdJobs.concat(jobs);
-        queuedTablesForOwner += 1;
-      }
-    }
-    set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);
-    reduce_manual_sync_table_count_for_owner(ownerUserId, ownerUnavailableTableCount);
-    if (queuedTablesForOwner == 0 && ownerDeferredTables.length == 0) {
-      finish_manual_sync_operation(ownerUserId, 'completed');
+    queuedJobCount += ownerJobs.length;
+    if (ownerJobs.length > 0) {
+      queuedClientCount += prepared.onlineClientCount;
     }
   }
   return {
     ok: true,
     mode: 'multi-writer',
-    jobs: createdJobs.map((job) => public_job_payload(job)),
-    queuedJobCount: createdJobs.length,
-    queuedClientCount: unique_string_values(
-      createdJobs.map((job) => string.from(job.clientName))
-    ).length,
+    queuedJobCount,
+    queuedClientCount,
     skippedOfflineClientCount,
-    skippedSourceResolutionTableCount: sourceResolutionTableCount,
+    skippedSourceResolutionTableCount,
     deferredTableCount,
-    message: createdJobs.length == 0 && skippedOfflineClientCount > 0
+    message: queuedJobCount == 0 && skippedOfflineClientCount > 0
       ? 'No online peer group had an eligible table to sync; offline clients will catch up automatically after reconnecting.'
-      : deferredTableCount > 0
-        ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
-        : skippedOfflineClientCount > 0
-          ? 'Sync queued for online clients; Change Tracking cursors are preserved until offline clients catch up.'
-          : 'Sync queued for all eligible tables.'
+      : queuedJobCount > 0 && skippedOfflineClientCount > 0
+        ? 'Sync queued for online clients; Change Tracking cursors are preserved until offline clients catch up.'
+        : deferredTableCount > 0
+          ? 'Sync started in bounded scheduler waves; remaining manual tables will drain automatically.'
+          : 'No eligible table currently requires synchronization.'
   };
 }
-
 function reset_all_agent_saved_state(): int {
   return db.updateMany(Agent, { clientName: { gte: '' } }, {
     // Connectivity is live operational truth, not saved sync data. Preserve

@@ -101,15 +101,15 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
     def test_bulk_job_creation_reuses_owner_and_active_job_caches(self):
         control_plane = read_text("business/control_plane.tru")
         jobs_body = control_plane.split(
-            "function jobs_create_all_enabled(", 1
-        )[1].split("function reset_all_agent_saved_state", 1)[0]
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
         self.assertIn("const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);", jobs_body)
-        self.assertIn("const activeOwnerTables = active_job_tables_for_owner(ownerUserId);", jobs_body)
-        self.assertNotIn("active_job_tables_for_client(", jobs_body)
-        self.assertNotIn("active_job_tables_from_cache", jobs_body)
-        self.assertIn("const tableCaches = onlineAgents.map", jobs_body)
+        self.assertIn("const activeTableCaches = ownerAgents.map", jobs_body)
+        self.assertEqual(jobs_body.count("active_job_tables_for_client("), 1)
+        self.assertIn("active_job_tables_from_cache", jobs_body)
+        self.assertIn("const tableCaches = ownerAgents.map", jobs_body)
         self.assertIn("sync_table_baseline_plan(", jobs_body)
-        self.assertNotIn("refresh_owner_baseline_table_issues(", jobs_body)
+        self.assertIn("refresh_owner_baseline_table_issues(", jobs_body)
         self.assertIn("!preserveChangeTrackingBaselines", jobs_body)
         self.assertIn("create_multi_writer_batch(", jobs_body)
 
@@ -196,7 +196,9 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertNotIn("let deferredTables = []", sync_all)
         self.assertIn("let skippedOfflineClientCount = 0", sync_all)
         self.assertIn("let deferredTableCount = 0", sync_all)
-        self.assertIn("createdJobs.map((job) => string.from(job.clientName))", sync_all)
+        self.assertNotIn("let createdJobs = []", sync_all)
+        self.assertIn("begin_manual_sync_all_for_owner(ownerUserId, requestedAt)", sync_all)
+        self.assertIn("queue_due_periodic_sync_jobs_for_owner(", sync_all)
         self.assertIn("where: { ownerUserId }", scoped_loader)
         self.assertIn("limit: 100", scoped_loader)
 

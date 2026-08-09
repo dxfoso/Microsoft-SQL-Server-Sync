@@ -493,12 +493,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         manual_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
             "function reset_all_agent_saved_state(", 1
         )[0]
+        manual_prepare = source.split("function begin_manual_sync_all_for_owner(", 1)[1].split(
+            "function jobs_create_all_enabled(", 1
+        )[0]
         self.assertNotIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", manual_all)
-        self.assertIn("const plan = sync_table_baseline_plan(", manual_all)
-        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", manual_all)
+        self.assertIn("const plan = sync_table_baseline_plan(", scheduler)
+        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", manual_prepare)
         self.assertIn(
-            "sourceResolutionTableCount += sync_table_issues_for_owner(ownerUserId).length;",
-            manual_all,
+            "sourceResolutionTableCount: sync_table_issues_for_owner(ownerUserId).length",
+            manual_prepare,
         )
 
         manual_one = source.split("function jobs_create(", 1)[1].split(
@@ -647,17 +650,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
     def test_manual_sync_all_defers_when_owner_has_active_batch_work(self):
         source = read_text("business/control_plane.tru")
-        body = source.split("function jobs_create_all_enabled(", 1)[1].split(
-            "function reset_all_agent_saved_state(", 1
+        body = source.split("function queue_due_periodic_sync_jobs_for_owner(", 1)[1].split(
+            "function periodic_sync_scheduler_agent_limit", 1
         )[0]
 
-        self.assertIn("const activeOwnerTables = active_job_tables_for_owner(ownerUserId);", body)
-        self.assertIn("if (activeOwnerTables.length > 0) {", body)
-        self.assertNotIn("active_job_tables_for_client(", body)
-        self.assertIn("deferredTableCount += enabledTables.length;", body)
-        self.assertIn("let ownerDeferredTables = [];", body)
+        self.assertIn("const activeTableCaches = ownerAgents.map", body)
+        self.assertIn("if (activeTableCapacityUsed >= periodic_sync_scheduler_table_limit())", body)
+        self.assertEqual(body.count("active_job_tables_for_client("), 1)
+        self.assertIn("const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);", body)
+        self.assertIn("let remainingManualTables = [];", body)
         self.assertIn(
-            "set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);",
+            "set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);",
             body,
         )
 
@@ -1208,7 +1211,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("!preserveChangeTrackingBaselines", source)
         self.assertNotIn("sync_gate_payload_for_owners(ownerUserIds)", sync_all)
         self.assertNotIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", sync_all)
-        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", sync_all)
+        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", source)
         self.assertIn("create_authoritative_reconcile_batch(", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("return raw_json_error(410, 'sync job is no longer active');", source)
@@ -1219,9 +1222,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("batch.createdAt", stale_guard)
         self.assertIn("status: { in: ['running', 'snapshotting', 'uploading', 'downloading', 'applying'] }", stale_guard)
         self.assertIn("if (processingJobs.length > 0)", stale_guard)
-        self.assertIn("let queuedTablesForOwner = 0;", source)
+        self.assertIn("let queuedTableCount = activeTableCapacityUsed;", source)
         self.assertIn(
-            "remaining manual tables will drain in bounded scheduler waves",
+            "remaining manual tables will drain automatically",
             source,
         )
         self.assertIn("Online peers continue syncing while another enabled client is offline", source)
@@ -1268,9 +1271,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("field manualSyncStartedAt: datetime?", source)
         self.assertIn("field manualSyncCompletedAt: datetime?", source)
-        self.assertIn("const syncAllRequestedAt = now_iso();", source)
+        self.assertIn("const requestedAt = now_iso();", source)
         self.assertIn(
-            "begin_manual_sync_operation(ownerUserId, enabledTables.length, syncAllRequestedAt)",
+            "begin_manual_sync_operation(ownerUserId, enabledTables.length, requestedAt)",
             source,
         )
         self.assertIn("activeTableCapacityUsed", scheduler)
@@ -1292,10 +1295,6 @@ class ControlPlaneContractsTests(unittest.TestCase):
         scheduler = source.split(
             "function queue_due_periodic_sync_jobs_for_owner(", 1
         )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
-        create_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
-            "function reset_all_agent_saved_state", 1
-        )[0]
-
         self.assertIn("let unavailableManualTables = [];", scheduler)
         self.assertIn(
             "string_array_contains(unavailableManualTables, table)", scheduler
@@ -1308,11 +1307,6 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "remainingManualTables.length == 0", scheduler
         )
         self.assertIn("finish_manual_sync_operation", scheduler)
-        self.assertIn("let ownerUnavailableTableCount = 0;", create_all)
-        self.assertIn(
-            "reduce_manual_sync_table_count_for_owner(ownerUserId, ownerUnavailableTableCount)",
-            create_all,
-        )
 
     def test_sync_scheduling_is_scoped_to_each_agents_selected_database(self):
         source = read_text("business/control_plane.tru")
@@ -1501,8 +1495,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         sync_all = source.split("function jobs_create_all_enabled(", 1)[1].split(
             "function reset_all_agent_saved_state", 1
         )[0]
+        manual_prepare = source.split("function begin_manual_sync_all_for_owner(", 1)[1].split(
+            "function jobs_create_all_enabled(", 1
+        )[0]
         self.assertIn("list_scheduler_agent_rows_for_owner(ownerUserId)", sync_all)
-        self.assertIn("agent_sync_enabled(agent)", sync_all)
+        self.assertIn("agent_sync_enabled(agent)", manual_prepare)
         self.assertIn("preserveChangeTrackingBaselines", source)
         self.assertIn("function mark_offline_sync_debt(", source)
         self.assertIn("function due_offline_catchup_tables(", source)
@@ -1895,7 +1892,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "multi-client union bootstrap waits until every enabled client is online",
             source,
         )
-        self.assertGreaterEqual(source.count("!preserveChangeTrackingBaselines"), 3)
+        self.assertGreaterEqual(source.count("!preserveChangeTrackingBaselines"), 2)
         self.assertIn("unionBootstrap ? expectedRowCount : 0", source)
         self.assertIn("batch.expectedClients.length >= 2", source)
         self.assertIn("unionBootstrapSnapshot", agent_page)
