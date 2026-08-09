@@ -7045,6 +7045,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   }
   const sessions = db.selectMany(Session, {
     where: { token },
+    orderBy: { field: 'createdAt', dir: 'desc' },
     fields: ['userId', 'userRole', 'app', 'revokedAt'],
     limit: 1
   });

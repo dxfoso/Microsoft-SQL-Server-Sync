@@ -205,6 +205,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("where: { ownerUserId }", scoped_loader)
         self.assertIn("limit: 100", scoped_loader)
         self.assertEqual(entrypoint.count("db.selectMany(Session"), 1)
+        self.assertIn("orderBy: { field: 'createdAt', dir: 'desc' }", entrypoint)
         self.assertIn("fields: ['userId', 'userRole', 'app', 'revokedAt']", entrypoint)
         self.assertIn("limit: 1", entrypoint)
         self.assertNotIn("current_user_record(token)", entrypoint)
