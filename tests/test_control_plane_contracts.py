@@ -496,7 +496,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", manual_all)
         self.assertIn("const plan = sync_table_baseline_plan(", manual_all)
         self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", manual_all)
-        self.assertIn("sourceResolutionTables = sourceResolutionTables.concat(", manual_all)
+        self.assertIn(
+            "sourceResolutionTableCount += sync_table_issues_for_owner(ownerUserId).length;",
+            manual_all,
+        )
 
         manual_one = source.split("function jobs_create(", 1)[1].split(
             "function jobs_bootstrap(", 1
@@ -651,7 +654,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("const activeOwnerTables = active_job_tables_for_owner(ownerUserId);", body)
         self.assertIn("if (activeOwnerTables.length > 0) {", body)
         self.assertNotIn("active_job_tables_for_client(", body)
-        self.assertIn("deferredTables = deferredTables.concat(", body)
+        self.assertIn("deferredTableCount += enabledTables.length;", body)
         self.assertIn("let ownerDeferredTables = [];", body)
         self.assertIn(
             "set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);",
@@ -1227,7 +1230,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("ownerAgents.length != allOwnerAgents.length", source)
         self.assertIn("onlineAgents.length != ownerAgents.length", source)
         self.assertIn("Change Tracking cursors are preserved until offline clients catch up", source)
-        self.assertIn("skippedOfflineClients", source)
+        self.assertIn("skippedOfflineClientCount", source)
 
     def test_missing_or_expired_baseline_replans_as_safe_all_client_union(self):
         source = read_text("business/control_plane.tru")

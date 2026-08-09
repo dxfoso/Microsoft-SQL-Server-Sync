@@ -2343,6 +2343,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ];
       if (result.skippedOfflineClients.isNotEmpty) {
         details.add('Offline: ${result.skippedOfflineClients.join(', ')}');
+      } else if (result.skippedOfflineClientCount > 0) {
+        details.add(
+          '${result.skippedOfflineClientCount} offline client(s) will catch up after reconnecting.',
+        );
       }
       if (result.skippedBusyTables.isNotEmpty) {
         details.add('Busy tables skipped: ${result.skippedBusyTables.length}');

@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 60)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 61)}
         observed_ids = set()
 
         for row in rows:
@@ -131,6 +131,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn('frontend:$commit', builder)
         self.assertIn("docker push $backendImage", builder)
         self.assertIn("docker push $frontendImage", builder)
+
+    def test_production_deployer_uses_exact_container_mappings_and_namespace(self):
+        deployer = read_text("scripts/deploy_production_images.ps1")
+
+        self.assertIn("deployment/sql-sync-back', \"backend=$backendImage\"", deployer)
+        self.assertIn("deployment/sql-sync-front', \"frontend=$frontendImage\"", deployer)
+        self.assertNotIn("sql-sync-back=$backendImage", deployer)
+        self.assertNotIn("sql-sync-front=$frontendImage", deployer)
+        self.assertIn("kubectl @Arguments -n $Namespace", deployer)
+        self.assertIn("docker manifest inspect $image", deployer)
+        self.assertIn("$health.build.git_commit", deployer)
 
 
 if __name__ == "__main__":

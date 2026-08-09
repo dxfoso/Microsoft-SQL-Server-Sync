@@ -6999,9 +6999,9 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   }
 
   let createdJobs = [];
-  let skippedOfflineClients = [];
-  let sourceResolutionTables = [];
-  let deferredTables = [];
+  let skippedOfflineClientCount = 0;
+  let sourceResolutionTableCount = 0;
+  let deferredTableCount = 0;
   let ownerUserIds = [];
   if (is_owner_user(current)) {
     ownerUserIds = [string.from(current.id)];
@@ -7022,7 +7022,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       if (effective_agent_online(agent)) {
         onlineAgents = onlineAgents.concat([agent]);
       } else {
-        skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
+        skippedOfflineClientCount += 1;
       }
     }
     if (onlineAgents.length == 0) {
@@ -7033,11 +7033,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     // inventories can exceed the per-request database operation budget before
     // Sync All reaches its intentionally bounded scheduling wave.
     if (sync_owner_has_blocking_table_issues(ownerUserId)) {
-      sourceResolutionTables = sourceResolutionTables.concat(
-        sync_table_issues_for_owner(ownerUserId).map((issue) =>
-          string.concat(ownerUserId, '::', string.from(issue.table))
-        )
-      );
+      sourceResolutionTableCount += sync_table_issues_for_owner(ownerUserId).length;
       continue;
     }
     const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
@@ -7063,9 +7059,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     const recentUploadModes = latest_completed_upload_modes_for_owner(ownerUserId);
     if (activeOwnerTables.length > 0) {
       ownerDeferredTables = enabledTables;
-      deferredTables = deferredTables.concat(
-        enabledTables.map((table) => string.concat(ownerUserId, '::', table))
-      );
+      deferredTableCount += enabledTables.length;
       set_manual_sync_pending_tables_for_owner(ownerUserId, ownerDeferredTables);
       continue;
     }
@@ -7075,7 +7069,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     for (const table of enabledTables) {
       if (queuedTablesForOwner >= periodic_sync_scheduler_table_limit()) {
         ownerDeferredTables = ownerDeferredTables.concat([table]);
-        deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
+        deferredTableCount += 1;
         continue;
       }
       const plan = sync_table_baseline_plan(
@@ -7097,7 +7091,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
       }
       if (string.from(plan.mode) == 'needs_input') {
         ownerDeferredTables = ownerDeferredTables.concat([table]);
-        deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
+        deferredTableCount += 1;
         continue;
       }
       let jobs = [];
@@ -7106,7 +7100,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
           (plan.targetAgents ?? []).length > 0) {
         if (preserveChangeTrackingBaselines) {
           ownerDeferredTables = ownerDeferredTables.concat([table]);
-          deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
+          deferredTableCount += 1;
           continue;
         }
         jobs = create_authoritative_reconcile_batch(
@@ -7115,14 +7109,12 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
           plan.sourceAgent,
           plan.targetAgents
         );
-        sourceResolutionTables = sourceResolutionTables.concat([
-          string.concat(ownerUserId, '::', table)
-        ]);
+        sourceResolutionTableCount += 1;
       } else if (string.from(plan.mode) == 'delta' ||
           string.from(plan.mode) == 'union_bootstrap') {
         if (string.from(plan.mode) == 'union_bootstrap' && preserveChangeTrackingBaselines) {
           ownerDeferredTables = ownerDeferredTables.concat([table]);
-          deferredTables = deferredTables.concat([string.concat(ownerUserId, '::', table)]);
+          deferredTableCount += 1;
           continue;
         }
         jobs = create_multi_writer_batch(
@@ -7163,15 +7155,14 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     queuedClientCount: unique_string_values(
       createdJobs.map((job) => string.from(job.clientName))
     ).length,
-    skippedOfflineClients: unique_string_values(skippedOfflineClients),
-    skippedBusyTables: [],
-    skippedSourceResolutionTables: unique_string_values(sourceResolutionTables),
-    deferredTables: unique_string_values(deferredTables),
-    message: createdJobs.length == 0 && skippedOfflineClients.length > 0
+    skippedOfflineClientCount,
+    skippedSourceResolutionTableCount: sourceResolutionTableCount,
+    deferredTableCount,
+    message: createdJobs.length == 0 && skippedOfflineClientCount > 0
       ? 'No online peer group had an eligible table to sync; offline clients will catch up automatically after reconnecting.'
-      : deferredTables.length > 0
+      : deferredTableCount > 0
         ? 'Sync started for the first eligible table batch; remaining manual tables will drain in bounded scheduler waves.'
-        : skippedOfflineClients.length > 0
+        : skippedOfflineClientCount > 0
           ? 'Sync queued for online clients; Change Tracking cursors are preserved until offline clients catch up.'
           : 'Sync queued for all eligible tables.'
   };

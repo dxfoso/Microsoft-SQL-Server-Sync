@@ -578,12 +578,14 @@ class AdminBulkSyncResult {
   const AdminBulkSyncResult({
     required this.queuedJobCount,
     required this.queuedClientCount,
+    required this.skippedOfflineClientCount,
     required this.skippedOfflineClients,
     required this.skippedBusyTables,
   });
 
   final int queuedJobCount;
   final int queuedClientCount;
+  final int skippedOfflineClientCount;
   final List<String> skippedOfflineClients;
   final List<String> skippedBusyTables;
 
@@ -591,6 +593,11 @@ class AdminBulkSyncResult {
     return AdminBulkSyncResult(
       queuedJobCount: (json['queuedJobCount'] as num? ?? 0).round(),
       queuedClientCount: (json['queuedClientCount'] as num? ?? 0).round(),
+      skippedOfflineClientCount:
+          (json['skippedOfflineClientCount'] as num? ??
+                  (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
+                      .length)
+              .round(),
       skippedOfflineClients: (json['skippedOfflineClients'] as List<dynamic>? ??
               const [])
           .map((item) => item.toString())
