@@ -6988,10 +6988,7 @@ function agent_diagnostics_get(clientName: string, token: string? = null): map<j
   };
 }
 
-function begin_manual_sync_all_for_owner(
-  ownerUserId: string,
-  requestedAt: string
-): map<json> {
+function begin_manual_sync_all_for_owner(ownerUserId: string, requestedAt: string): map<json> {
   const ownerAgents = list_scheduler_agent_rows_for_owner(ownerUserId).filter((agent) =>
     agent_sync_enabled(agent)
   );
