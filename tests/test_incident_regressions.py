@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 62)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 63)}
         observed_ids = set()
 
         for row in rows:
@@ -142,6 +142,9 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("kubectl @Arguments -n $Namespace", deployer)
         self.assertIn("docker manifest inspect $image", deployer)
         self.assertIn("$health.build.git_commit", deployer)
+        self.assertIn("for ($attempt = 1; $attempt -le 24; $attempt += 1)", deployer)
+        self.assertIn("$stableObservations -ge 2", deployer)
+        self.assertIn("Start-Sleep -Seconds 5", deployer)
 
     def test_manual_sync_dispatch_helper_uses_valid_tru_function_declaration(self):
         control_plane = read_text("business/control_plane.tru")
