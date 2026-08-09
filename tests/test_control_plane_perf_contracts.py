@@ -179,6 +179,9 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
 
     def test_sync_all_loads_large_agent_table_state_one_owner_at_a_time(self):
         control_plane = read_text("business/control_plane.tru")
+        entrypoint = control_plane.split(
+            "function jobs_create_all_enabled(", 1
+        )[1].split("function jobs_create_all_enabled_for_identity(", 1)[0]
         sync_all = control_plane.split(
             "function jobs_create_all_enabled_for_identity(", 1
         )[1].split("function reset_all_agent_saved_state", 1)[0]
@@ -201,6 +204,9 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("queue_due_periodic_sync_jobs_for_owner(", sync_all)
         self.assertIn("where: { ownerUserId }", scoped_loader)
         self.assertIn("limit: 100", scoped_loader)
+        self.assertIn("sync_all_authenticated_user_role(token)", entrypoint)
+        self.assertIn("sync_all_authenticated_user_id(token)", entrypoint)
+        self.assertNotIn("current_user_record(token)", entrypoint)
 
     def test_change_tracking_preflight_does_not_rebuild_supplied_table_cache(self):
         control_plane = read_text("business/control_plane.tru")

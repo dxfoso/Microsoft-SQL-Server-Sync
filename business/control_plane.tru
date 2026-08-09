@@ -7039,15 +7039,29 @@ function begin_manual_sync_all_for_owner(ownerUserId: string, requestedAt: strin
   };
 }
 
-function jobs_create_all_enabled(token: string? = null): map<json> {
+function sync_all_authenticated_user_role(token: string? = null): string {
   const current = current_user_record(token);
   if (current == null) {
+    return '';
+  }
+  return string.from(current.role);
+}
+
+function sync_all_authenticated_user_id(token: string? = null): string {
+  const current = current_user_record(token);
+  if (current == null) {
+    return '';
+  }
+  return string.from(current.id);
+}
+
+function jobs_create_all_enabled(token: string? = null): map<json> {
+  const role = sync_all_authenticated_user_role(token);
+  const userId = sync_all_authenticated_user_id(token);
+  if (role.trim().length == 0 || userId.trim().length == 0) {
     return raw_json_error(401, 'permission denied');
   }
-  return jobs_create_all_enabled_for_identity(
-    string.from(current.role),
-    string.from(current.id)
-  );
+  return jobs_create_all_enabled_for_identity(role, userId);
 }
 
 function jobs_create_all_enabled_for_identity(role: string, userId: string): map<json> {
