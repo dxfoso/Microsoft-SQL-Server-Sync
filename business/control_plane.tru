@@ -6999,9 +6999,7 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
   }
 
   let createdJobs = [];
-  let queuedClientNames = [];
   let skippedOfflineClients = [];
-  let skippedBusyTables = [];
   let sourceResolutionTables = [];
   let deferredTables = [];
   let ownerUserIds = [];
@@ -7148,7 +7146,6 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
           );
         }
         createdJobs = createdJobs.concat(jobs);
-        queuedClientNames = queuedClientNames.concat(tableAgents.map((agent) => string.from(agent.clientName)));
         queuedTablesForOwner += 1;
       }
     }
@@ -7163,9 +7160,11 @@ function jobs_create_all_enabled(token: string? = null): map<json> {
     mode: 'multi-writer',
     jobs: createdJobs.map((job) => public_job_payload(job)),
     queuedJobCount: createdJobs.length,
-    queuedClientCount: unique_string_values(queuedClientNames).length,
+    queuedClientCount: unique_string_values(
+      createdJobs.map((job) => string.from(job.clientName))
+    ).length,
     skippedOfflineClients: unique_string_values(skippedOfflineClients),
-    skippedBusyTables: unique_string_values(skippedBusyTables),
+    skippedBusyTables: [],
     skippedSourceResolutionTables: unique_string_values(sourceResolutionTables),
     deferredTables: unique_string_values(deferredTables),
     message: createdJobs.length == 0 && skippedOfflineClients.length > 0

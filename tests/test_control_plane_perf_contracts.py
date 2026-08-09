@@ -189,6 +189,9 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("list_scheduler_agent_owner_rows()", sync_all)
         self.assertIn("list_scheduler_agent_rows_for_owner(ownerUserId)", sync_all)
         self.assertNotIn("visible_agent_rows_for(current)", sync_all)
+        self.assertNotIn("let queuedClientNames = []", sync_all)
+        self.assertNotIn("let skippedBusyTables = []", sync_all)
+        self.assertIn("createdJobs.map((job) => string.from(job.clientName))", sync_all)
         self.assertIn("where: { ownerUserId }", scoped_loader)
         self.assertIn("limit: 100", scoped_loader)
 
