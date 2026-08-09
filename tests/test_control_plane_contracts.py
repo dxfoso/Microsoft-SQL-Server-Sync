@@ -422,6 +422,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("set_owner_automatic_sync_paused(current.id, paused)", control_body)
         self.assertIn("controlOwnerUserId = '__automatic_sync_control__'", control_body)
         self.assertIn("automaticSyncPaused: paused", control_body)
+        self.assertIn("if (!paused)", control_body)
+        self.assertIn("list_scheduler_agent_owner_rows()", control_body)
+        self.assertIn("set_owner_automatic_sync_paused(ownerUserId, false)", control_body)
+        self.assertIn("resumedOwnerCount", control_body)
+        self.assertIn("periodic_sync_scheduler_owner_limit()", control_body)
         self.assertIn("function automatic_sync_is_paused_for_owner", source)
         self.assertIn(
             "automaticSyncPaused || automatic_sync_is_paused_for_owner(ownerUserId)",

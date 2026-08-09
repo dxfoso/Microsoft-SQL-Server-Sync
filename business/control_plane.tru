@@ -4666,7 +4666,28 @@ function automatic_sync_control_set(paused: bool, token: string? = null): map<js
       updatedAt: now_iso()
     });
   }
-  return { ok: true, automaticSyncPaused: paused, scope: 'global' };
+  let resumedOwnerCount = 0;
+  if (!paused) {
+    let previousOwnerUserId = '';
+    for (const ownerRow of list_scheduler_agent_owner_rows()) {
+      const ownerUserId = string.from(ownerRow.ownerUserId ?? '').trim();
+      if (ownerUserId.length == 0 || ownerUserId == previousOwnerUserId) {
+        continue;
+      }
+      previousOwnerUserId = ownerUserId;
+      set_owner_automatic_sync_paused(ownerUserId, false);
+      resumedOwnerCount += 1;
+      if (resumedOwnerCount >= periodic_sync_scheduler_owner_limit()) {
+        break;
+      }
+    }
+  }
+  return {
+    ok: true,
+    automaticSyncPaused: paused,
+    resumedOwnerCount,
+    scope: 'global'
+  };
 }
 
 function row_key(row: map<json>, keyColumns: array<string>): string {
