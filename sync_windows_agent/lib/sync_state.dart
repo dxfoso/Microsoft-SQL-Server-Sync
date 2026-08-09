@@ -313,7 +313,12 @@ class SyncAppStateStore {
   final String? lastAutoUpdateTarget;
   final String? lastAutoUpdateAttemptedAt;
 
-  static Directory _stateDirectory() {
+  static Future<void> _saveQueue = Future<void>.value();
+
+  static Directory _stateDirectory([Directory? override]) {
+    if (override != null) {
+      return override;
+    }
     final base =
         Platform.environment['APPDATA'] ??
         Platform.environment['LOCALAPPDATA'] ??
@@ -321,111 +326,89 @@ class SyncAppStateStore {
     return Directory('$base${Platform.pathSeparator}Microsoft-SQL-Server-Sync');
   }
 
-  static File _stateFile() {
+  static File _stateFile([Directory? stateDirectory]) {
     return File(
-      '${_stateDirectory().path}${Platform.pathSeparator}sync_windows_agent_state.json',
+      '${_stateDirectory(stateDirectory).path}${Platform.pathSeparator}sync_windows_agent_state.json',
     );
   }
 
-  static Future<SyncAppStateStore> load() async {
-    try {
-      final file = _stateFile();
-      if (!await file.exists()) {
-        return _defaultStore;
-      }
-
-      final raw = await file.readAsString();
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) {
-        return _defaultStore;
-      }
-
-      final json = Map<String, dynamic>.from(decoded);
-      final clientsJson = Map<String, dynamic>.from(
-        json['clients'] as Map? ?? const {},
-      );
-      return SyncAppStateStore(
-        lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
-        hasOpenedOnce: json['hasOpenedOnce'] as bool? ?? false,
-        startMinimized: json['startMinimized'] as bool? ?? false,
-        startOnStartup: json['startOnStartup'] as bool? ?? false,
-        server: json['server'] as String? ?? 'localhost',
-        selectedDatabasesByUser: _readStringMap(
-          json['selectedDatabasesByUser'],
-        ),
-        authToken: json['authToken'] as String?,
-        accountUsername: json['accountUsername'] as String?,
-        accountEmail: json['accountEmail'] as String?,
-        accountName: json['accountName'] as String?,
-        rememberedLoginName: json['rememberedLoginName'] as String?,
-        rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
-        lastAutoUpdateTarget: json['lastAutoUpdateTarget'] as String?,
-        lastAutoUpdateAttemptedAt: json['lastAutoUpdateAttemptedAt'] as String?,
-        clients: clientsJson.map(
-          (key, value) => MapEntry(
-            key,
-            SyncClientState.fromJson(Map<String, dynamic>.from(value as Map)),
-          ),
-        ),
-      );
-    } catch (_) {
-      return _defaultStore;
-    }
+  static File _backupStateFile([Directory? stateDirectory]) {
+    return File('${_stateFile(stateDirectory).path}.bak');
   }
 
-  static SyncAppStateStore loadSync() {
-    try {
-      final file = _stateFile();
-      if (!file.existsSync()) {
-        return _defaultStore;
-      }
-
-      final raw = file.readAsStringSync();
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) {
-        return _defaultStore;
-      }
-
-      final json = Map<String, dynamic>.from(decoded);
-      final clientsJson = Map<String, dynamic>.from(
-        json['clients'] as Map? ?? const {},
-      );
-      return SyncAppStateStore(
-        lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
-        hasOpenedOnce: json['hasOpenedOnce'] as bool? ?? false,
-        startMinimized: json['startMinimized'] as bool? ?? false,
-        startOnStartup: json['startOnStartup'] as bool? ?? false,
-        server: json['server'] as String? ?? 'localhost',
-        selectedDatabasesByUser: _readStringMap(
-          json['selectedDatabasesByUser'],
-        ),
-        authToken: json['authToken'] as String?,
-        accountUsername: json['accountUsername'] as String?,
-        accountEmail: json['accountEmail'] as String?,
-        accountName: json['accountName'] as String?,
-        rememberedLoginName: json['rememberedLoginName'] as String?,
-        rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
-        lastAutoUpdateTarget: json['lastAutoUpdateTarget'] as String?,
-        lastAutoUpdateAttemptedAt: json['lastAutoUpdateAttemptedAt'] as String?,
-        clients: clientsJson.map(
-          (key, value) => MapEntry(
-            key,
-            SyncClientState.fromJson(Map<String, dynamic>.from(value as Map)),
-          ),
-        ),
-      );
-    } catch (_) {
-      return _defaultStore;
+  static SyncAppStateStore _decode(String raw) {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      throw const FormatException('Windows client state must be a JSON map.');
     }
+    final json = Map<String, dynamic>.from(decoded);
+    final clientsJson = Map<String, dynamic>.from(
+      json['clients'] as Map? ?? const {},
+    );
+    return SyncAppStateStore(
+      lastClientName: json['lastClientName'] as String? ?? 'Local Agent',
+      hasOpenedOnce: json['hasOpenedOnce'] as bool? ?? false,
+      startMinimized: json['startMinimized'] as bool? ?? false,
+      startOnStartup: json['startOnStartup'] as bool? ?? false,
+      server: json['server'] as String? ?? 'localhost',
+      selectedDatabasesByUser: _readStringMap(json['selectedDatabasesByUser']),
+      authToken: json['authToken'] as String?,
+      accountUsername: json['accountUsername'] as String?,
+      accountEmail: json['accountEmail'] as String?,
+      accountName: json['accountName'] as String?,
+      rememberedLoginName: json['rememberedLoginName'] as String?,
+      rememberedLoginPassword: json['rememberedLoginPassword'] as String?,
+      lastAutoUpdateTarget: json['lastAutoUpdateTarget'] as String?,
+      lastAutoUpdateAttemptedAt: json['lastAutoUpdateAttemptedAt'] as String?,
+      clients: clientsJson.map(
+        (key, value) => MapEntry(
+          key,
+          SyncClientState.fromJson(Map<String, dynamic>.from(value as Map)),
+        ),
+      ),
+    );
   }
 
-  Future<void> save() async {
-    final dir = _stateDirectory();
+  static Future<SyncAppStateStore> load({Directory? stateDirectory}) async {
+    for (final file in <File>[
+      _stateFile(stateDirectory),
+      _backupStateFile(stateDirectory),
+    ]) {
+      try {
+        if (await file.exists()) {
+          return _decode(await file.readAsString());
+        }
+      } catch (_) {
+        // A killed updater or power loss can leave the primary incomplete.
+        // Continue to the last known-good backup before using defaults.
+      }
+    }
+    return _defaultStore;
+  }
+
+  static SyncAppStateStore loadSync({Directory? stateDirectory}) {
+    for (final file in <File>[
+      _stateFile(stateDirectory),
+      _backupStateFile(stateDirectory),
+    ]) {
+      try {
+        if (file.existsSync()) {
+          return _decode(file.readAsStringSync());
+        }
+      } catch (_) {
+        // Fall through to the last known-good backup.
+      }
+    }
+    return _defaultStore;
+  }
+
+  Future<void> save({Directory? stateDirectory}) async {
+    final dir = _stateDirectory(stateDirectory);
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
 
-    final file = _stateFile();
+    final file = _stateFile(stateDirectory);
     final payload = jsonEncode({
       'lastClientName': lastClientName,
       'hasOpenedOnce': hasOpenedOnce,
@@ -443,7 +426,38 @@ class SyncAppStateStore {
       'lastAutoUpdateAttemptedAt': lastAutoUpdateAttemptedAt,
       'clients': clients.map((key, value) => MapEntry(key, value.toJson())),
     });
-    await file.writeAsString(payload);
+    final pending = _saveQueue.then(
+      (_) => _writeAtomically(dir: dir, file: file, payload: payload),
+    );
+    _saveQueue = pending.catchError((Object _) {});
+    await pending;
+  }
+
+  static Future<void> _writeAtomically({
+    required Directory dir,
+    required File file,
+    required String payload,
+  }) async {
+    final temporary = File('${file.path}.tmp');
+    final backup = File('${file.path}.bak');
+    try {
+      await temporary.writeAsString(payload, flush: true);
+      if (await file.exists()) {
+        try {
+          _decode(await file.readAsString());
+          await file.copy(backup.path);
+        } catch (_) {
+          // Preserve an older valid backup instead of replacing it with a
+          // corrupt primary file.
+        }
+        await file.delete();
+      }
+      await temporary.rename(file.path);
+    } finally {
+      if (await temporary.exists()) {
+        await temporary.delete();
+      }
+    }
   }
 }
 
