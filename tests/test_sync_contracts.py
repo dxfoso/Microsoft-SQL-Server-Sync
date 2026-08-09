@@ -10,6 +10,19 @@ def read_text(relative_path: str) -> str:
 
 
 class SyncContractsTests(unittest.TestCase):
+    def test_heartbeat_prioritizes_complete_selected_database_inventory(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        body = agent_page.split(
+            "List<String> _boundedHeartbeatTableNames() {", 1
+        )[1].split("List<Map<String, String>> _tableRelationshipsPayload", 1)[0]
+
+        self.assertIn("static const int _heartbeatTablePayloadLimit = 600;", agent_page)
+        self.assertIn("final selectedDatabase = (_selectedDatabase ?? '').trim().toLowerCase();", body)
+        self.assertIn("bool belongsToSelectedDatabase(String table)", body)
+        self.assertIn("entry.value.enabled && belongsToSelectedDatabase(entry.key)", body)
+        self.assertLess(body.index("for (final table in _tables)"), body.index("for (final table in _syncState.tables.keys)"))
+        self.assertIn("if (belongsToSelectedDatabase(table))", body)
+
     def test_complete_snapshot_verification_accepts_only_protected_hot_rows(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         apply_body = agent_page.split(

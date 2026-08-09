@@ -11,6 +11,21 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
+    def test_heartbeat_preserves_full_selected_database_inventory_for_planning(self):
+        source = read_text("business/control_plane.tru")
+        bounded = source.split(
+            "function bounded_heartbeat_tables(", 1
+        )[1].split("function json_payload_changed", 1)[0]
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick", 1
+        )[0]
+
+        self.assertIn("function agent_table_payload_limit(): int {\n  return 600;", source)
+        self.assertIn("return agent_table_payload_limit();", source)
+        self.assertIn("database: string = ''", bounded)
+        self.assertIn("tableDatabase.toLowerCase() != selectedDatabase.toLowerCase()", bounded)
+        self.assertIn("bounded_heartbeat_tables(nextTables, selectedTable, database)", heartbeat)
+
     def test_heartbeat_rereads_fresh_command_delivery_state_before_response(self):
         source = read_text("business/control_plane.tru")
         heartbeat = source.split("function agents_heartbeat(", 1)[1].split(

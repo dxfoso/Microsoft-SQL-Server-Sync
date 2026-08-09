@@ -133,7 +133,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   );
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
   static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);
-  static const int _heartbeatTablePayloadLimit = 150;
+  static const int _heartbeatTablePayloadLimit = 600;
 
   late final TextEditingController _serverController;
   final TextEditingController _userController = TextEditingController();
@@ -2310,6 +2310,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<String> _boundedHeartbeatTableNames() {
     final ordered = <String>[];
     final seen = <String>{};
+    final selectedDatabase = (_selectedDatabase ?? '').trim().toLowerCase();
 
     void addTableName(String table) {
       final trimmed = table.trim();
@@ -2319,6 +2320,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       ordered.add(trimmed);
     }
 
+    bool belongsToSelectedDatabase(String table) {
+      if (selectedDatabase.isEmpty) {
+        return true;
+      }
+      final tableDatabase =
+          _databaseNameFromSyncKey(table).trim().toLowerCase();
+      return tableDatabase.isEmpty || tableDatabase == selectedDatabase;
+    }
+
     if (_selectedTable != null) {
       addTableName(_syncTableKey(_selectedTable!));
     }
@@ -2326,19 +2336,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       addTableName(job.table);
     }
     for (final entry in _syncState.tables.entries) {
-      if (entry.value.enabled) {
+      if (entry.value.enabled && belongsToSelectedDatabase(entry.key)) {
         addTableName(entry.key);
       }
     }
-    for (final table in _syncState.tables.keys) {
-      addTableName(table);
+    for (final table in _tables) {
+      addTableName(_syncTableKey(table));
       if (ordered.length >= _heartbeatTablePayloadLimit) {
         break;
       }
     }
     if (ordered.length < _heartbeatTablePayloadLimit) {
-      for (final table in _tables) {
-        addTableName(_syncTableKey(table));
+      for (final table in _syncState.tables.keys) {
+        if (belongsToSelectedDatabase(table)) {
+          addTableName(table);
+        }
         if (ordered.length >= _heartbeatTablePayloadLimit) {
           break;
         }

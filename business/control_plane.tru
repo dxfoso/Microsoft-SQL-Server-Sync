@@ -1136,18 +1136,19 @@ function apply_table_sync_policies_with_policies(ownerUserId: string? = null, ta
 }
 
 function agent_table_payload_limit(): int {
-  return 150;
+  return 600;
 }
 
 function heartbeat_table_payload_limit(): int {
-  return 60;
+  return agent_table_payload_limit();
 }
 
-function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: string? = null): array<json> {
+function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: string? = null, database: string = ''): array<json> {
   if (tables == null) {
     return [];
   }
   let selected = '';
+  const selectedDatabase = database.trim();
   if (selectedTable != null) {
     selected = string.from(selectedTable).trim();
   }
@@ -1165,6 +1166,13 @@ function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: st
     }
     const tableName = string.from(tableState.table).trim();
     if (tableName.length == 0) {
+      continue;
+    }
+    const tableReference = sync_table_reference(tableName);
+    const tableDatabase = string.from(tableReference.database ?? '').trim();
+    if (selectedDatabase.length != 0 &&
+        tableDatabase.length != 0 &&
+        tableDatabase.toLowerCase() != selectedDatabase.toLowerCase()) {
       continue;
     }
     const nextState = {
@@ -5760,7 +5768,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     nextTables = tables;
   }
   const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
-  nextTables = bounded_heartbeat_tables(nextTables, selectedTable);
+  nextTables = bounded_heartbeat_tables(nextTables, selectedTable, database);
   const tablesChanged = json_payload_changed(agent.tables, nextTables);
   const relationshipsChanged = json_payload_changed(agent.tableRelationships, nextTableRelationships);
   const nextMachineName = machineName.trim().length == 0 ? resolvedClientName : machineName;
