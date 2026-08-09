@@ -59,9 +59,40 @@ function Initialize-NetworkSecurityProtocol {
     }
 }
 
+if (-not ('SqlSyncAgentUpdateWebClient' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Net;
+
+public sealed class SqlSyncAgentUpdateWebClient : WebClient
+{
+    public int ConnectTimeoutMilliseconds { get; set; }
+    public int ReadWriteTimeoutMilliseconds { get; set; }
+
+    public SqlSyncAgentUpdateWebClient()
+    {
+        ConnectTimeoutMilliseconds = 45000;
+        ReadWriteTimeoutMilliseconds = 300000;
+    }
+
+    protected override WebRequest GetWebRequest(Uri address)
+    {
+        WebRequest request = base.GetWebRequest(address);
+        request.Timeout = ConnectTimeoutMilliseconds;
+        HttpWebRequest httpRequest = request as HttpWebRequest;
+        if (httpRequest != null)
+        {
+            httpRequest.ReadWriteTimeout = ReadWriteTimeoutMilliseconds;
+        }
+        return request;
+    }
+}
+'@
+}
+
 function New-UpdateWebClient {
     Initialize-NetworkSecurityProtocol
-    $client = [System.Net.WebClient]::new()
+    $client = [SqlSyncAgentUpdateWebClient]::new()
     $client.Headers[[System.Net.HttpRequestHeader]::UserAgent] = 'SqlSyncAgentUpdater/1.0'
     return $client
 }
@@ -69,14 +100,24 @@ function New-UpdateWebClient {
 function Invoke-UpdateRestMethod {
     param([Parameter(Mandatory = $true)][string] $Uri)
 
-    $client = New-UpdateWebClient
-    try {
-        $content = $client.DownloadString($Uri)
-        return $content | ConvertFrom-Json
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $client = New-UpdateWebClient
+        try {
+            $content = $client.DownloadString($Uri)
+            return $content | ConvertFrom-Json
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -lt 3) {
+                Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
+            }
+        }
+        finally {
+            $client.Dispose()
+        }
     }
-    finally {
-        $client.Dispose()
-    }
+    throw "Update metadata download failed after 3 bounded attempts: $Uri. $($lastError.Exception.Message)"
 }
 
 function Invoke-UpdateWebRequest {
@@ -85,13 +126,25 @@ function Invoke-UpdateWebRequest {
         [Parameter(Mandatory = $true)][string] $OutFile
     )
 
-    $client = New-UpdateWebClient
-    try {
-        $client.DownloadFile($Uri, $OutFile)
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $client = New-UpdateWebClient
+        try {
+            $client.DownloadFile($Uri, $OutFile)
+            return
+        }
+        catch {
+            $lastError = $_
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+            if ($attempt -lt 3) {
+                Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
+            }
+        }
+        finally {
+            $client.Dispose()
+        }
     }
-    finally {
-        $client.Dispose()
-    }
+    throw "Update payload download failed after 3 bounded attempts: $Uri. $($lastError.Exception.Message)"
 }
 
 function Get-DefaultInstallDir {
@@ -370,7 +423,14 @@ function Start-SupervisorProcess {
         '-WindowStyle', 'Hidden',
         '-EncodedCommand', $encodedCommand
     )
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        $supervisorProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+        Start-Sleep -Milliseconds 500
+        $supervisorProcess.Refresh()
+        if (-not $supervisorProcess.HasExited) { return }
+        if ($attempt -lt 10) { Start-Sleep -Milliseconds 500 }
+    }
+    throw 'Independent supervisor exited during every bounded startup attempt.'
 }
 
 function Update-StartupShortcutToSupervisor {
@@ -696,7 +756,15 @@ function Start-SupervisorProcess {
     $encodedCommand = [Convert]::ToBase64String(
         [Text.Encoding]::Unicode.GetBytes("& $quotedSupervisorPath")
     )
-    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', $encodedCommand) -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', $encodedCommand)
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        $supervisorProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+        Start-Sleep -Milliseconds 500
+        $supervisorProcess.Refresh()
+        if (-not $supervisorProcess.HasExited) { return }
+        if ($attempt -lt 10) { Start-Sleep -Milliseconds 500 }
+    }
+    throw 'Independent supervisor exited during every bounded startup attempt.'
 }
 
 function Update-StartupShortcutToSupervisor {
@@ -818,6 +886,97 @@ function Remove-EmptyParentDirectories {
     }
 }
 
+function Save-InstallRollbackSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string] $PayloadDir,
+        [Parameter(Mandatory = $true)][string] $InstallDir,
+        [Parameter(Mandatory = $true)][string] $RollbackDir,
+        [Parameter(Mandatory = $true)][string] $CreatedListPath,
+        [string] $DeleteListPath = ''
+    )
+
+    New-Item -Path $RollbackDir -ItemType Directory -Force | Out-Null
+    $createdPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $managedPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($source in Get-ChildItem -LiteralPath $PayloadDir -File -Recurse -Force) {
+        $relative = $source.FullName.Substring(($PayloadDir.TrimEnd('\', '/')).Length).TrimStart('\', '/')
+        [void] $managedPaths.Add($relative)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($DeleteListPath) -and (Test-Path -LiteralPath $DeleteListPath -PathType Leaf)) {
+        foreach ($relative in Get-Content -LiteralPath $DeleteListPath -ErrorAction Stop) {
+            if (-not [string]::IsNullOrWhiteSpace($relative)) {
+                [void] $managedPaths.Add($relative)
+            }
+        }
+    }
+
+    foreach ($relative in $managedPaths) {
+        $target = Resolve-InstallPath -RootDir $InstallDir -RelativePath $relative
+        if (Test-Path -LiteralPath $target -PathType Leaf) {
+            $backup = Resolve-InstallPath -RootDir $RollbackDir -RelativePath $relative
+            $backupParent = Split-Path -Path $backup -Parent
+            New-Item -Path $backupParent -ItemType Directory -Force | Out-Null
+            Copy-Item -LiteralPath $target -Destination $backup -Force
+        }
+        else {
+            [void] $createdPaths.Add($relative)
+        }
+    }
+    Set-Content -LiteralPath $CreatedListPath -Value @($createdPaths) -Encoding UTF8
+}
+
+function Restore-InstallRollbackSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string] $InstallDir,
+        [Parameter(Mandatory = $true)][string] $RollbackDir,
+        [Parameter(Mandatory = $true)][string] $CreatedListPath,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+
+    Write-UpdateLog -Message 'Post-update startup verification failed; rolling back the complete managed-file change set.' -LogPath $LogPath
+    Stop-SupervisorProcesses -TargetInstallDir $InstallDir
+    Stop-AgentProcesses -TargetInstallDir $InstallDir
+    if (Test-Path -LiteralPath $CreatedListPath -PathType Leaf) {
+        foreach ($relative in Get-Content -LiteralPath $CreatedListPath -ErrorAction Stop) {
+            if ([string]::IsNullOrWhiteSpace($relative)) { continue }
+            $target = Resolve-InstallPath -RootDir $InstallDir -RelativePath $relative
+            Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (Test-Path -LiteralPath $RollbackDir -PathType Container) {
+        foreach ($backup in Get-ChildItem -LiteralPath $RollbackDir -File -Recurse -Force) {
+            $relative = $backup.FullName.Substring(($RollbackDir.TrimEnd('\', '/')).Length).TrimStart('\', '/')
+            $target = Resolve-InstallPath -RootDir $InstallDir -RelativePath $relative
+            $targetParent = Split-Path -Path $target -Parent
+            New-Item -Path $targetParent -ItemType Directory -Force | Out-Null
+            Copy-Item -LiteralPath $backup.FullName -Destination $target -Force
+        }
+    }
+    Write-UpdateLog -Message 'Rollback files restored and verified; restarting the previous client.' -LogPath $LogPath
+    Start-UpdatedClient -ExecutablePath (Join-Path $InstallDir 'sync_windows_agent.exe') -InstallDir $InstallDir -LogPath $LogPath
+}
+
+function Wait-AgentStartupStable {
+    param(
+        [Parameter(Mandatory = $true)][string] $InstallDir,
+        [ValidateRange(1, 120)][int] $RequiredStableSeconds = 10,
+        [ValidateRange(1, 300)][int] $TimeoutSeconds = 45
+    )
+
+    $stableSeconds = 0
+    for ($elapsed = 0; $elapsed -lt $TimeoutSeconds; $elapsed++) {
+        Start-Sleep -Seconds 1
+        if (@(Get-AgentProcesses -TargetInstallDir $InstallDir).Count -gt 0) {
+            $stableSeconds += 1
+            if ($stableSeconds -ge $RequiredStableSeconds) { return $true }
+        }
+        else {
+            $stableSeconds = 0
+        }
+    }
+    return $false
+}
+
 $logPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
 Write-UpdateLog -Message "Finalize update helper started. payload=$PayloadDir install=$InstallDir parent=$ParentProcessId" -LogPath $logPath
 
@@ -835,6 +994,11 @@ Stop-SupervisorProcesses -TargetInstallDir $InstallDir
 Write-UpdateLog -Message "Ensuring the prior client instance from this install is stopped before install." -LogPath $logPath
 Stop-AgentProcesses -TargetInstallDir $InstallDir
 Start-Sleep -Milliseconds 500
+
+$rollbackDir = Join-Path -Path $WorkRoot -ChildPath 'rollback'
+$createdListPath = Join-Path -Path $WorkRoot -ChildPath 'rollback-created.txt'
+Write-UpdateLog -Message 'Saving transactional rollback snapshot for every managed file that will change.' -LogPath $logPath
+Save-InstallRollbackSnapshot -PayloadDir $PayloadDir -InstallDir $InstallDir -RollbackDir $rollbackDir -CreatedListPath $createdListPath -DeleteListPath $DeleteListPath
 
 if (-not [string]::IsNullOrWhiteSpace($DeleteListPath) -and (Test-Path -LiteralPath $DeleteListPath -PathType Leaf)) {
     foreach ($relativePath in Get-Content -LiteralPath $DeleteListPath -ErrorAction Stop) {
@@ -873,6 +1037,26 @@ if (-not $NoStart) {
     Write-UpdateLog -Message "Stopping any remaining client instance from this install before relaunch." -LogPath $logPath
     Stop-AgentProcesses -TargetInstallDir $InstallDir
     Start-UpdatedClient -ExecutablePath $installedExe -InstallDir $InstallDir -LogPath $logPath
+    $userStoppedMarkerPath = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.user-stopped'
+    if (-not (Test-Path -LiteralPath $userStoppedMarkerPath -PathType Leaf)) {
+        Write-UpdateLog -Message 'Verifying that the updated client process remains healthy after restart.' -LogPath $logPath
+        $startupStableSeconds = 10
+        $startupTimeoutSeconds = 45
+        if (-not [string]::IsNullOrWhiteSpace($env:SYNC_WINDOWS_AGENT_UPDATE_STABLE_SECONDS)) {
+            $startupStableSeconds = [Math]::Max(1, [Math]::Min(120, [int] $env:SYNC_WINDOWS_AGENT_UPDATE_STABLE_SECONDS))
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:SYNC_WINDOWS_AGENT_UPDATE_STARTUP_TIMEOUT_SECONDS)) {
+            $startupTimeoutSeconds = [Math]::Max($startupStableSeconds, [Math]::Min(300, [int] $env:SYNC_WINDOWS_AGENT_UPDATE_STARTUP_TIMEOUT_SECONDS))
+        }
+        if (-not (Wait-AgentStartupStable -InstallDir $InstallDir -RequiredStableSeconds $startupStableSeconds -TimeoutSeconds $startupTimeoutSeconds)) {
+            Restore-InstallRollbackSnapshot -InstallDir $InstallDir -RollbackDir $rollbackDir -CreatedListPath $createdListPath -LogPath $logPath
+            if (-not (Wait-AgentStartupStable -InstallDir $InstallDir -RequiredStableSeconds $startupStableSeconds -TimeoutSeconds $startupTimeoutSeconds)) {
+                throw 'The updated client failed startup verification and the restored previous client also failed to remain running.'
+            }
+            throw 'The updated client failed startup verification. The previous version was restored and restarted safely; the supervisor will retry later.'
+        }
+        Write-UpdateLog -Message 'Updated client startup verification passed.' -LogPath $logPath
+    }
 } else {
     Write-UpdateLog -Message 'NoStart set. Skipping client relaunch.' -LogPath $logPath
 }
@@ -918,6 +1102,20 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $mainLogPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
 Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir noStart=$NoStart" -LogPath $mainLogPath
+$updateMutex = [System.Threading.Mutex]::new($false, (Get-UpdateMutexName -TargetInstallDir $InstallDir))
+$updateMutexAcquired = $false
+try {
+    $updateMutexAcquired = $updateMutex.WaitOne(0)
+}
+catch [System.Threading.AbandonedMutexException] {
+    $updateMutexAcquired = $true
+}
+if (-not $updateMutexAcquired) {
+    Write-UpdateLog -Message 'Another updater owns this installation; skipping the duplicate update request before network access.' -LogPath $mainLogPath
+    $updateMutex.Dispose()
+    return
+}
+
 $manifest = Invoke-UpdateRestMethod -Uri $ManifestUrl
 $installedExeForVersion = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
 if (Test-Path -LiteralPath $installedExeForVersion -PathType Leaf) {
@@ -953,20 +1151,6 @@ $zipPath = Join-Path -Path $workRoot -ChildPath 'sync_windows_agent.zip'
 $extractDir = Join-Path -Path $workRoot -ChildPath 'extract'
 $payloadDir = Join-Path -Path $workRoot -ChildPath 'payload'
 $deleteListPath = Join-Path -Path $workRoot -ChildPath 'delete.txt'
-
-$updateMutex = [System.Threading.Mutex]::new($false, (Get-UpdateMutexName -TargetInstallDir $InstallDir))
-$updateMutexAcquired = $false
-try {
-    $updateMutexAcquired = $updateMutex.WaitOne(0)
-}
-catch [System.Threading.AbandonedMutexException] {
-    $updateMutexAcquired = $true
-}
-if (-not $updateMutexAcquired) {
-    Write-UpdateLog -Message 'Another updater owns this installation; skipping the duplicate update request.' -LogPath $mainLogPath
-    $updateMutex.Dispose()
-    return
-}
 
 New-Item -Path $workRoot -ItemType Directory -Force | Out-Null
 try {

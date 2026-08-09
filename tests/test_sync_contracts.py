@@ -1459,6 +1459,27 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Start-UpdatedClient -ExecutablePath $currentExe", update_script)
         self.assertIn("Updater failed:", update_script)
 
+    def test_windows_update_is_bounded_transactional_and_rolls_back_failed_startup(self):
+        update_script = read_text("update.ps1")
+
+        self.assertIn("class SqlSyncAgentUpdateWebClient : WebClient", update_script)
+        self.assertIn("ConnectTimeoutMilliseconds = 45000", update_script)
+        self.assertIn("ReadWriteTimeoutMilliseconds = 300000", update_script)
+        self.assertIn("failed after 3 bounded attempts", update_script)
+        self.assertLess(
+            update_script.index("$updateMutex = [System.Threading.Mutex]::new"),
+            update_script.index("$manifest = Invoke-UpdateRestMethod"),
+        )
+        self.assertIn("function Save-InstallRollbackSnapshot {", update_script)
+        self.assertIn("function Restore-InstallRollbackSnapshot {", update_script)
+        self.assertIn("function Wait-AgentStartupStable {", update_script)
+        self.assertIn("Saving transactional rollback snapshot", update_script)
+        self.assertIn("Updated client startup verification passed.", update_script)
+        self.assertIn("rolling back the complete managed-file change set", update_script)
+        self.assertIn("The previous version was restored and restarted safely", update_script)
+        self.assertGreaterEqual(update_script.count("Independent supervisor exited during every bounded startup attempt."), 2)
+        self.assertGreaterEqual(update_script.count("$supervisorProcess.Refresh()"), 2)
+
     def test_windows_client_updates_only_move_forward(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

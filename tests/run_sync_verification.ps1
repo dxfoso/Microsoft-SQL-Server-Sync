@@ -187,6 +187,13 @@ try {
                 '-File', (Join-Path $repoRoot 'tests\test_windows_updater_paths.ps1')
             )
         }
+        Invoke-VerificationStep 'Windows updater transactional rollback' {
+            Invoke-NativeChecked -Executable 'powershell.exe' -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', (Join-Path $repoRoot 'tests\test_windows_updater_rollback.ps1')
+            )
+        }
         Invoke-VerificationStep 'Windows supervisor user-stop lifecycle' {
             Invoke-NativeChecked -Executable 'powershell.exe' -Arguments @(
                 '-NoProfile',
