@@ -3844,6 +3844,16 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     );
     const tableAgents = plan.participants ?? [];
     if (tableAgents.length == 0 || string.from(plan.mode) == 'unavailable') {
+      // Debt for an online client cannot be fulfilled while the table has no
+      // peer participant. Retaining it would display Catching up forever and
+      // retry every scheduler tick. Clearing this server-only marker is safe:
+      // no SQL row/cursor changes, and a later eligible peer is detected by
+      // the ordinary Change Tracking scheduler.
+      clear_offline_sync_debt_for_clients(
+        normalizedOwnerUserId,
+        table,
+        ownerAgents.map((agent) => string.from(agent.clientName))
+      );
       if (string_array_contains(manualPendingTables, table)) {
         unavailableManualTables = unavailableManualTables.concat([table]);
       }

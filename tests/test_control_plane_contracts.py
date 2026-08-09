@@ -478,6 +478,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
             set_pending_body,
         )
 
+    def test_unavailable_online_catchup_debt_is_released_without_sql_mutation(self):
+        source = read_text("business/control_plane.tru")
+        owner_scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        unavailable = owner_scheduler.split(
+            "if (tableAgents.length == 0 || string.from(plan.mode) == 'unavailable')", 1
+        )[1].split("continue;", 1)[0]
+
+        self.assertIn("clear_offline_sync_debt_for_clients(", unavailable)
+        self.assertIn("ownerAgents.map((agent) => string.from(agent.clientName))", unavailable)
+        self.assertNotIn("db.delete", unavailable)
+        self.assertNotIn("deleteMany", unavailable)
+
     def test_table_issues_stop_all_normal_sync_until_user_resolves_them(self):
         source = read_text("business/control_plane.tru")
         self.assertIn("field tableIssues: array<json>?", source)
