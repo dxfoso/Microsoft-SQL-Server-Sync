@@ -243,7 +243,7 @@ class ChartContractsTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('truMemoryCapMb: "6144"', values_yaml)
-        self.assertIn('truExecutionMemoryMaxBytes: "134217728"', values_yaml)
+        self.assertIn('truExecutionMemoryMaxBytes: "536870912"', values_yaml)
         self.assertIn('truWasmTimeoutMs: "30000"', values_yaml)
         self.assertIn("memory: 8Gi", values_yaml)
         self.assertIn("TRU_MEMORY_CAP_MB", backend_deployment)

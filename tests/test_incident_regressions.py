@@ -80,7 +80,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn(
             "const int kDeltaPackageMaxCompressedBytes = 384000;", packages
         )
-        self.assertIn('truExecutionMemoryMaxBytes: "134217728"', values)
+        self.assertIn('truExecutionMemoryMaxBytes: "536870912"', values)
         self.assertIn("TRU_EXECUTION_MEMORY_MAX_BYTES", deployment)
         self.assertIn(".Values.backend.env.truExecutionMemoryMaxBytes", deployment)
 
