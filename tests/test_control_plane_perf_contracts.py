@@ -211,6 +211,36 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertNotIn("current_user_record(token)", entrypoint)
         self.assertNotIn("find_active_session_by_token(token)", entrypoint)
 
+    def test_sync_all_manual_queue_drain_is_linear_in_inventory_size(self):
+        # The complete-inventory Sync All queue must stay linear before the
+        # per-table planner begins its bounded work.
+        control_plane = read_text("business/control_plane.tru")
+        scheduler = control_plane.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
+        pending_reader = control_plane.split(
+            "function manual_sync_pending_tables_for_owner(", 1
+        )[1].split("function set_manual_sync_pending_tables_for_owner", 1)[0]
+        pending_writer = control_plane.split(
+            "function set_manual_sync_pending_tables_for_owner(", 1
+        )[1].split("function periodic_sync_scheduled_table_attempts_for_owner", 1)[0]
+        pending_normalizer = control_plane.split(
+            "function manual_sync_pending_tables_from_values(", 1
+        )[1].split("function auto_sync_tick", 1)[0]
+
+        self.assertIn("let dueTables = manualPendingTables;", scheduler)
+        self.assertIn(
+            "let remainingManualTables = manualPendingTables.filter", scheduler
+        )
+        self.assertNotIn(
+            "manualPendingTables.concat(due_offline_catchup_tables", scheduler
+        )
+        self.assertNotIn("unique_string_values", pending_reader)
+        self.assertNotIn("unique_string_values", pending_writer)
+        self.assertNotIn("unique_string_values", pending_normalizer)
+        self.assertIn(".map((value) => string.from(value).trim())", pending_normalizer)
+        self.assertIn(".filter((table) =>", pending_normalizer)
+
     def test_change_tracking_preflight_does_not_rebuild_supplied_table_cache(self):
         control_plane = read_text("business/control_plane.tru")
         ready_body = control_plane.split(

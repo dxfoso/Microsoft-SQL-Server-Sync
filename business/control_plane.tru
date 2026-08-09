@@ -3824,10 +3824,11 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const recentUploadModes = latest_completed_upload_modes_for_owner(normalizedOwnerUserId);
   const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
-  let dueTables = unique_string_values(
-    manualPendingTables.concat(due_offline_catchup_tables(normalizedOwnerUserId, ownerAgents))
-  );
+  let dueTables = manualPendingTables;
   if (manualPendingTables.length == 0) {
+    dueTables = unique_string_values(
+      due_offline_catchup_tables(normalizedOwnerUserId, ownerAgents)
+    );
     for (const agent of ownerAgents) {
       const cache = scheduler_agent_table_state_cache_for_agent(string.from(agent.clientName), tableCaches);
       const agentTables = due_periodic_sync_tables_for_agent_with_policies(
@@ -3941,36 +3942,27 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     }
   }
   if (manualPendingTables.length > 0) {
-    let remainingManualTables = [];
-    for (const table of manualPendingTables) {
-      if (string_array_contains(queuedTables, table)) {
-        continue;
+    // Filter the durable queue once. Building the same hundreds-entry array
+    // one concat at a time, then deduplicating it again, charged quadratic
+    // cumulative interpreter memory on every four-table scheduler wave.
+    let remainingManualTables = manualPendingTables.filter((table) => {
+      if (string_array_contains(queuedTables, table) ||
+          string_array_contains(unavailableManualTables, table)) {
+        return false;
       }
-      // A table enabled on only one current client has no peer target. It is
-      // not syncable in this operation and must not leave Sync All running
-      // forever with zero jobs. A later heartbeat/client installation makes
-      // it eligible for a future Sync All without changing its table policy.
-      if (string_array_contains(unavailableManualTables, table)) {
-        continue;
-      }
-      let stillEnabled = false;
       for (const agent of ownerAgents) {
         const cache = scheduler_agent_table_state_cache_for_agent(
           string.from(agent.clientName),
           tableCaches
         );
-        let enabledTables = [];
-        if (cache != null && cache.enabledTables != null) {
-          enabledTables = cache.enabledTables;
-        }
-        if (string_array_contains(enabledTables, table)) {
-          stillEnabled = true;
+        if (cache != null &&
+            cache.enabledTables != null &&
+            string_array_contains(cache.enabledTables, table)) {
+          return true;
         }
       }
-      if (stillEnabled) {
-        remainingManualTables = remainingManualTables.concat([table]);
-      }
-    }
+      return false;
+    });
     set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);
     reduce_manual_sync_table_count_for_owner(ownerUserId, unavailableManualTables.length);
     if (remainingManualTables.length == 0 &&
@@ -4049,20 +4041,17 @@ function manual_sync_pending_tables_for_owner(ownerUserId: string? = null): arra
   if (existing == null || existing.manualPendingTables == null) {
     return [];
   }
-  let tables = [];
-  for (const value of existing.manualPendingTables) {
-    const table = string.from(value).trim();
-    if (table.length != 0 && table != '__automatic_sync_paused__') {
-      tables = tables.concat([table]);
-    }
-  }
-  return unique_string_values(tables);
+  return manual_sync_pending_tables_from_values(existing.manualPendingTables);
 }
 
 function set_manual_sync_pending_tables_for_owner(ownerUserId: string? = null, tables: array<string>? = null): void {
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
   const existing = db.selectOne(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId });
-  let pendingTables = unique_string_values(tables ?? []);
+  // Manual queues are formed from the already-unique policy/inventory set and
+  // subsequently reduced with a single filter pass. Re-deduplicating hundreds
+  // of table names here is quadratic in the TRU request arena and can exhaust
+  // the finite production memory budget before the first bounded wave starts.
+  let pendingTables = manual_sync_pending_tables_from_values(tables ?? []);
   // Updating a manual queue must not silently resume automatic scheduling.
   // Preserve the independent owner pause marker until the user explicitly
   // resumes automatic sync.
@@ -4073,7 +4062,6 @@ function set_manual_sync_pending_tables_for_owner(ownerUserId: string? = null, t
       }
     }
   }
-  pendingTables = unique_string_values(pendingTables);
   if (existing != null) {
     db.update(PeriodicSyncState, { ownerUserId: normalizedOwnerUserId }, {
       manualPendingTables: pendingTables,
@@ -5974,14 +5962,9 @@ function manual_sync_operation_payload(state: map<json>): map<json> {
 }
 
 function manual_sync_pending_tables_from_values(values: array<json>): array<string> {
-  let tables = [];
-  for (const value of values) {
-    const table = string.from(value).trim();
-    if (table.length != 0 && table != '__automatic_sync_paused__') {
-      tables = tables.concat([table]);
-    }
-  }
-  return unique_string_values(tables);
+  return values
+    .map((value) => string.from(value).trim())
+    .filter((table) => table.length != 0 && table != '__automatic_sync_paused__');
 }
 
 function auto_sync_tick(token: string? = null): map<json> {

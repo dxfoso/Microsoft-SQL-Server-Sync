@@ -713,7 +713,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (activeTableCapacityUsed >= periodic_sync_scheduler_table_limit())", body)
         self.assertEqual(body.count("active_job_tables_for_client("), 1)
         self.assertIn("const manualPendingTables = manual_sync_pending_tables_for_owner(ownerUserId);", body)
-        self.assertIn("let remainingManualTables = [];", body)
+        self.assertIn(
+            "let remainingManualTables = manualPendingTables.filter", body
+        )
         self.assertIn(
             "set_manual_sync_pending_tables_for_owner(ownerUserId, remainingManualTables);",
             body,
