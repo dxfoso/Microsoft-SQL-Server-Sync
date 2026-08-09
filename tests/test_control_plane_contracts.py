@@ -50,14 +50,31 @@ class ControlPlaneContractsTests(unittest.TestCase):
             body,
         )
         self.assertNotIn(".take(", body)
-        self.assertIn("find_table_sync_policy(ownerUserId, normalizedTable)", body)
+        self.assertIn("list_table_sync_policies_for_scope(ownerUserId)", body)
+        self.assertIn("table_sync_policy_for_table_with_policies(", body)
         self.assertIn("if (policy == null)", body)
         self.assertIn("else if (policy.enabled != true)", body)
-        self.assertIn("upsert_table_sync_policy(", body)
-        self.assertNotIn("upsert_table_sync_policy(\n        ownerUserId,\n        normalizedTable,\n        false", body)
+        self.assertIn("db.upsertMany(TableSyncPolicy, policyRowsToUpsert", body)
+        self.assertIn("db.updateMany(TableSyncPolicy", body)
+        self.assertNotIn("find_table_sync_policy(", body)
+        self.assertNotIn("upsert_table_sync_policy(", body)
         self.assertIn("createdTables", body)
         self.assertIn("reactivatedTables", body)
         self.assertIn("reactivatedTableCount: reactivatedTables.length", body)
+
+    def test_auto_enrollment_database_work_is_bounded_for_large_inventories(self):
+        source = read_text("business/control_plane.tru")
+        body = source.split(
+            "function table_sync_policy_auto_enroll(", 1
+        )[1].split("function table_dependency_policy_set(", 1)[0]
+
+        self.assertEqual(body.count("list_table_sync_policies_for_scope(ownerUserId)"), 2)
+        self.assertEqual(body.count("db.upsertMany(TableSyncPolicy"), 1)
+        self.assertEqual(body.count("db.updateMany(TableSyncPolicy"), 1)
+        self.assertNotIn("db.selectOne(", body)
+        self.assertNotIn("db.insert(", body)
+        self.assertNotIn("db.update(", body)
+        self.assertIn("if (inspectedTableCount >= 600)", body)
 
     def test_public_jobs_expose_authoritative_changed_row_count(self):
         source = read_text("business/control_plane.tru")

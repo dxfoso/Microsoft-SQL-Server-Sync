@@ -2139,26 +2139,83 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
   let policies = [];
   let createdTables = [];
   let reactivatedTables = [];
+  const existingPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  let policyRowsToUpsert = [];
+  let legacyTablesToReactivate = [];
+  const policyUpdatedAt = now_iso();
   for (const normalizedTable of normalizedTables) {
-    let policy = find_table_sync_policy(ownerUserId, normalizedTable);
+    const reference = sync_table_reference(normalizedTable);
+    const databaseName = string.from(reference.database).trim();
+    const localTable = string.from(reference.table).trim();
+    const policy = table_sync_policy_for_table_with_policies(
+      ownerUserId,
+      databaseName,
+      localTable,
+      existingPolicies
+    );
     if (policy == null) {
-      policy = upsert_table_sync_policy(
+      let storedDatabase = null;
+      if (databaseName.length != 0) {
+        storedDatabase = databaseName;
+      }
+      policyRowsToUpsert = policyRowsToUpsert.concat([{
         ownerUserId,
-        normalizedTable,
-        true,
-        current.username
-      );
+        database: storedDatabase,
+        table: localTable,
+        enabled: true,
+        syncMode: 'sync',
+        updatedAt: policyUpdatedAt,
+        updatedByClientName: current.username
+      }]);
       createdTables = createdTables.concat([normalizedTable]);
     } else if (policy.enabled != true) {
-      policy = upsert_table_sync_policy(
-        ownerUserId,
-        normalizedTable,
-        true,
-        current.username
-      );
+      const policyDatabase = table_sync_policy_database_name(policy);
+      if (policyDatabase.length == 0 && databaseName.length != 0) {
+        legacyTablesToReactivate = legacyTablesToReactivate.concat([localTable]);
+      } else {
+        let storedDatabase = null;
+        if (policyDatabase.length != 0) {
+          storedDatabase = policyDatabase;
+        }
+        policyRowsToUpsert = policyRowsToUpsert.concat([{
+          ownerUserId,
+          database: storedDatabase,
+          table: table_sync_policy_local_name(policy),
+          enabled: true,
+          syncMode: 'sync',
+          updatedAt: policyUpdatedAt,
+          updatedByClientName: current.username
+        }]);
+      }
       reactivatedTables = reactivatedTables.concat([normalizedTable]);
     }
-    policies = policies.concat([table_sync_policy_payload(policy)]);
+  }
+  if (legacyTablesToReactivate.length > 0) {
+    db.updateMany(TableSyncPolicy, {
+      ownerUserId,
+      database: null,
+      table: { in: unique_string_values(legacyTablesToReactivate) }
+    }, {
+      enabled: true,
+      syncMode: 'sync',
+      updatedAt: policyUpdatedAt,
+      updatedByClientName: current.username
+    });
+  }
+  if (policyRowsToUpsert.length > 0) {
+    db.upsertMany(TableSyncPolicy, policyRowsToUpsert, ['ownerUserId', 'database', 'table']);
+  }
+  const enrolledPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  for (const normalizedTable of normalizedTables) {
+    const policy = table_sync_policy_for_table_with_policies(
+      ownerUserId,
+      '',
+      normalizedTable,
+      enrolledPolicies
+    );
+    if (policy != null) {
+      policies = policies.concat([table_sync_policy_payload(policy)]);
+    }
   }
   return {
     ok: true,
