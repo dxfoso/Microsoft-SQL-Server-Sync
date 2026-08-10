@@ -19,11 +19,27 @@ if ($Commit -notmatch '^[0-9a-f]{40}$') {
 $backendImage = "$RegistryRoot/backend:$Commit"
 $frontendImage = "$RegistryRoot/frontend:$Commit"
 
-foreach ($image in @($backendImage, $frontendImage)) {
-    & docker manifest inspect $image *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Immutable production image is unavailable: $image"
+function Assert-RegistryManifestAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string] $Image,
+        [ValidateRange(1, 5)][int] $Attempts = 3
+    )
+    $lastExitCode = 0
+    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        & docker manifest inspect $Image *> $null
+        $lastExitCode = $LASTEXITCODE
+        if ($lastExitCode -eq 0) {
+            return
+        }
+        if ($attempt -lt $Attempts) {
+            Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
+        }
     }
+    throw "Immutable production image is unavailable after $Attempts attempts: $Image (exit code $lastExitCode)"
+}
+
+foreach ($image in @($backendImage, $frontendImage)) {
+    Assert-RegistryManifestAvailable -Image $image
 }
 
 function Invoke-RemoteKubectl {

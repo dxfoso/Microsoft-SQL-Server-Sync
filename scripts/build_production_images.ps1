@@ -32,6 +32,27 @@ function Invoke-NativeChecked {
     }
 }
 
+function Invoke-NativeCheckedWithRetry {
+    param(
+        [string] $Description,
+        [scriptblock] $Command,
+        [ValidateRange(1, 5)][int] $Attempts = 3
+    )
+    $lastExitCode = 0
+    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        Write-Host "$Description attempt $attempt of $Attempts"
+        & $Command
+        $lastExitCode = $LASTEXITCODE
+        if ($lastExitCode -eq 0) {
+            return
+        }
+        if ($attempt -lt $Attempts) {
+            Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
+        }
+    }
+    throw "$Description failed after $Attempts attempts with exit code $lastExitCode."
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $backendContext, $frontendContext | Out-Null
 
@@ -79,8 +100,8 @@ try {
         & docker build --build-arg "BACKEND_BASE_URL=$BackendBaseUrl" --build-arg "BUILD_COMMIT_HASH=$commit" --build-arg "BUILD_COMMIT_DATE=$commitDate" --build-arg "BUILD_RELEASE_DATE=$releaseDate" --build-arg "TRU_BUILD_GIT_SHA=$commit" --build-arg "TRU_BUILD_COMMIT_MESSAGE=$commitMessage" --build-arg "TRU_BUILD_COMMIT_DATE=$commitDate" --build-arg "TRU_BUILD_RELEASE_DATE=$releaseDate" -t $frontendImage $frontendContext
     }
     if (-not $SkipPush) {
-        Invoke-NativeChecked "Pushing $backendImage..." { & docker push $backendImage }
-        Invoke-NativeChecked "Pushing $frontendImage..." { & docker push $frontendImage }
+        Invoke-NativeCheckedWithRetry "Pushing $backendImage..." { & docker push $backendImage }
+        Invoke-NativeCheckedWithRetry "Pushing $frontendImage..." { & docker push $frontendImage }
     }
     Write-Host "BACKEND_IMAGE=$backendImage"
     Write-Host "FRONTEND_IMAGE=$frontendImage"
