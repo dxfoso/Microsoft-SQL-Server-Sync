@@ -1148,7 +1148,8 @@ class _ClientsPageState extends State<ClientsPage> {
                           DataColumn(label: Text('Tables')),
                           DataColumn(label: Text('Last synced')),
                           DataColumn(label: Text('Last change check')),
-                          DataColumn(label: Text('Sync All total')),
+                          DataColumn(label: Text('Last sync duration')),
+                          DataColumn(label: Text('Last Sync All total')),
                           DataColumn(label: Text('Last heartbeat')),
                           DataColumn(label: Text('Actions')),
                         ],
@@ -1622,6 +1623,7 @@ class _ClientsPageState extends State<ClientsPage> {
         DataCell(Text('${agent.tables.length}')),
         DataCell(Text(_formatTimestamp(_latestClientSync(agent)))),
         DataCell(Text(_formatTimestamp(agent.lastChangeCheckAt))),
+        DataCell(Text(formatSyncDuration(agent.lastSyncDuration))),
         DataCell(
           Text(
             formatSyncDuration(_syncAllOperationForAgent(agent)?.duration()),

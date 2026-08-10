@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 70)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 71)}
         observed_ids = set()
 
         for row in rows:
@@ -154,6 +154,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             control_plane,
         )
         self.assertNotIn("function begin_manual_sync_all_for_owner(\n", control_plane)
+
+    def test_clients_list_distinguishes_latest_sync_and_sync_all_durations(self):
+        clients_page = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("DataColumn(label: Text('Last sync duration'))", clients_page)
+        self.assertIn("DataColumn(label: Text('Last Sync All total'))", clients_page)
+        self.assertIn(
+            "DataCell(Text(formatSyncDuration(agent.lastSyncDuration)))",
+            clients_page,
+        )
+        self.assertIn(
+            "formatSyncDuration(_syncAllOperationForAgent(agent)?.duration())",
+            clients_page,
+        )
 
 
 if __name__ == "__main__":
