@@ -337,6 +337,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "clientUpdateLastRequestId: resolvedRequestIdOrNull", ack
         )
 
+    def test_heartbeat_clears_stale_update_failure_after_manual_upgrade(self):
+        source = read_text("business/control_plane.tru")
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick", 1
+        )[0]
+
+        self.assertIn("nextClientVersion != previousClientVersion", heartbeat)
+        self.assertIn("!client_update_request_pending(agent)", heartbeat)
+        self.assertIn("previousClientUpdateStatus == 'failed'", heartbeat)
+        self.assertIn("previousClientUpdateStatus == 'retrying'", heartbeat)
+        self.assertIn("nextClientUpdateStatus = 'current'", heartbeat)
+        self.assertIn(
+            "nextClientUpdateMessage = 'Installed client version confirmed by heartbeat.'",
+            heartbeat,
+        )
+        self.assertEqual(
+            heartbeat.count("clientUpdateStatus: nextClientUpdateStatus"), 2
+        )
+        self.assertEqual(
+            heartbeat.count("clientUpdateMessage: nextClientUpdateMessage"), 2
+        )
+
     def test_client_update_request_all_persists_requests_for_offline_agents(self):
         source = read_text("business/control_plane.tru")
         match = re.search(

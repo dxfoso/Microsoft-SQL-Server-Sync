@@ -5886,6 +5886,20 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   const nextMachineName = machineName.trim().length == 0 ? resolvedClientName : machineName;
   const nextHistoryLimit = clamp_history_limit(historyLimit);
   const nextClientVersion = truncate_text(clientVersion.trim(), 32);
+  let nextClientUpdateStatus = agent.clientUpdateStatus;
+  let nextClientUpdateMessage = agent.clientUpdateMessage;
+  const previousClientVersion = string.from(agent.clientVersion ?? '').trim();
+  const previousClientUpdateStatus = string.from(agent.clientUpdateStatus ?? '').trim().toLowerCase();
+  if (nextClientVersion.length != 0 &&
+      nextClientVersion != previousClientVersion &&
+      !client_update_request_pending(agent) &&
+      (previousClientUpdateStatus == 'failed' || previousClientUpdateStatus == 'retrying')) {
+    // A manual installation or a later successful retry may advance the
+    // executable after an older request was already acknowledged as failed.
+    // The authenticated heartbeat is authoritative for the installed binary.
+    nextClientUpdateStatus = 'current';
+    nextClientUpdateMessage = 'Installed client version confirmed by heartbeat.';
+  }
   const lightweightHeartbeatChanged = lightweight_agent_heartbeat_state_changed(
     agent,
     nextMachineName,
@@ -5915,6 +5929,8 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       serverConnected,
       sqlConnected,
       clientVersion: nextClientVersion,
+      clientUpdateStatus: nextClientUpdateStatus,
+      clientUpdateMessage: nextClientUpdateMessage,
       lastHeartbeat: now_iso(),
       selectedTable,
       tables: nextTables,
@@ -5938,6 +5954,8 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       serverConnected,
       sqlConnected,
       clientVersion: nextClientVersion,
+      clientUpdateStatus: nextClientUpdateStatus,
+      clientUpdateMessage: nextClientUpdateMessage,
       lastHeartbeat: now_iso(),
       selectedTable,
       updatedAt: now_iso()
