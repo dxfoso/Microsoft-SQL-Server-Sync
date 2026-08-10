@@ -776,6 +776,30 @@ class ControlPlaneContractsTests(unittest.TestCase):
             2,
         )
 
+    def test_periodic_scheduler_globally_orders_candidates_across_clients(self):
+        source = read_text("business/control_plane.tru")
+        ordering = source.split(
+            "function order_owner_due_table_candidates(", 1
+        )[1].split("function queue_due_periodic_sync_jobs_for_owner(", 1)[0]
+        queue = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
+
+        self.assertIn("for (const candidateTable of dueTables)", ordering)
+        self.assertIn("for (const agent of ownerAgents)", ordering)
+        self.assertIn("if (tableState == null)", ordering)
+        self.assertIn(
+            "sync_table_state_has_pending_local_changes(tableState)", ordering
+        )
+        self.assertIn(
+            "candidateHasPendingLocalChanges && !selectedHasPendingLocalChanges",
+            ordering,
+        )
+        self.assertIn("candidateAgeMinutes > selectedAgeMinutes", ordering)
+        self.assertIn(
+            "dueTables = order_owner_due_table_candidates(", queue
+        )
+
     def test_cancel_active_sync_also_clears_durable_manual_queue(self):
         source = read_text("business/control_plane.tru")
         cancel = source.split("function jobs_cancel_active(", 1)[1].split(

@@ -3806,6 +3806,57 @@ function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, poli
   return dueTables;
 }
 
+function order_owner_due_table_candidates(dueTables: array<string>, ownerAgents: array<json>, tableCaches: array<json>): array<string> {
+  let orderedTables = [];
+  for (const ignored of dueTables) {
+    let selectedTable = '';
+    let selectedAgeMinutes = -1;
+    let selectedHasPendingLocalChanges = false;
+    for (const candidateTable of dueTables) {
+      if (string_array_contains(orderedTables, candidateTable)) {
+        continue;
+      }
+      let candidateAgeMinutes = -1;
+      let candidateHasPendingLocalChanges = false;
+      for (const agent of ownerAgents) {
+        const cache = scheduler_agent_table_state_cache_for_agent(
+          string.from(agent.clientName),
+          tableCaches
+        );
+        let states = [];
+        if (cache != null && cache.tables != null) {
+          states = cache.tables;
+        }
+        const tableState = scheduler_agent_table_state(states, candidateTable);
+        if (tableState == null) {
+          continue;
+        }
+        if (sync_table_state_has_pending_local_changes(tableState)) {
+          candidateHasPendingLocalChanges = true;
+        }
+        const ageMinutes = sync_table_state_due_age_minutes(
+          tableState,
+          agent.autoSyncIntervalMinutes
+        );
+        if (ageMinutes != null && ageMinutes > candidateAgeMinutes) {
+          candidateAgeMinutes = ageMinutes;
+        }
+      }
+      if ((candidateHasPendingLocalChanges && !selectedHasPendingLocalChanges) ||
+          (candidateHasPendingLocalChanges == selectedHasPendingLocalChanges &&
+            candidateAgeMinutes > selectedAgeMinutes)) {
+        selectedTable = candidateTable;
+        selectedAgeMinutes = candidateAgeMinutes;
+        selectedHasPendingLocalChanges = candidateHasPendingLocalChanges;
+      }
+    }
+    if (selectedTable.length != 0) {
+      orderedTables = orderedTables.concat([selectedTable]);
+    }
+  }
+  return orderedTables;
+}
+
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
@@ -3892,6 +3943,11 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         }
       }
     }
+    dueTables = order_owner_due_table_candidates(
+      dueTables,
+      ownerAgents,
+      tableCaches
+    );
   }
 
   let createdJobs = [];
