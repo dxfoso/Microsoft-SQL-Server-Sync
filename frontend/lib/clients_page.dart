@@ -1817,7 +1817,6 @@ class _ClientsPageState extends State<ClientsPage> {
       return 'Needs input';
     }
     if (ownerIssues.any((issue) => issue.resolving)) return 'Repairing';
-    if (agent.clientUpdate.pending) return 'Updating';
     if (!agent.serverConnected) return 'Server offline';
     if (!agent.sqlConnected) return 'SQL offline';
     if (agent.runtimeStatusLabel.trim().isNotEmpty) {
@@ -1850,6 +1849,11 @@ class _ClientsPageState extends State<ClientsPage> {
         _ => 'Syncing',
       };
     }
+    if (agent.clientUpdate.pending) {
+      return agent.clientUpdate.status.trim().toLowerCase() == 'retrying'
+          ? 'Update retrying'
+          : 'Update pending';
+    }
     return 'Ready';
   }
 
@@ -1859,6 +1863,7 @@ class _ClientsPageState extends State<ClientsPage> {
         return const Color(0xFF0F766E);
       case 'uploading':
       case 'updating':
+      case 'update pending':
       case 'syncing':
         return const Color(0xFF2563EB);
       case 'downloading':
@@ -1867,6 +1872,7 @@ class _ClientsPageState extends State<ClientsPage> {
         return const Color(0xFFB54708);
       case 'waiting':
       case 'queued':
+      case 'update retrying':
         return const Color(0xFF7A5D00);
       case 'offline':
       case 'disabled':

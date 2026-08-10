@@ -1749,15 +1749,6 @@ function client_runtime_status_payload(agent: map<json>, activeJobs: array<json>
       heartbeatAgeSeconds
     };
   }
-  if (agent_client_update_payload(agent).pending == true) {
-    return {
-      code: 'updating',
-      label: 'Updating',
-      ready: false,
-      heartbeatAgeSeconds
-    };
-  }
-
   let clientActiveJobs = activeJobs;
   if (clientActiveJobs == null) {
     clientActiveJobs = db.selectMany(SyncJob, {
@@ -1792,6 +1783,21 @@ function client_runtime_status_payload(agent: map<json>, activeJobs: array<json>
         heartbeatAgeSeconds
       };
     }
+  }
+  if (agent_client_update_payload(agent).pending == true) {
+    const updateStatus = string.from(agent.clientUpdateStatus ?? '').trim().toLowerCase();
+    let updateCode = 'update_pending';
+    let updateLabel = 'Update pending';
+    if (updateStatus == 'retrying') {
+      updateCode = 'update_retrying';
+      updateLabel = 'Update retrying';
+    }
+    return {
+      code: updateCode,
+      label: updateLabel,
+      ready: false,
+      heartbeatAgeSeconds
+    };
   }
   if (client_has_offline_sync_debt(agent)) {
     const catchupPaused = automatic_sync_is_paused() ||
@@ -3737,6 +3743,17 @@ function sync_table_state_has_pending_local_changes(tableState: map<json>? = nul
     'A local SQL change was detected automatically.';
 }
 
+function sync_table_state_requires_automatic_sync(tableState: map<json>? = null): bool {
+  if (sync_table_state_has_pending_local_changes(tableState)) {
+    return true;
+  }
+  if (tableState == null) {
+    return false;
+  }
+  return string.from(tableState.changeTrackingStatus ?? '').trim().toLowerCase() ==
+    'baseline_pending';
+}
+
 function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
   return due_periodic_sync_tables_for_agent_with_policies(agent);
 }
@@ -3761,6 +3778,12 @@ function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, poli
   let dueCandidates = [];
   for (const table of enabledTables) {
     const tableState = scheduler_agent_table_state(cachedTables, table);
+    // Change Tracking discovery is the source of truth for ordinary automatic
+    // work. Elapsed time alone is only a retry/eligibility bound and must not
+    // create zero-change upload/download barriers for every enabled table.
+    if (!sync_table_state_requires_automatic_sync(tableState)) {
+      continue;
+    }
     const ageMinutes = sync_table_state_due_age_minutes(
       tableState,
       agent.autoSyncIntervalMinutes

@@ -776,6 +776,54 @@ class ControlPlaneContractsTests(unittest.TestCase):
             2,
         )
 
+    def test_periodic_scheduler_skips_unchanged_maintenance_tables(self):
+        source = read_text("business/control_plane.tru")
+        requirement = source.split(
+            "function sync_table_state_requires_automatic_sync(", 1
+        )[1].split("function due_periodic_sync_tables_for_agent(", 1)[0]
+        selector = source.split(
+            "function due_periodic_sync_tables_for_agent_with_policies(", 1
+        )[1].split("function order_owner_due_table_candidates(", 1)[0]
+
+        self.assertIn(
+            "sync_table_state_has_pending_local_changes(tableState)",
+            requirement,
+        )
+        self.assertIn("'baseline_pending'", requirement)
+        self.assertIn(
+            "if (!sync_table_state_requires_automatic_sync(tableState))",
+            selector,
+        )
+        self.assertLess(
+            selector.index(
+                "if (!sync_table_state_requires_automatic_sync(tableState))"
+            ),
+            selector.index("sync_table_state_due_age_minutes("),
+        )
+
+    def test_client_status_prioritizes_sync_and_names_update_retries(self):
+        control_plane = read_text("business/control_plane.tru")
+        server_status = control_plane.split(
+            "function client_runtime_status_payload(", 1
+        )[1].split("function agent_diagnostics_payload(", 1)[0]
+        clients_page = read_text("frontend/lib/clients_page.dart")
+        web_status = clients_page.split(
+            "String _clientActivityStatus(", 1
+        )[1].split("Color _clientActivityColor(", 1)[0]
+
+        self.assertIn("updateLabel = 'Update retrying'", server_status)
+        self.assertIn("let updateLabel = 'Update pending'", server_status)
+        self.assertLess(
+            server_status.index("const priorities ="),
+            server_status.index("agent_client_update_payload(agent).pending"),
+        )
+        self.assertIn("'Update retrying'", web_status)
+        self.assertIn("'Update pending'", web_status)
+        self.assertLess(
+            web_status.index("agent.runtimeStatusLabel.trim().isNotEmpty"),
+            web_status.index("agent.clientUpdate.pending"),
+        )
+
     def test_periodic_scheduler_globally_orders_candidates_across_clients(self):
         source = read_text("business/control_plane.tru")
         ordering = source.split(
