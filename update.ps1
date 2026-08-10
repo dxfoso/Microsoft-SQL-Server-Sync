@@ -120,31 +120,93 @@ function Invoke-UpdateRestMethod {
     throw "Update metadata download failed after 3 bounded attempts: $Uri. $($lastError.Exception.Message)"
 }
 
-function Invoke-UpdateWebRequest {
+function Invoke-ResumableUpdateWebRequest {
     param(
         [Parameter(Mandatory = $true)][string] $Uri,
-        [Parameter(Mandatory = $true)][string] $OutFile
+        [Parameter(Mandatory = $true)][string] $OutFile,
+        [Parameter(Mandatory = $true)][int64] $ExpectedSizeBytes,
+        [Parameter(Mandatory = $true)][string] $ExpectedSha256
     )
+
+    $partialFile = "$OutFile.part"
+    $parent = Split-Path -Path $OutFile -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+    }
+    if (Test-InstalledFileMatchesManifest -Path $OutFile -ExpectedSizeBytes $ExpectedSizeBytes -ExpectedSha256 $ExpectedSha256) {
+        return
+    }
+    Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
 
     $lastError = $null
     for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $client = New-UpdateWebClient
+        $response = $null
+        $responseStream = $null
+        $fileStream = $null
         try {
-            $client.DownloadFile($Uri, $OutFile)
+            Initialize-NetworkSecurityProtocol
+            if (Test-InstalledFileMatchesManifest -Path $partialFile -ExpectedSizeBytes $ExpectedSizeBytes -ExpectedSha256 $ExpectedSha256) {
+                Move-Item -LiteralPath $partialFile -Destination $OutFile -Force
+                return
+            }
+            $existingBytes = [int64]0
+            if (Test-Path -LiteralPath $partialFile -PathType Leaf) {
+                $existingBytes = [int64](Get-Item -LiteralPath $partialFile).Length
+            }
+            if ($ExpectedSizeBytes -ge 0 -and $existingBytes -ge $ExpectedSizeBytes) {
+                Remove-Item -LiteralPath $partialFile -Force
+                $existingBytes = 0
+            }
+
+            $request = [System.Net.HttpWebRequest]::Create($Uri)
+            $request.Method = 'GET'
+            $request.UserAgent = 'SqlSyncAgentUpdater/1.0'
+            $request.Timeout = 45000
+            $request.ReadWriteTimeout = 300000
+            if ($existingBytes -gt 0) {
+                $request.AddRange($existingBytes)
+            }
+            $response = [System.Net.HttpWebResponse]$request.GetResponse()
+            $append = $existingBytes -gt 0 -and $response.StatusCode -eq [System.Net.HttpStatusCode]::PartialContent
+            $fileMode = if ($append) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
+            $fileStream = [System.IO.File]::Open($partialFile, $fileMode, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            $responseStream = $response.GetResponseStream()
+            $buffer = New-Object byte[] 65536
+            while (($read = $responseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileStream.Write($buffer, 0, $read)
+            }
+            $fileStream.Flush()
+            $fileStream.Dispose()
+            $fileStream = $null
+            $responseStream.Dispose()
+            $responseStream = $null
+            $response.Dispose()
+            $response = $null
+
+            if (-not (Test-InstalledFileMatchesManifest -Path $partialFile -ExpectedSizeBytes $ExpectedSizeBytes -ExpectedSha256 $ExpectedSha256)) {
+                $actualSize = [int64](Get-Item -LiteralPath $partialFile).Length
+                if ($ExpectedSizeBytes -ge 0 -and $actualSize -lt $ExpectedSizeBytes) {
+                    throw "Resumable download is incomplete: $actualSize of $ExpectedSizeBytes bytes."
+                }
+                Remove-Item -LiteralPath $partialFile -Force -ErrorAction SilentlyContinue
+                throw 'Downloaded payload failed its size or SHA-256 verification.'
+            }
+            Move-Item -LiteralPath $partialFile -Destination $OutFile -Force
             return
         }
         catch {
             $lastError = $_
-            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
             if ($attempt -lt 3) {
                 Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
             }
         }
         finally {
-            $client.Dispose()
+            if ($null -ne $fileStream) { $fileStream.Dispose() }
+            if ($null -ne $responseStream) { $responseStream.Dispose() }
+            if ($null -ne $response) { $response.Dispose() }
         }
     }
-    throw "Update payload download failed after 3 bounded attempts: $Uri. $($lastError.Exception.Message)"
+    throw "Resumable update payload download failed after 3 bounded attempts: $Uri. Partial bytes were preserved for the next updater run. $($lastError.Exception.Message)"
 }
 
 function Get-DefaultInstallDir {
@@ -1133,8 +1195,11 @@ if (-not [string]::IsNullOrWhiteSpace($filesManifestUrlValue)) {
     $filesManifestUrl = Resolve-UpdateUrl -BaseUrl $ManifestUrl -Value $filesManifestUrlValue
 }
 $zipUrl = Resolve-UpdateUrl -BaseUrl $ManifestUrl -Value ([string] $manifest.zipUrl)
+$safeTargetVersion = ([string]$manifest.version) -replace '[^A-Za-z0-9._-]', '-'
+$persistentCacheRoot = Join-Path -Path $InstallDir -ChildPath ".update-cache\$safeTargetVersion"
 
 $requiredFreeBytes = 512MB
+$declaredSizeBytes = [int64]-1
 try {
     $declaredSizeBytes = [int64] $manifest.sizeBytes
     if ($declaredSizeBytes -gt 0) {
@@ -1193,7 +1258,10 @@ try {
                 }
 
                 Write-UpdateLog -Message "Downloading changed file: $relativePath" -LogPath $mainLogPath
-                Invoke-UpdateWebRequest -Uri $fileUrl -OutFile $stagedPath
+                $cacheKey = if (-not [string]::IsNullOrWhiteSpace($expectedHash)) { $expectedHash.ToLowerInvariant() } else { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($relativePath)).Replace('/', '_') }
+                $cachedPath = Join-Path -Path $persistentCacheRoot -ChildPath $cacheKey
+                Invoke-ResumableUpdateWebRequest -Uri $fileUrl -OutFile $cachedPath -ExpectedSizeBytes $expectedSizeBytes -ExpectedSha256 $expectedHash
+                Copy-Item -LiteralPath $cachedPath -Destination $stagedPath -Force
                 if (-not (Test-InstalledFileMatchesManifest -Path $stagedPath -ExpectedSizeBytes $expectedSizeBytes -ExpectedSha256 $expectedHash)) {
                     throw "Downloaded file verification failed: $relativePath"
                 }
@@ -1238,9 +1306,11 @@ try {
     }
 
     Write-UpdateLog -Message "Downloading client package: $zipUrl" -LogPath $mainLogPath
-    Invoke-UpdateWebRequest -Uri $zipUrl -OutFile $zipPath
-
     $expectedHash = [string] $manifest.sha256
+    $cachedZipPath = Join-Path -Path $persistentCacheRoot -ChildPath 'complete-package.zip'
+    Invoke-ResumableUpdateWebRequest -Uri $zipUrl -OutFile $cachedZipPath -ExpectedSizeBytes $declaredSizeBytes -ExpectedSha256 $expectedHash
+    Copy-Item -LiteralPath $cachedZipPath -Destination $zipPath -Force
+
     if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
         $actualHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash.ToLowerInvariant()) {

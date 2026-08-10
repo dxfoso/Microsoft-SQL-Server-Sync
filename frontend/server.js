@@ -159,7 +159,7 @@ function clientDownloadLocation(manifest) {
   return "/client/sync_windows_agent_latest.zip";
 }
 
-async function tryServeClientUpdate(pathname, res) {
+async function tryServeClientUpdate(pathname, req, res) {
   if (pathname !== "/client" && !pathname.startsWith("/client/")) {
     return false;
   }
@@ -215,10 +215,32 @@ async function tryServeClientUpdate(pathname, res) {
       const contentType =
         MIME_TYPES[path.extname(candidatePath).toLowerCase()] ||
         "application/octet-stream";
+      const rangeMatch = /^bytes=(\d+)-(\d*)$/.exec(String(req.headers.range || ""));
+      let statusCode = 200;
+      let responseBuffer = buffer;
+      let contentRange;
+      if (rangeMatch) {
+        const start = Number(rangeMatch[1]);
+        const requestedEnd = rangeMatch[2] ? Number(rangeMatch[2]) : buffer.length - 1;
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start >= buffer.length || requestedEnd < start) {
+          res.writeHead(416, {
+            "Content-Range": `bytes */${buffer.length}`,
+            "Accept-Ranges": "bytes",
+          });
+          res.end();
+          return true;
+        }
+        const end = Math.min(requestedEnd, buffer.length - 1);
+        statusCode = 206;
+        responseBuffer = buffer.subarray(start, end + 1);
+        contentRange = `bytes ${start}-${end}/${buffer.length}`;
+      }
       const headers = {
         "Content-Type": contentType,
-        "Content-Length": buffer.length,
+        "Content-Length": responseBuffer.length,
+        "Accept-Ranges": "bytes",
       };
+      if (contentRange) headers["Content-Range"] = contentRange;
       if (
         requestedPath === "update.ps1" ||
         requestedPath === "latest-files.json" ||
@@ -228,8 +250,8 @@ async function tryServeClientUpdate(pathname, res) {
         headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
         headers.Pragma = "no-cache";
       }
-      res.writeHead(200, headers);
-      res.end(buffer);
+      res.writeHead(statusCode, headers);
+      res.end(responseBuffer);
       return true;
     } catch {
       // Try the image-bundled fallback when the persistent volume has no file.
@@ -414,7 +436,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  const servedUpdate = await tryServeClientUpdate(pathname, res);
+  const servedUpdate = await tryServeClientUpdate(pathname, req, res);
   if (servedUpdate) {
     return;
   }

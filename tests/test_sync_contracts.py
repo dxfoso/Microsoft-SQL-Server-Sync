@@ -1494,6 +1494,26 @@ class SyncContractsTests(unittest.TestCase):
         self.assertGreaterEqual(update_script.count("Independent supervisor exited during every bounded startup attempt."), 2)
         self.assertGreaterEqual(update_script.count("$supervisorProcess.Refresh()"), 2)
 
+    def test_windows_update_resumes_verified_differential_payloads(self):
+        update_script = read_text("update.ps1")
+        server = read_text("frontend/server.js")
+
+        self.assertIn("function Invoke-ResumableUpdateWebRequest {", update_script)
+        self.assertIn('$partialFile = "$OutFile.part"', update_script)
+        self.assertIn("$request.AddRange($existingBytes)", update_script)
+        self.assertIn("[System.IO.FileMode]::Append", update_script)
+        self.assertIn("Partial bytes were preserved for the next updater run", update_script)
+        self.assertIn('ChildPath ".update-cache\\$safeTargetVersion"', update_script)
+        self.assertIn("Test-InstalledFileMatchesManifest -Path $partialFile", update_script)
+        self.assertIn("Copy-Item -LiteralPath $cachedPath -Destination $stagedPath -Force", update_script)
+
+        self.assertIn("async function tryServeClientUpdate(pathname, req, res)", server)
+        self.assertIn('req.headers.range || ""', server)
+        self.assertIn('"Accept-Ranges": "bytes"', server)
+        self.assertIn('"Content-Range": `bytes */${buffer.length}`', server)
+        self.assertIn("statusCode = 206", server)
+        self.assertIn("buffer.subarray(start, end + 1)", server)
+
     def test_windows_client_updates_only_move_forward(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
