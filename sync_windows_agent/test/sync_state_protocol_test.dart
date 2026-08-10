@@ -26,6 +26,20 @@ void main() {
     expect(restored.syncEpoch, isEmpty);
   });
 
+  test('detected local changes survive state and heartbeat serialization', () {
+    final state = SyncTableState.fromJson(const <String, dynamic>{
+      'enabled': true,
+      'localChangesPending': true,
+    });
+
+    expect(state.localChangesPending, isTrue);
+    expect(state.toJson()['localChangesPending'], isTrue);
+    expect(
+      state.copyWith(localChangesPending: false).localChangesPending,
+      isFalse,
+    );
+  });
+
   test('state writes are serialized and recover from the valid backup', () async {
     final directory = await Directory.systemTemp.createTemp(
       'sql-sync-state-regression-',

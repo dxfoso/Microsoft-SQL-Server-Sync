@@ -721,6 +721,40 @@ class ControlPlaneContractsTests(unittest.TestCase):
             body,
         )
 
+    def test_periodic_scheduler_prioritizes_tables_with_detected_local_changes(self):
+        source = read_text("business/control_plane.tru")
+        helper = source.split(
+            "function sync_table_state_has_pending_local_changes(", 1
+        )[1].split("function due_periodic_sync_tables_for_agent(", 1)[0]
+        selector = source.split(
+            "function due_periodic_sync_tables_for_agent_with_policies(", 1
+        )[1].split("function queue_due_periodic_sync_jobs_for_owner(", 1)[0]
+
+        self.assertIn("tableState.localChangesPending == true", helper)
+        self.assertIn(
+            "A local SQL change was detected automatically.", helper
+        )
+        self.assertIn(
+            "localChangesPending: sync_table_state_has_pending_local_changes(tableState)",
+            selector,
+        )
+        self.assertIn(
+            "candidateHasPendingLocalChanges && !selectedHasPendingLocalChanges",
+            selector,
+        )
+        self.assertIn(
+            "candidate.ageMinutes > selectedAgeMinutes", selector
+        )
+        normalizer = source.split(
+            "function normalize_agent_table_payload_state(", 1
+        )[1].split("function normalize_agent_tables_payload(", 1)[0]
+        self.assertEqual(
+            normalizer.count(
+                "localChangesPending: tableState.localChangesPending == true"
+            ),
+            2,
+        )
+
     def test_cancel_active_sync_also_clears_durable_manual_queue(self):
         source = read_text("business/control_plane.tru")
         cancel = source.split("function jobs_cancel_active(", 1)[1].split(
@@ -757,7 +791,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("sync_table_state_due_age_minutes(", due_body)
         self.assertIn("let dueCandidates = [];", due_body)
         self.assertIn("let selectedAgeMinutes = -1;", due_body)
-        self.assertIn("if (candidate.ageMinutes > selectedAgeMinutes) {", due_body)
+        self.assertIn("candidate.ageMinutes > selectedAgeMinutes", due_body)
         self.assertIn("string_array_contains(dueTables, candidateTable)", due_body)
         self.assertIn("if (dueTableLimit > 0 && dueTables.length >= dueTableLimit) {", due_body)
         self.assertNotIn(

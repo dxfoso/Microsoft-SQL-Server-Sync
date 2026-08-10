@@ -85,6 +85,7 @@ class SyncTableState {
     required this.changeTrackingOwner,
     required this.changeTrackingStatus,
     required this.changeTrackingMessage,
+    this.localChangesPending = false,
     required this.message,
     required this.history,
   });
@@ -101,6 +102,7 @@ class SyncTableState {
   final String? changeTrackingOwner;
   final String changeTrackingStatus;
   final String changeTrackingMessage;
+  final bool localChangesPending;
   final String message;
   final List<SyncHistoryEntry> history;
 
@@ -125,6 +127,7 @@ class SyncTableState {
       changeTrackingStatus:
           json['changeTrackingStatus'] as String? ?? 'unknown',
       changeTrackingMessage: json['changeTrackingMessage'] as String? ?? '',
+      localChangesPending: json['localChangesPending'] as bool? ?? false,
       message: json['message'] as String? ?? '',
       history: history,
     );
@@ -143,6 +146,7 @@ class SyncTableState {
     'changeTrackingOwner': changeTrackingOwner,
     'changeTrackingStatus': changeTrackingStatus,
     'changeTrackingMessage': changeTrackingMessage,
+    'localChangesPending': localChangesPending,
     'message': message,
     'history': history.map((entry) => entry.toJson()).toList(growable: false),
   };
@@ -160,6 +164,7 @@ class SyncTableState {
     Object? changeTrackingOwner = _syncTableStateUnset,
     String? changeTrackingStatus,
     String? changeTrackingMessage,
+    bool? localChangesPending,
     String? message,
     List<SyncHistoryEntry>? history,
   }) {
@@ -186,6 +191,7 @@ class SyncTableState {
       changeTrackingStatus: changeTrackingStatus ?? this.changeTrackingStatus,
       changeTrackingMessage:
           changeTrackingMessage ?? this.changeTrackingMessage,
+      localChangesPending: localChangesPending ?? this.localChangesPending,
       message: message ?? this.message,
       history: history ?? this.history,
     );

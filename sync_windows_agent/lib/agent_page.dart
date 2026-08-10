@@ -1971,6 +1971,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                     : probe.status == 'baseline'
                     ? 'Automatic Change Tracking baseline established.'
                     : 'Automatic change scan is current.',
+            localChangesPending: false,
             status: baselinePending ? 'Queued' : current.status,
             message:
                 baselinePending
@@ -1992,6 +1993,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             changeTrackingStatus: 'enabled',
             changeTrackingMessage:
                 'A local SQL change was detected automatically.',
+            localChangesPending: true,
             message:
                 'Changed automatically; waiting for every online client baseline.',
           );
@@ -2005,6 +2007,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             changeTrackingStatus: 'expired',
             changeTrackingMessage:
                 'Change Tracking retention expired. Automatic delta sync is blocked to prevent data loss.',
+            localChangesPending: false,
             status: 'Blocked',
             message:
                 'Change Tracking baseline expired; authoritative reconciliation is required.',
