@@ -310,11 +310,32 @@ class ControlPlaneContractsTests(unittest.TestCase):
             ack_body,
         )
         self.assertNotIn("string.from(requestId)", ack_body)
-        self.assertIn("clientUpdateLastRequestId: resolvedRequestIdOrNull,", ack_body)
-        self.assertIn("clientUpdateLastAcknowledgedAt: now_iso(),", ack_body)
-        self.assertIn("clientUpdateStatus: truncate_text(status.trim(), 32),", ack_body)
+        self.assertIn("clientUpdateLastRequestId: nextLastRequestId,", ack_body)
+        self.assertIn("clientUpdateLastAcknowledgedAt: nextAcknowledgedAt,", ack_body)
+        self.assertIn("clientUpdateStatus: nextStatus,", ack_body)
         self.assertIn("clientUpdateMessage: truncate_text(message, 4000),", ack_body)
         self.assertIn("clientVersion: nextClientVersion,", ack_body)
+
+    def test_retryable_client_update_transport_failure_remains_pending(self):
+        source = read_text("business/control_plane.tru")
+        retry = source.split(
+            "function client_update_ack_should_retry(", 1
+        )[1].split("function agent_client_update_payload(", 1)[0]
+        ack = source.split("function agent_client_update_ack(", 1)[1].split(
+            "function agent_window_action_request_all(", 1
+        )[0]
+
+        self.assertIn("normalizedStatus == 'retrying'", retry)
+        self.assertIn(
+            "control plane request timed out during checking client update manifest",
+            retry,
+        )
+        self.assertIn("client_update_ack_should_retry(status, message)", ack)
+        self.assertIn("nextStatus = 'retrying'", ack)
+        self.assertIn("nextLastRequestId = resolvedRequestIdOrNull", ack)
+        self.assertNotIn(
+            "clientUpdateLastRequestId: resolvedRequestIdOrNull", ack
+        )
 
     def test_client_update_request_all_persists_requests_for_offline_agents(self):
         source = read_text("business/control_plane.tru")
