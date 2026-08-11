@@ -823,6 +823,30 @@ class ControlPlaneContractsTests(unittest.TestCase):
             selector.index("sync_table_state_due_age_minutes("),
         )
 
+    def test_periodic_scheduler_repairs_complete_fingerprint_divergence(self):
+        source = read_text("business/control_plane.tru")
+        detector = source.split(
+            "function divergent_fingerprint_tables_for_owner(", 1
+        )[1].split("function due_periodic_sync_tables_for_agent_with_policies(", 1)[0]
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        planner = source.split("function sync_table_baseline_plan(", 1)[1].split(
+            "function enabled_sync_policy_tables_for_agent(", 1
+        )[0]
+
+        self.assertIn("participantCount >= 2", detector)
+        self.assertIn("reportedCount == participantCount", detector)
+        self.assertIn("fingerprints.length > 1", detector)
+        self.assertIn("sync_table_reported_fingerprint(state)", detector)
+        self.assertIn("divergent_fingerprint_tables_for_owner(", scheduler)
+        self.assertIn("periodic_sync_table_due_after_attempt(", scheduler)
+        self.assertIn("record_periodic_sync_table_attempt(ownerUserId, table)", scheduler)
+        self.assertIn("mode: 'union_bootstrap'", planner)
+        self.assertIn(
+            "Clients report different complete table fingerprints", planner
+        )
+
     def test_client_status_prioritizes_sync_and_names_update_retries(self):
         control_plane = read_text("business/control_plane.tru")
         server_status = control_plane.split(

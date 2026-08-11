@@ -3758,6 +3758,49 @@ function due_periodic_sync_tables_for_agent(agent: map<json>): array<string> {
   return due_periodic_sync_tables_for_agent_with_policies(agent);
 }
 
+function divergent_fingerprint_tables_for_owner(ownerAgents: array<json>, tableCaches: array<json>, maxCount: int): array<string> {
+  let candidateTables = [];
+  for (const cache of tableCaches) {
+    candidateTables = candidateTables.concat(cache.enabledTables ?? []);
+  }
+  let divergentTables = [];
+  for (const table of unique_string_values(candidateTables)) {
+    if (maxCount > 0 && divergentTables.length >= maxCount) {
+      break;
+    }
+    let participantCount = 0;
+    let reportedCount = 0;
+    let fingerprints = [];
+    for (const agent of ownerAgents) {
+      const cache = scheduler_agent_table_state_cache_for_agent(
+        string.from(agent.clientName),
+        tableCaches
+      );
+      if (cache == null ||
+          cache.enabledTables == null ||
+          !string_array_contains(cache.enabledTables, table)) {
+        continue;
+      }
+      participantCount += 1;
+      const state = scheduler_agent_table_state(cache.tables ?? [], table);
+      const fingerprint = sync_table_reported_fingerprint(state);
+      if (fingerprint.length == 0) {
+        continue;
+      }
+      reportedCount += 1;
+      if (!string_array_contains(fingerprints, fingerprint)) {
+        fingerprints = fingerprints.concat([fingerprint]);
+      }
+    }
+    if (participantCount >= 2 &&
+        reportedCount == participantCount &&
+        fingerprints.length > 1) {
+      divergentTables = divergentTables.concat([table]);
+    }
+  }
+  return divergentTables;
+}
+
 function due_periodic_sync_tables_for_agent_with_policies(agent: map<json>, policies: array<json>? = null, tableCache: map<json>? = null, maxCount: int? = null): array<string> {
   let enabledTables = [];
   if (tableCache != null && tableCache.enabledTables != null) {
@@ -3964,6 +4007,25 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         )) {
           dueTables = unique_string_values(dueTables.concat([table]));
         }
+      }
+    }
+    for (const table of divergent_fingerprint_tables_for_owner(
+      ownerAgents,
+      tableCaches,
+      periodic_sync_scheduler_table_limit()
+    )) {
+      let retryDue = false;
+      for (const agent of ownerAgents) {
+        if (periodic_sync_table_due_after_attempt(
+          scheduledTableAttempts,
+          table,
+          agent.autoSyncIntervalMinutes
+        )) {
+          retryDue = true;
+        }
+      }
+      if (retryDue) {
+        dueTables = unique_string_values(dueTables.concat([table]));
       }
     }
     dueTables = order_owner_due_table_candidates(
