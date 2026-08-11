@@ -113,6 +113,44 @@ String buildTargetSnapshotStageLoadSql({
   return statements.join('\nGO\n');
 }
 
+String buildTargetPrimaryKeyLookupSql({
+  required String stageTableName,
+  required List<SqlSyncColumnDefinition> keyColumns,
+  required List<Map<String, dynamic>> keyRows,
+  required String targetReference,
+  required String targetProjectionExpression,
+}) {
+  if (keyColumns.isEmpty) {
+    throw ArgumentError.value(keyColumns, 'keyColumns', 'must not be empty');
+  }
+  final stageTarget = stageTableReference(stageTableName);
+  final keyColumnList = keyColumns
+      .map((column) => quoteIdentifier(column.name))
+      .join(', ');
+  final joinClause = _matchClauseForAliases(
+    keyColumns,
+    leftAlias: 'requested',
+    rightAlias: 'target_row',
+  );
+  final loadSql = buildTargetSnapshotStageLoadSql(
+    stageTableName: stageTableName,
+    columns: keyColumns,
+    rows: keyRows,
+  );
+  return '''
+$loadSql
+GO
+SET NOCOUNT ON;
+;WITH requested AS (
+  SELECT DISTINCT $keyColumnList
+  FROM $stageTarget
+)
+SELECT ($targetProjectionExpression + NCHAR(29)) AS [__sync_agent_row_payload]
+FROM $targetReference AS target_row
+INNER JOIN requested ON $joinClause;
+''';
+}
+
 String buildTargetSnapshotStageApplySql({
   required String database,
   required String schema,

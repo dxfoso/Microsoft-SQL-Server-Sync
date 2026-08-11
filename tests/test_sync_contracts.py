@@ -1563,6 +1563,23 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_processingJobIds.isNotEmpty", agent_apply)
         self.assertIn("job.status == 'running' || job.status == 'applying'", agent_apply)
 
+    def test_large_content_comparison_uses_one_set_based_sqlcmd_launch(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        lookup = agent.split(
+            "Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1
+        )[1].split("String _sourceBatchEncodedColumnExpression(", 1)[0]
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        builder = merge.split(
+            "String buildTargetPrimaryKeyLookupSql(", 1
+        )[1].split("String buildTargetSnapshotStageApplySql(", 1)[0]
+
+        self.assertEqual(lookup.count("await _runSqlCmd("), 1)
+        self.assertNotIn("const keyBatchSize = 100", lookup)
+        self.assertIn("buildTargetPrimaryKeyLookupSql(", lookup)
+        self.assertIn("SELECT DISTINCT", builder)
+        self.assertIn("INNER JOIN requested ON", builder)
+        self.assertIn("buildTargetSnapshotStageLoadSql(", builder)
+
     def test_windows_client_updates_only_move_forward(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

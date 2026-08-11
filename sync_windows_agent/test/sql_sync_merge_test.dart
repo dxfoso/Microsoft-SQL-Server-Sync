@@ -63,6 +63,39 @@ void main() {
     expect(RegExp(r'INSERT INTO').allMatches(sql), hasLength(3));
   });
 
+  test('primary-key comparison uses one staged set-based SQL script', () {
+    const keyColumns = [
+      SqlSyncColumnDefinition(
+        name: 'Id',
+        sqlType: 'int',
+        maxLength: 4,
+        precision: 10,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    final sql = buildTargetPrimaryKeyLookupSql(
+      stageTableName: 'sqlsync_items_keys',
+      keyColumns: keyColumns,
+      keyRows: List<Map<String, dynamic>>.generate(
+        2501,
+        (index) => {'Id': index + 1},
+      ),
+      targetReference: '[AmnDb048].[dbo].[mt000]',
+      targetProjectionExpression: 'CONVERT(nvarchar(max), target_row.[Id])',
+    );
+
+    expect(RegExp(r'CREATE TABLE').allMatches(sql), hasLength(1));
+    expect(RegExp(r'INSERT INTO').allMatches(sql), hasLength(3));
+    expect(sql, contains('SELECT DISTINCT [Id]'));
+    expect(
+      sql,
+      contains('INNER JOIN requested ON requested.[Id] = target_row.[Id]'),
+    );
+    expect(sql, isNot(contains(' WHERE ([Id] =')));
+  });
+
   test('complete snapshot verification defers only protected hot rows', () {
     expect(
       unexpectedCompleteSnapshotMismatchCount(

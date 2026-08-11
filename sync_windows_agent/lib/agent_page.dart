@@ -7148,35 +7148,24 @@ COMMIT TRANSACTION;
         .join(' + NCHAR($fieldSeparator) + ');
     final target =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';
-    final resultRows = <Map<String, dynamic>>[];
-    const keyBatchSize = 100;
-    for (var offset = 0; offset < keyRows.length; offset += keyBatchSize) {
-      final batch = keyRows
-          .skip(offset)
-          .take(keyBatchSize)
-          .toList(growable: false);
-      final predicates = batch
-          .map((row) {
-            return keyDefinitions
-                .map((column) {
-                  final value = row[column.name];
-                  if (value == null) {
-                    throw StateError(
-                      'Whole-row hash comparison rejected a null primary identity for $schema.$table.',
-                    );
-                  }
-                  return '${_quoteIdentifier(column.name)} = ${sourceBatchTargetLiteral(column, value)}';
-                })
-                .join(' AND ');
-          })
-          .map((predicate) => '($predicate)')
-          .join('\n  OR ');
-      final query = '''
-SET NOCOUNT ON;
-SELECT ($payloadExpression + NCHAR($rowSentinel)) AS [__sync_agent_row_payload]
-FROM $target
-WHERE $predicates;
-''';
+    for (final row in keyRows) {
+      for (final column in keyDefinitions) {
+        if (row[column.name] == null) {
+          throw StateError(
+            'Whole-row hash comparison rejected a null primary identity for $schema.$table.',
+          );
+        }
+      }
+    }
+    final stageTableName = _nextTargetSnapshotStageTableName('${table}_keys');
+    try {
+      final query = buildTargetPrimaryKeyLookupSql(
+        stageTableName: stageTableName,
+        keyColumns: keyDefinitions,
+        keyRows: keyRows,
+        targetReference: target,
+        targetProjectionExpression: payloadExpression,
+      );
       final processResult = await _runSqlCmd(
         profile: profile,
         database: database,
@@ -7191,16 +7180,19 @@ WHERE $predicates;
           _sqlCmdFailed('target whole-row hash comparison', processResult),
         );
       }
-      resultRows.addAll(
-        _parseSourceBatchRows(
-          processResult.stdout.toString(),
-          columns: columns,
-          fieldSeparator: String.fromCharCode(fieldSeparator),
-          rowSentinel: String.fromCharCode(rowSentinel),
-        ),
+      return _parseSourceBatchRows(
+        processResult.stdout.toString(),
+        columns: columns,
+        fieldSeparator: String.fromCharCode(fieldSeparator),
+        rowSentinel: String.fromCharCode(rowSentinel),
+      );
+    } finally {
+      await _dropTargetSnapshotStage(
+        profile: profile,
+        database: database,
+        stageTableName: stageTableName,
       );
     }
-    return resultRows;
   }
 
   String _sourceBatchEncodedColumnExpression(

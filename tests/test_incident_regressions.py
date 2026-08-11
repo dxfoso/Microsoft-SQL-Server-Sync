@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 88)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 89)}
         observed_ids = set()
 
         for row in rows:
@@ -276,6 +276,16 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("_authToken?.trim().isNotEmpty", shell)
         self.assertIn("_processingJobIds.isNotEmpty", agent)
         self.assertIn("_activeJobs.any(", agent)
+
+    def test_large_row_comparison_is_set_based_not_process_per_page(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        lookup = agent.split(
+            "Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1
+        )[1].split("String _sourceBatchEncodedColumnExpression(", 1)[0]
+
+        self.assertIn("buildTargetPrimaryKeyLookupSql(", lookup)
+        self.assertEqual(lookup.count("await _runSqlCmd("), 1)
+        self.assertNotIn("keyBatchSize", lookup)
 
 
 if __name__ == "__main__":
