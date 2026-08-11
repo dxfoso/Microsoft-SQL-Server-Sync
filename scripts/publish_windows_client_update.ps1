@@ -164,17 +164,47 @@ function New-PortableFilesManifest {
         [Parameter(Mandatory = $true)][string] $Commit
     )
 
-    $files = Get-ChildItem -LiteralPath $PortableDir -Recurse -File -Force |
-        Where-Object { $_.Name -ne 'files.json' } |
-        Sort-Object FullName |
-        ForEach-Object {
+    $sourceFiles = @(Get-ChildItem -LiteralPath $PortableDir -Recurse -File -Force |
+        Where-Object { $_.Name -ne 'files.json' -and -not $_.Name.EndsWith('.sqlsync.gz', [System.StringComparison]::OrdinalIgnoreCase) } |
+        Sort-Object FullName)
+    $files = $sourceFiles | ForEach-Object {
             $relativePath = Get-RelativeFilePath -RootPath $PortableDir -FilePath $_.FullName
-            [ordered]@{
+            $entry = [ordered]@{
                 path = $relativePath
                 url = "$PublicRoot/packages/$PackageDirName/$relativePath"
                 sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
                 sizeBytes = $_.Length
             }
+
+            # Compiled Flutter payloads and fonts compress very well. Keep the raw
+            # URL for older updaters, while newer clients transfer a resumable,
+            # independently verified gzip sidecar and validate the expanded file.
+            if ($_.Length -ge 65536) {
+                $compressedPath = "$($_.FullName).sqlsync.gz"
+                $inputStream = [System.IO.File]::Open($_.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+                $outputStream = [System.IO.File]::Open($compressedPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                $gzipStream = [System.IO.Compression.GZipStream]::new($outputStream, [System.IO.Compression.CompressionLevel]::Optimal)
+                try {
+                    $inputStream.CopyTo($gzipStream)
+                }
+                finally {
+                    $gzipStream.Dispose()
+                    $outputStream.Dispose()
+                    $inputStream.Dispose()
+                }
+
+                $compressedSize = [int64](Get-Item -LiteralPath $compressedPath).Length
+                if ($compressedSize -le [int64]([Math]::Floor($_.Length * 0.9))) {
+                    $entry.compression = 'gzip'
+                    $entry.transferUrl = "$PublicRoot/packages/$PackageDirName/$relativePath.sqlsync.gz"
+                    $entry.transferSha256 = (Get-FileHash -LiteralPath $compressedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                    $entry.transferSizeBytes = $compressedSize
+                }
+                else {
+                    Remove-Item -LiteralPath $compressedPath -Force
+                }
+            }
+            $entry
         }
 
     return [ordered]@{

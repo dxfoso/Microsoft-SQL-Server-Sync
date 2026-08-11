@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 89)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 90)}
         observed_ids = set()
 
         for row in rows:
@@ -286,6 +286,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("buildTargetPrimaryKeyLookupSql(", lookup)
         self.assertEqual(lookup.count("await _runSqlCmd("), 1)
         self.assertNotIn("keyBatchSize", lookup)
+
+    def test_client_differential_updates_compress_large_changed_files(self):
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+        updater = read_text("update.ps1")
+
+        self.assertIn("[System.IO.Compression.CompressionLevel]::Optimal", publisher)
+        self.assertIn("$entry.transferSizeBytes = $compressedSize", publisher)
+        self.assertIn("$request.AddRange($existingBytes)", updater)
+        self.assertIn("Expand-VerifiedGzipUpdateFile", updater)
+        self.assertIn(
+            "Test-InstalledFileMatchesManifest -Path $stagedPath",
+            updater,
+        )
 
 
 if __name__ == "__main__":

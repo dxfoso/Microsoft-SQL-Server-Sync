@@ -1518,6 +1518,25 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("statusCode = 206", server)
         self.assertIn("buffer.subarray(start, end + 1)", server)
 
+    def test_windows_update_uses_resumable_verified_compressed_differentials(self):
+        update_script = read_text("update.ps1")
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+
+        self.assertIn("compression = 'gzip'", publisher)
+        self.assertIn("transferSha256", publisher)
+        self.assertIn("transferSizeBytes", publisher)
+        self.assertIn(".sqlsync.gz", publisher)
+        self.assertIn("function Expand-VerifiedGzipUpdateFile {", update_script)
+        self.assertIn("Invoke-ResumableUpdateWebRequest -Uri $fileUrl", update_script)
+        self.assertLess(
+            update_script.index("Invoke-ResumableUpdateWebRequest -Uri $fileUrl"),
+            update_script.index("Expand-VerifiedGzipUpdateFile -SourcePath $cachedPath"),
+        )
+        self.assertLess(
+            update_script.index("Expand-VerifiedGzipUpdateFile -SourcePath $cachedPath"),
+            update_script.index("Test-InstalledFileMatchesManifest -Path $stagedPath"),
+        )
+
     def test_server_requested_update_reports_durable_download_phase(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         handler = agent_page.split(

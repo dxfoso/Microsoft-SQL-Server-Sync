@@ -209,6 +209,26 @@ function Invoke-ResumableUpdateWebRequest {
     throw "Resumable update payload download failed after 3 bounded attempts: $Uri. Partial bytes were preserved for the next updater run. $($lastError.Exception.Message)"
 }
 
+function Expand-VerifiedGzipUpdateFile {
+    param(
+        [Parameter(Mandatory = $true)][string] $SourcePath,
+        [Parameter(Mandatory = $true)][string] $DestinationPath
+    )
+
+    $inputStream = [System.IO.File]::Open($SourcePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    $gzipStream = [System.IO.Compression.GZipStream]::new($inputStream, [System.IO.Compression.CompressionMode]::Decompress)
+    $outputStream = [System.IO.File]::Open($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $gzipStream.CopyTo($outputStream)
+        $outputStream.Flush()
+    }
+    finally {
+        $outputStream.Dispose()
+        $gzipStream.Dispose()
+        $inputStream.Dispose()
+    }
+}
+
 function Get-DefaultInstallDir {
     $portableExe = Join-Path -Path $PSScriptRoot -ChildPath 'sync_windows_agent.exe'
     if (Test-Path -LiteralPath $portableExe -PathType Leaf) {
@@ -1250,7 +1270,23 @@ try {
                     continue
                 }
 
-                $fileUrl = Resolve-UpdateUrl -BaseUrl $filesManifestUrl -Value ([string] $fileEntry.url)
+                $compression = ''
+                $transferUrlValue = [string] $fileEntry.url
+                $transferHash = $expectedHash
+                $transferSizeBytes = $expectedSizeBytes
+                if ($null -ne $fileEntry.PSObject.Properties['compression']) {
+                    $compression = ([string] $fileEntry.compression).Trim().ToLowerInvariant()
+                }
+                if ($compression -eq 'gzip') {
+                    $transferUrlValue = [string] $fileEntry.transferUrl
+                    $transferHash = [string] $fileEntry.transferSha256
+                    $transferSizeBytes = [int64] $fileEntry.transferSizeBytes
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($compression)) {
+                    throw "Unsupported update payload compression: $compression"
+                }
+
+                $fileUrl = Resolve-UpdateUrl -BaseUrl $filesManifestUrl -Value $transferUrlValue
                 $stagedPath = Resolve-InstallPath -RootDir $payloadDir -RelativePath $relativePath
                 $stagedParent = Split-Path -Path $stagedPath -Parent
                 if (-not [string]::IsNullOrWhiteSpace($stagedParent)) {
@@ -1258,10 +1294,15 @@ try {
                 }
 
                 Write-UpdateLog -Message "Downloading changed file: $relativePath" -LogPath $mainLogPath
-                $cacheKey = if (-not [string]::IsNullOrWhiteSpace($expectedHash)) { $expectedHash.ToLowerInvariant() } else { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($relativePath)).Replace('/', '_') }
+                $cacheKey = if (-not [string]::IsNullOrWhiteSpace($transferHash)) { $transferHash.ToLowerInvariant() } else { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($relativePath)).Replace('/', '_') }
                 $cachedPath = Join-Path -Path $persistentCacheRoot -ChildPath $cacheKey
-                Invoke-ResumableUpdateWebRequest -Uri $fileUrl -OutFile $cachedPath -ExpectedSizeBytes $expectedSizeBytes -ExpectedSha256 $expectedHash
-                Copy-Item -LiteralPath $cachedPath -Destination $stagedPath -Force
+                Invoke-ResumableUpdateWebRequest -Uri $fileUrl -OutFile $cachedPath -ExpectedSizeBytes $transferSizeBytes -ExpectedSha256 $transferHash
+                if ($compression -eq 'gzip') {
+                    Expand-VerifiedGzipUpdateFile -SourcePath $cachedPath -DestinationPath $stagedPath
+                }
+                else {
+                    Copy-Item -LiteralPath $cachedPath -Destination $stagedPath -Force
+                }
                 if (-not (Test-InstalledFileMatchesManifest -Path $stagedPath -ExpectedSizeBytes $expectedSizeBytes -ExpectedSha256 $expectedHash)) {
                     throw "Downloaded file verification failed: $relativePath"
                 }
