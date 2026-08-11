@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sync_windows_agent/live_sync_api.dart';
+import 'package:sync_windows_agent/sync_transfer_cache.dart';
 
 class _DelayedClient extends http.BaseClient {
   _DelayedClient({required this.delay, required this.responseForName});
@@ -95,6 +97,127 @@ String _buildLargeSnapshotJson({
 }
 
 void main() {
+  test('multi-writer download resumes verified pages after restart', () async {
+    final cacheDirectory = await Directory.systemTemp.createTemp(
+      'sql-sync-download-resume-',
+    );
+    addTearDown(() async {
+      if (await cacheDirectory.exists()) {
+        await cacheDirectory.delete(recursive: true);
+      }
+    });
+    final payloads = [
+      utf8.encode(
+        jsonEncode([
+          {'Id': '1'},
+        ]),
+      ),
+      utf8.encode(
+        jsonEncode([
+          {'Id': '2'},
+        ]),
+      ),
+    ];
+    Map<String, dynamic> response(int index, {required bool done}) {
+      final encoded = base64Encode(payloads[index]);
+      return {
+        'done': done,
+        'nextCursor': done ? null : 'page-2',
+        'totalRowCount': 2,
+        'payloadBase64': encoded,
+        'payloadEncoding': 'json',
+        'transferManifest': {'id': 'immutable-manifest'},
+        'transferChunk': {
+          'sha256': sha256.convert(utf8.encode(encoded)).toString(),
+          'compressedBytes': encoded.length,
+        },
+        'snapshot': {
+          'id': 'snapshot-$index',
+          'clientName': 'server-merge',
+          'table': 'db::items',
+          'createdAt': '2026-08-11T00:00:00Z',
+          'rowCount': 1,
+          'checksum': '',
+          'snapshotBytes': payloads[index].length,
+          'columns': ['Id'],
+          'rows': const [],
+          'sourceJobId': 'download-job',
+          'clientChangeTrackingVersions': const [],
+          'isDelta': true,
+        },
+      };
+    }
+
+    final firstClient = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        if (callIndex == 0) {
+          return (
+            statusCode: 200,
+            body: {'status': 'success', 'value': response(0, done: false)},
+          );
+        }
+        return (
+          statusCode: 503,
+          body: {'status': 'failed', 'message': 'connection interrupted'},
+        );
+      },
+    );
+    final firstApi = AgentControlPlaneClient(
+      client: firstClient,
+      baseUrl: 'https://example.com/call',
+      snapshotTransferMaxAttempts: 1,
+      transferCache: SyncTransferCache(directory: cacheDirectory),
+    );
+    await expectLater(
+      firstApi.downloadMultiWriterDelta(
+        'download-job',
+        batchId: 'batch-1',
+        protocolVersion: kSyncProtocolVersion,
+        syncEpoch: 'epoch-1',
+      ),
+      throwsA(isA<AgentControlPlaneException>()),
+    );
+
+    final resumedClient = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        expect(callIndex, 0);
+        expect(args['cursor'], 'page-2');
+        return (
+          statusCode: 200,
+          body: {'status': 'success', 'value': response(1, done: true)},
+        );
+      },
+    );
+    final resumedApi = AgentControlPlaneClient(
+      client: resumedClient,
+      baseUrl: 'https://example.com/call',
+      snapshotTransferMaxAttempts: 1,
+      transferCache: SyncTransferCache(directory: cacheDirectory),
+    );
+    final progress = <bool>[];
+    final snapshot = await resumedApi.downloadMultiWriterDelta(
+      'download-job',
+      batchId: 'batch-1',
+      protocolVersion: kSyncProtocolVersion,
+      syncEpoch: 'epoch-1',
+      onProgress:
+          ({
+            required pages,
+            required rows,
+            required totalRows,
+            required compressedBytes,
+            required resumed,
+          }) async => progress.add(resumed),
+    );
+
+    expect(snapshot.rows, [
+      {'Id': '1'},
+      {'Id': '2'},
+    ]);
+    expect(progress, [true, false]);
+    expect(resumedClient.requests, hasLength(1));
+  });
+
   test(
     'uploadDiagnostics uses its longer timeout than regular control plane calls',
     () async {

@@ -23,6 +23,7 @@ import 'sql_sync_schema.dart';
 import 'sql_cmd_output.dart';
 import 'sync_state.dart';
 import 'sync_rejection_outbox.dart';
+import 'sync_transfer_cache.dart';
 import 'startup_log.dart';
 import 'tray_progress.dart';
 import 'window_settings.dart';
@@ -140,6 +141,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   final TextEditingController _passwordController = TextEditingController();
   final AgentControlPlaneClient _controlPlaneClient = AgentControlPlaneClient();
   final SyncRejectionOutbox _rejectionOutbox = SyncRejectionOutbox();
+  final SyncTransferCache _transferCache = SyncTransferCache();
   late SyncClientState _syncState;
   Timer? _connectionCheckTimer;
   Timer? _syncPollTimer;
@@ -5138,7 +5140,26 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       return;
     }
 
-    final snapshot = await _createRelaySnapshotForJob(job);
+    final uploadCacheKey = _transferCache.key(
+      direction: 'upload',
+      jobId: job.id,
+      batchId: job.batchId!,
+      protocolVersion: job.protocolVersion,
+      syncEpoch: job.syncEpoch,
+    );
+    final cachedSnapshot = await _transferCache.loadUploadSnapshot(
+      uploadCacheKey,
+    );
+    final snapshot =
+        cachedSnapshot == null
+            ? await _createRelaySnapshotForJob(job)
+            : _RelaySnapshotDocument.fromJson(cachedSnapshot);
+    if (cachedSnapshot == null) {
+      await _transferCache.saveUploadSnapshot(
+        uploadCacheKey,
+        snapshot.toJson(),
+      );
+    }
     logAgentDiagnostic(
       'sync.snapshot.created',
       context: {
@@ -5247,6 +5268,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       overrideMessage:
           'Uploaded ${snapshot.rowCount} ${snapshot.isDelta ? 'changed' : 'bootstrap'} row${snapshot.rowCount == 1 ? '' : 's'} for ${job.table}.',
     );
+    await _transferCache.clear(uploadCacheKey);
     uploadStopwatch.stop();
     logAgentDiagnostic(
       'sync.upload.completed',
@@ -5354,6 +5376,31 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       // Buffer the complete table delta before SQL apply. Committing streamed
       // pages independently can leave a partial table when a later page fails.
       onChunk: null,
+      onProgress: ({
+        required pages,
+        required rows,
+        required totalRows,
+        required compressedBytes,
+        required resumed,
+      }) async {
+        final fraction = totalRows <= 0 ? 0.0 : rows / totalRows;
+        final progress = 20 + (fraction.clamp(0.0, 1.0) * 35).round();
+        try {
+          final progressJob = await _controlPlaneClient.updateJobProgress(
+            job.id,
+            status: 'downloading',
+            progress: progress,
+            message:
+                '${resumed ? 'Resumed' : 'Downloaded'} $rows of $totalRows rows in $pages verified page${pages == 1 ? '' : 's'} for ${_localTableName(job.table)}.',
+            rowCount: rows,
+          );
+          _applyRemoteJobState(progressJob);
+        } catch (error) {
+          logStartupEvent(
+            'Non-fatal transfer progress update failed for ${job.id}: $error',
+          );
+        }
+      },
     );
     final canonicalFullMerge =
         downloadedSnapshot.canonicalFullMerge && !downloadedSnapshot.isDelta;
@@ -5513,6 +5560,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       success: converged,
       overrideMessage:
           'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${applyStats.protectedRows} post-upload local change${applyStats.protectedRows == 1 ? '' : 's'} protected; ${pendingAfterApply.length} quarantined.',
+    );
+    await _controlPlaneClient.clearMultiWriterTransfer(
+      job.id,
+      batchId: job.batchId!,
+      protocolVersion: job.protocolVersion,
+      syncEpoch: job.syncEpoch,
     );
     downloadStopwatch.stop();
     logAgentDiagnostic(
@@ -11533,6 +11586,46 @@ class _RelaySnapshotDocument {
   final List<String> keyColumns;
   final List<List<String>> uniqueKeyColumnSets;
   final bool isDelta;
+
+  factory _RelaySnapshotDocument.fromJson(Map<String, dynamic> json) {
+    final snapshotJson = json['snapshotJson']?.toString() ?? '';
+    if (snapshotJson.isEmpty) {
+      throw const FormatException('Cached relay snapshot is incomplete.');
+    }
+    return _RelaySnapshotDocument(
+      createdAt: json['createdAt']?.toString() ?? '',
+      rowCount: (json['rowCount'] as num?)?.toInt() ?? 0,
+      snapshotBytes: (json['snapshotBytes'] as num?)?.toInt() ?? 0,
+      snapshotJson: snapshotJson,
+      checksum: json['checksum']?.toString() ?? '',
+      changeTrackingVersion: (json['changeTrackingVersion'] as num?)?.toInt(),
+      keyColumns: (json['keyColumns'] as List<dynamic>? ?? const [])
+          .map((value) => value.toString())
+          .toList(growable: false),
+      uniqueKeyColumnSets: (json['uniqueKeyColumnSets'] as List<dynamic>? ??
+              const [])
+          .whereType<List>()
+          .map(
+            (values) =>
+                values.map((value) => value.toString()).toList(growable: false),
+          )
+          .toList(growable: false),
+      isDelta: json['isDelta'] == true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'createdAt': createdAt,
+    'rowCount': rowCount,
+    'snapshotBytes': snapshotBytes,
+    'snapshotJson': snapshotJson,
+    'checksum': checksum,
+    if (changeTrackingVersion != null)
+      'changeTrackingVersion': changeTrackingVersion,
+    'keyColumns': keyColumns,
+    'uniqueKeyColumnSets': uniqueKeyColumnSets,
+    'isDelta': isDelta,
+  };
 }
 
 class _ConsistentSourceSnapshot {

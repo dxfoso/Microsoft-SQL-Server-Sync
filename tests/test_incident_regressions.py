@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 81)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 82)}
         observed_ids = set()
 
         for row in rows:
@@ -191,6 +191,23 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "formatSyncDuration(_syncAllOperationForAgent(agent)?.duration())",
             clients_page,
         )
+
+    def test_slow_network_sync_transfers_are_durable_and_content_verified(self):
+        control_plane = read_text("business/control_plane.tru")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        cache = read_text("sync_windows_agent/lib/sync_transfer_cache.dart")
+
+        self.assertIn("transferManifest", control_plane)
+        self.assertIn("transferChunk", control_plane)
+        self.assertIn("crypto.hash(transferChunkPayload, 'sha256')", control_plane)
+        self.assertIn("loadDownloadPages", api)
+        self.assertIn("Multi-writer transfer chunk failed SHA-256", api)
+        self.assertIn("loadUploadSnapshot", agent)
+        self.assertIn("saveUploadSnapshot", agent)
+        self.assertIn("Buffer the complete table delta before SQL apply", agent)
+        self.assertIn("maxBytes = 2 * 1024 * 1024 * 1024", cache)
+        self.assertIn("maxAge = Duration(days: 7)", cache)
 
 
 if __name__ == "__main__":

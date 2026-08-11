@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import 'startup_log.dart';
 import 'sync_state.dart';
+import 'sync_transfer_cache.dart';
 
 const int kSyncProtocolVersion = 4;
 const String _defaultControlPlaneUrl = String.fromEnvironment(
@@ -35,6 +37,14 @@ const List<Duration> _defaultSnapshotTransferRetryDelays = <Duration>[
 typedef TransferProgressCallback =
     void Function(TransferProgressSnapshot progress);
 typedef SyncCancellationCheck = void Function();
+typedef MultiWriterDownloadProgress =
+    Future<void> Function({
+      required int pages,
+      required int rows,
+      required int totalRows,
+      required int compressedBytes,
+      required bool resumed,
+    });
 
 class TransferProgressSnapshot {
   const TransferProgressSnapshot({
@@ -89,6 +99,7 @@ class AgentControlPlaneClient {
     int? snapshotTransferMaxAttempts,
     Duration? snapshotTransferRequestTimeout,
     List<Duration>? snapshotTransferRetryDelays,
+    SyncTransferCache? transferCache,
   }) : _client = client ?? http.Client(),
        _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultControlPlaneUrl),
        _controlPlaneRequestTimeout = controlPlaneRequestTimeout,
@@ -111,7 +122,8 @@ class AgentControlPlaneClient {
                : List<Duration>.unmodifiable(
                  snapshotTransferRetryDelays ??
                      _defaultSnapshotTransferRetryDelays,
-               );
+               ),
+       _transferCache = transferCache ?? SyncTransferCache();
 
   final http.Client _client;
   final String _baseUrl;
@@ -121,6 +133,7 @@ class AgentControlPlaneClient {
   final int _snapshotTransferMaxAttempts;
   final Duration _snapshotTransferRequestTimeout;
   final List<Duration> _snapshotTransferRetryDelays;
+  final SyncTransferCache _transferCache;
   String? _authToken;
 
   String get baseUrl => _baseUrl;
@@ -1287,23 +1300,41 @@ class AgentControlPlaneClient {
     required int protocolVersion,
     required String syncEpoch,
     Future<void> Function(RemoteSnapshot snapshot)? onChunk,
+    MultiWriterDownloadProgress? onProgress,
     SyncCancellationCheck? checkCancelled,
   }) async {
+    final cacheKey = _transferCache.key(
+      direction: 'download',
+      jobId: jobId,
+      batchId: batchId,
+      protocolVersion: protocolVersion,
+      syncEpoch: syncEpoch,
+    );
+    var cachedPages = await _transferCache.loadDownloadPages(cacheKey);
+    if (cachedPages.any((page) => page['transferManifest'] is! Map)) {
+      await _transferCache.clear(cacheKey);
+      cachedPages = const [];
+    }
+    var pageIndex = 0;
     String? cursor;
+    String? transferManifestId;
     RemoteSnapshot? firstSnapshot;
     final mergedRows = <Map<String, String?>>[];
     var mergedRowCount = 0;
     var totalSnapshotBytes = 0;
     while (true) {
       checkCancelled?.call();
-      final decoded =
-          await _invokeFunctionWithRetry('jobs_multi_writer_download', {
-            'jobId': jobId,
-            'batchId': batchId,
-            'protocolVersion': protocolVersion,
-            'syncEpoch': syncEpoch,
-            if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
-          }, 'downloading merged multi-writer delta');
+      final resumed = pageIndex < cachedPages.length;
+      final dynamic decoded =
+          resumed
+              ? cachedPages[pageIndex]
+              : await _invokeFunctionWithRetry('jobs_multi_writer_download', {
+                'jobId': jobId,
+                'batchId': batchId,
+                'protocolVersion': protocolVersion,
+                'syncEpoch': syncEpoch,
+                if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+              }, 'downloading merged multi-writer delta');
       checkCancelled?.call();
       if (decoded is! Map || decoded['snapshot'] is! Map) {
         throw const AgentControlPlaneException(
@@ -1314,6 +1345,33 @@ class AgentControlPlaneClient {
         decoded['snapshot'] as Map,
       );
       final encodedChunk = decoded['payloadBase64']?.toString() ?? '';
+      final manifest = decoded['transferManifest'];
+      if (manifest is Map) {
+        final manifestId = manifest['id']?.toString() ?? '';
+        if (manifestId.isEmpty ||
+            (transferManifestId != null && transferManifestId != manifestId)) {
+          throw const AgentControlPlaneException(
+            'Multi-writer transfer manifest changed during download.',
+          );
+        }
+        transferManifestId = manifestId;
+      }
+      final chunk = decoded['transferChunk'];
+      if (chunk is Map && encodedChunk.isNotEmpty) {
+        final expected = chunk['sha256']?.toString().toLowerCase() ?? '';
+        final actual = sha256.convert(utf8.encode(encodedChunk)).toString();
+        if (expected.isEmpty || expected != actual) {
+          throw const AgentControlPlaneException(
+            'Multi-writer transfer chunk failed SHA-256 verification.',
+          );
+        }
+      }
+      if (!resumed && manifest is Map) {
+        await _transferCache.appendDownloadPage(
+          cacheKey,
+          Map<String, dynamic>.from(decoded),
+        );
+      }
       if (encodedChunk.isNotEmpty) {
         const maxCompressedPackageBytes = 750000;
         const maxDecompressedPackageBytes = 2000000;
@@ -1426,6 +1484,21 @@ class AgentControlPlaneClient {
         mergedRows.addAll(snapshot.rows);
       }
       totalSnapshotBytes += snapshot.snapshotBytes;
+      pageIndex += 1;
+      if (onProgress != null) {
+        await onProgress(
+          pages: pageIndex,
+          rows: mergedRowCount,
+          totalRows:
+              (decoded['totalRowCount'] as num?)?.toInt() ?? mergedRowCount,
+          compressedBytes:
+              (chunk is Map
+                  ? (chunk['compressedBytes'] as num?)?.toInt()
+                  : null) ??
+              0,
+          resumed: resumed,
+        );
+      }
       final done = decoded['done'] == true;
       if (done) {
         final mergedIsDelta = firstSnapshot.isDelta && snapshot.isDelta;
@@ -1455,6 +1528,21 @@ class AgentControlPlaneClient {
       cursor = nextCursor;
     }
   }
+
+  Future<void> clearMultiWriterTransfer(
+    String jobId, {
+    required String batchId,
+    required int protocolVersion,
+    required String syncEpoch,
+  }) => _transferCache.clear(
+    _transferCache.key(
+      direction: 'download',
+      jobId: jobId,
+      batchId: batchId,
+      protocolVersion: protocolVersion,
+      syncEpoch: syncEpoch,
+    ),
+  );
 
   List<Map<String, String?>> _deduplicateCanonicalFullMergeRows(
     List<Map<String, String?>> rows,

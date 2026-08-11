@@ -8706,7 +8706,55 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     snapshot.rows = [];
     snapshot.snapshotBytes = int.from(storedChunks[0].snapshotBytes ?? 0);
   }
-  return raw_json_success({ snapshot, cursor, nextCursor, totalRowCount, done, payloadBase64: chunkPayloadBase64, payloadEncoding: chunkPayloadEncoding, isDelta: chunkIsDelta });
+  const transferManifestId = crypto.hash(json.stringify({
+    version: 1,
+    batchId: batch.id,
+    protocolVersion: batch.protocolVersion,
+    syncEpoch: batch.syncEpoch,
+    table: batch.table,
+    expectedClients: batch.expectedClients,
+    totalRowCount
+  }), 'sha256');
+  const transferChunkPayload = chunkPayloadBase64.length != 0
+    ? chunkPayloadBase64
+    : json.stringify(chunkRows);
+  const transferChunk = {
+    id: crypto.hash(json.stringify({
+      manifestId: transferManifestId,
+      cursor: cursor ?? '',
+      nextCursor: nextCursor ?? '',
+      payloadSha256: crypto.hash(transferChunkPayload, 'sha256')
+    }), 'sha256'),
+    sha256: crypto.hash(transferChunkPayload, 'sha256'),
+    cursor: cursor ?? '',
+    nextCursor: nextCursor ?? '',
+    rowCount: chunkRows.length,
+    compressedBytes: chunkPayloadBase64.length == 0
+      ? 0
+      : int.from(storedChunks[0].compressedBytes ?? 0),
+    uncompressedBytes: int.from(snapshot.snapshotBytes ?? 0)
+  };
+  return raw_json_success({
+    snapshot,
+    cursor,
+    nextCursor,
+    totalRowCount,
+    done,
+    payloadBase64: chunkPayloadBase64,
+    payloadEncoding: chunkPayloadEncoding,
+    isDelta: chunkIsDelta,
+    transferManifest: {
+      version: 1,
+      id: transferManifestId,
+      immutable: true,
+      batchId: batch.id,
+      protocolVersion: batch.protocolVersion,
+      syncEpoch: batch.syncEpoch,
+      table: batch.table,
+      totalRowCount
+    },
+    transferChunk
+  });
 }
 
 function jobs_upload_chunk(jobId: string, uploadId: string, chunkIndex: int, chunkData: string, token: string? = null): map<json> {

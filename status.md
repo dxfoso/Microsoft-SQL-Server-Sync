@@ -1,8 +1,17 @@
 # Current Status
 
-Updated: 2026-08-08 19:56 Europe/Berlin
+Updated: 2026-08-11 Europe/Berlin
 
-**Progress: 100% complete for the requested one-time sync, incident fix, deployment, and production verification**
+**Progress: 55% - implementing and deploying restartable slow-network sync transport**
+
+- Implemented immutable server transfer manifests and SHA-256 page identities.
+- Implemented durable Windows download-page staging and restart-stable upload snapshots.
+- Transfers resume verified work after network/process interruption; SQL remains unchanged until the existing final atomic apply.
+- Added real page/row progress plus 7-day/2-GiB bounded cleanup.
+- Added INC-081 and focused restart/corruption regressions; focused Flutter tests pass.
+- Next: mandatory Docker and Standard recovery gates, client build/publication, immutable server deployment, and public health/manifest checks.
+
+Previous completed production baseline:
 
 - The controlled Sync All completed successfully from 17:04:50 to 17:55:20 UTC (50m 30s total) across 31 eligible tables.
 - All jobs completed: zero active jobs, zero visible failures, zero pending decisions, and the sync gate reports every table ready.
