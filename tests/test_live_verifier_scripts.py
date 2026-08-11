@@ -3,6 +3,7 @@ import io
 import pathlib
 import sys
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from contextlib import redirect_stdout, redirect_stderr
 
@@ -20,6 +21,25 @@ def load_script_module(name: str, relative_path: str):
 
 
 class LiveVerifierScriptsTests(unittest.TestCase):
+    def test_client_update_read_retries_direct_windows_connection_reset(self):
+        verifier = load_script_module(
+            "verify_live_client_update_direct_reset_script",
+            "scripts/verify_live_client_update.py",
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"ok": true}'
+        request = verifier.urllib.request.Request("https://example.com")
+
+        with mock.patch.object(
+            verifier.urllib.request,
+            "urlopen",
+            side_effect=[ConnectionResetError(10054, "reset"), response],
+        ) as urlopen, mock.patch.object(verifier.time, "sleep"):
+            result = verifier.read_json_request(request, attempts=2)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(urlopen.call_count, 2)
+
     def test_bulk_diagnostics_request_includes_batch_size_when_provided(self):
         verifier = load_script_module(
             "verify_live_bulk_diagnostics_script",

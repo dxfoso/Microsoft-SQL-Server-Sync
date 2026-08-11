@@ -37,7 +37,7 @@ def read_json_request(request: urllib.request.Request, *, attempts: int = 3) -> 
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise ApiError(f"HTTP {exc.code}: {detail}") from exc
-        except urllib.error.URLError as exc:
+        except (urllib.error.URLError, ConnectionResetError, TimeoutError) as exc:
             api_error = ApiError(f"request failed: {exc}")
             if attempt >= attempts or not retryable_transport_error(api_error):
                 raise api_error from exc
