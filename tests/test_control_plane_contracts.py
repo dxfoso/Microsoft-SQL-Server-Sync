@@ -847,6 +847,19 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "Clients report different complete table fingerprints", planner
         )
 
+    def test_pending_change_with_valid_cursors_stays_on_delta_path(self):
+        source = read_text("business/control_plane.tru")
+        planner = source.split("function sync_table_baseline_plan(", 1)[1].split(
+            "function enabled_sync_policy_tables_for_agent(", 1
+        )[0]
+
+        pending_branch = "readyAgents.length == participants.length && hasPendingLocalChanges"
+        fingerprint_branch = "allFingerprints.length > 1"
+        self.assertIn("sync_table_state_has_pending_local_changes(state)", planner)
+        self.assertIn(pending_branch, planner)
+        self.assertLess(planner.index(pending_branch), planner.index(fingerprint_branch))
+        self.assertIn("pending local changes will use the delta path", planner)
+
     def test_client_status_prioritizes_sync_and_names_update_retries(self):
         control_plane = read_text("business/control_plane.tru")
         server_status = control_plane.split(
@@ -1586,7 +1599,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("readyAgents.length == participants.length", planner)
         self.assertLess(
             planner.index("allReportedRowCounts.length > 1"),
-            planner.index("readyAgents.length == participants.length"),
+            planner.index("if (readyAgents.length == participants.length) {"),
         )
         self.assertIn("reportedRowCountClientCount == participants.length", planner)
         fingerprint_union = planner.split(

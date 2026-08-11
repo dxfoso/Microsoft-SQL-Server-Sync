@@ -3495,6 +3495,7 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
   let reportedClientCount = 0;
   let reportedRowCountClientCount = 0;
   let allReportedRowCounts = [];
+  let hasPendingLocalChanges = false;
   for (const agent of participants) {
     const cache = scheduler_agent_table_state_cache_for_agent(
       string.from(agent.clientName),
@@ -3505,6 +3506,9 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       states = cache.tables;
     }
     const state = scheduler_agent_table_state(states, table);
+    if (sync_table_state_has_pending_local_changes(state)) {
+      hasPendingLocalChanges = true;
+    }
     if (state != null && state.rowCount != null) {
       const reportedRowCount = string.from(state.rowCount);
       reportedRowCountClientCount += 1;
@@ -3536,6 +3540,21 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       sourceAgent: null,
       targetAgents: [],
       message: 'Table is not enabled for any client.'
+    };
+  }
+  // Complete fingerprints are expected to differ while a valid-cursor client
+  // has an unsynchronized local change. Preserve the ordinary delta path so a
+  // small edit does not become a full-table union. If older unrelated drift
+  // remains after the delta, the bounded fingerprint repair detects it once
+  // no local Change Tracking work is pending.
+  if (readyAgents.length == participants.length && hasPendingLocalChanges) {
+    return {
+      mode: 'delta',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: [],
+      message: 'Every enabled client has a valid Change Tracking baseline; pending local changes will use the delta path.'
     };
   }
   // A completed union is only a transport result, not proof that every SQL
