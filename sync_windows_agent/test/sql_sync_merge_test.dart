@@ -131,6 +131,35 @@ void main() {
     expect(sql, isNot(contains(' WHERE ([Id] =')));
   });
 
+  test('primary-key comparison can query a preloaded resumable key stage', () {
+    const keyColumns = [
+      SqlSyncColumnDefinition(
+        name: 'Id',
+        sqlType: 'int',
+        maxLength: 4,
+        precision: 10,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    final sql = buildTargetPrimaryKeyLookupFromStageSql(
+      stageTableName: 'sqlsync_items_job_keys',
+      keyColumns: keyColumns,
+      targetReference: '[AmnDb048].[dbo].[mt000]',
+      targetProjectionExpression: 'CONVERT(nvarchar(max), target_row.[Id])',
+    );
+
+    expect(sql, isNot(contains('CREATE TABLE')));
+    expect(sql, isNot(contains('INSERT INTO')));
+    expect(sql, contains('FROM tempdb.dbo.[sqlsync_items_job_keys]'));
+    expect(sql, contains('SELECT DISTINCT [Id]'));
+    expect(
+      sql,
+      contains('INNER JOIN requested ON requested.[Id] = target_row.[Id]'),
+    );
+  });
+
   test('complete snapshot verification defers only protected hot rows', () {
     expect(
       unexpectedCompleteSnapshotMismatchCount(

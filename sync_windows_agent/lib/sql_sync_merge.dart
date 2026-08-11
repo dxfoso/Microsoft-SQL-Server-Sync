@@ -141,6 +141,27 @@ String buildTargetPrimaryKeyLookupSql({
   if (keyColumns.isEmpty) {
     throw ArgumentError.value(keyColumns, 'keyColumns', 'must not be empty');
   }
+  final loadSql = buildTargetSnapshotStageLoadSql(
+    stageTableName: stageTableName,
+    columns: keyColumns,
+    rows: keyRows,
+  );
+  return '''
+$loadSql
+GO
+${buildTargetPrimaryKeyLookupFromStageSql(stageTableName: stageTableName, keyColumns: keyColumns, targetReference: targetReference, targetProjectionExpression: targetProjectionExpression)}
+''';
+}
+
+String buildTargetPrimaryKeyLookupFromStageSql({
+  required String stageTableName,
+  required List<SqlSyncColumnDefinition> keyColumns,
+  required String targetReference,
+  required String targetProjectionExpression,
+}) {
+  if (keyColumns.isEmpty) {
+    throw ArgumentError.value(keyColumns, 'keyColumns', 'must not be empty');
+  }
   final stageTarget = stageTableReference(stageTableName);
   final keyColumnList = keyColumns
       .map((column) => quoteIdentifier(column.name))
@@ -150,14 +171,7 @@ String buildTargetPrimaryKeyLookupSql({
     leftAlias: 'requested',
     rightAlias: 'target_row',
   );
-  final loadSql = buildTargetSnapshotStageLoadSql(
-    stageTableName: stageTableName,
-    columns: keyColumns,
-    rows: keyRows,
-  );
   return '''
-$loadSql
-GO
 SET NOCOUNT ON;
 ;WITH requested AS (
   SELECT DISTINCT $keyColumnList

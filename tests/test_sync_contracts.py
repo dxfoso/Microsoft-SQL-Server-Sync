@@ -1628,10 +1628,32 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertEqual(lookup.count("await _runSqlCmd("), 1)
         self.assertNotIn("const keyBatchSize = 100", lookup)
-        self.assertIn("buildTargetPrimaryKeyLookupSql(", lookup)
+        self.assertIn("_targetSnapshotStageTableNameForOperation(", lookup)
+        self.assertIn("replaceExisting: false", lookup)
+        self.assertIn("_queryTargetSnapshotStageRowCount(", lookup)
+        self.assertIn("while (stagedRowCount < keyRows.length)", lookup)
+        self.assertIn("targetSnapshotInsertRowsPerStatement", lookup)
+        self.assertIn("buildTargetPrimaryKeyLookupFromStageSql(", lookup)
         self.assertIn("SELECT DISTINCT", builder)
         self.assertIn("INNER JOIN requested ON", builder)
         self.assertIn("buildTargetSnapshotStageLoadSql(", builder)
+
+    def test_large_content_comparison_stages_resumable_bounded_key_chunks(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        comparison = agent.split(
+            "Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1
+        )[1].split("String _sourceBatchEncodedColumnExpression(", 1)[0]
+
+        self.assertIn("required String operationId", comparison)
+        self.assertIn("_targetSnapshotStageTableNameForOperation(", comparison)
+        self.assertIn("replaceExisting: false", comparison)
+        self.assertIn("_queryTargetSnapshotStageRowCount(", comparison)
+        self.assertIn("while (stagedRowCount < keyRows.length)", comparison)
+        self.assertIn("buildTargetSnapshotStageInsertSql(", comparison)
+        self.assertIn("await onStageProgress?.call(stagedRowCount, keyRows.length)", comparison)
+        self.assertIn("if (lookupCompleted || confirmedFailure)", comparison)
+        self.assertIn("buildTargetPrimaryKeyLookupFromStageSql(", comparison)
+        self.assertIn("Prepared $loadedRows of $totalRows keys", agent)
 
     def test_set_based_comparison_qualifies_every_target_projection_column(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

@@ -6156,6 +6156,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final contentCheckedRows =
         applyDelta
             ? await _rowsWhoseContentChanged(
+              operationId: job.id,
               profile: targetProfile,
               database: targetDatabase,
               schema: targetTable.schema,
@@ -6163,6 +6164,25 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
               columns: syncColumns,
               primaryKeyColumns: primaryKeyColumns,
               rows: rowsForApply,
+              onLookupStageProgress: (loadedRows, totalRows) async {
+                final fraction = totalRows <= 0 ? 1.0 : loadedRows / totalRows;
+                final progress = 55 + (fraction.clamp(0.0, 1.0) * 10).round();
+                try {
+                  final progressJob = await _controlPlaneClient.updateJobProgress(
+                    job.id,
+                    status: 'applying',
+                    progress: progress,
+                    message:
+                        'Prepared $loadedRows of $totalRows keys in resumable comparison chunks for ${_localTableName(job.table)}.',
+                    rowCount: loadedRows,
+                  );
+                  _applyRemoteJobState(progressJob);
+                } catch (error) {
+                  logStartupEvent(
+                    'Non-fatal comparison progress update failed for ${job.id}: $error',
+                  );
+                }
+              },
             )
             : rowsForApply;
     if (contentCheckedRows.length != rowsForApply.length) {
@@ -6185,7 +6205,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         .toList(growable: false);
     Future<void> reportStageProgress(int loadedRows, int totalRows) async {
       final fraction = totalRows <= 0 ? 1.0 : loadedRows / totalRows;
-      final progress = 55 + (fraction.clamp(0.0, 1.0) * 25).round();
+      final progress = 65 + (fraction.clamp(0.0, 1.0) * 15).round();
       try {
         final progressJob = await _controlPlaneClient.updateJobProgress(
           job.id,
@@ -6421,6 +6441,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
     if (fullSnapshotApply) {
       final unappliedRows = await _rowsWhoseContentChanged(
+        operationId: job.id,
         profile: targetProfile,
         database: targetDatabase,
         schema: targetTable.schema,
@@ -7120,6 +7141,7 @@ COMMIT TRANSACTION;
   }
 
   Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged({
+    required String operationId,
     required _SqlConnectionProfile profile,
     required String database,
     required String schema,
@@ -7127,6 +7149,7 @@ COMMIT TRANSACTION;
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
     required List<Map<String, dynamic>> rows,
+    Future<void> Function(int loadedRows, int totalRows)? onLookupStageProgress,
   }) async {
     final upserts = rows
         .where((row) => row['__sync_op'] != 'D')
@@ -7135,6 +7158,7 @@ COMMIT TRANSACTION;
       return rows;
     }
     final targetRows = await _fetchRowsByPrimaryKeys(
+      operationId: operationId,
       profile: profile,
       database: database,
       schema: schema,
@@ -7142,6 +7166,7 @@ COMMIT TRANSACTION;
       columns: columns,
       primaryKeyColumns: primaryKeyColumns,
       keyRows: upserts,
+      onStageProgress: onLookupStageProgress,
     );
     final targetHashByIdentity = <String, String>{
       for (final row in targetRows)
@@ -7165,6 +7190,7 @@ COMMIT TRANSACTION;
   }
 
   Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys({
+    required String operationId,
     required _SqlConnectionProfile profile,
     required String database,
     required String schema,
@@ -7172,6 +7198,7 @@ COMMIT TRANSACTION;
     required List<_SqlColumnDefinition> columns,
     required List<String> primaryKeyColumns,
     required List<Map<String, dynamic>> keyRows,
+    Future<void> Function(int loadedRows, int totalRows)? onStageProgress,
   }) async {
     const fieldSeparator = 31;
     const rowSentinel = 29;
@@ -7206,12 +7233,67 @@ COMMIT TRANSACTION;
         }
       }
     }
-    final stageTableName = _nextTargetSnapshotStageTableName('${table}_keys');
+    final stageTableName = _targetSnapshotStageTableNameForOperation(
+      '${table}_keys',
+      operationId,
+    );
+    var confirmedFailure = false;
+    var lookupCompleted = false;
     try {
-      final query = buildTargetPrimaryKeyLookupSql(
+      await _runSqlCmdOrThrow(
+        profile: profile,
+        database: database,
+        query: buildTargetSnapshotStageSetupSql(
+          stageTableName: stageTableName,
+          columns: keyDefinitions,
+          replaceExisting: false,
+        ),
+        context: 'target comparison key stage setup',
+        timeout: _snapshotSqlCmdTimeout,
+      );
+      var stagedRowCount = await _queryTargetSnapshotStageRowCount(
+        profile: profile,
+        database: database,
+        stageTableName: stageTableName,
+      );
+      if (stagedRowCount > keyRows.length) {
+        await _runSqlCmdOrThrow(
+          profile: profile,
+          database: database,
+          query: buildTargetSnapshotStageSetupSql(
+            stageTableName: stageTableName,
+            columns: keyDefinitions,
+          ),
+          context: 'target comparison key stage reset',
+          timeout: _snapshotSqlCmdTimeout,
+        );
+        stagedRowCount = 0;
+      }
+      if (stagedRowCount > 0) {
+        await onStageProgress?.call(stagedRowCount, keyRows.length);
+      }
+      while (stagedRowCount < keyRows.length) {
+        final chunk = keyRows
+            .skip(stagedRowCount)
+            .take(targetSnapshotInsertRowsPerStatement)
+            .toList(growable: false);
+        await _runSqlCmdOrThrow(
+          profile: profile,
+          database: database,
+          query: buildTargetSnapshotStageInsertSql(
+            stageTableName: stageTableName,
+            columns: keyDefinitions,
+            rows: chunk,
+          ),
+          context: 'target comparison key stage chunk',
+          timeout: _snapshotSqlCmdTimeout,
+        );
+        stagedRowCount += chunk.length;
+        await onStageProgress?.call(stagedRowCount, keyRows.length);
+      }
+      final query = buildTargetPrimaryKeyLookupFromStageSql(
         stageTableName: stageTableName,
         keyColumns: keyDefinitions,
-        keyRows: keyRows,
         targetReference: target,
         targetProjectionExpression: payloadExpression,
       );
@@ -7225,22 +7307,37 @@ COMMIT TRANSACTION;
         throw Exception(_sqlCmdUnavailableMessage(profile));
       }
       if (processResult.exitCode != 0) {
+        confirmedFailure = true;
         throw Exception(
           _sqlCmdFailed('target whole-row hash comparison', processResult),
         );
       }
-      return _parseSourceBatchRows(
-        processResult.stdout.toString(),
-        columns: columns,
-        fieldSeparator: String.fromCharCode(fieldSeparator),
-        rowSentinel: String.fromCharCode(rowSentinel),
-      );
+      late final List<Map<String, dynamic>> parsedRows;
+      try {
+        parsedRows = _parseSourceBatchRows(
+          processResult.stdout.toString(),
+          columns: columns,
+          fieldSeparator: String.fromCharCode(fieldSeparator),
+          rowSentinel: String.fromCharCode(rowSentinel),
+        );
+      } catch (_) {
+        confirmedFailure = true;
+        rethrow;
+      }
+      lookupCompleted = true;
+      return parsedRows;
     } finally {
-      await _dropTargetSnapshotStage(
-        profile: profile,
-        database: database,
-        stageTableName: stageTableName,
-      );
+      // Preserve committed key chunks when the process or transport is
+      // interrupted. A retry for the same immutable job resumes from the
+      // durable count. Confirmed SQL/parse failures and successful lookups
+      // clean up immediately; SQL Server restart clears tempdb naturally.
+      if (lookupCompleted || confirmedFailure) {
+        await _dropTargetSnapshotStage(
+          profile: profile,
+          database: database,
+          stageTableName: stageTableName,
+        );
+      }
     }
   }
 
@@ -7617,12 +7714,6 @@ END
       throw StateError('Target snapshot stage row count was not reported.');
     }
     return int.parse(match.group(1)!);
-  }
-
-  String _nextTargetSnapshotStageTableName(String table) {
-    final normalizedTable = table.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
-    final randomSuffix = math.Random.secure().nextInt(0x7fffffff);
-    return 'sqlsync_${normalizedTable}_$randomSuffix';
   }
 
   Future<void> _dropTargetSnapshotStage({

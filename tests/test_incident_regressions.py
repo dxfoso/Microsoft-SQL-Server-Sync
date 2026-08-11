@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 93)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 94)}
         observed_ids = set()
 
         for row in rows:
@@ -283,7 +283,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1
         )[1].split("String _sourceBatchEncodedColumnExpression(", 1)[0]
 
-        self.assertIn("buildTargetPrimaryKeyLookupSql(", lookup)
+        self.assertIn("buildTargetPrimaryKeyLookupFromStageSql(", lookup)
         self.assertEqual(lookup.count("await _runSqlCmd("), 1)
         self.assertNotIn("keyBatchSize", lookup)
 
@@ -339,6 +339,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("String _buildStagedDeltaDeleteStatements(", 1)[0]
         self.assertEqual(merge_body.count("DROP TABLE $stageTarget"), 1)
         self.assertIn("Transport/process interruption", merge_body)
+
+    def test_large_hash_comparison_resumes_bounded_key_staging(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        lookup = agent.split(
+            "Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1
+        )[1].split("String _sourceBatchEncodedColumnExpression(", 1)[0]
+
+        self.assertIn("_targetSnapshotStageTableNameForOperation(", lookup)
+        self.assertIn("replaceExisting: false", lookup)
+        self.assertIn("_queryTargetSnapshotStageRowCount(", lookup)
+        self.assertIn("while (stagedRowCount < keyRows.length)", lookup)
+        self.assertIn("targetSnapshotInsertRowsPerStatement", lookup)
+        self.assertIn("buildTargetPrimaryKeyLookupFromStageSql(", lookup)
+        self.assertIn("lookupCompleted || confirmedFailure", lookup)
+        self.assertIn("onLookupStageProgress", agent)
 
 
 if __name__ == "__main__":
