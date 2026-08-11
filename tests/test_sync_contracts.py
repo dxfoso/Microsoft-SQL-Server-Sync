@@ -1585,6 +1585,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("continuing the durable update", handler)
         self.assertIn("'downloading' => _clientUpdateDownloadLabel", clients_page)
 
+    def test_clients_page_shows_active_phase_progress_and_speed(self):
+        web = read_text("frontend/lib/clients_page.dart")
+        status = web.split("String _clientActivityStatus(", 1)[1].split(
+            "Color _clientActivityColor", 1
+        )[0]
+        self.assertIn("_primaryActiveJob(jobs)", status)
+        self.assertIn("_activeJobProgressLabel(activeJob)", status)
+        self.assertIn("job.progress.clamp(0, 100)", status)
+        self.assertIn("rowsPerSecond", status)
+        self.assertIn("percentPerMinute", status)
+        self.assertIn("no movement", status)
+        self.assertIn("status == 'waiting' || status == 'queued'", status)
+
     def test_client_update_download_progress_is_checkpointed_and_relayed(self):
         updater = read_text("update.ps1")
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

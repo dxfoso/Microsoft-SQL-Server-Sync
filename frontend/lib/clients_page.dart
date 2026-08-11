@@ -218,6 +218,25 @@ class _SyncLogBatch {
   }
 }
 
+class _JobProgressSample {
+  const _JobProgressSample({
+    required this.progress,
+    required this.rowCount,
+    required this.observedAt,
+  });
+
+  final int progress;
+  final int rowCount;
+  final DateTime observedAt;
+}
+
+class _JobProgressRate {
+  const _JobProgressRate({this.rowsPerSecond, this.percentPerMinute});
+
+  final double? rowsPerSecond;
+  final double? percentPerMinute;
+}
+
 class ClientsPage extends StatefulWidget {
   const ClientsPage({
     super.key,
@@ -244,6 +263,8 @@ class _ClientsPageState extends State<ClientsPage> {
   final ScrollController _tableHorizontalController = ScrollController();
   Timer? _refreshTimer;
   AdminLiveState? _state;
+  final Map<String, _JobProgressSample> _jobProgressSamples = {};
+  final Map<String, _JobProgressRate> _jobProgressRates = {};
   String? _selectedClientName;
   String? _error;
   bool _loading = true;
@@ -375,6 +396,7 @@ class _ClientsPageState extends State<ClientsPage> {
       final availableNames =
           nextState.agents.map((agent) => agent.clientName).toSet();
       final selected = _selectedClientName;
+      _recordJobProgress(nextState.jobs);
       setState(() {
         _state = nextState;
         _selectedClientName =
@@ -1827,6 +1849,8 @@ class _ClientsPageState extends State<ClientsPage> {
     if (ownerIssues.any((issue) => issue.resolving)) return 'Repairing';
     if (!agent.serverConnected) return 'Server offline';
     if (!agent.sqlConnected) return 'SQL offline';
+    final activeJob = _primaryActiveJob(jobs);
+    if (activeJob != null) return _activeJobProgressLabel(activeJob);
     if (agent.runtimeStatusLabel.trim().isNotEmpty) {
       return agent.runtimeStatusLabel.trim();
     }
@@ -1868,6 +1892,98 @@ class _ClientsPageState extends State<ClientsPage> {
     return 'Ready';
   }
 
+  AdminJob? _primaryActiveJob(List<AdminJob> jobs) {
+    const priorities = <String>[
+      'applying',
+      'downloading',
+      'uploading',
+      'snapshotting',
+      'running',
+      'waiting',
+      'queued',
+    ];
+    for (final status in priorities) {
+      for (final job in jobs) {
+        if (job.status.toLowerCase() == status) return job;
+      }
+    }
+    return null;
+  }
+
+  String _activeJobProgressLabel(AdminJob job) {
+    final status = job.status.toLowerCase();
+    final phase = switch (status) {
+      'applying' => 'Applying',
+      'downloading' => 'Downloading',
+      'uploading' || 'snapshotting' => 'Uploading',
+      'running' => 'Syncing',
+      'waiting' => 'Waiting',
+      'queued' => 'Queued',
+      _ => 'Syncing',
+    };
+    if (status == 'waiting' || status == 'queued') return phase;
+    final parts = <String>['$phase ${job.progress.clamp(0, 100)}%'];
+    final rate = _jobProgressRates[job.id];
+    if (rate?.rowsPerSecond != null && rate!.rowsPerSecond! > 0) {
+      parts.add('${rate.rowsPerSecond!.toStringAsFixed(1)} rows/s');
+    } else if (rate?.percentPerMinute != null && rate!.percentPerMinute! > 0) {
+      parts.add('${rate.percentPerMinute!.toStringAsFixed(1)}%/min');
+    } else {
+      final sample = _jobProgressSamples[job.id];
+      if (sample != null) {
+        final unchangedFor = DateTime.now().toUtc().difference(
+          sample.observedAt,
+        );
+        if (unchangedFor >= _refreshInterval * 2) {
+          parts.add('no movement ${formatSyncDuration(unchangedFor)}');
+        }
+      }
+    }
+    return parts.join(' · ');
+  }
+
+  void _recordJobProgress(List<AdminJob> jobs) {
+    final now = DateTime.now().toUtc();
+    final activeIds = <String>{};
+    for (final job in jobs.where(
+      (job) => job.isActive || job.status.toLowerCase() == 'waiting',
+    )) {
+      activeIds.add(job.id);
+      final previous = _jobProgressSamples[job.id];
+      if (previous == null) {
+        _jobProgressSamples[job.id] = _JobProgressSample(
+          progress: job.progress,
+          rowCount: job.rowCount,
+          observedAt: now,
+        );
+        continue;
+      }
+      if (previous.progress == job.progress &&
+          previous.rowCount == job.rowCount) {
+        continue;
+      }
+      final seconds = now.difference(previous.observedAt).inMilliseconds / 1000;
+      if (seconds > 0) {
+        final rowDelta = job.rowCount - previous.rowCount;
+        final progressDelta = job.progress - previous.progress;
+        _jobProgressRates[job.id] = _JobProgressRate(
+          rowsPerSecond: rowDelta > 0 ? rowDelta / seconds : null,
+          percentPerMinute:
+              rowDelta <= 0 && progressDelta > 0
+                  ? progressDelta * 60 / seconds
+                  : null,
+        );
+      }
+      _jobProgressSamples[job.id] = _JobProgressSample(
+        progress: job.progress,
+        rowCount: job.rowCount,
+        observedAt: now,
+      );
+    }
+    _jobProgressSamples.removeWhere((id, _) => !activeIds.contains(id));
+    _jobProgressRates.removeWhere((id, _) => !activeIds.contains(id));
+  }
+
   String _clientUpdateDownloadLabel(AdminAgentClientUpdate update) {
     final percent = update.progressPercent;
     final downloaded = update.downloadedBytes;
@@ -1880,7 +1996,14 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Color _clientActivityColor(String status) {
-    if (status.toLowerCase().startsWith('update downloading')) {
+    final normalizedStatus = status.toLowerCase();
+    if (normalizedStatus.startsWith('applying') ||
+        normalizedStatus.startsWith('downloading') ||
+        normalizedStatus.startsWith('uploading') ||
+        normalizedStatus.startsWith('syncing')) {
+      return const Color(0xFF2563EB);
+    }
+    if (normalizedStatus.startsWith('update downloading')) {
       return const Color(0xFF2563EB);
     }
     switch (status.toLowerCase()) {

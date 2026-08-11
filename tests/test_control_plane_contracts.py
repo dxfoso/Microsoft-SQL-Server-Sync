@@ -384,6 +384,21 @@ class ControlPlaneContractsTests(unittest.TestCase):
             heartbeat.count("clientUpdateMessage: nextClientUpdateMessage"), 2
         )
 
+    def test_live_state_prioritizes_active_jobs_before_bounded_history(self):
+        source = read_text("business/control_plane.tru")
+        live_state = source.split("function live_state(token:", 1)[1].split(
+            "function agents_heartbeat", 1
+        )[0]
+        active_query = source.split(
+            "function live_state_active_job_rows_for", 1
+        )[1].split("function list_scheduler_agent_owner_rows", 1)[0]
+
+        self.assertIn("const recentJobRows = live_state_job_rows_for", live_state)
+        self.assertIn("prioritized_live_state_job_rows(activeJobRows, recentJobRows)", live_state)
+        self.assertIn("'direction'", active_query)
+        self.assertIn("'createdAt'", active_query)
+        self.assertIn("'completedAt'", active_query)
+
     def test_client_update_progress_is_persisted_and_exposed(self):
         source = read_text("business/control_plane.tru")
         payload = source.split("function agent_client_update_payload(", 1)[1].split(

@@ -2507,7 +2507,7 @@ function live_state_active_job_rows_for(current: map<json>): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'table', 'status', 'progress', 'rowCount', 'updatedAt', 'message'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
     limit: 1000
   });
   if (rows == null) {
@@ -2623,6 +2623,20 @@ function bounded_public_job_payloads(rows: array<json>, limit: int): map<json> {
     total: seen,
     truncated: seen > items.length
   };
+}
+
+function prioritized_live_state_job_rows(activeRows: array<json>, historyRows: array<json>): array<json> {
+  let rows = [];
+  let seenIds = [];
+  for (const row of activeRows.concat(historyRows)) {
+    const id = string.from(row.id).trim();
+    if (id.length == 0 || string_array_contains(seenIds, id)) {
+      continue;
+    }
+    seenIds = seenIds.concat([id]);
+    rows = rows.concat([row]);
+  }
+  return rows;
 }
 
 function ensure_agent(clientName: string, clientUserId: string? = null, ownerUserId: string? = null): map<json> {
@@ -5903,8 +5917,9 @@ function live_state(token: string? = null): map<json> {
     completedJobRows,
     periodicSyncRows
   );
+  const recentJobRows = live_state_job_rows_for(current, jobLimit);
   const jobPage = bounded_public_job_payloads(
-    live_state_job_rows_for(current, jobLimit),
+    prioritized_live_state_job_rows(activeJobRows, recentJobRows),
     jobLimit
   );
   const clientActivities = public_client_activity_payloads(

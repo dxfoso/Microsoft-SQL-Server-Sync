@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 97)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 99)}
         observed_ids = set()
 
         for row in rows:
@@ -339,6 +339,27 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("String _buildStagedDeltaDeleteStatements(", 1)[0]
         self.assertEqual(merge_body.count("DROP TABLE $stageTarget"), 1)
         self.assertIn("Transport/process interruption", merge_body)
+
+    def test_active_client_status_reports_progress_rate_or_stall(self):
+        source = read_text("frontend/lib/clients_page.dart")
+        self.assertIn("_recordJobProgress(nextState.jobs)", source)
+        self.assertIn("'$phase ${job.progress.clamp(0, 100)}%'", source)
+        self.assertIn("rows/s", source)
+        self.assertIn("%/min", source)
+        self.assertIn("no movement ${formatSyncDuration(unchangedFor)}", source)
+        self.assertIn("_jobProgressSamples.removeWhere", source)
+
+    def test_active_sync_job_cannot_disappear_from_bounded_web_history(self):
+        source = read_text("business/control_plane.tru")
+        live_state = source.split("function live_state(token:", 1)[1].split(
+            "function agents_heartbeat", 1
+        )[0]
+        prioritizer = source.split(
+            "function prioritized_live_state_job_rows(", 1
+        )[1].split("function ensure_agent", 1)[0]
+        self.assertIn("activeRows.concat(historyRows)", prioritizer)
+        self.assertIn("string_array_contains(seenIds, id)", prioritizer)
+        self.assertIn("prioritized_live_state_job_rows(activeJobRows, recentJobRows)", live_state)
 
     def test_updater_launch_failure_enters_transactional_rollback(self):
         updater = read_text("update.ps1")
