@@ -8715,9 +8715,10 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     expectedClients: batch.expectedClients,
     totalRowCount
   }), 'sha256');
-  const transferChunkPayload = chunkPayloadBase64.length != 0
-    ? chunkPayloadBase64
-    : json.stringify(chunkRows);
+  let transferChunkPayload = string.from(chunkPayloadBase64);
+  if (transferChunkPayload.length == 0) {
+    transferChunkPayload = json.stringify(chunkRows);
+  }
   const transferChunk = {
     id: crypto.hash(json.stringify({
       manifestId: transferManifestId,

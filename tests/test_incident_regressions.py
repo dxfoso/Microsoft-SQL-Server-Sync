@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 82)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 83)}
         observed_ids = set()
 
         for row in rows:
@@ -208,6 +208,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Buffer the complete table delta before SQL apply", agent)
         self.assertIn("maxBytes = 2 * 1024 * 1024 * 1024", cache)
         self.assertIn("maxAge = Duration(days: 7)", cache)
+
+    def test_transfer_payload_uses_tru_type_stable_assignment(self):
+        control_plane = read_text("business/control_plane.tru")
+
+        self.assertIn(
+            "let transferChunkPayload = string.from(chunkPayloadBase64);",
+            control_plane,
+        )
+        self.assertIn(
+            "transferChunkPayload = json.stringify(chunkRows);", control_plane
+        )
+        self.assertNotIn(
+            "const transferChunkPayload = chunkPayloadBase64.length != 0",
+            control_plane,
+        )
 
 
 if __name__ == "__main__":
