@@ -32,6 +32,7 @@ int unexpectedCompleteSnapshotMismatchCount({
 String buildTargetSnapshotStageSetupSql({
   required String stageTableName,
   required List<SqlSyncColumnDefinition> columns,
+  bool replaceExisting = true,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -43,17 +44,34 @@ String buildTargetSnapshotStageSetupSql({
       )
       .join(',\n    ');
   final stageTarget = stageTableReference(stageTableName);
-  return '''
-SET NOCOUNT ON;
-SET XACT_ABORT ON;
+  final replaceSql =
+      replaceExisting
+          ? '''
 IF OBJECT_ID(N'$stageTarget', N'U') IS NOT NULL
 BEGIN
   DROP TABLE $stageTarget;
-END;
+END;'''
+          : '';
+  return '''
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+$replaceSql
+IF OBJECT_ID(N'$stageTarget', N'U') IS NULL
+BEGIN
 CREATE TABLE $stageTarget (
   __row_num INT IDENTITY(1,1) NOT NULL,
   $sourceTempColumnDefinitions
 );
+END;
+''';
+}
+
+String buildTargetSnapshotStageRowCountSql({required String stageTableName}) {
+  final stageTarget = stageTableReference(stageTableName);
+  return '''
+SET NOCOUNT ON;
+SELECT N'__SQL_SYNC_STAGE_ROWS__=' + CONVERT(nvarchar(30), COUNT_BIG(*))
+FROM $stageTarget;
 ''';
 }
 
@@ -192,10 +210,11 @@ String buildTargetSnapshotStageApplySql({
       .map((column) => quoteIdentifier(column.name))
       .join(', ');
   final stageTarget = stageTableReference(stageTableName);
+  const workingSource = '#source_rows';
   final sourceIndexStatements = _buildSourceTempIndexStatements(<List<String>>[
     primaryKeyColumns,
     ...uniqueIndexColumnSets,
-  ]).replaceAll('#source_rows', stageTarget);
+  ]);
   final identityColumns = insertColumns
       .where((column) => column.isIdentity)
       .toList(growable: false);
@@ -238,7 +257,7 @@ String buildTargetSnapshotStageApplySql({
             database: database,
             schema: schema,
             table: table,
-            stageTarget: stageTarget,
+            stageTarget: workingSource,
             columns: columns,
             primaryKeyColumns: primaryKeyColumns,
             uniqueIndexColumnSets: uniqueIndexColumnSets,
@@ -255,7 +274,7 @@ String buildTargetSnapshotStageApplySql({
             database: database,
             schema: schema,
             table: table,
-            stageTarget: stageTarget,
+            stageTarget: workingSource,
             columns: columns,
             primaryKeyColumns: primaryKeyColumns,
             uniqueIndexColumnSets: uniqueIndexColumnSets,
@@ -264,8 +283,8 @@ String buildTargetSnapshotStageApplySql({
   final mergeStatements = '''
   $deltaDeleteStatements
   $latestUniqueConflictStatements
-  ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
-  ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: stageTarget, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
+  ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: workingSource, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
+  ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: workingSource, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
   SET @SqlSyncInsertedRows += @@ROWCOUNT;''';
 
   return '''
@@ -273,6 +292,9 @@ SET NOCOUNT ON;
 SET XACT_ABORT ON;
 $transactionIsolation
 BEGIN TRY
+  SELECT __row_num, $sourceColumnList
+  INTO $workingSource
+  FROM $stageTarget;
   $sourceIndexStatements
   BEGIN TRANSACTION;
   DECLARE @SqlSyncProtectedRows INT = 0;
@@ -298,16 +320,15 @@ BEGIN CATCH
     ROLLBACK TRANSACTION;
   END;
   $triggerRestoreBlock
+  -- A confirmed SQL error rolled back the target transaction, so this stage
+  -- cannot make forward progress unchanged. Transport/process interruption
+  -- does not execute this block and therefore preserves committed chunks.
   IF OBJECT_ID(N'$stageTarget', N'U') IS NOT NULL
   BEGIN
     DROP TABLE $stageTarget;
   END;
   RAISERROR(@SqlSyncStageErrorMessage, 16, 1);
 END CATCH;
-IF OBJECT_ID(N'$stageTarget', N'U') IS NOT NULL
-BEGIN
-  DROP TABLE $stageTarget;
-END;
 ''';
 }
 

@@ -6183,6 +6183,44 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final upsertRows = contentCheckedRows
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
+    Future<void> reportStageProgress(int loadedRows, int totalRows) async {
+      final fraction = totalRows <= 0 ? 1.0 : loadedRows / totalRows;
+      final progress = 55 + (fraction.clamp(0.0, 1.0) * 25).round();
+      try {
+        final progressJob = await _controlPlaneClient.updateJobProgress(
+          job.id,
+          status: 'applying',
+          progress: progress,
+          message:
+              'Staged $loadedRows of $totalRows rows in resumable chunks for ${_localTableName(job.table)}.',
+          rowCount: loadedRows,
+        );
+        _applyRemoteJobState(progressJob);
+      } catch (error) {
+        logStartupEvent(
+          'Non-fatal stage progress update failed for ${job.id}: $error',
+        );
+      }
+    }
+
+    Future<void> reportMergeStarted() async {
+      try {
+        final progressJob = await _controlPlaneClient.updateJobProgress(
+          job.id,
+          status: 'applying',
+          progress: 85,
+          message:
+              'Staging complete; atomically merging changes into ${_localTableName(job.table)}.',
+          rowCount: contentCheckedRows.length,
+        );
+        _applyRemoteJobState(progressJob);
+      } catch (error) {
+        logStartupEvent(
+          'Non-fatal atomic merge progress update failed for ${job.id}: $error',
+        );
+      }
+    }
+
     var protectedFullSnapshotUpsertRows = 0;
     if (fullSnapshotApply) {
       if (deleteRows.isNotEmpty) {
@@ -6210,6 +6248,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           )
           .toList(growable: false);
       final applyResult = await _applySourceRowsToTarget(
+        operationId: job.id,
         profile: targetProfile,
         database: targetDatabase,
         schema: targetTable.schema,
@@ -6222,6 +6261,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         manageTriggers: true,
         insertOnly: false,
         resolveUniqueConflictsLatestWins: true,
+        onStageProgress: reportStageProgress,
+        onMergeStarted: reportMergeStarted,
       );
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
@@ -6285,6 +6326,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           )
           .toList(growable: false);
       final applyResult = await _applySourceRowsToTarget(
+        operationId: job.id,
         profile: targetProfile,
         database: targetDatabase,
         schema: targetTable.schema,
@@ -6298,6 +6340,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         manageTriggers: true,
         insertOnly: false,
         resolveUniqueConflictsLatestWins: true,
+        onStageProgress: reportStageProgress,
+        onMergeStarted: reportMergeStarted,
       );
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
@@ -7334,6 +7378,7 @@ END
   }
 
   Future<_TargetApplyResult> _applySourceRowsToTarget({
+    required String operationId,
     required _SqlConnectionProfile profile,
     required String database,
     required String schema,
@@ -7347,8 +7392,13 @@ END
     bool manageTriggers = true,
     bool insertOnly = false,
     bool resolveUniqueConflictsLatestWins = false,
+    Future<void> Function(int loadedRows, int totalRows)? onStageProgress,
+    Future<void> Function()? onMergeStarted,
   }) async {
-    final stageTableName = _nextTargetSnapshotStageTableName(table);
+    final stageTableName = _targetSnapshotStageTableNameForOperation(
+      table,
+      operationId,
+    );
     final rowCountBefore = await _queryTableRowCount(
       profile: profile,
       database: database,
@@ -7361,19 +7411,66 @@ END
             'Unable to read the target row count before target apply.',
       );
     }
+    var mergeCompleted = false;
     try {
       final stageLoadStopwatch = Stopwatch()..start();
+      var sqlcmdLaunchCount = 0;
       await _runSqlCmdOrThrow(
         profile: profile,
         database: database,
-        query: buildTargetSnapshotStageLoadSql(
+        query: buildTargetSnapshotStageSetupSql(
           stageTableName: stageTableName,
           columns: columns,
-          rows: rows,
+          replaceExisting: false,
         ),
-        context: 'target snapshot stage load',
-        timeout: _atomicSnapshotApplySqlCmdTimeout,
+        context: 'target snapshot stage setup',
+        timeout: _snapshotSqlCmdTimeout,
       );
+      sqlcmdLaunchCount += 1;
+      var stagedRowCount = await _queryTargetSnapshotStageRowCount(
+        profile: profile,
+        database: database,
+        stageTableName: stageTableName,
+      );
+      sqlcmdLaunchCount += 1;
+      if (stagedRowCount > rows.length) {
+        await _runSqlCmdOrThrow(
+          profile: profile,
+          database: database,
+          query: buildTargetSnapshotStageSetupSql(
+            stageTableName: stageTableName,
+            columns: columns,
+          ),
+          context: 'target snapshot stage reset',
+          timeout: _snapshotSqlCmdTimeout,
+        );
+        sqlcmdLaunchCount += 1;
+        stagedRowCount = 0;
+      }
+      final resumedRowCount = stagedRowCount;
+      if (stagedRowCount > 0) {
+        await onStageProgress?.call(stagedRowCount, rows.length);
+      }
+      while (stagedRowCount < rows.length) {
+        final chunk = rows
+            .skip(stagedRowCount)
+            .take(targetSnapshotInsertRowsPerStatement)
+            .toList(growable: false);
+        await _runSqlCmdOrThrow(
+          profile: profile,
+          database: database,
+          query: buildTargetSnapshotStageInsertSql(
+            stageTableName: stageTableName,
+            columns: columns,
+            rows: chunk,
+          ),
+          context: 'target snapshot stage chunk',
+          timeout: _snapshotSqlCmdTimeout,
+        );
+        sqlcmdLaunchCount += 1;
+        stagedRowCount += chunk.length;
+        await onStageProgress?.call(stagedRowCount, rows.length);
+      }
       stageLoadStopwatch.stop();
       logAgentDiagnostic(
         'sync.apply.stage_loaded',
@@ -7384,10 +7481,12 @@ END
           'insertStatementCount':
               (rows.length + targetSnapshotInsertRowsPerStatement - 1) ~/
               targetSnapshotInsertRowsPerStatement,
-          'sqlcmdLaunchCount': 1,
+          'resumedRowCount': resumedRowCount,
+          'sqlcmdLaunchCount': sqlcmdLaunchCount,
           'elapsedMs': stageLoadStopwatch.elapsedMilliseconds,
         },
       );
+      await onMergeStarted?.call();
       final mergeResult = await _runSqlCmdOrThrow(
         profile: profile,
         database: database,
@@ -7428,6 +7527,7 @@ END
           ) ??
           0;
       if (reportedInsertedRows != null) {
+        mergeCompleted = true;
         return _TargetApplyResult(
           insertedRows: reportedInsertedRows,
           protectedRows: protectedRows,
@@ -7454,6 +7554,7 @@ END
       logStartupEvent(
         'sqlcmd omitted the target apply result marker for $database.$schema.$table; counted $insertedRows inserted row(s) from target cardinality.',
       );
+      mergeCompleted = true;
       return _TargetApplyResult(
         insertedRows: insertedRows,
         protectedRows: protectedRows,
@@ -7461,12 +7562,61 @@ END
         protectedDeleteRows: protectedDeleteRows,
       );
     } finally {
-      await _dropTargetSnapshotStage(
-        profile: profile,
-        database: database,
-        stageTableName: stageTableName,
+      // Keep a partially loaded stage after process/network interruption. The
+      // deterministic operation name lets the same durable job resume from
+      // its committed row count. Target rows remain untouched until merge.
+      if (mergeCompleted) {
+        await _dropTargetSnapshotStage(
+          profile: profile,
+          database: database,
+          stageTableName: stageTableName,
+        );
+      }
+    }
+  }
+
+  String _targetSnapshotStageTableNameForOperation(
+    String table,
+    String operationId,
+  ) {
+    final normalizedTable = table
+        .replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_')
+        .substring(0, math.min(48, table.length));
+    final normalizedOperation = operationId.replaceAll(
+      RegExp(r'[^A-Za-z0-9]'),
+      '',
+    );
+    if (normalizedOperation.isEmpty) {
+      throw ArgumentError.value(
+        operationId,
+        'operationId',
+        'must not be empty',
       );
     }
+    return 'sqlsync_${normalizedTable}_${normalizedOperation.substring(0, math.min(48, normalizedOperation.length))}';
+  }
+
+  Future<int> _queryTargetSnapshotStageRowCount({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String stageTableName,
+  }) async {
+    final result = await _runSqlCmdOrThrow(
+      profile: profile,
+      database: database,
+      query: buildTargetSnapshotStageRowCountSql(
+        stageTableName: stageTableName,
+      ),
+      context: 'target snapshot stage row count',
+      timeout: _snapshotSqlCmdTimeout,
+    );
+    final match = RegExp(
+      r'__SQL_SYNC_STAGE_ROWS__=(\d+)',
+    ).firstMatch(result.stdout.toString());
+    if (match == null) {
+      throw StateError('Target snapshot stage row count was not reported.');
+    }
+    return int.parse(match.group(1)!);
   }
 
   String _nextTargetSnapshotStageTableName(String table) {

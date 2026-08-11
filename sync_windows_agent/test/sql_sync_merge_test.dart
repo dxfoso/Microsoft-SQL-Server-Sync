@@ -63,6 +63,41 @@ void main() {
     expect(RegExp(r'INSERT INTO').allMatches(sql), hasLength(3));
   });
 
+  test(
+    'resumable staging preserves an existing operation table and reports its row count',
+    () {
+      const columns = [
+        SqlSyncColumnDefinition(
+          name: 'Id',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ];
+      final setup = buildTargetSnapshotStageSetupSql(
+        stageTableName: 'sqlsync_items_job123',
+        columns: columns,
+        replaceExisting: false,
+      );
+      final count = buildTargetSnapshotStageRowCountSql(
+        stageTableName: 'sqlsync_items_job123',
+      );
+
+      expect(setup, isNot(contains('DROP TABLE')));
+      expect(
+        setup,
+        contains(
+          "IF OBJECT_ID(N'tempdb.dbo.[sqlsync_items_job123]', N'U') IS NULL",
+        ),
+      );
+      expect(count, contains('__SQL_SYNC_STAGE_ROWS__='));
+      expect(count, contains('COUNT_BIG(*)'));
+    },
+  );
+
   test('primary-key comparison uses one staged set-based SQL script', () {
     const keyColumns = [
       SqlSyncColumnDefinition(
@@ -297,10 +332,15 @@ void main() {
         contains('CHANGETABLE(CHANGES [db].[dbo].[items], 42) AS ct'),
       );
       expect(sql, contains('ct.SYS_CHANGE_CONTEXT <> 0x53514C53594E43'));
+      expect(sql, contains('DELETE source\n  FROM #source_rows AS source'));
       expect(
         sql,
-        contains('DELETE source\n  FROM tempdb.dbo.[#stage_items] AS source'),
+        contains(
+          'SELECT __row_num, [Id], [Value]\n  INTO #source_rows\n  FROM tempdb.dbo.[#stage_items]',
+        ),
       );
+      expect(sql, contains('DROP TABLE tempdb.dbo.[#stage_items]'));
+      expect(sql.trim(), endsWith('END CATCH;'));
       expect(sql, contains('INNER JOIN #sqlsync_protected_keys AS target'));
       expect(sql, contains('__SQL_SYNC_PROTECTED__='));
       expect(sql, contains('__SQL_SYNC_PROTECTED_UPSERTS__='));

@@ -489,13 +489,15 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged(", agent_page)
         self.assertIn("targetHash == null || targetHash != incomingHash", agent_page)
         self.assertIn("Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged", agent_page)
-        self.assertIn("buildTargetSnapshotStageLoadSql(", agent_page)
+        self.assertIn("buildTargetSnapshotStageSetupSql(", agent_page)
+        self.assertIn("buildTargetSnapshotStageInsertSql(", agent_page)
+        self.assertIn("buildTargetSnapshotStageRowCountSql(", agent_page)
         self.assertIn("targetSnapshotInsertRowsPerStatement = 1000", merge_helper)
-        self.assertIn("'sqlcmdLaunchCount': 1", agent_page)
         stage_apply = agent_page.split(
             "Future<_TargetApplyResult> _applySourceRowsToTarget(", 1
         )[1].split("String _nextTargetSnapshotStageTableName", 1)[0]
-        self.assertNotIn("offset += _targetSnapshotStageInsertBatchSize", stage_apply)
+        self.assertIn("while (stagedRowCount < rows.length)", stage_apply)
+        self.assertIn("await onStageProgress?.call(stagedRowCount, rows.length)", stage_apply)
         self.assertIn("_buildSourceTempIndexStatements(", merge_helper)
 
     def test_table_fingerprints_only_hash_writable_sync_columns(self):
@@ -1175,7 +1177,7 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertEqual(
             apply_body.count("timeout: _atomicSnapshotApplySqlCmdTimeout,"),
-            2,
+            1,
         )
         self.assertNotIn(
             "context: 'target snapshot stage load',\n        timeout: _snapshotSqlCmdTimeout,",
@@ -1209,22 +1211,38 @@ class SyncContractsTests(unittest.TestCase):
             client_api,
         )
 
-    def test_atomic_stage_load_separates_sqlcmd_batches_to_bound_server_memory(self):
+    def test_atomic_stage_load_is_chunked_resumable_and_reports_progress(self):
         merge_helper = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        load_body = merge_helper.split(
-            "String buildTargetSnapshotStageLoadSql(", 1
-        )[1].split("String buildTargetSnapshotStageApplySql(", 1)[0]
         apply_body = agent_page.split(
             "Future<_TargetApplyResult> _applySourceRowsToTarget(", 1
         )[1].split("String _nextTargetSnapshotStageTableName(", 1)[0]
 
         self.assertIn("targetSnapshotInsertRowsPerStatement = 1000", merge_helper)
-        self.assertIn("return statements.join('\\nGO\\n');", load_body)
-        self.assertIn("buildTargetSnapshotStageLoadSql(", apply_body)
-        self.assertIn("context: 'target snapshot stage load'", apply_body)
-        self.assertIn("'sqlcmdLaunchCount': 1", apply_body)
+        self.assertIn("replaceExisting: false", apply_body)
+        self.assertIn("_queryTargetSnapshotStageRowCount(", apply_body)
+        self.assertIn("while (stagedRowCount < rows.length)", apply_body)
+        self.assertIn("buildTargetSnapshotStageInsertSql(", apply_body)
+        self.assertIn("context: 'target snapshot stage chunk'", apply_body)
+        self.assertIn("final resumedRowCount = stagedRowCount", apply_body)
+        self.assertIn("if (mergeCompleted)", apply_body)
+        self.assertIn("_targetSnapshotStageTableNameForOperation(", apply_body)
+        self.assertIn("Staged $loadedRows of $totalRows rows in resumable chunks", agent_page)
+        self.assertIn("Staging complete; atomically merging changes", agent_page)
+        self.assertIn("SELECT __row_num, $sourceColumnList", merge_helper)
+        self.assertIn("Transport/process interruption", merge_helper)
+        self.assertEqual(
+            merge_helper.split("String buildTargetSnapshotStageApplySql(", 1)[1]
+            .split("String _buildStagedDeltaDeleteStatements(", 1)[0]
+            .count("DROP TABLE $stageTarget"),
+            1,
+        )
+
+    def test_atomic_stage_load_separates_sqlcmd_batches_to_bound_server_memory(self):
+        # Retain the INC-055 catalog selector while the stronger INC-092
+        # regression verifies durable cross-process staging and progress.
+        self.test_atomic_stage_load_is_chunked_resumable_and_reports_progress()
 
     def test_unused_business_info_route_is_removed(self):
         self.assertFalse((ROOT / "business" / "sql_sync_api.tru").exists())
@@ -1935,7 +1953,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("BEGIN TRANSACTION;", target_apply)
         self.assertIn("COMMIT TRANSACTION;", target_apply)
         self.assertIn("stageTableReference(stageTableName)", target_apply)
-        self.assertIn("DROP TABLE $stageTarget", target_apply)
+        self.assertIn("INTO $workingSource", target_apply)
+        self.assertEqual(target_apply.count("DROP TABLE $stageTarget"), 1)
+        self.assertIn("if (mergeCompleted)", agent_page)
+        self.assertIn("_dropTargetSnapshotStage(", agent_page)
         self.assertNotIn("DELETE TOP", target_apply)
         self.assertIn("WHERE NOT EXISTS (", merge_helper)
         self.assertIn("target snapshot merge", agent_page)

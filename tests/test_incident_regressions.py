@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 92)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 93)}
         observed_ids = set()
 
         for row in rows:
@@ -316,6 +316,29 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("$fileEntry.transferUrl", updater)
         self.assertIn("$request.AddRange($existingBytes)", updater)
         self.assertIn("filesManifest.commit", updater)
+
+    def test_atomic_apply_staging_resumes_chunks_and_keeps_final_merge_atomic(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        apply_body = agent.split(
+            "Future<_TargetApplyResult> _applySourceRowsToTarget(", 1
+        )[1].split("String _nextTargetSnapshotStageTableName(", 1)[0]
+
+        self.assertIn("_targetSnapshotStageTableNameForOperation(", apply_body)
+        self.assertIn("replaceExisting: false", apply_body)
+        self.assertIn("_queryTargetSnapshotStageRowCount(", apply_body)
+        self.assertIn("while (stagedRowCount < rows.length)", apply_body)
+        self.assertIn("buildTargetSnapshotStageInsertSql(", apply_body)
+        self.assertIn("await onStageProgress?.call(stagedRowCount, rows.length)", apply_body)
+        self.assertIn("if (mergeCompleted)", apply_body)
+        self.assertIn("SELECT __row_num, $sourceColumnList", merge)
+        self.assertIn("INTO $workingSource", merge)
+        self.assertIn("BEGIN TRANSACTION;", merge)
+        merge_body = merge.split(
+            "String buildTargetSnapshotStageApplySql(", 1
+        )[1].split("String _buildStagedDeltaDeleteStatements(", 1)[0]
+        self.assertEqual(merge_body.count("DROP TABLE $stageTarget"), 1)
+        self.assertIn("Transport/process interruption", merge_body)
 
 
 if __name__ == "__main__":
