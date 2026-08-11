@@ -1545,6 +1545,24 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("status: 'applying'", download[buffered:sql_apply])
         self.assertIn("progress: 55", download[buffered:sql_apply])
 
+    def test_authenticated_shell_defers_updates_to_job_aware_agent_page(self):
+        app = read_text("sync_windows_agent/lib/app.dart")
+        shell_apply = app.split(
+            "Future<void> _maybeAutoApplyShellClientUpdate(", 1
+        )[1].split("void _migrateStoredClientState", 1)[0]
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        agent_apply = agent.split(
+            "Future<void> _maybeAutoApplyClientUpdate(", 1
+        )[1].split("String _clientUpdateCommand", 1)[0]
+
+        self.assertIn("_authToken?.trim().isNotEmpty", shell_apply)
+        self.assertLess(
+            shell_apply.index("_authToken?.trim().isNotEmpty"),
+            shell_apply.index("Process.start("),
+        )
+        self.assertIn("_processingJobIds.isNotEmpty", agent_apply)
+        self.assertIn("job.status == 'running' || job.status == 'applying'", agent_apply)
+
     def test_windows_client_updates_only_move_forward(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

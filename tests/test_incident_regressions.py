@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 87)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 88)}
         observed_ids = set()
 
         for row in rows:
@@ -265,6 +265,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             download.index("Verified download complete; atomically applying"),
             download.index("await _applyDownloadedSnapshotToTarget("),
         )
+
+    def test_authenticated_update_waits_for_active_sync_work(self):
+        app = read_text("sync_windows_agent/lib/app.dart")
+        shell = app.split(
+            "Future<void> _maybeAutoApplyShellClientUpdate(", 1
+        )[1].split("void _migrateStoredClientState", 1)[0]
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("_authToken?.trim().isNotEmpty", shell)
+        self.assertIn("_processingJobIds.isNotEmpty", agent)
+        self.assertIn("_activeJobs.any(", agent)
 
 
 if __name__ == "__main__":

@@ -630,6 +630,12 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
     ClientUpdateInfo updateInfo, {
     bool force = false,
   }) async {
+    // Once authenticated, AgentPage owns update scheduling because it knows
+    // whether a sync snapshot or atomic SQL apply is active. The shell-level
+    // updater is only the signed-out/startup recovery path.
+    if ((_authToken?.trim().isNotEmpty ?? false)) {
+      return;
+    }
     if (!mounted ||
         !_shellHasClientUpdate ||
         !_supportsShellAutomaticClientUpdate ||
