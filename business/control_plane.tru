@@ -4031,7 +4031,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     for (const table of divergent_fingerprint_tables_for_owner(
       ownerAgents,
       tableCaches,
-      periodic_sync_scheduler_table_limit()
+      0
     )) {
       let retryDue = false;
       for (const agent of ownerAgents) {

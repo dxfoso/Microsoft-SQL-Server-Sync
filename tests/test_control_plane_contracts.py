@@ -840,8 +840,16 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("fingerprints.length > 1", detector)
         self.assertIn("sync_table_reported_fingerprint(state)", detector)
         self.assertIn("divergent_fingerprint_tables_for_owner(", scheduler)
+        self.assertIn(
+            "divergent_fingerprint_tables_for_owner(\n      ownerAgents,\n      tableCaches,\n      0\n    )",
+            scheduler,
+        )
         self.assertIn("periodic_sync_table_due_after_attempt(", scheduler)
         self.assertIn("record_periodic_sync_table_attempt(ownerUserId, table)", scheduler)
+        self.assertIn(
+            "if (queuedTableCount >= periodic_sync_scheduler_table_limit())",
+            scheduler,
+        )
         self.assertIn("mode: 'union_bootstrap'", planner)
         self.assertIn(
             "Clients report different complete table fingerprints", planner
