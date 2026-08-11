@@ -507,6 +507,9 @@ class AdminAgentClientUpdate {
     this.acknowledgedAt,
     this.status = 'idle',
     this.message = '',
+    this.downloadedBytes,
+    this.totalBytes,
+    this.progressPercent,
   });
 
   final bool pending;
@@ -518,6 +521,9 @@ class AdminAgentClientUpdate {
   final String? acknowledgedAt;
   final String status;
   final String message;
+  final int? downloadedBytes;
+  final int? totalBytes;
+  final int? progressPercent;
 
   factory AdminAgentClientUpdate.fromJson(Map<String, dynamic> json) {
     return AdminAgentClientUpdate(
@@ -530,6 +536,9 @@ class AdminAgentClientUpdate {
       acknowledgedAt: json['acknowledgedAt'] as String?,
       status: json['status'] as String? ?? 'idle',
       message: json['message'] as String? ?? '',
+      downloadedBytes: (json['downloadedBytes'] as num?)?.round(),
+      totalBytes: (json['totalBytes'] as num?)?.round(),
+      progressPercent: (json['progressPercent'] as num?)?.round(),
     );
   }
 }

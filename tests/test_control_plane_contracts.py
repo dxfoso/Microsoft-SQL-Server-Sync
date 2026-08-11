@@ -252,7 +252,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function agent_client_update_payload(agent: map<json>, authenticatedClientPoll: bool = false): map<json> {", source)
         self.assertIn("function agent_client_update_request(clientName: string, targetVersion: string? = null, token: string? = null): map<json> {", source)
         self.assertIn("function agent_client_update_request_all(targetVersion: string? = null, token: string? = null): map<json> {", source)
-        self.assertIn("function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', token: string? = null): map<json> {", source)
+        self.assertIn("function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', downloadedBytes: int? = null, totalBytes: int? = null, progressPercent: int? = null, token: string? = null): map<json> {", source)
 
     def test_control_plane_exposes_server_requested_window_actions(self):
         source = read_text("business/control_plane.tru")
@@ -351,7 +351,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("normalizedStatus == 'downloading'", retry)
         self.assertIn("normalizedStatus == 'installing'", retry)
-        self.assertIn("status: 'downloading'", handler)
+        self.assertIn("status: reportedStatus", handler)
+        self.assertIn("? 'installing' : 'downloading'", handler)
         self.assertIn("Verified files and partial downloads will be reused", handler)
         self.assertIn("continuing the durable update", handler)
         self.assertIn("'updateLogTail': _readUpdateLogTail()", agent)
@@ -382,6 +383,23 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertEqual(
             heartbeat.count("clientUpdateMessage: nextClientUpdateMessage"), 2
         )
+
+    def test_client_update_progress_is_persisted_and_exposed(self):
+        source = read_text("business/control_plane.tru")
+        payload = source.split("function agent_client_update_payload(", 1)[1].split(
+            "function window_action_request_pending", 1
+        )[0]
+        acknowledgement = source.split("function agent_client_update_ack(", 1)[1].split(
+            "function agent_window_action_request_all", 1
+        )[0]
+
+        self.assertIn("field clientUpdateDownloadedBytes: int? min=0", source)
+        self.assertIn("downloadedBytes: agent.clientUpdateDownloadedBytes", payload)
+        self.assertIn("totalBytes: agent.clientUpdateTotalBytes", payload)
+        self.assertIn("progressPercent: agent.clientUpdateProgressPercent", payload)
+        self.assertIn("downloadedBytes: int? = null", acknowledgement)
+        self.assertIn("clientUpdateDownloadedBytes: nextDownloadedBytes", acknowledgement)
+        self.assertIn("clientUpdateProgressPercent: nextProgressPercent", acknowledgement)
 
     def test_client_update_request_all_persists_requests_for_offline_agents(self):
         source = read_text("business/control_plane.tru")

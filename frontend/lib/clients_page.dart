@@ -1859,7 +1859,7 @@ class _ClientsPageState extends State<ClientsPage> {
     }
     if (agent.clientUpdate.pending) {
       return switch (agent.clientUpdate.status.trim().toLowerCase()) {
-        'downloading' => 'Update downloading',
+        'downloading' => _clientUpdateDownloadLabel(agent.clientUpdate),
         'installing' => 'Update installing',
         'retrying' => 'Update retrying',
         _ => 'Update pending',
@@ -1868,7 +1868,21 @@ class _ClientsPageState extends State<ClientsPage> {
     return 'Ready';
   }
 
+  String _clientUpdateDownloadLabel(AdminAgentClientUpdate update) {
+    final percent = update.progressPercent;
+    final downloaded = update.downloadedBytes;
+    final total = update.totalBytes;
+    if (percent == null) return 'Update downloading';
+    if (downloaded != null && total != null && total > 0) {
+      return 'Update downloading $percent% (${_formatBytes(downloaded)} / ${_formatBytes(total)})';
+    }
+    return 'Update downloading $percent%';
+  }
+
   Color _clientActivityColor(String status) {
+    if (status.toLowerCase().startsWith('update downloading')) {
+      return const Color(0xFF2563EB);
+    }
     switch (status.toLowerCase()) {
       case 'ready':
         return const Color(0xFF0F766E);
@@ -1886,7 +1900,6 @@ class _ClientsPageState extends State<ClientsPage> {
         return const Color(0xFFB54708);
       case 'waiting':
       case 'queued':
-      case 'update retrying':
         return const Color(0xFF7A5D00);
       case 'offline':
       case 'disabled':

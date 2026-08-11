@@ -59,6 +59,64 @@ function Initialize-NetworkSecurityProtocol {
     }
 }
 
+function Write-UpdateProgress {
+    param(
+        [Parameter(Mandatory = $true)][string] $Status,
+        [Parameter(Mandatory = $true)][int64] $DownloadedBytes,
+        [Parameter(Mandatory = $true)][int64] $TotalBytes,
+        [string] $Message = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($script:UpdateProgressPath)) {
+        return
+    }
+    try {
+        $safeDownloaded = [Math]::Max([int64]0, $DownloadedBytes)
+        $safeTotal = [Math]::Max([int64]0, $TotalBytes)
+        $percent = if ($safeTotal -gt 0) {
+            [Math]::Min(100, [Math]::Max(0, [int][Math]::Floor(($safeDownloaded * 100.0) / $safeTotal)))
+        } else { 0 }
+        $payload = [ordered]@{
+            version = $script:UpdateTargetVersion
+            status = $Status
+            downloadedBytes = $safeDownloaded
+            totalBytes = $safeTotal
+            percent = $percent
+            message = $Message
+            updatedAt = [DateTime]::UtcNow.ToString('o')
+        } | ConvertTo-Json -Compress
+        $temporaryPath = "$($script:UpdateProgressPath).$PID.tmp"
+        [System.IO.File]::WriteAllText($temporaryPath, $payload, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporaryPath -Destination $script:UpdateProgressPath -Force
+    }
+    catch {
+        # Progress reporting is best effort and must never break the update.
+    }
+}
+
+function Publish-UpdateDownloadProgress {
+    param(
+        [Parameter(Mandatory = $true)][int64] $FileBytes,
+        [Parameter(Mandatory = $true)][int64] $AggregateCompletedBytes,
+        [Parameter(Mandatory = $true)][int64] $TotalDownloadBytes
+    )
+
+    $downloaded = [Math]::Min($TotalDownloadBytes, [Math]::Max([int64]0, $AggregateCompletedBytes + $FileBytes))
+    $now = [DateTime]::UtcNow
+    $percent = if ($TotalDownloadBytes -gt 0) { [int][Math]::Floor(($downloaded * 100.0) / $TotalDownloadBytes) } else { 0 }
+    $due = $script:LastUpdateProgressAt -eq [DateTime]::MinValue -or
+        $percent -ne $script:LastUpdateProgressPercent -or
+        ($downloaded - $script:LastUpdateProgressBytes) -ge 1MB -or
+        ($now - $script:LastUpdateProgressAt).TotalSeconds -ge 2
+    if (-not $due) {
+        return
+    }
+    Write-UpdateProgress -Status 'downloading' -DownloadedBytes $downloaded -TotalBytes $TotalDownloadBytes -Message 'Downloading the verified client update.'
+    $script:LastUpdateProgressAt = $now
+    $script:LastUpdateProgressBytes = $downloaded
+    $script:LastUpdateProgressPercent = $percent
+}
+
 if (-not ('SqlSyncAgentUpdateWebClient' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -125,7 +183,9 @@ function Invoke-ResumableUpdateWebRequest {
         [Parameter(Mandatory = $true)][string] $Uri,
         [Parameter(Mandatory = $true)][string] $OutFile,
         [Parameter(Mandatory = $true)][int64] $ExpectedSizeBytes,
-        [Parameter(Mandatory = $true)][string] $ExpectedSha256
+        [Parameter(Mandatory = $true)][string] $ExpectedSha256,
+        [int64] $AggregateCompletedBytes = 0,
+        [int64] $TotalDownloadBytes = 0
     )
 
     $partialFile = "$OutFile.part"
@@ -134,6 +194,7 @@ function Invoke-ResumableUpdateWebRequest {
         New-Item -Path $parent -ItemType Directory -Force | Out-Null
     }
     if (Test-InstalledFileMatchesManifest -Path $OutFile -ExpectedSizeBytes $ExpectedSizeBytes -ExpectedSha256 $ExpectedSha256) {
+        Publish-UpdateDownloadProgress -FileBytes $ExpectedSizeBytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
         return
     }
     Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
@@ -147,6 +208,7 @@ function Invoke-ResumableUpdateWebRequest {
             Initialize-NetworkSecurityProtocol
             if (Test-InstalledFileMatchesManifest -Path $partialFile -ExpectedSizeBytes $ExpectedSizeBytes -ExpectedSha256 $ExpectedSha256) {
                 Move-Item -LiteralPath $partialFile -Destination $OutFile -Force
+                Publish-UpdateDownloadProgress -FileBytes $ExpectedSizeBytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
                 return
             }
             $existingBytes = [int64]0
@@ -157,6 +219,7 @@ function Invoke-ResumableUpdateWebRequest {
                 Remove-Item -LiteralPath $partialFile -Force
                 $existingBytes = 0
             }
+            Publish-UpdateDownloadProgress -FileBytes $existingBytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
 
             $request = [System.Net.HttpWebRequest]::Create($Uri)
             $request.Method = 'GET'
@@ -168,12 +231,17 @@ function Invoke-ResumableUpdateWebRequest {
             }
             $response = [System.Net.HttpWebResponse]$request.GetResponse()
             $append = $existingBytes -gt 0 -and $response.StatusCode -eq [System.Net.HttpStatusCode]::PartialContent
+            if (-not $append) {
+                $existingBytes = 0
+            }
             $fileMode = if ($append) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
             $fileStream = [System.IO.File]::Open($partialFile, $fileMode, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
             $responseStream = $response.GetResponseStream()
             $buffer = New-Object byte[] 65536
             while (($read = $responseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
                 $fileStream.Write($buffer, 0, $read)
+                $existingBytes += $read
+                Publish-UpdateDownloadProgress -FileBytes $existingBytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
             }
             $fileStream.Flush()
             $fileStream.Dispose()
@@ -192,6 +260,7 @@ function Invoke-ResumableUpdateWebRequest {
                 throw 'Downloaded payload failed its size or SHA-256 verification.'
             }
             Move-Item -LiteralPath $partialFile -Destination $OutFile -Force
+            Publish-UpdateDownloadProgress -FileBytes $ExpectedSizeBytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
             return
         }
         catch {
@@ -1183,6 +1252,11 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $mainLogPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
+$script:UpdateProgressPath = Join-Path -Path $InstallDir -ChildPath 'update-progress.json'
+$script:UpdateTargetVersion = ''
+$script:LastUpdateProgressAt = [DateTime]::MinValue
+$script:LastUpdateProgressBytes = [int64]-1
+$script:LastUpdateProgressPercent = -1
 Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir noStart=$NoStart" -LogPath $mainLogPath
 $updateMutex = [System.Threading.Mutex]::new($false, (Get-UpdateMutexName -TargetInstallDir $InstallDir))
 $updateMutexAcquired = $false
@@ -1199,6 +1273,7 @@ if (-not $updateMutexAcquired) {
 }
 
 $manifest = Invoke-UpdateRestMethod -Uri $ManifestUrl
+$script:UpdateTargetVersion = [string] $manifest.version
 $installedExeForVersion = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
 if (Test-Path -LiteralPath $installedExeForVersion -PathType Leaf) {
     $installedVersion = [string] (Get-Item -LiteralPath $installedExeForVersion).VersionInfo.ProductVersion
@@ -1252,6 +1327,26 @@ try {
             $staleManagedPaths = [System.Collections.Generic.List[string]]::new()
             $downloadCount = 0
             $downloadBytes = [int64]0
+            $totalDownloadBytes = [int64]0
+            foreach ($fileEntry in $fileEntries) {
+                $relativePath = ConvertTo-InstallRelativePath -Path ([string] $fileEntry.path)
+                $expectedSizeBytes = [int64] $fileEntry.sizeBytes
+                $expectedHash = [string] $fileEntry.sha256
+                $targetPath = Resolve-InstallPath -RootDir $InstallDir -RelativePath $relativePath
+                if (Test-InstalledFileMatchesManifest -Path $targetPath -ExpectedSizeBytes $expectedSizeBytes -ExpectedSha256 $expectedHash) {
+                    continue
+                }
+                $transferSizeBytes = $expectedSizeBytes
+                if ($null -ne $fileEntry.PSObject.Properties['compression'] -and
+                    ([string] $fileEntry.compression).Trim().ToLowerInvariant() -eq 'gzip') {
+                    $transferSizeBytes = [int64] $fileEntry.transferSizeBytes
+                }
+                if ($transferSizeBytes -gt 0) {
+                    $totalDownloadBytes += $transferSizeBytes
+                }
+            }
+            $completedDownloadBytes = [int64]0
+            Write-UpdateProgress -Status 'downloading' -DownloadedBytes 0 -TotalBytes $totalDownloadBytes -Message 'Preparing the verified differential download.'
 
             New-Item -Path $payloadDir -ItemType Directory -Force | Out-Null
 
@@ -1299,7 +1394,10 @@ try {
                 Write-UpdateLog -Message "Downloading changed file: $relativePath" -LogPath $mainLogPath
                 $cacheKey = if (-not [string]::IsNullOrWhiteSpace($transferHash)) { $transferHash.ToLowerInvariant() } else { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($relativePath)).Replace('/', '_') }
                 $cachedPath = Join-Path -Path $persistentCacheRoot -ChildPath $cacheKey
-                Invoke-ResumableUpdateWebRequest -Uri $fileUrl -OutFile $cachedPath -ExpectedSizeBytes $transferSizeBytes -ExpectedSha256 $transferHash
+                Invoke-ResumableUpdateWebRequest -Uri $fileUrl -OutFile $cachedPath -ExpectedSizeBytes $transferSizeBytes -ExpectedSha256 $transferHash -AggregateCompletedBytes $completedDownloadBytes -TotalDownloadBytes $totalDownloadBytes
+                if ($transferSizeBytes -gt 0) {
+                    $completedDownloadBytes += $transferSizeBytes
+                }
                 if ($compression -eq 'gzip') {
                     Expand-VerifiedGzipUpdateFile -SourcePath $cachedPath -DestinationPath $stagedPath
                 }
@@ -1333,6 +1431,7 @@ try {
             }
 
             Write-UpdateLog -Message 'Stopping the supervisor before scheduling differential replacement.' -LogPath $mainLogPath
+            Write-UpdateProgress -Status 'installing' -DownloadedBytes $totalDownloadBytes -TotalBytes $totalDownloadBytes -Message 'Download verified. Installing the client update.'
             Stop-SupervisorProcesses -TargetInstallDir $InstallDir
             Stop-AgentProcesses -TargetInstallDir $InstallDir
             Write-UpdateLog -Message "Scheduling differential install. files=$downloadCount bytes=$downloadBytes deletes=$($staleManagedPaths.Count)" -LogPath $mainLogPath
@@ -1352,7 +1451,8 @@ try {
     Write-UpdateLog -Message "Downloading client package: $zipUrl" -LogPath $mainLogPath
     $expectedHash = [string] $manifest.sha256
     $cachedZipPath = Join-Path -Path $persistentCacheRoot -ChildPath 'complete-package.zip'
-    Invoke-ResumableUpdateWebRequest -Uri $zipUrl -OutFile $cachedZipPath -ExpectedSizeBytes $declaredSizeBytes -ExpectedSha256 $expectedHash
+    Write-UpdateProgress -Status 'downloading' -DownloadedBytes 0 -TotalBytes $declaredSizeBytes -Message 'Downloading the verified client package.'
+    Invoke-ResumableUpdateWebRequest -Uri $zipUrl -OutFile $cachedZipPath -ExpectedSizeBytes $declaredSizeBytes -ExpectedSha256 $expectedHash -TotalDownloadBytes $declaredSizeBytes
     Copy-Item -LiteralPath $cachedZipPath -Destination $zipPath -Force
 
     if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
@@ -1373,6 +1473,7 @@ try {
     }
 
     Write-UpdateLog -Message 'Stopping the supervisor before scheduling package replacement.' -LogPath $mainLogPath
+    Write-UpdateProgress -Status 'installing' -DownloadedBytes $declaredSizeBytes -TotalBytes $declaredSizeBytes -Message 'Download verified. Installing the client update.'
     Stop-SupervisorProcesses -TargetInstallDir $InstallDir
     Stop-AgentProcesses -TargetInstallDir $InstallDir
     Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath
@@ -1387,6 +1488,7 @@ try {
     Write-UpdateLog -Message "Updater scheduled for version $($manifest.version) in $InstallDir" -LogPath $mainLogPath
 }
 catch {
+    Write-UpdateProgress -Status 'failed' -DownloadedBytes ([Math]::Max([int64]0, $script:LastUpdateProgressBytes)) -TotalBytes 0 -Message $_.Exception.Message
     Write-UpdateLog -Message "Updater failed: $($_.Exception.Message)" -LogPath $mainLogPath
     $currentExe = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
     if (-not $NoStart -and (Test-Path -LiteralPath $currentExe -PathType Leaf)) {

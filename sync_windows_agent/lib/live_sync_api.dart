@@ -683,6 +683,9 @@ class AgentControlPlaneClient {
     required String status,
     String installedVersion = '',
     String message = '',
+    int? downloadedBytes,
+    int? totalBytes,
+    int? progressPercent,
   }) async {
     final response = await _invokeFunction('agent_client_update_ack', {
       'clientName': clientName,
@@ -690,6 +693,9 @@ class AgentControlPlaneClient {
       'status': status,
       'installedVersion': installedVersion,
       'message': message,
+      if (downloadedBytes != null) 'downloadedBytes': downloadedBytes,
+      if (totalBytes != null) 'totalBytes': totalBytes,
+      if (progressPercent != null) 'progressPercent': progressPercent,
     }, 'acknowledging client update request');
     if (response is! Map || response['clientUpdate'] is! Map) {
       throw const AgentControlPlaneException(
@@ -2020,6 +2026,9 @@ class RemoteAgentClientUpdate {
     this.acknowledgedAt,
     this.status = 'idle',
     this.message = '',
+    this.downloadedBytes,
+    this.totalBytes,
+    this.progressPercent,
   });
 
   final bool pending;
@@ -2031,6 +2040,9 @@ class RemoteAgentClientUpdate {
   final String? acknowledgedAt;
   final String status;
   final String message;
+  final int? downloadedBytes;
+  final int? totalBytes;
+  final int? progressPercent;
 
   factory RemoteAgentClientUpdate.fromJson(Map<String, dynamic> json) {
     return RemoteAgentClientUpdate(
@@ -2043,6 +2055,9 @@ class RemoteAgentClientUpdate {
       acknowledgedAt: json['acknowledgedAt'] as String?,
       status: json['status'] as String? ?? 'idle',
       message: json['message'] as String? ?? '',
+      downloadedBytes: (json['downloadedBytes'] as num?)?.round(),
+      totalBytes: (json['totalBytes'] as num?)?.round(),
+      progressPercent: (json['progressPercent'] as num?)?.round(),
     );
   }
 }

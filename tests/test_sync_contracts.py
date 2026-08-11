@@ -1578,11 +1578,29 @@ class SyncContractsTests(unittest.TestCase):
         )[1].split("Future<String> _buildDiagnosticsPayload()", 1)[0]
         clients_page = read_text("frontend/lib/clients_page.dart")
 
-        self.assertIn("status: 'downloading'", handler)
+        self.assertIn("status: reportedStatus", handler)
+        self.assertIn("? 'installing' : 'downloading'", handler)
         self.assertIn("durable updater accepted this request", handler)
         self.assertIn("Verified files and partial downloads will be reused", handler)
         self.assertIn("continuing the durable update", handler)
-        self.assertIn("'downloading' => 'Update downloading'", clients_page)
+        self.assertIn("'downloading' => _clientUpdateDownloadLabel", clients_page)
+
+    def test_client_update_download_progress_is_checkpointed_and_relayed(self):
+        updater = read_text("update.ps1")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        web = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("function Write-UpdateProgress", updater)
+        self.assertIn("update-progress.json", updater)
+        self.assertIn("Publish-UpdateDownloadProgress", updater)
+        self.assertIn("Progress reporting is best effort", updater)
+        self.assertIn("_readClientUpdateProgress(manifestVersion)", agent)
+        self.assertIn("progress['version']", agent)
+        self.assertIn("downloadedBytes: localProgress?['downloadedBytes']", agent)
+        self.assertIn("if (downloadedBytes != null) 'downloadedBytes'", api)
+        self.assertIn("Update downloading $percent%", web)
+        self.assertIn("_formatBytes(downloaded)", web)
 
     def test_verified_download_reports_applying_before_atomic_sql_work(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

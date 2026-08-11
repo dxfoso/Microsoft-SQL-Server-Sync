@@ -65,6 +65,9 @@ class Agent {
   field clientUpdateLastAcknowledgedAt: datetime?
   field clientUpdateStatus: string min=0 max=32
   field clientUpdateMessage: string min=0 max=4000
+  field clientUpdateDownloadedBytes: int? min=0
+  field clientUpdateTotalBytes: int? min=0
+  field clientUpdateProgressPercent: int? min=0 max=100
   field windowActionRequestId: string? min=0 max=64
   field windowActionRequestedAt: datetime?
   field windowActionRequestedByUserId: string? min=0 max=64
@@ -1631,7 +1634,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -2015,7 +2018,10 @@ function agent_client_update_payload(agent: map<json>, authenticatedClientPoll: 
     lastRequestId: agent.clientUpdateLastRequestId,
     acknowledgedAt: agent.clientUpdateLastAcknowledgedAt,
     status: statusValue,
-    message: messageValue
+    message: messageValue,
+    downloadedBytes: agent.clientUpdateDownloadedBytes,
+    totalBytes: agent.clientUpdateTotalBytes,
+    progressPercent: agent.clientUpdateProgressPercent
   };
 }
 
@@ -2425,7 +2431,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -2655,6 +2661,9 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       clientUpdateLastAcknowledgedAt: null,
       clientUpdateStatus: 'idle',
       clientUpdateMessage: '',
+      clientUpdateDownloadedBytes: null,
+      clientUpdateTotalBytes: null,
+      clientUpdateProgressPercent: null,
       windowActionRequestId: null,
       windowActionRequestedAt: null,
       windowActionRequestedByUserId: null,
@@ -2723,6 +2732,9 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     clientUpdateLastAcknowledgedAt: null,
     clientUpdateStatus: 'idle',
     clientUpdateMessage: '',
+    clientUpdateDownloadedBytes: null,
+    clientUpdateTotalBytes: null,
+    clientUpdateProgressPercent: null,
     windowActionRequestId: null,
     windowActionRequestedAt: null,
     windowActionRequestedByUserId: null,
@@ -6743,6 +6755,9 @@ function agent_client_update_request(clientName: string, targetVersion: string? 
     clientUpdateTargetVersion: targetVersionOrNull,
     clientUpdateStatus: 'requested',
     clientUpdateMessage: '',
+    clientUpdateDownloadedBytes: null,
+    clientUpdateTotalBytes: null,
+    clientUpdateProgressPercent: null,
     updatedAt: requestedAt
   });
   if (updated == null) {
@@ -6798,6 +6813,9 @@ function agent_client_update_request_all(targetVersion: string? = null, token: s
     clientUpdateTargetVersion: targetVersionOrNull,
     clientUpdateStatus: 'requested',
     clientUpdateMessage: '',
+    clientUpdateDownloadedBytes: null,
+    clientUpdateTotalBytes: null,
+    clientUpdateProgressPercent: null,
     updatedAt: requestedAt
   });
   return {
@@ -6810,7 +6828,7 @@ function agent_client_update_request_all(targetVersion: string? = null, token: s
   };
 }
 
-function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', token: string? = null): map<json> {
+function agent_client_update_ack(clientName: string? = null, requestId: string? = null, status: string = 'current', installedVersion: string = '', message: string = '', downloadedBytes: int? = null, totalBytes: int? = null, progressPercent: int? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -6868,6 +6886,24 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
   let nextLastRequestId = agent.clientUpdateLastRequestId;
   let nextAcknowledgedAt = agent.clientUpdateLastAcknowledgedAt;
   let nextStatus = truncate_text(status.trim(), 32);
+  let nextDownloadedBytes = agent.clientUpdateDownloadedBytes;
+  let nextTotalBytes = agent.clientUpdateTotalBytes;
+  let nextProgressPercent = agent.clientUpdateProgressPercent;
+  if (downloadedBytes != null && downloadedBytes >= 0) {
+    nextDownloadedBytes = downloadedBytes;
+  }
+  if (totalBytes != null && totalBytes >= 0) {
+    nextTotalBytes = totalBytes;
+  }
+  if (progressPercent != null) {
+    nextProgressPercent = progressPercent;
+    if (nextProgressPercent < 0) {
+      nextProgressPercent = 0;
+    }
+    if (nextProgressPercent > 100) {
+      nextProgressPercent = 100;
+    }
+  }
   if (retryableAcknowledgement) {
     const normalizedNextStatus = nextStatus.trim().toLowerCase();
     if (normalizedNextStatus != 'downloading' && normalizedNextStatus != 'installing') {
@@ -6882,6 +6918,9 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
     clientUpdateLastAcknowledgedAt: nextAcknowledgedAt,
     clientUpdateStatus: nextStatus,
     clientUpdateMessage: truncate_text(message, 4000),
+    clientUpdateDownloadedBytes: nextDownloadedBytes,
+    clientUpdateTotalBytes: nextTotalBytes,
+    clientUpdateProgressPercent: nextProgressPercent,
     clientVersion: nextClientVersion,
     updatedAt: now_iso()
   });
@@ -7463,6 +7502,9 @@ function reset_all_agent_saved_state(): int {
     clientUpdateLastAcknowledgedAt: null,
     clientUpdateStatus: 'idle',
     clientUpdateMessage: '',
+    clientUpdateDownloadedBytes: null,
+    clientUpdateTotalBytes: null,
+    clientUpdateProgressPercent: null,
     windowActionRequestId: null,
     windowActionRequestedAt: null,
     windowActionRequestedByUserId: null,

@@ -4328,14 +4328,26 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       logStartupEvent(
         'Server requested client update $requestId for ${widget.clientName}; live version=$manifestVersion current=${currentVersion.isEmpty ? 'unknown' : currentVersion}.',
       );
+      final localProgress = _readClientUpdateProgress(manifestVersion);
+      final progressStatus =
+          localProgress?['status']?.toString().trim().toLowerCase();
+      final reportedStatus =
+          progressStatus == 'installing' ? 'installing' : 'downloading';
+      final progressMessage =
+          localProgress?['message']?.toString().trim() ?? '';
       try {
         await _controlPlaneClient.acknowledgeClientUpdate(
           clientName: widget.clientName,
           requestId: requestId,
-          status: 'downloading',
+          status: reportedStatus,
           installedVersion: _agentAppVersion,
           message:
-              'The durable updater accepted this request. Verified files and partial downloads will be reused after reconnect or restart.',
+              progressMessage.isNotEmpty
+                  ? progressMessage
+                  : 'The durable updater accepted this request. Verified files and partial downloads will be reused after reconnect or restart.',
+          downloadedBytes: localProgress?['downloadedBytes'] as int?,
+          totalBytes: localProgress?['totalBytes'] as int?,
+          progressPercent: localProgress?['percent'] as int?,
         );
       } catch (error) {
         // Status reporting is best effort. A transient acknowledgement loss
@@ -4360,6 +4372,35 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           message: error.toString(),
         );
       } catch (_) {}
+    }
+  }
+
+  Map<String, dynamic>? _readClientUpdateProgress(String targetVersion) {
+    try {
+      final progressFile = File(
+        path.join(
+          File(Platform.resolvedExecutable).parent.path,
+          'update-progress.json',
+        ),
+      );
+      if (!progressFile.existsSync()) return null;
+      final decoded = jsonDecode(progressFile.readAsStringSync());
+      if (decoded is! Map) return null;
+      final progress = Map<String, dynamic>.from(decoded);
+      if ((progress['version']?.toString().trim() ?? '') != targetVersion) {
+        return null;
+      }
+      final downloaded = (progress['downloadedBytes'] as num?)?.round();
+      final total = (progress['totalBytes'] as num?)?.round();
+      final percent = (progress['percent'] as num?)?.round();
+      if (downloaded == null || total == null || percent == null) return null;
+      progress['downloadedBytes'] = math.max(0, downloaded);
+      progress['totalBytes'] = math.max(0, total);
+      progress['percent'] = percent.clamp(0, 100);
+      return progress;
+    } catch (error) {
+      logStartupEvent('Ignoring unreadable client update progress: $error');
+      return null;
     }
   }
 

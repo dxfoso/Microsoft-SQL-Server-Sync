@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 94)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 96)}
         observed_ids = set()
 
         for row in rows:
@@ -339,6 +339,27 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("String _buildStagedDeltaDeleteStatements(", 1)[0]
         self.assertEqual(merge_body.count("DROP TABLE $stageTarget"), 1)
         self.assertIn("Transport/process interruption", merge_body)
+
+    def test_client_update_retrying_has_one_reachable_color_case(self):
+        source = read_text("frontend/lib/clients_page.dart")
+        color_mapper = source.split(
+            "Color _clientActivityColor(String status)", 1
+        )[1].split("Widget _buildClientListItem", 1)[0]
+        self.assertEqual(color_mapper.count("case 'update retrying':"), 1)
+
+    def test_resumable_client_update_progress_is_visible_without_credentials(self):
+        updater = read_text("update.ps1")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        backend = read_text("business/control_plane.tru")
+        web = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("update-progress.json", updater)
+        self.assertIn("Move-Item -LiteralPath $temporaryPath", updater)
+        self.assertIn("Progress reporting is best effort", updater)
+        self.assertIn("_readClientUpdateProgress", agent)
+        self.assertNotIn("token", updater.lower())
+        self.assertIn("clientUpdateProgressPercent", backend)
+        self.assertIn("Update downloading $percent%", web)
 
     def test_large_hash_comparison_resumes_bounded_key_staging(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
