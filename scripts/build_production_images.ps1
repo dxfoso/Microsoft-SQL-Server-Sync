@@ -36,6 +36,7 @@ function Invoke-NativeCheckedWithRetry {
     param(
         [string] $Description,
         [scriptblock] $Command,
+        [scriptblock] $Verify,
         [ValidateRange(1, 5)][int] $Attempts = 3
     )
     $lastExitCode = 0
@@ -43,6 +44,10 @@ function Invoke-NativeCheckedWithRetry {
         Write-Host "$Description attempt $attempt of $Attempts"
         & $Command
         $lastExitCode = $LASTEXITCODE
+        if ($lastExitCode -eq 0 -and $null -ne $Verify) {
+            & $Verify
+            $lastExitCode = $LASTEXITCODE
+        }
         if ($lastExitCode -eq 0) {
             return
         }
@@ -100,8 +105,8 @@ try {
         & docker build --build-arg "BACKEND_BASE_URL=$BackendBaseUrl" --build-arg "BUILD_COMMIT_HASH=$commit" --build-arg "BUILD_COMMIT_DATE=$commitDate" --build-arg "BUILD_RELEASE_DATE=$releaseDate" --build-arg "TRU_BUILD_GIT_SHA=$commit" --build-arg "TRU_BUILD_COMMIT_MESSAGE=$commitMessage" --build-arg "TRU_BUILD_COMMIT_DATE=$commitDate" --build-arg "TRU_BUILD_RELEASE_DATE=$releaseDate" -t $frontendImage $frontendContext
     }
     if (-not $SkipPush) {
-        Invoke-NativeCheckedWithRetry "Pushing $backendImage..." { & docker push $backendImage }
-        Invoke-NativeCheckedWithRetry "Pushing $frontendImage..." { & docker push $frontendImage }
+        Invoke-NativeCheckedWithRetry "Pushing $backendImage..." { & docker push $backendImage } { & docker manifest inspect $backendImage *> $null }
+        Invoke-NativeCheckedWithRetry "Pushing $frontendImage..." { & docker push $frontendImage } { & docker manifest inspect $frontendImage *> $null }
     }
     Write-Host "BACKEND_IMAGE=$backendImage"
     Write-Host "FRONTEND_IMAGE=$frontendImage"

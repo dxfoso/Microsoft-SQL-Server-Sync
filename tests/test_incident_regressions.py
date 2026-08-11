@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 83)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 84)}
         observed_ids = set()
 
         for row in rows:
@@ -149,6 +149,13 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn(
             'Invoke-NativeCheckedWithRetry "Pushing $frontendImage..."', builder
         )
+        self.assertIn(
+            "docker manifest inspect $backendImage *> $null", builder
+        )
+        self.assertIn(
+            "docker manifest inspect $frontendImage *> $null", builder
+        )
+        self.assertIn("$null -ne $Verify", builder)
         self.assertIn("function Assert-RegistryManifestAvailable {", deployer)
         self.assertIn("[ValidateRange(1, 5)][int] $Attempts = 3", deployer)
         self.assertIn("docker manifest inspect $Image", deployer)
