@@ -1504,6 +1504,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("[System.IO.FileMode]::Append", update_script)
         self.assertIn("Partial bytes were preserved for the next updater run", update_script)
         self.assertIn('ChildPath ".update-cache\\$safeTargetVersion"', update_script)
+        self.assertLess(
+            update_script.index("$persistentCacheRoot ="),
+            update_script.index("$workRoot ="),
+        )
         self.assertIn("Test-InstalledFileMatchesManifest -Path $partialFile", update_script)
         self.assertIn("Copy-Item -LiteralPath $cachedPath -Destination $stagedPath -Force", update_script)
 
@@ -1513,6 +1517,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn('"Content-Range": `bytes */${buffer.length}`', server)
         self.assertIn("statusCode = 206", server)
         self.assertIn("buffer.subarray(start, end + 1)", server)
+
+    def test_server_requested_update_reports_durable_download_phase(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        handler = agent_page.split(
+            "Future<void> _handleRequestedClientUpdate(", 1
+        )[1].split("Future<String> _buildDiagnosticsPayload()", 1)[0]
+        clients_page = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("status: 'downloading'", handler)
+        self.assertIn("durable updater accepted this request", handler)
+        self.assertIn("Verified files and partial downloads will be reused", handler)
+        self.assertIn("continuing the durable update", handler)
+        self.assertIn("'downloading' => 'Update downloading'", clients_page)
 
     def test_windows_client_updates_only_move_forward(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")

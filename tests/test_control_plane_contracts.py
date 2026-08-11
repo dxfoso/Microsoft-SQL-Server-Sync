@@ -326,6 +326,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
 
         self.assertIn("normalizedStatus == 'retrying'", retry)
+        self.assertIn("normalizedStatus == 'downloading'", retry)
+        self.assertIn("normalizedStatus == 'installing'", retry)
         self.assertIn(
             "control plane request timed out during checking client update manifest",
             retry,
@@ -336,6 +338,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn(
             "clientUpdateLastRequestId: resolvedRequestIdOrNull", ack
         )
+
+    def test_client_update_download_phase_is_durable_and_visible(self):
+        source = read_text("business/control_plane.tru")
+        retry = source.split(
+            "function client_update_ack_should_retry(", 1
+        )[1].split("function agent_client_update_payload(", 1)[0]
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        handler = agent.split(
+            "Future<void> _handleRequestedClientUpdate(", 1
+        )[1].split("Future<String> _buildDiagnosticsPayload()", 1)[0]
+
+        self.assertIn("normalizedStatus == 'downloading'", retry)
+        self.assertIn("normalizedStatus == 'installing'", retry)
+        self.assertIn("status: 'downloading'", handler)
+        self.assertIn("Verified files and partial downloads will be reused", handler)
+        self.assertIn("continuing the durable update", handler)
+        self.assertIn("'updateLogTail': _readUpdateLogTail()", agent)
+        ack = source.split("function agent_client_update_ack(", 1)[1].split(
+            "function agent_window_action_request_all(", 1
+        )[0]
+        self.assertIn("normalizedNextStatus != 'downloading'", ack)
+        self.assertIn("normalizedNextStatus != 'installing'", ack)
 
     def test_heartbeat_clears_stale_update_failure_after_manual_upgrade(self):
         source = read_text("business/control_plane.tru")

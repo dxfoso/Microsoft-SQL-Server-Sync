@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 85)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 86)}
         observed_ids = set()
 
         for row in rows:
@@ -241,6 +241,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "const transferChunkPayload = chunkPayloadBase64.length != 0",
             control_plane,
         )
+
+    def test_online_client_update_reports_and_resumes_durable_transfer(self):
+        control_plane = read_text("business/control_plane.tru")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        updater = read_text("update.ps1")
+
+        self.assertIn("normalizedStatus == 'downloading'", control_plane)
+        self.assertIn("normalizedNextStatus != 'downloading'", control_plane)
+        self.assertIn("status: 'downloading'", agent)
+        self.assertIn("'updateLogTail': _readUpdateLogTail()", agent)
+        self.assertIn('$partialFile = "$OutFile.part"', updater)
+        self.assertIn('ChildPath ".update-cache\\$safeTargetVersion"', updater)
 
 
 if __name__ == "__main__":

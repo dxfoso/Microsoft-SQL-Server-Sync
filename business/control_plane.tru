@@ -1983,7 +1983,7 @@ function client_update_request_pending(agent: map<json>): bool {
 
 function client_update_ack_should_retry(status: string, message: string): bool {
   const normalizedStatus = status.trim().toLowerCase();
-  if (normalizedStatus == 'retrying') {
+  if (normalizedStatus == 'retrying' || normalizedStatus == 'downloading' || normalizedStatus == 'installing') {
     return true;
   }
   // Compatibility for installed clients that predate the typed `retrying`
@@ -6869,7 +6869,10 @@ function agent_client_update_ack(clientName: string? = null, requestId: string? 
   let nextAcknowledgedAt = agent.clientUpdateLastAcknowledgedAt;
   let nextStatus = truncate_text(status.trim(), 32);
   if (retryableAcknowledgement) {
-    nextStatus = 'retrying';
+    const normalizedNextStatus = nextStatus.trim().toLowerCase();
+    if (normalizedNextStatus != 'downloading' && normalizedNextStatus != 'installing') {
+      nextStatus = 'retrying';
+    }
   } else {
     nextLastRequestId = resolvedRequestIdOrNull;
     nextAcknowledgedAt = now_iso();

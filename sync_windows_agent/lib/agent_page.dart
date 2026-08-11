@@ -4328,6 +4328,23 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       logStartupEvent(
         'Server requested client update $requestId for ${widget.clientName}; live version=$manifestVersion current=${currentVersion.isEmpty ? 'unknown' : currentVersion}.',
       );
+      try {
+        await _controlPlaneClient.acknowledgeClientUpdate(
+          clientName: widget.clientName,
+          requestId: requestId,
+          status: 'downloading',
+          installedVersion: _agentAppVersion,
+          message:
+              'The durable updater accepted this request. Verified files and partial downloads will be reused after reconnect or restart.',
+        );
+      } catch (error) {
+        // Status reporting is best effort. A transient acknowledgement loss
+        // must not prevent the already-authenticated client from starting its
+        // content-verified, resumable updater.
+        logStartupEvent(
+          'Client update download acknowledgement failed; continuing the durable update: $error',
+        );
+      }
       // The request was delivered by the heartbeat that owns this loop. Do
       // not defer it while that loop is busy; deferring here can leave a
       // client permanently on an old build behind a long-running sync job.
@@ -4485,6 +4502,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'completeRetainedLog': true,
       },
       'startupLogTail': _readStartupLogTail(),
+      'updateLogTail': _readUpdateLogTail(),
     };
 
     return _encodeDiagnosticsPayloadForUpload(payload);
@@ -4538,6 +4556,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       reduced['startupLogTail'],
       maxChars: 40000,
     );
+    reduced['updateLogTail'] = _truncateUploadText(
+      reduced['updateLogTail'],
+      maxChars: 12000,
+    );
     _compactChangeTrackingDatabasesForUpload(reduced, maxDatabases: 8);
     encoded = encode(reduced);
     if (encoded.length <= _maxDiagnosticsUploadPayloadChars) {
@@ -4560,6 +4582,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     minimal['startupLogTail'] = _truncateUploadText(
       minimal['startupLogTail'],
       maxChars: 40000,
+    );
+    minimal['updateLogTail'] = _truncateUploadText(
+      minimal['updateLogTail'],
+      maxChars: 8000,
     );
     _compactChangeTrackingDatabasesForUpload(minimal, maxDatabases: 3);
     encoded = encode(minimal);
@@ -4586,6 +4612,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       'startupLogTail': _truncateUploadText(
         payload['startupLogTail'],
         maxChars: 40000,
+      ),
+      'updateLogTail': _truncateUploadText(
+        payload['updateLogTail'],
+        maxChars: 8000,
       ),
       'clientLog': payload['clientLog'],
       'payloadReduced': true,
@@ -4789,6 +4819,24 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
   }
 
   String _readStartupLogTail() => readRetainedAgentLog();
+
+  String _readUpdateLogTail() {
+    try {
+      final updateLog = File(
+        path.join(File(Platform.resolvedExecutable).parent.path, 'update.log'),
+      );
+      if (!updateLog.existsSync()) {
+        return '';
+      }
+      final contents = updateLog.readAsStringSync();
+      const maxChars = 12000;
+      return contents.length <= maxChars
+          ? contents
+          : contents.substring(contents.length - maxChars);
+    } catch (error) {
+      return 'Could not read update.log: $error';
+    }
+  }
 
   Future<void> _processPendingJobs() async {
     if (_processingPendingJobsBusy) {

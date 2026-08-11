@@ -1858,9 +1858,12 @@ class _ClientsPageState extends State<ClientsPage> {
       };
     }
     if (agent.clientUpdate.pending) {
-      return agent.clientUpdate.status.trim().toLowerCase() == 'retrying'
-          ? 'Update retrying'
-          : 'Update pending';
+      return switch (agent.clientUpdate.status.trim().toLowerCase()) {
+        'downloading' => 'Update downloading',
+        'installing' => 'Update installing',
+        'retrying' => 'Update retrying',
+        _ => 'Update pending',
+      };
     }
     return 'Ready';
   }
@@ -1872,6 +1875,9 @@ class _ClientsPageState extends State<ClientsPage> {
       case 'uploading':
       case 'updating':
       case 'update pending':
+      case 'update downloading':
+      case 'update installing':
+      case 'update retrying':
       case 'syncing':
         return const Color(0xFF2563EB);
       case 'downloading':
