@@ -198,6 +198,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "formatSyncDuration(_syncAllOperationForAgent(agent)?.duration())",
             clients_page,
         )
+        self.assertIn("DataColumn(label: Text('Client version'))", clients_page)
+        self.assertIn("agent.clientVersion.trim()", clients_page)
+
+    def test_web_download_button_displays_latest_client_manifest_version(self):
+        app = read_text("frontend/lib/app.dart")
+        parser = read_text("frontend/lib/client_update_manifest.dart")
+
+        self.assertIn("/client/latest.json?release=$nonce", app)
+        self.assertIn("parseLatestWindowsClientVersion(response.body)", app)
+        self.assertIn("Download Windows Client · v$version", app)
+        self.assertIn("decoded['version']", parser)
 
     def test_slow_network_sync_transfers_are_durable_and_content_verified(self):
         control_plane = read_text("business/control_plane.tru")

@@ -1141,6 +1141,7 @@ class _ClientsPageState extends State<ClientsPage> {
                         dataRowMaxHeight: 72,
                         columns: const [
                           DataColumn(label: Text('Client')),
+                          DataColumn(label: Text('Client version')),
                           DataColumn(label: Text('Active')),
                           DataColumn(label: Text('Conflict source')),
                           DataColumn(label: Text('Status')),
@@ -1609,6 +1610,13 @@ class _ClientsPageState extends State<ClientsPage> {
             ),
           ),
         ),
+        DataCell(
+          Text(
+            agent.clientVersion.trim().isEmpty
+                ? '-'
+                : agent.clientVersion.trim(),
+          ),
+        ),
         DataCell(_buildClientActiveCheckbox(agent)),
         DataCell(_buildConflictSourceCheckbox(agent)),
         DataCell(
@@ -1933,7 +1941,7 @@ class _ClientsPageState extends State<ClientsPage> {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '$database · ${agent.tables.length} tables',
+                      '$database · ${agent.tables.length} tables · Client ${agent.clientVersion.trim().isEmpty ? '-' : agent.clientVersion.trim()}',
                       style: const TextStyle(
                         color: Color(0xFF667085),
                         fontSize: 12,

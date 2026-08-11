@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'browser_bridge.dart';
+import 'client_update_manifest.dart';
 import 'clients_page.dart';
 import 'dashboard_page.dart';
 import 'live_sync_api.dart';
@@ -453,9 +455,9 @@ class _AdminWorkspace extends StatefulWidget {
 }
 
 class _AdminWorkspaceState extends State<_AdminWorkspace> {
-  static const _windowsClientDownloadPath =
-      '/client/download';
+  static const _windowsClientDownloadPath = '/client/download';
   int _selectedIndex = 0;
+  String _latestWindowsClientVersion = '';
 
   void _downloadWindowsClient() {
     final releaseNonce = DateTime.now().millisecondsSinceEpoch;
@@ -470,6 +472,23 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
                 Uri.base.pathSegments.first == 'clients'
             ? 1
             : 0;
+    unawaited(_loadLatestWindowsClientVersion());
+  }
+
+  Future<void> _loadLatestWindowsClientVersion() async {
+    try {
+      final nonce = DateTime.now().millisecondsSinceEpoch;
+      final response = await http.get(
+        Uri.base.resolve('/client/latest.json?release=$nonce'),
+      );
+      if (response.statusCode != 200) return;
+      final version = parseLatestWindowsClientVersion(response.body);
+      if (mounted && version.isNotEmpty) {
+        setState(() => _latestWindowsClientVersion = version);
+      }
+    } catch (_) {
+      // Keep download usable if the optional version label is unavailable.
+    }
   }
 
   void _select(int index) {
@@ -631,18 +650,25 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
 
   Widget _downloadWindowsClientButton({required bool compact}) {
     const color = Color(0xFF0F766E);
+    final version = _latestWindowsClientVersion;
     if (compact) {
-      return IconButton(
-        tooltip: 'Download Windows Client',
+      return TextButton.icon(
+        key: const ValueKey('download-windows-client-compact'),
+        style: TextButton.styleFrom(foregroundColor: color),
         onPressed: _downloadWindowsClient,
-        icon: const Icon(Icons.download_for_offline_outlined),
-        color: color,
+        icon: const Icon(Icons.download_for_offline_outlined, size: 18),
+        label: Text(version.isEmpty ? 'Download' : 'v$version'),
       );
     }
     return OutlinedButton.icon(
+      key: const ValueKey('download-windows-client'),
       onPressed: _downloadWindowsClient,
       icon: const Icon(Icons.download_for_offline_outlined, size: 18),
-      label: const Text('Download Windows Client'),
+      label: Text(
+        version.isEmpty
+            ? 'Download Windows Client'
+            : 'Download Windows Client · v$version',
+      ),
       style: OutlinedButton.styleFrom(
         foregroundColor: color,
         side: const BorderSide(color: Color(0xFF80CBC4)),
