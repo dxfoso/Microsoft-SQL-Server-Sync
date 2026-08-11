@@ -1537,6 +1537,22 @@ class SyncContractsTests(unittest.TestCase):
             update_script.index("Test-InstalledFileMatchesManifest -Path $stagedPath"),
         )
 
+    def test_client_updates_pin_immutable_versioned_manifests_and_packages(self):
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+        updater = read_text("update.ps1")
+        image_builder = read_text("scripts/build_production_images.ps1")
+        dockerfile = read_text("frontend/Dockerfile")
+        server = read_text("frontend/server.js")
+
+        self.assertIn(
+            'filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json"',
+            publisher,
+        )
+        self.assertIn("Immutable file manifest identity does not match", updater)
+        self.assertIn("immutablePackageName", image_builder)
+        self.assertIn("COPY client-updates/packages /app/public/client-updates/packages", dockerfile)
+        self.assertIn('max-age=31536000, immutable', server)
+
     def test_server_requested_update_reports_durable_download_phase(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         handler = agent_page.split(
@@ -1598,6 +1614,15 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("SELECT DISTINCT", builder)
         self.assertIn("INNER JOIN requested ON", builder)
         self.assertIn("buildTargetSnapshotStageLoadSql(", builder)
+
+    def test_set_based_comparison_qualifies_every_target_projection_column(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        lookup = agent.split(
+            "Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1
+        )[1].split("String _sourceBatchEncodedColumnExpression(", 1)[0]
+
+        self.assertIn("'target_row.${_quoteIdentifier(column.name)}'", lookup)
+        self.assertIn("columnReference:", lookup)
 
     def test_windows_client_updates_only_move_forward(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")

@@ -7144,7 +7144,12 @@ COMMIT TRANSACTION;
       );
     }
     final payloadExpression = columns
-        .map(_sourceBatchEncodedColumnExpression)
+        .map(
+          (column) => _sourceBatchEncodedColumnExpression(
+            column,
+            columnReference: 'target_row.${_quoteIdentifier(column.name)}',
+          ),
+        )
         .join(' + NCHAR($fieldSeparator) + ');
     final target =
         '${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)}';

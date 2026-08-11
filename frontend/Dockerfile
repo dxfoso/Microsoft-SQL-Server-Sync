@@ -48,7 +48,7 @@ COPY client-updates/latest.json /app/public/client-updates/latest.json
 COPY client-updates/latest-files.json /app/public/client-updates/latest-files.json
 COPY client-updates/update.ps1 /app/public/client-updates/update.ps1
 COPY client-updates/sync_windows_agent_latest.zip /app/public/client-updates/sync_windows_agent_latest.zip
-COPY client-updates/packages/latest-package /app/public/client-updates/packages/latest-package
+COPY client-updates/packages /app/public/client-updates/packages
 
 ENV PORT=80
 ENV PUBLIC_DIR=/app/public

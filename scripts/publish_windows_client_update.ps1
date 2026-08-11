@@ -455,12 +455,7 @@ $filesManifest = New-PortableFilesManifest `
     -Version $version `
     -Commit $commit
 $filesManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $packageFilesManifest -Encoding ASCII
-$latestFilesManifestData = New-PortableFilesManifest `
-    -PortableDir $packageOutputDir `
-    -PublicRoot $publicRoot `
-    -PackageDirName 'latest-package' `
-    -Version $version `
-    -Commit $commit
+$latestFilesManifestData = $filesManifest
 $latestFilesManifestData | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $latestFilesManifest -Encoding ASCII
 if (Test-Path -LiteralPath $latestPackageDir) {
     Remove-Item -LiteralPath $latestPackageDir -Recurse -Force
@@ -473,7 +468,7 @@ $manifest = [ordered]@{
     commit = $commit
     releaseDate = $releaseDate
     packageType = 'files-v1'
-    filesManifestUrl = "$publicRoot/latest-files.json"
+    filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json"
     zipUrl = "$publicRoot/$zipName"
     updateScriptUrl = "$publicRoot/update.ps1"
     sha256 = $zipHash

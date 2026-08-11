@@ -94,9 +94,21 @@ try {
     }
     $frontendClientDir = Join-Path $frontendContext 'client-updates'
     $frontendPackageDir = Join-Path $frontendClientDir 'packages'
+    $latestClientManifest = Get-Content -LiteralPath (Join-Path $artifacts 'latest.json') -Raw | ConvertFrom-Json
+    $immutableManifestUri = [System.Uri]::new([string]$latestClientManifest.filesManifestUrl)
+    $immutablePackageMatch = [regex]::Match($immutableManifestUri.AbsolutePath, '/packages/([A-Za-z0-9._-]+)/files\.json$')
+    if (-not $immutablePackageMatch.Success) {
+        throw "Latest Windows client manifest does not reference an immutable versioned package."
+    }
+    $immutablePackageName = $immutablePackageMatch.Groups[1].Value
+    $immutablePackageDir = Join-Path $artifacts "packages\$immutablePackageName"
+    if (-not (Test-Path -LiteralPath $immutablePackageDir -PathType Container)) {
+        throw "Missing immutable Windows client package: $immutablePackageName"
+    }
     New-Item -ItemType Directory -Force -Path $frontendClientDir, $frontendPackageDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $artifacts 'latest.json'), (Join-Path $artifacts 'latest-files.json'), (Join-Path $artifacts 'update.ps1'), (Join-Path $artifacts 'sync_windows_agent_latest.zip') -Destination $frontendClientDir -Force
     Copy-Item -LiteralPath (Join-Path $artifacts 'packages\latest-package') -Destination $frontendPackageDir -Recurse -Force
+    Copy-Item -LiteralPath $immutablePackageDir -Destination $frontendPackageDir -Recurse -Force
 
     Invoke-NativeChecked "Building $backendImage..." {
         & docker build --build-arg "BUILD_COMMIT_HASH=$commit" --build-arg "TRU_BUILD_GIT_SHA=$commit" -t $backendImage $backendContext

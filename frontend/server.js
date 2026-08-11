@@ -249,6 +249,8 @@ async function tryServeClientUpdate(pathname, req, res) {
       ) {
         headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
         headers.Pragma = "no-cache";
+      } else if (/^packages\/[A-Za-z0-9._-]+\//.test(requestedPath)) {
+        headers["Cache-Control"] = "public, max-age=31536000, immutable";
       }
       res.writeHead(statusCode, headers);
       res.end(responseBuffer);

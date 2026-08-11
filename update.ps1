@@ -1242,6 +1242,9 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($filesManifestUrl)) {
         Write-UpdateLog -Message "Downloading file manifest: $filesManifestUrl" -LogPath $mainLogPath
         $filesManifest = Invoke-UpdateRestMethod -Uri $filesManifestUrl
+        if ([string] $filesManifest.version -ne [string] $manifest.version -or [string] $filesManifest.commit -ne [string] $manifest.commit) {
+            throw "Immutable file manifest identity does not match the selected client release."
+        }
         $fileEntries = @($filesManifest.files)
         if ($fileEntries.Count -gt 0) {
             $localManagedPaths = Get-PortableManifestManagedPaths -ManifestPath (Join-Path -Path $InstallDir -ChildPath 'portable-manifest.txt')
