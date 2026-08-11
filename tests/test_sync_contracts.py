@@ -1531,6 +1531,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("continuing the durable update", handler)
         self.assertIn("'downloading' => 'Update downloading'", clients_page)
 
+    def test_verified_download_reports_applying_before_atomic_sql_work(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        download = agent_page.split(
+            "Future<void> _processSnapshotRelayDownloadJob(", 1
+        )[1].split("Future<", 1)[0]
+
+        buffered = download.index("'sync.download.buffered'")
+        applying = download.index("Verified download complete; atomically applying")
+        sql_apply = download.index("await _applyDownloadedSnapshotToTarget(")
+        self.assertLess(buffered, applying)
+        self.assertLess(applying, sql_apply)
+        self.assertIn("status: 'applying'", download[buffered:sql_apply])
+        self.assertIn("progress: 55", download[buffered:sql_apply])
+
     def test_windows_client_updates_only_move_forward(self):
         app_source = read_text("sync_windows_agent/lib/app.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

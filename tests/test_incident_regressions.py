@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 86)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 87)}
         observed_ids = set()
 
         for row in rows:
@@ -253,6 +253,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("'updateLogTail': _readUpdateLogTail()", agent)
         self.assertIn('$partialFile = "$OutFile.part"', updater)
         self.assertIn('ChildPath ".update-cache\\$safeTargetVersion"', updater)
+
+    def test_completed_transfer_reports_atomic_apply_phase(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        download = agent.split(
+            "Future<void> _processSnapshotRelayDownloadJob(", 1
+        )[1].split("Future<", 1)[0]
+
+        self.assertIn("Verified download complete; atomically applying", download)
+        self.assertLess(
+            download.index("Verified download complete; atomically applying"),
+            download.index("await _applyDownloadedSnapshotToTarget("),
+        )
 
 
 if __name__ == "__main__":

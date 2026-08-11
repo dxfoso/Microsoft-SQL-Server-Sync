@@ -5476,6 +5476,19 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       },
     );
 
+    activeJob = await _controlPlaneClient.updateJobProgress(
+      job.id,
+      status: 'applying',
+      progress: 55,
+      message:
+          'Verified download complete; atomically applying changes to ${_localTableName(job.table)}.',
+      rowCount: downloadedSnapshot.rows.length,
+    );
+    _applyRemoteJobState(activeJob);
+    if (!activeJob.isActive) {
+      throw _SyncJobCancelled(job.id);
+    }
+
     _checkSyncJobNotCancelled(job.id);
     final retryRows =
         authoritativeReconcile || canonicalFullMerge
