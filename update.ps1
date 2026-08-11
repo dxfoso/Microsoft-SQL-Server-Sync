@@ -1187,7 +1187,6 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 if (-not $NoStart) {
     Write-UpdateLog -Message "Stopping any remaining client instance from this install before relaunch." -LogPath $logPath
     Stop-AgentProcesses -TargetInstallDir $InstallDir
-    Start-UpdatedClient -ExecutablePath $installedExe -InstallDir $InstallDir -LogPath $logPath
     $userStoppedMarkerPath = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.user-stopped'
     if (-not (Test-Path -LiteralPath $userStoppedMarkerPath -PathType Leaf)) {
         Write-UpdateLog -Message 'Verifying that the updated client process remains healthy after restart.' -LogPath $logPath
@@ -1199,7 +1198,15 @@ if (-not $NoStart) {
         if (-not [string]::IsNullOrWhiteSpace($env:SYNC_WINDOWS_AGENT_UPDATE_STARTUP_TIMEOUT_SECONDS)) {
             $startupTimeoutSeconds = [Math]::Max($startupStableSeconds, [Math]::Min(300, [int] $env:SYNC_WINDOWS_AGENT_UPDATE_STARTUP_TIMEOUT_SECONDS))
         }
-        if (-not (Wait-AgentStartupStable -InstallDir $InstallDir -RequiredStableSeconds $startupStableSeconds -TimeoutSeconds $startupTimeoutSeconds)) {
+        $updatedClientStable = $false
+        try {
+            Start-UpdatedClient -ExecutablePath $installedExe -InstallDir $InstallDir -LogPath $logPath
+            $updatedClientStable = Wait-AgentStartupStable -InstallDir $InstallDir -RequiredStableSeconds $startupStableSeconds -TimeoutSeconds $startupTimeoutSeconds
+        }
+        catch {
+            Write-UpdateLog -Message "Updated client launch failed before stability verification: $($_.Exception.Message)" -LogPath $logPath
+        }
+        if (-not $updatedClientStable) {
             Restore-InstallRollbackSnapshot -InstallDir $InstallDir -RollbackDir $rollbackDir -CreatedListPath $createdListPath -LogPath $logPath
             if (-not (Wait-AgentStartupStable -InstallDir $InstallDir -RequiredStableSeconds $startupStableSeconds -TimeoutSeconds $startupTimeoutSeconds)) {
                 throw 'The updated client failed startup verification and the restored previous client also failed to remain running.'
@@ -1207,6 +1214,9 @@ if (-not $NoStart) {
             throw 'The updated client failed startup verification. The previous version was restored and restarted safely; the supervisor will retry later.'
         }
         Write-UpdateLog -Message 'Updated client startup verification passed.' -LogPath $logPath
+    }
+    else {
+        Start-UpdatedClient -ExecutablePath $installedExe -InstallDir $InstallDir -LogPath $logPath
     }
 } else {
     Write-UpdateLog -Message 'NoStart set. Skipping client relaunch.' -LogPath $logPath

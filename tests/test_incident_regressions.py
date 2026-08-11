@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 96)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 97)}
         observed_ids = set()
 
         for row in rows:
@@ -339,6 +339,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("String _buildStagedDeltaDeleteStatements(", 1)[0]
         self.assertEqual(merge_body.count("DROP TABLE $stageTarget"), 1)
         self.assertIn("Transport/process interruption", merge_body)
+
+    def test_updater_launch_failure_enters_transactional_rollback(self):
+        updater = read_text("update.ps1")
+        finalizer = updater.split("if (-not $NoStart) {", 1)[1].split(
+            "Write-UpdateLog -Message \"Finalize helper cleaning work root", 1
+        )[0]
+        self.assertIn("$updatedClientStable = $false", finalizer)
+        self.assertIn("try {\n            Start-UpdatedClient", finalizer)
+        self.assertIn("catch {", finalizer)
+        self.assertIn("if (-not $updatedClientStable)", finalizer)
+        self.assertIn("Restore-InstallRollbackSnapshot", finalizer)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")
