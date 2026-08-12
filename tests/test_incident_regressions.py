@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 108)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 109)}
         observed_ids = set()
 
         for row in rows:
@@ -430,6 +430,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Write-FinalizerFailureProgress -InstallDir $InstallDir", updater)
         self.assertIn("status = 'failed'", updater)
         self.assertIn("'failed' => 'failed'", agent)
+
+    def test_deferred_finalizer_stops_encoded_target_supervisor(self):
+        updater = read_text("update.ps1")
+        helper = updater.split("$helper = @'", 1)[1].split("\n'@", 1)[0]
+        stop_supervisor = helper.split("function Stop-SupervisorProcesses", 1)[1].split(
+            "function Start-SupervisorProcess", 1
+        )[0]
+
+        self.assertIn("function Get-PowerShellLaunchText", helper)
+        self.assertIn("[Convert]::FromBase64String", helper)
+        self.assertIn("$launchText = Get-PowerShellLaunchText", stop_supervisor)
+        self.assertIn("$launchText.IndexOf($supervisorPath", stop_supervisor)
+        self.assertNotIn("$_.CommandLine.IndexOf($supervisorPath", stop_supervisor)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

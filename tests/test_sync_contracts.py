@@ -1759,6 +1759,18 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("status = 'failed'", helper)
         self.assertIn("Move-Item -LiteralPath $temporaryPath", helper)
 
+    def test_deferred_updater_decodes_encoded_supervisor_commands(self):
+        update_script = read_text("update.ps1")
+        helper = update_script.split("$helper = @'", 1)[1].split("\n'@", 1)[0]
+        stop_supervisor = helper.split("function Stop-SupervisorProcesses", 1)[1].split(
+            "function Start-SupervisorProcess", 1
+        )[0]
+
+        self.assertIn("function Get-PowerShellLaunchText", helper)
+        self.assertIn("[Text.Encoding]::Unicode.GetString", helper)
+        self.assertIn("-EncodedCommand|-enc", helper)
+        self.assertIn("Get-PowerShellLaunchText -CommandLine", stop_supervisor)
+
     def test_update_script_encodes_paths_passed_to_hidden_powershell(self):
         update_script = read_text("update.ps1")
         self.assertIn("[Text.Encoding]::Unicode.GetBytes($deferredCommand)", update_script)

@@ -974,6 +974,33 @@ function Get-SupervisorScriptPath {
     return Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_supervisor.ps1'
 }
 
+function Get-PowerShellLaunchText {
+    param([string] $CommandLine = '')
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return ''
+    }
+    $launchText = $CommandLine
+    $encodedMatch = [regex]::Match(
+        $CommandLine,
+        '(?i)(?:-EncodedCommand|-enc)\s+["'']?([A-Za-z0-9+/=]+)'
+    )
+    if ($encodedMatch.Success) {
+        try {
+            $decoded = [Text.Encoding]::Unicode.GetString(
+                [Convert]::FromBase64String($encodedMatch.Groups[1].Value)
+            )
+            if (-not [string]::IsNullOrWhiteSpace($decoded)) {
+                $launchText = "$launchText`n$decoded"
+            }
+        }
+        catch {
+            # Malformed encoded arguments cannot identify an app supervisor.
+        }
+    }
+    return $launchText
+}
+
 function Stop-SupervisorProcesses {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
@@ -981,11 +1008,12 @@ function Stop-SupervisorProcesses {
     $legacyWatchdogPath = [System.IO.Path]::GetFullPath((Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1'))
     $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
+            $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
             ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
             -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
             (
-                $_.CommandLine.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $_.CommandLine.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $launchText.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
             )
         })
 
