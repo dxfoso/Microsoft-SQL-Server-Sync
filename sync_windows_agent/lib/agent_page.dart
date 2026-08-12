@@ -2791,6 +2791,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     unawaited(_maybeAutoApplyClientUpdate(updateInfo));
   }
 
+  bool get _clientUpdateMustWaitForSafeSyncBoundary =>
+      _syncLoopBusy || _rowsLoading || _processingPendingJobsBusy;
+
   void _scheduleAutomaticClientUpdateRetry(ClientUpdateInfo updateInfo) {
     _clientUpdateApplyRetryTimer?.cancel();
     _clientUpdateApplyRetryTimer = Timer(_autoUpdateRetryCooldown, () {
@@ -2828,13 +2831,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (!force && _hasRecentAutoUpdateAttempt(targetId)) {
       return;
     }
+    // A server-requested update has priority over the next queued sync job,
+    // but it must never stop the process that owns an active SQL operation.
+    // Keep the request durable until the current job reaches its safe boundary.
+    if (_clientUpdateMustWaitForSafeSyncBoundary ||
+        _processingJobIds.isNotEmpty) {
+      if (force) {
+        _pendingForcedClientUpdateInfo = updateInfo;
+      }
+      return;
+    }
     if (!force &&
-        (_syncLoopBusy ||
-            _rowsLoading ||
-            _processingJobIds.isNotEmpty ||
-            _activeJobs.any(
-              (job) => job.status == 'running' || job.status == 'applying',
-            ))) {
+        _activeJobs.any(
+          (job) => job.status == 'running' || job.status == 'applying',
+        )) {
       return;
     }
 
@@ -4358,9 +4368,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           'Client update download acknowledgement failed; continuing the durable update: $error',
         );
       }
-      // The request was delivered by the heartbeat that owns this loop. Do
-      // not defer it while that loop is busy; deferring here can leave a
-      // client permanently on an old build behind a long-running sync job.
+      // Give the request priority at the next safe sync boundary. The update
+      // remains durable while the current SQL operation completes, and the
+      // pending marker prevents another queued job from starting first.
       await _maybeAutoApplyClientUpdate(updateInfo, force: true);
     } catch (error) {
       logStartupEvent('Server-requested client update failed: $error');
@@ -5037,6 +5047,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           _cancelledProcessingJobIds.remove(job.id);
           _updateTraySyncIndicator();
         }
+        if (_pendingForcedClientUpdateInfo != null) {
+          logStartupEvent(
+            'Pausing the local sync queue at a safe boundary for a pending client update.',
+          );
+          break;
+        }
       }
     } catch (error, stackTrace) {
       logStartupEvent('Could not prepare pending sync jobs: $error');
@@ -5044,6 +5060,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     } finally {
       _updateTraySyncIndicator();
       _processingPendingJobsBusy = false;
+      _retryAutomaticClientUpdateIfReady();
     }
   }
 

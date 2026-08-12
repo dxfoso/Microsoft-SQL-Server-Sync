@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 101)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 102)}
         observed_ids = set()
 
         for row in rows:
@@ -429,6 +429,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn('if [ "$attempt" -ge 3 ]; then exit 1; fi', dockerfile)
         self.assertIn('Invoke-NativeCheckedWithRetry "Building $frontendImage..."', builder)
         self.assertIn("docker image inspect $frontendImage", builder)
+
+    def test_server_update_cannot_interrupt_active_sql_apply(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        update_body = agent.split(
+            "Future<void> _maybeAutoApplyClientUpdate(", 1
+        )[1].split("String _clientUpdateCommand", 1)[0]
+        queue_body = agent.split(
+            "Future<void> _processPendingJobs() async", 1
+        )[1].split("void _checkSyncJobNotCancelled", 1)[0]
+
+        self.assertIn("if (_clientUpdateMustWaitForSafeSyncBoundary ||", update_body)
+        self.assertIn("_processingJobIds.isNotEmpty", agent)
+        self.assertIn("_pendingForcedClientUpdateInfo = updateInfo", update_body)
+        self.assertIn("Pausing the local sync queue at a safe boundary", queue_body)
+        self.assertIn("_retryAutomaticClientUpdateIfReady();", queue_body)
 
 
 if __name__ == "__main__":

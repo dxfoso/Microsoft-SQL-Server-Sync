@@ -1423,6 +1423,23 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("VersionInfo.ProductVersion", publish_script)
         self.assertIn("does not match pubspec/manifest version", publish_script)
 
+    def test_server_requested_update_waits_for_active_sql_job_boundary(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        update_body = agent_page.split(
+            "Future<void> _maybeAutoApplyClientUpdate(", 1
+        )[1].split("String _clientUpdateCommand", 1)[0]
+        job_loop = agent_page.split(
+            "Future<void> _processPendingJobs() async", 1
+        )[1].split("void _checkSyncJobNotCancelled", 1)[0]
+
+        self.assertIn("_clientUpdateMustWaitForSafeSyncBoundary", update_body)
+        self.assertIn("_processingPendingJobsBusy", agent_page)
+        self.assertIn("_processingJobIds.isNotEmpty", agent_page)
+        self.assertIn("_pendingForcedClientUpdateInfo = updateInfo", update_body)
+        self.assertIn("if (_pendingForcedClientUpdateInfo != null)", job_loop)
+        self.assertIn("break;", job_loop)
+        self.assertIn("_retryAutomaticClientUpdateIfReady();", job_loop)
+
     def test_user_close_pauses_supervisor_until_manual_client_launch(self):
         update_script = read_text("update.ps1")
         supervisor = read_text("sync_windows_agent_supervisor.ps1")
