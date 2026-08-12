@@ -76,11 +76,11 @@ exit 0
     }
 
     $supervisorLog = Get-Content -LiteralPath (Join-Path $testInstall 'sync_windows_agent_supervisor.log') -Raw
-    if ($supervisorLog -notmatch 'Agent executable is unavailable; supervisor remains active') {
-        throw 'The supervisor did not log missing-client survival.'
+    if ($supervisorLog -notmatch 'Agent install is incomplete; launch suppressed') {
+        throw 'The supervisor did not log incomplete-install launch suppression.'
     }
 
-    Write-Host "PASS user-stop update suppression, independent request logging, and missing-client survival pid=$($supervisorProcess.Id)"
+    Write-Host "PASS user-stop update suppression, independent request logging, and incomplete-install launch suppression pid=$($supervisorProcess.Id)"
 }
 finally {
     if ($null -ne $supervisorProcess -and -not $supervisorProcess.HasExited) {

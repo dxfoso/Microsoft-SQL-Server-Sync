@@ -18,6 +18,13 @@ $updateScriptPath = Join-Path -Path $installDir -ChildPath 'update.ps1'
 $supervisorLogPath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent_supervisor.log'
 $requestLogPath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent_update_requests.log'
 $userStoppedMarkerPath = Join-Path -Path $installDir -ChildPath 'sync_windows_agent.user-stopped'
+$requiredRuntimePaths = @(
+    $executablePath,
+    (Join-Path -Path $installDir -ChildPath 'flutter_windows.dll'),
+    (Join-Path -Path $installDir -ChildPath 'data\app.so'),
+    (Join-Path -Path $installDir -ChildPath 'data\icudtl.dat')
+)
+$lastIncompleteInstallSummary = ''
 
 if ($env:SYNC_WINDOWS_AGENT_SUPERVISOR_SKIP_UPDATE -eq '1') {
     $SkipUpdate = $true
@@ -74,6 +81,12 @@ function Get-AgentProcesses {
         })
 }
 
+function Get-MissingAgentRuntimePaths {
+    return @($requiredRuntimePaths | Where-Object {
+        -not (Test-Path -LiteralPath $_ -PathType Leaf)
+    })
+}
+
 function Stop-ObsoleteInstallProcesses {
     $stoppedSupervisors = 0
     $stoppedAgents = 0
@@ -125,10 +138,16 @@ function Ensure-AgentRunning {
     if ($SkipAgentStart -or @(Get-AgentProcesses).Count -gt 0) {
         return
     }
-    if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
-        Write-SupervisorLog "Agent executable is unavailable; supervisor remains active: $executablePath"
+    $missingRuntimePaths = @(Get-MissingAgentRuntimePaths)
+    if ($missingRuntimePaths.Count -gt 0) {
+        $missingSummary = $missingRuntimePaths -join '; '
+        if ($missingSummary -ne $script:lastIncompleteInstallSummary) {
+            Write-SupervisorLog "Agent install is incomplete; launch suppressed until the complete portable folder is restored. missing=$missingSummary"
+            $script:lastIncompleteInstallSummary = $missingSummary
+        }
         return
     }
+    $script:lastIncompleteInstallSummary = ''
 
     try {
         $process = Start-Process -FilePath $executablePath `
@@ -209,6 +228,9 @@ try {
     $nextUpdateCheck = [DateTime]::UtcNow.AddSeconds($UpdateCheckSeconds)
     while ($true) {
         Start-Sleep -Seconds $AgentCheckSeconds
+        if (-not $SkipObsoleteRetirement) {
+            Stop-ObsoleteInstallProcesses
+        }
         Ensure-AgentRunning
         if ([DateTime]::UtcNow -ge $nextUpdateCheck) {
             Invoke-IndependentUpdateCheck

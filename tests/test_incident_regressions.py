@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 102)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 103)}
         observed_ids = set()
 
         for row in rows:
@@ -64,6 +64,16 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("external FlutterFalcon builder", document)
         self.assertIn("Win32_Process.Create", document)
         self.assertIn("must not persist access credentials", document)
+
+    def test_incomplete_obsolete_client_cannot_be_relaunched(self):
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        self.assertIn("function Get-MissingAgentRuntimePaths {", supervisor)
+        self.assertIn("flutter_windows.dll", supervisor)
+        self.assertIn("data\\app.so", supervisor)
+        self.assertIn("data\\icudtl.dat", supervisor)
+        self.assertIn("launch suppressed", supervisor)
+        loop = supervisor.split("while ($true) {", 1)[1]
+        self.assertIn("Stop-ObsoleteInstallProcesses", loop)
 
     def test_upload_and_backend_execution_memory_are_bounded(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

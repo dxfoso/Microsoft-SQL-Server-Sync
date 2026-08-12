@@ -1861,6 +1861,20 @@ class SyncContractsTests(unittest.TestCase):
             supervisor,
         )
 
+    def test_supervisor_never_relaunches_an_incomplete_portable_install(self):
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        ensure_body = supervisor.split("function Ensure-AgentRunning {", 1)[1].split(
+            "function Invoke-IndependentUpdateCheck {", 1
+        )[0]
+
+        self.assertIn("function Get-MissingAgentRuntimePaths {", supervisor)
+        self.assertIn("flutter_windows.dll", supervisor)
+        self.assertIn("data\\app.so", supervisor)
+        self.assertIn("data\\icudtl.dat", supervisor)
+        self.assertIn("$missingRuntimePaths = @(Get-MissingAgentRuntimePaths)", ensure_body)
+        self.assertIn("launch suppressed", ensure_body)
+        self.assertIn("Stop-ObsoleteInstallProcesses", supervisor.split("while ($true) {", 1)[1])
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")
