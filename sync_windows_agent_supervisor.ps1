@@ -87,6 +87,87 @@ function Get-MissingAgentRuntimePaths {
     })
 }
 
+function Remove-ObsoleteLaunchRegistrations {
+    $retiredShortcuts = 0
+    $retiredRunValues = 0
+    $retiredTasks = 0
+
+    # A copied executable cannot run without its adjacent Flutter runtime. An
+    # old shortcut may therefore create a loader error before process-based
+    # retirement can observe it. Inspect only launch registrations that name
+    # this application and preserve the registration for this exact install.
+    $startupRoots = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $startupRoots += (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramData)) {
+        $startupRoots += (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Startup')
+    }
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        foreach ($startupRoot in $startupRoots) {
+            if (-not (Test-Path -LiteralPath $startupRoot -PathType Container)) { continue }
+            foreach ($shortcutFile in Get-ChildItem -LiteralPath $startupRoot -Filter '*.lnk' -File -ErrorAction SilentlyContinue) {
+                try {
+                    $shortcut = $shell.CreateShortcut($shortcutFile.FullName)
+                    $launchText = "$($shortcut.TargetPath) $($shortcut.Arguments)"
+                    if ($launchText.IndexOf('sync_windows_agent', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+                    if ($launchText.IndexOf($scriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { continue }
+                    Remove-Item -LiteralPath $shortcutFile.FullName -Force -ErrorAction Stop
+                    $retiredShortcuts += 1
+                }
+                catch {
+                    Write-SupervisorLog "Could not retire obsolete startup shortcut $($shortcutFile.FullName): $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+    catch {
+        Write-SupervisorLog "Could not inspect Windows startup shortcuts: $($_.Exception.Message)"
+    }
+
+    foreach ($runKeyPath in @(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'
+    )) {
+        try {
+            if (-not (Test-Path -LiteralPath $runKeyPath)) { continue }
+            $runKey = Get-ItemProperty -LiteralPath $runKeyPath -ErrorAction Stop
+            foreach ($property in $runKey.PSObject.Properties) {
+                if ($property.Name -like 'PS*' -or $property.Value -isnot [string]) { continue }
+                $launchText = [string] $property.Value
+                if ($launchText.IndexOf('sync_windows_agent', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+                if ($launchText.IndexOf($scriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { continue }
+                Remove-ItemProperty -LiteralPath $runKeyPath -Name $property.Name -Force -ErrorAction Stop
+                $retiredRunValues += 1
+            }
+        }
+        catch {
+            Write-SupervisorLog "Could not inspect Windows Run key ${runKeyPath}: $($_.Exception.Message)"
+        }
+    }
+
+    if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
+        foreach ($task in Get-ScheduledTask -ErrorAction SilentlyContinue) {
+            try {
+                $launchText = (($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' ')
+                if ($launchText.IndexOf('sync_windows_agent', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+                if ($launchText.IndexOf($scriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { continue }
+                Disable-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop | Out-Null
+                $retiredTasks += 1
+            }
+            catch {
+                Write-SupervisorLog "Could not disable obsolete scheduled task $($task.TaskPath)$($task.TaskName): $($_.Exception.Message)"
+            }
+        }
+    }
+
+    if ($retiredShortcuts -gt 0 -or $retiredRunValues -gt 0 -or $retiredTasks -gt 0) {
+        Write-SupervisorLog "Retired obsolete launch registrations. shortcuts=$retiredShortcuts runValues=$retiredRunValues scheduledTasks=$retiredTasks"
+    }
+}
+
 function Stop-ObsoleteInstallProcesses {
     $stoppedSupervisors = 0
     $stoppedAgents = 0
@@ -216,6 +297,7 @@ if (-not $createdNew) {
 
 try {
     if (-not $SkipObsoleteRetirement) {
+        Remove-ObsoleteLaunchRegistrations
         Stop-ObsoleteInstallProcesses
     }
     Write-SupervisorLog "Supervisor started. pid=$PID install=$installDir"
@@ -229,6 +311,7 @@ try {
     while ($true) {
         Start-Sleep -Seconds $AgentCheckSeconds
         if (-not $SkipObsoleteRetirement) {
+            Remove-ObsoleteLaunchRegistrations
             Stop-ObsoleteInstallProcesses
         }
         Ensure-AgentRunning

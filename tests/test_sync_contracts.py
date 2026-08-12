@@ -1875,6 +1875,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("launch suppressed", ensure_body)
         self.assertIn("Stop-ObsoleteInstallProcesses", supervisor.split("while ($true) {", 1)[1])
 
+    def test_supervisor_retires_obsolete_windows_autostart_registrations(self):
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        cleanup = supervisor.split("function Remove-ObsoleteLaunchRegistrations {", 1)[1].split(
+            "function Stop-ObsoleteInstallProcesses {", 1
+        )[0]
+        self.assertIn("WScript.Shell", cleanup)
+        self.assertIn("CurrentVersion\\Run", cleanup)
+        self.assertIn("Get-ScheduledTask", cleanup)
+        self.assertIn("Disable-ScheduledTask", cleanup)
+        self.assertIn("IndexOf($scriptPath", cleanup)
+        self.assertIn("Retired obsolete launch registrations", cleanup)
+        loop = supervisor.split("while ($true) {", 1)[1]
+        self.assertIn("Remove-ObsoleteLaunchRegistrations", loop)
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")
