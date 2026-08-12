@@ -20,6 +20,14 @@ ENV TRU_BUILD_COMMIT_MESSAGE=${TRU_BUILD_COMMIT_MESSAGE}
 ENV TRU_BUILD_COMMIT_DATE=${TRU_BUILD_COMMIT_DATE}
 ENV TRU_BUILD_RELEASE_DATE=${TRU_BUILD_RELEASE_DATE}
 
+RUN set -eu; \
+  attempt=1; \
+  until flutter precache --web; do \
+    if [ "$attempt" -ge 3 ]; then exit 1; fi; \
+    sleep $((attempt * 2)); \
+    attempt=$((attempt + 1)); \
+  done
+
 COPY pubspec.yaml pubspec.lock ./
 RUN flutter pub get
 

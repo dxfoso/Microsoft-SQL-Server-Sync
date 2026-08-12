@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 100)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 101)}
         observed_ids = set()
 
         for row in rows:
@@ -420,6 +420,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("bulkCopy.BatchSize", bulk_source)
         self.assertIn("MinimumSpeedup = 1.25", benchmark)
         self.assertIn("SqlBulkCopy speedup", benchmark)
+
+    def test_frontend_image_retries_transient_flutter_web_sdk_downloads(self):
+        dockerfile = read_text("frontend/Dockerfile")
+        builder = read_text("scripts/build_production_images.ps1")
+
+        self.assertIn("until flutter precache --web", dockerfile)
+        self.assertIn('if [ "$attempt" -ge 3 ]; then exit 1; fi', dockerfile)
+        self.assertIn('Invoke-NativeCheckedWithRetry "Building $frontendImage..."', builder)
+        self.assertIn("docker image inspect $frontendImage", builder)
 
 
 if __name__ == "__main__":

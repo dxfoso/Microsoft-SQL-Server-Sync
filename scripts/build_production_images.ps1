@@ -113,9 +113,9 @@ try {
     Invoke-NativeChecked "Building $backendImage..." {
         & docker build --build-arg "BUILD_COMMIT_HASH=$commit" --build-arg "TRU_BUILD_GIT_SHA=$commit" -t $backendImage $backendContext
     }
-    Invoke-NativeChecked "Building $frontendImage..." {
+    Invoke-NativeCheckedWithRetry "Building $frontendImage..." {
         & docker build --build-arg "BACKEND_BASE_URL=$BackendBaseUrl" --build-arg "BUILD_COMMIT_HASH=$commit" --build-arg "BUILD_COMMIT_DATE=$commitDate" --build-arg "BUILD_RELEASE_DATE=$releaseDate" --build-arg "TRU_BUILD_GIT_SHA=$commit" --build-arg "TRU_BUILD_COMMIT_MESSAGE=$commitMessage" --build-arg "TRU_BUILD_COMMIT_DATE=$commitDate" --build-arg "TRU_BUILD_RELEASE_DATE=$releaseDate" -t $frontendImage $frontendContext
-    }
+    } { & docker image inspect $frontendImage *> $null }
     if (-not $SkipPush) {
         Invoke-NativeCheckedWithRetry "Pushing $backendImage..." { & docker push $backendImage } { & docker manifest inspect $backendImage *> $null }
         Invoke-NativeCheckedWithRetry "Pushing $frontendImage..." { & docker push $frontendImage } { & docker manifest inspect $frontendImage *> $null }
