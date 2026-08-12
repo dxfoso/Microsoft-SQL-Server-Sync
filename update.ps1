@@ -533,6 +533,23 @@ function Get-SupervisorScriptPath {
     return Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_supervisor.ps1'
 }
 
+function Get-PowerShellLaunchText {
+    param([AllowNull()][string] $CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return '' }
+    $launchText = $CommandLine
+    $encodedMatch = [regex]::Match($CommandLine, '(?i)(?:-EncodedCommand|-enc)\s+["'']?([A-Za-z0-9+/=]+)')
+    if ($encodedMatch.Success) {
+        try {
+            $decoded = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedMatch.Groups[1].Value))
+            $launchText += " $decoded"
+        }
+        catch {
+        }
+    }
+    return $launchText
+}
+
 function Remove-ObsoleteLaunchRegistrations {
     param(
         [Parameter(Mandatory = $true)][string] $TargetInstallDir,
@@ -622,11 +639,12 @@ function Stop-SupervisorProcesses {
     )
     $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
+            $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
             ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
             -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
             (
-                $_.CommandLine.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $_.CommandLine.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $launchText.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
             )
         })
 
@@ -1131,14 +1149,15 @@ function Stop-ObsoleteInstallProcesses {
 
     $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
+            $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
             ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
             $_.ProcessId -ne $PID -and
             -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
             (
-                $_.CommandLine.IndexOf('sync_windows_agent_supervisor.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $_.CommandLine.IndexOf('sync_windows_agent_watchdog.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                $launchText.IndexOf('sync_windows_agent_supervisor.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $launchText.IndexOf('sync_windows_agent_watchdog.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0
             ) -and
-            $_.CommandLine.IndexOf($targetSupervisor, [System.StringComparison]::OrdinalIgnoreCase) -lt 0
+            $launchText.IndexOf($targetSupervisor, [System.StringComparison]::OrdinalIgnoreCase) -lt 0
         })
     foreach ($process in $powershellProcesses) {
         Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue

@@ -1921,6 +1921,23 @@ class SyncContractsTests(unittest.TestCase):
             install_handoff = updater.split(marker, 1)[1].split("Start-DeferredInstall", 1)[0]
             self.assertIn("Stop-ObsoleteInstallProcesses", install_handoff)
 
+    def test_updater_decodes_encoded_commands_when_stopping_supervisors(self):
+        updater = read_text("update.ps1")
+        decoder = updater.split("function Get-PowerShellLaunchText {", 1)[1].split(
+            "function Remove-ObsoleteLaunchRegistrations {", 1
+        )[0]
+        self.assertIn("EncodedCommand", decoder)
+        self.assertIn("FromBase64String", decoder)
+        self.assertIn("Encoding]::Unicode.GetString", decoder)
+        stop_target = updater.split("function Stop-SupervisorProcesses {", 1)[1].split(
+            "function Stop-ObsoleteInstallProcesses {", 1
+        )[0]
+        self.assertIn("Get-PowerShellLaunchText", stop_target)
+        stop_obsolete = updater.split("function Stop-ObsoleteInstallProcesses {", 1)[1].split(
+            "function Start-SupervisorProcess {", 1
+        )[0]
+        self.assertIn("Get-PowerShellLaunchText", stop_obsolete)
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")

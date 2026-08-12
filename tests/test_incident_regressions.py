@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 106)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 107)}
         observed_ids = set()
 
         for row in rows:
@@ -104,6 +104,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         ):
             handoff = updater.split(marker, 1)[1].split("Start-DeferredInstall", 1)[0]
             self.assertIn("Stop-ObsoleteInstallProcesses", handoff)
+
+    def test_updater_recognizes_encoded_supervisor_commands(self):
+        updater = read_text("update.ps1")
+        self.assertIn("function Get-PowerShellLaunchText {", updater)
+        self.assertIn("FromBase64String", updater)
+        stop_target = updater.split("function Stop-SupervisorProcesses {", 1)[1].split(
+            "function Stop-ObsoleteInstallProcesses {", 1
+        )[0]
+        self.assertIn("Get-PowerShellLaunchText", stop_target)
 
     def test_upload_and_backend_execution_memory_are_bounded(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
