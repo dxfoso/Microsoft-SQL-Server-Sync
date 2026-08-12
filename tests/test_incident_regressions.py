@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 107)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 108)}
         observed_ids = set()
 
         for row in rows:
@@ -420,6 +420,16 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("catch {", finalizer)
         self.assertIn("if (-not $updatedClientStable)", finalizer)
         self.assertIn("Restore-InstallRollbackSnapshot", finalizer)
+
+    def test_deferred_update_failure_is_reported_after_safe_rollback(self):
+        updater = read_text("update.ps1")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("function Write-FinalizerFailureProgress", updater)
+        self.assertIn("Finalize update helper failed: $failureMessage", updater)
+        self.assertIn("Write-FinalizerFailureProgress -InstallDir $InstallDir", updater)
+        self.assertIn("status = 'failed'", updater)
+        self.assertIn("'failed' => 'failed'", agent)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

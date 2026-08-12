@@ -1066,6 +1066,49 @@ function Write-UpdateLog {
     Add-Content -LiteralPath $LogPath -Value $line -Encoding ASCII
 }
 
+function Write-FinalizerFailureProgress {
+    param(
+        [Parameter(Mandatory = $true)][string] $InstallDir,
+        [string] $Version = '',
+        [Parameter(Mandatory = $true)][string] $Message
+    )
+
+    try {
+        $progressPath = Join-Path -Path $InstallDir -ChildPath 'update-progress.json'
+        $downloadedBytes = [int64]0
+        $totalBytes = [int64]0
+        if (Test-Path -LiteralPath $progressPath -PathType Leaf) {
+            try {
+                $previous = Get-Content -LiteralPath $progressPath -Raw -ErrorAction Stop | ConvertFrom-Json
+                $downloadedBytes = [Math]::Max([int64]0, [int64]$previous.downloadedBytes)
+                $totalBytes = [Math]::Max([int64]0, [int64]$previous.totalBytes)
+            }
+            catch {
+                $downloadedBytes = [int64]0
+                $totalBytes = [int64]0
+            }
+        }
+        $percent = if ($totalBytes -gt 0) {
+            [Math]::Min(100, [Math]::Max(0, [int][Math]::Floor(($downloadedBytes * 100.0) / $totalBytes)))
+        } else { 0 }
+        $payload = [ordered]@{
+            version = $Version
+            status = 'failed'
+            downloadedBytes = $downloadedBytes
+            totalBytes = $totalBytes
+            percent = $percent
+            message = $Message
+            updatedAt = [DateTime]::UtcNow.ToString('o')
+        } | ConvertTo-Json -Compress
+        $temporaryPath = "$progressPath.$PID.tmp"
+        [System.IO.File]::WriteAllText($temporaryPath, $payload, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporaryPath -Destination $progressPath -Force
+    }
+    catch {
+        # Failure telemetry is best effort and must not interfere with rollback.
+    }
+}
+
 function ConvertTo-InstallRelativePath {
     param([Parameter(Mandatory = $true)][string] $Path)
 
@@ -1272,6 +1315,12 @@ function Wait-AgentStartupStable {
 }
 
 $logPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
+trap {
+    $failureMessage = $_.Exception.Message
+    Write-UpdateLog -Message "Finalize update helper failed: $failureMessage" -LogPath $logPath
+    Write-FinalizerFailureProgress -InstallDir $InstallDir -Version $Version -Message $failureMessage
+    exit 1
+}
 Write-UpdateLog -Message "Finalize update helper started. payload=$PayloadDir install=$InstallDir parent=$ParentProcessId" -LogPath $logPath
 
 for ($attempt = 0; $attempt -lt 120; $attempt++) {

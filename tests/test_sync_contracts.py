@@ -1614,7 +1614,9 @@ class SyncContractsTests(unittest.TestCase):
         clients_page = read_text("frontend/lib/clients_page.dart")
 
         self.assertIn("status: reportedStatus", handler)
-        self.assertIn("? 'installing' : 'downloading'", handler)
+        self.assertIn("'installing' => 'installing'", handler)
+        self.assertIn("_ => 'downloading'", handler)
+        self.assertIn("'failed' => 'failed'", handler)
         self.assertIn("durable updater accepted this request", handler)
         self.assertIn("Verified files and partial downloads will be reused", handler)
         self.assertIn("continuing the durable update", handler)
@@ -1746,6 +1748,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Test-PayloadInstalled -PayloadDir $PayloadDir -InstallDir $InstallDir", update_script)
         self.assertIn("Verified installed client payload for version $Version.", update_script)
         self.assertIn("Start-Sleep -Milliseconds 500", update_script)
+
+    def test_deferred_updater_persists_exact_failure_telemetry(self):
+        update_script = read_text("update.ps1")
+        helper = update_script.split("$helper = @'", 1)[1].split("\n'@", 1)[0]
+
+        self.assertIn("function Write-FinalizerFailureProgress", helper)
+        self.assertIn("trap {", helper)
+        self.assertIn("$failureMessage = $_.Exception.Message", helper)
+        self.assertIn("status = 'failed'", helper)
+        self.assertIn("Move-Item -LiteralPath $temporaryPath", helper)
 
     def test_update_script_encodes_paths_passed_to_hidden_powershell(self):
         update_script = read_text("update.ps1")

@@ -4342,8 +4342,11 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       final localProgress = _readClientUpdateProgress(manifestVersion);
       final progressStatus =
           localProgress?['status']?.toString().trim().toLowerCase();
-      final reportedStatus =
-          progressStatus == 'installing' ? 'installing' : 'downloading';
+      final reportedStatus = switch (progressStatus) {
+        'failed' => 'failed',
+        'installing' => 'installing',
+        _ => 'downloading',
+      };
       final progressMessage =
           localProgress?['message']?.toString().trim() ?? '';
       try {
