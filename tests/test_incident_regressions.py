@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 104)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 105)}
         observed_ids = set()
 
         for row in rows:
@@ -81,6 +81,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("CurrentVersion\\Run", supervisor)
         self.assertIn("Disable-ScheduledTask", supervisor)
         self.assertIn("Retired obsolete launch registrations", supervisor)
+
+    def test_updater_retires_obsolete_autostart_before_file_replacement(self):
+        updater = read_text("update.ps1")
+        self.assertIn("function Remove-ObsoleteLaunchRegistrations {", updater)
+        differential = updater.split(
+            "Stopping the supervisor before scheduling differential replacement.", 1
+        )[1].split("Start-DeferredInstall", 1)[0]
+        package = updater.split(
+            "Stopping the supervisor before scheduling package replacement.", 1
+        )[1].split("Start-DeferredInstall", 1)[0]
+        self.assertIn("Remove-ObsoleteLaunchRegistrations", differential)
+        self.assertIn("Remove-ObsoleteLaunchRegistrations", package)
 
     def test_upload_and_backend_execution_memory_are_bounded(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

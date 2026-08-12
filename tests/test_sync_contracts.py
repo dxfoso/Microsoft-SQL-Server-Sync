@@ -1889,6 +1889,22 @@ class SyncContractsTests(unittest.TestCase):
         loop = supervisor.split("while ($true) {", 1)[1]
         self.assertIn("Remove-ObsoleteLaunchRegistrations", loop)
 
+    def test_web_delivered_updater_retires_obsolete_autostart_before_install(self):
+        updater = read_text("update.ps1")
+        cleanup = updater.split("function Remove-ObsoleteLaunchRegistrations {", 1)[1].split(
+            "function Stop-SupervisorProcesses {", 1
+        )[0]
+        self.assertIn("WScript.Shell", cleanup)
+        self.assertIn("CurrentVersion\\Run", cleanup)
+        self.assertIn("Disable-ScheduledTask", cleanup)
+        self.assertIn("Updater retired obsolete launch registrations", cleanup)
+        for marker in (
+            "Stopping the supervisor before scheduling differential replacement.",
+            "Stopping the supervisor before scheduling package replacement.",
+        ):
+            install_handoff = updater.split(marker, 1)[1].split("Start-DeferredInstall", 1)[0]
+            self.assertIn("Remove-ObsoleteLaunchRegistrations", install_handoff)
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")
