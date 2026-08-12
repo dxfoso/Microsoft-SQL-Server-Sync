@@ -70,6 +70,7 @@ def native_tool(name):
 DOCKER = native_tool("docker")
 SQLCMD = native_tool("sqlcmd")
 DART = native_tool("dart")
+POWERSHELL = native_tool("powershell")
 COMPOSE = [DOCKER, "compose", "-f", str(HARNESS_DIR / "compose.yaml")]
 CONTAINER_SQLCMD = SQLCMD is None and DOCKER is not None
 
@@ -115,6 +116,37 @@ def tool_supports_option(executable, option):
 
 
 SQLCMD_SUPPORTS_INPUT_CODEPAGE = tool_supports_option(SQLCMD, "-f")
+
+
+def run_windows_bulk_stage_performance_regression():
+    if os.name != "nt" or POWERSHELL is None or SQLCMD is None:
+        print("Skipping Windows SqlBulkCopy performance regression on this host.")
+        return
+    result = run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ROOT / "tests" / "benchmark_sql_bulk_stage.ps1"),
+            "-Server",
+            SQL_SERVER,
+            "-User",
+            SQL_USER,
+            "-Password",
+            PASSWORD,
+            "-Rows",
+            "14030",
+            "-MinimumSpeedup",
+            "1.25",
+        ]
+    )
+    print(result.stdout.strip())
 
 
 def run(command, *, input_text=None, cwd=ROOT, check=True):
@@ -1873,6 +1905,7 @@ def main():
         wait_for_sql()
         if args.suite in ("standard", "all"):
             run_scenarios()
+            run_windows_bulk_stage_performance_regression()
         if args.suite in ("robustness", "all"):
             run_robustness_scenarios(
                 include_restart=not args.skip_sql_restart,

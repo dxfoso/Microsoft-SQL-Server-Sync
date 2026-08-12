@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 99)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 100)}
         observed_ids = set()
 
         for row in rows:
@@ -407,6 +407,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("buildTargetPrimaryKeyLookupFromStageSql(", lookup)
         self.assertIn("lookupCompleted || confirmedFailure", lookup)
         self.assertIn("onLookupStageProgress", agent)
+
+    def test_slow_literal_staging_uses_bounded_resumable_bulk_copy(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        bulk_source = read_text("sync_windows_agent/assets/SqlBulkStage.cs")
+        benchmark = read_text("tests/benchmark_sql_bulk_stage.ps1")
+
+        self.assertGreaterEqual(agent.count("_runSqlBulkStageRows("), 3)
+        self.assertIn("durableRowCount = await _queryTargetSnapshotStageRowCount", agent)
+        self.assertIn("bulkCopyAvailable = false", agent)
+        self.assertIn("SqlBulkCopyOptions.UseInternalTransaction", bulk_source)
+        self.assertIn("bulkCopy.BatchSize", bulk_source)
+        self.assertIn("MinimumSpeedup = 1.25", benchmark)
+        self.assertIn("SqlBulkCopy speedup", benchmark)
 
 
 if __name__ == "__main__":

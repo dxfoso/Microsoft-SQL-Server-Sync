@@ -10,6 +10,24 @@ def read_text(relative_path: str) -> str:
 
 
 class SyncContractsTests(unittest.TestCase):
+    def test_windows_snapshot_staging_uses_resumable_sql_bulk_copy(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        bulk_policy = read_text("sync_windows_agent/lib/sql_bulk_stage.dart")
+        bulk_script = read_text("sync_windows_agent/assets/sql_bulk_stage.ps1")
+        bulk_source = read_text("sync_windows_agent/assets/SqlBulkStage.cs")
+
+        self.assertIn("_runSqlBulkStageRows(", agent)
+        self.assertGreaterEqual(agent.count("bulkCopyAvailable = Platform.isWindows"), 2)
+        self.assertIn("targetSnapshotBulkRowsPerInvocation = 10000", bulk_policy)
+        self.assertIn("targetSnapshotBulkCommitRows = 1000", bulk_policy)
+        self.assertIn("SqlSync.BulkStageLoader", bulk_script)
+        self.assertIn("SqlBulkCopyOptions.TableLock", bulk_source)
+        self.assertIn("SqlBulkCopyOptions.UseInternalTransaction", bulk_source)
+        self.assertIn("bulkCopy.BatchSize", bulk_source)
+        self.assertIn("_queryTargetSnapshotStageRowCount(", agent)
+        self.assertIn("sync.apply.bulk_stage_fallback", agent)
+        self.assertIn("buildTargetSnapshotStageInsertSql(", agent)
+
     def test_heartbeat_prioritizes_complete_selected_database_inventory(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         body = agent_page.split(

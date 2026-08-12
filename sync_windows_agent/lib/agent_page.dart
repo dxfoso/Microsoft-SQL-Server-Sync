@@ -18,6 +18,7 @@ import 'data_export_policy.dart';
 import 'delta_package.dart';
 import 'live_sync_api.dart';
 import 'sql_sync_fingerprint.dart';
+import 'sql_bulk_stage.dart';
 import 'sql_sync_merge.dart';
 import 'sql_sync_schema.dart';
 import 'sql_cmd_output.dart';
@@ -7313,7 +7314,49 @@ COMMIT TRANSACTION;
       if (stagedRowCount > 0) {
         await onStageProgress?.call(stagedRowCount, keyRows.length);
       }
+      var bulkCopyAvailable = Platform.isWindows;
       while (stagedRowCount < keyRows.length) {
+        if (bulkCopyAvailable) {
+          final bulkChunk = keyRows
+              .skip(stagedRowCount)
+              .take(targetSnapshotBulkRowsPerInvocation)
+              .toList(growable: false);
+          final bulkResult = await _runSqlBulkStageRows(
+            profile: profile,
+            database: database,
+            stageTableName: stageTableName,
+            columns: keyDefinitions,
+            rows: bulkChunk,
+          );
+          if (bulkResult.success && bulkResult.copiedRows == bulkChunk.length) {
+            stagedRowCount += bulkChunk.length;
+            await onStageProgress?.call(stagedRowCount, keyRows.length);
+            continue;
+          }
+          final durableRowCount = await _queryTargetSnapshotStageRowCount(
+            profile: profile,
+            database: database,
+            stageTableName: stageTableName,
+          );
+          if (durableRowCount >= stagedRowCount &&
+              durableRowCount <= keyRows.length) {
+            stagedRowCount = durableRowCount;
+            await onStageProgress?.call(stagedRowCount, keyRows.length);
+          }
+          bulkCopyAvailable = false;
+          logAgentDiagnostic(
+            'sync.compare.bulk_stage_fallback',
+            level: AgentLogLevel.warning,
+            context: {
+              'database': database,
+              'table': '$schema.$table',
+              'stagedRowCount': stagedRowCount,
+              'totalRows': keyRows.length,
+            },
+            error: bulkResult.error,
+          );
+          continue;
+        }
         final chunk = keyRows
             .skip(stagedRowCount)
             .take(targetSnapshotInsertRowsPerStatement)
@@ -7586,10 +7629,61 @@ END
         stagedRowCount = 0;
       }
       final resumedRowCount = stagedRowCount;
+      var bulkCopyLaunchCount = 0;
+      var literalFallbackRows = 0;
+      var bulkCopyAvailable = Platform.isWindows;
       if (stagedRowCount > 0) {
         await onStageProgress?.call(stagedRowCount, rows.length);
       }
       while (stagedRowCount < rows.length) {
+        if (bulkCopyAvailable) {
+          final bulkChunk = rows
+              .skip(stagedRowCount)
+              .take(targetSnapshotBulkRowsPerInvocation)
+              .toList(growable: false);
+          final bulkResult = await _runSqlBulkStageRows(
+            profile: profile,
+            database: database,
+            stageTableName: stageTableName,
+            columns: columns,
+            rows: bulkChunk,
+          );
+          bulkCopyLaunchCount += 1;
+          if (bulkResult.success && bulkResult.copiedRows == bulkChunk.length) {
+            stagedRowCount += bulkChunk.length;
+            await onStageProgress?.call(stagedRowCount, rows.length);
+            continue;
+          }
+
+          // SqlBulkCopy commits each bounded batch independently. A connection
+          // loss can therefore return an error after earlier batches committed.
+          // Re-read the durable identity count before entering the literal-SQL
+          // compatibility path so a retry never duplicates staged rows.
+          final durableRowCount = await _queryTargetSnapshotStageRowCount(
+            profile: profile,
+            database: database,
+            stageTableName: stageTableName,
+          );
+          sqlcmdLaunchCount += 1;
+          if (durableRowCount >= stagedRowCount &&
+              durableRowCount <= rows.length) {
+            stagedRowCount = durableRowCount;
+            await onStageProgress?.call(stagedRowCount, rows.length);
+          }
+          bulkCopyAvailable = false;
+          logAgentDiagnostic(
+            'sync.apply.bulk_stage_fallback',
+            level: AgentLogLevel.warning,
+            context: {
+              'database': database,
+              'table': '$schema.$table',
+              'stagedRowCount': stagedRowCount,
+              'totalRows': rows.length,
+            },
+            error: bulkResult.error,
+          );
+          continue;
+        }
         final chunk = rows
             .skip(stagedRowCount)
             .take(targetSnapshotInsertRowsPerStatement)
@@ -7606,6 +7700,7 @@ END
           timeout: _snapshotSqlCmdTimeout,
         );
         sqlcmdLaunchCount += 1;
+        literalFallbackRows += chunk.length;
         stagedRowCount += chunk.length;
         await onStageProgress?.call(stagedRowCount, rows.length);
       }
@@ -7621,6 +7716,9 @@ END
               targetSnapshotInsertRowsPerStatement,
           'resumedRowCount': resumedRowCount,
           'sqlcmdLaunchCount': sqlcmdLaunchCount,
+          'bulkCopyLaunchCount': bulkCopyLaunchCount,
+          'literalFallbackRows': literalFallbackRows,
+          'loader': literalFallbackRows == 0 ? 'sql-bulk-copy' : 'mixed',
           'elapsedMs': stageLoadStopwatch.elapsedMilliseconds,
         },
       );
@@ -7709,6 +7807,127 @@ END
           database: database,
           stageTableName: stageTableName,
         );
+      }
+    }
+  }
+
+  Future<({bool success, int? copiedRows, String error})> _runSqlBulkStageRows({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required String stageTableName,
+    required List<_SqlColumnDefinition> columns,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    if (!Platform.isWindows || rows.isEmpty) {
+      return (
+        success: false,
+        copiedRows: null,
+        error: 'SqlBulkCopy staging is available only on Windows.',
+      );
+    }
+    Directory? commandDirectory;
+    Process? process;
+    final stopwatch = Stopwatch()..start();
+    try {
+      commandDirectory = await Directory.systemTemp.createTemp(
+        'sync_agent_bulk_stage_',
+      );
+      final request = buildSqlBulkStageRequest(
+        server: profile.server,
+        database: database,
+        useWindowsAuth: profile.useWindowsAuth,
+        user: profile.user,
+        password: profile.password,
+        destinationTable: stageTableReference(stageTableName),
+        columns: columns,
+        rows: rows,
+      );
+      final requestFile = File(
+        '${commandDirectory.path}${Platform.pathSeparator}request.json',
+      );
+      final scriptFile = File(
+        '${commandDirectory.path}${Platform.pathSeparator}sql_bulk_stage.ps1',
+      );
+      final sourceFile = File(
+        '${commandDirectory.path}${Platform.pathSeparator}SqlBulkStage.cs',
+      );
+      await requestFile.writeAsString(jsonEncode(request), encoding: utf8);
+      await scriptFile.writeAsString(
+        await rootBundle.loadString(sqlBulkStageAssetPath),
+        encoding: utf8,
+      );
+      await sourceFile.writeAsString(
+        await rootBundle.loadString(sqlBulkStageSourceAssetPath),
+        encoding: utf8,
+      );
+      process = await Process.start('powershell.exe', <String>[
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle',
+        'Hidden',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        scriptFile.path,
+        '-RequestPath',
+        requestFile.path,
+      ], runInShell: false);
+      final stdoutFuture =
+          process.stdout.transform(systemEncoding.decoder).join();
+      final stderrFuture =
+          process.stderr.transform(systemEncoding.decoder).join();
+      final exitCode = await process.exitCode.timeout(_snapshotSqlCmdTimeout);
+      final stdoutText = await stdoutFuture;
+      final stderrText = await stderrFuture;
+      final copiedRows = parseSqlBulkCopiedRowCount(stdoutText);
+      stopwatch.stop();
+      logAgentDiagnostic(
+        'sync.apply.bulk_stage_completed',
+        level: exitCode == 0 ? AgentLogLevel.debug : AgentLogLevel.warning,
+        context: {
+          'server': profile.server,
+          'database': database,
+          'rowCount': rows.length,
+          'requestBytes': sqlBulkStageRequestUtf8Bytes(request),
+          'copiedRows': copiedRows ?? -1,
+          'exitCode': exitCode,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+        },
+        error: exitCode == 0 ? null : stderrText,
+      );
+      return (
+        success: exitCode == 0 && copiedRows != null,
+        copiedRows: copiedRows,
+        error:
+            stderrText.trim().isEmpty
+                ? 'SqlBulkCopy helper exited with code $exitCode.'
+                : stderrText.trim(),
+      );
+    } on TimeoutException {
+      process?.kill();
+      stopwatch.stop();
+      return (
+        success: false,
+        copiedRows: null,
+        error:
+            'SqlBulkCopy staging timed out after ${_formatDurationForLog(_snapshotSqlCmdTimeout)}.',
+      );
+    } on Object catch (error) {
+      stopwatch.stop();
+      return (success: false, copiedRows: null, error: error.toString());
+    } finally {
+      if (commandDirectory != null) {
+        try {
+          await commandDirectory.delete(recursive: true);
+        } on Object catch (error) {
+          logAgentDiagnostic(
+            'sync.apply.bulk_stage_cleanup_failed',
+            level: AgentLogLevel.warning,
+            context: {'database': database},
+            error: error,
+          );
+        }
       }
     }
   }
