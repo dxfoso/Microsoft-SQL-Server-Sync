@@ -1771,6 +1771,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("-EncodedCommand|-enc", helper)
         self.assertIn("Get-PowerShellLaunchText -CommandLine", stop_supervisor)
 
+    def test_windows_update_elevates_only_for_protected_install_handoff(self):
+        update_script = read_text("update.ps1")
+
+        self.assertIn("$requiresElevation = Test-InstallNeedsElevation", update_script)
+        self.assertIn("if (-not $requiresElevation)", update_script)
+        self.assertIn("Normal update handoff was denied", update_script)
+        self.assertIn("if ($Elevated)", update_script)
+        self.assertIn("-WindowStyle Hidden -Verb RunAs", update_script)
+        self.assertGreaterEqual(update_script.count("-Elevated:$requiresElevation"), 2)
+
     def test_update_script_encodes_paths_passed_to_hidden_powershell(self):
         update_script = read_text("update.ps1")
         self.assertIn("[Text.Encoding]::Unicode.GetBytes($deferredCommand)", update_script)

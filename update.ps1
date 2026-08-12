@@ -847,6 +847,23 @@ function Save-UpdateDeleteList {
     Set-Content -LiteralPath $Path -Value $lines -Encoding ASCII
 }
 
+function Test-InstallNeedsElevation {
+    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+
+    try {
+        $probePath = Join-Path -Path $TargetInstallDir -ChildPath ".sql-sync-update-access-$PID.tmp"
+        [System.IO.File]::WriteAllText($probePath, 'probe', [Text.UTF8Encoding]::new($false))
+        Remove-Item -LiteralPath $probePath -Force -ErrorAction Stop
+    }
+    catch {
+        return $true
+    }
+
+    $hiddenAgent = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { [string]::IsNullOrWhiteSpace($_.ExecutablePath) })
+    return $hiddenAgent.Count -gt 0
+}
+
 function Start-DeferredInstall {
     param(
         [Parameter(Mandatory = $true)][string] $PayloadDir,
@@ -855,6 +872,7 @@ function Start-DeferredInstall {
         [Parameter(Mandatory = $true)][int] $ParentProcessId,
         [string] $DeleteListPath = '',
         [string] $Version = '',
+        [switch] $Elevated,
         [switch] $NoStart
     )
 
@@ -1473,7 +1491,12 @@ Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
         '-EncodedCommand', $encodedCommand
     )
 
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $startArgs -WorkingDirectory $WorkRoot -WindowStyle Hidden
+    if ($Elevated) {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $startArgs -WorkingDirectory $WorkRoot -WindowStyle Hidden -Verb RunAs
+    }
+    else {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $startArgs -WorkingDirectory $WorkRoot -WindowStyle Hidden
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
@@ -1662,10 +1685,22 @@ try {
 
             Write-UpdateLog -Message 'Stopping the supervisor before scheduling differential replacement.' -LogPath $mainLogPath
             Write-UpdateProgress -Status 'installing' -DownloadedBytes $totalDownloadBytes -TotalBytes $totalDownloadBytes -Message 'Download verified. Installing the client update.'
+            $requiresElevation = Test-InstallNeedsElevation -TargetInstallDir $InstallDir
             Remove-ObsoleteLaunchRegistrations -TargetInstallDir $InstallDir -LogPath $mainLogPath
             Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
-            Stop-SupervisorProcesses -TargetInstallDir $InstallDir
-            Stop-AgentProcesses -TargetInstallDir $InstallDir
+            if (-not $requiresElevation) {
+                try {
+                    Stop-SupervisorProcesses -TargetInstallDir $InstallDir
+                    Stop-AgentProcesses -TargetInstallDir $InstallDir
+                }
+                catch {
+                    $requiresElevation = $true
+                    Write-UpdateLog -Message "Normal update handoff was denied; requesting standard Windows administrator consent: $($_.Exception.Message)" -LogPath $mainLogPath
+                }
+            }
+            if ($requiresElevation) {
+                Write-UpdateProgress -Status 'installing' -DownloadedBytes $totalDownloadBytes -TotalBytes $totalDownloadBytes -Message 'Windows administrator approval is required once to replace the protected client installation.'
+            }
             Write-UpdateLog -Message "Scheduling differential install. files=$downloadCount bytes=$downloadBytes deletes=$($staleManagedPaths.Count)" -LogPath $mainLogPath
             Start-DeferredInstall `
                 -PayloadDir $payloadDir `
@@ -1674,6 +1709,7 @@ try {
                 -ParentProcessId $PID `
                 -DeleteListPath $deleteListPath `
                 -Version ([string] $manifest.version) `
+                -Elevated:$requiresElevation `
                 -NoStart:$NoStart
             Write-UpdateLog -Message "Differential updater scheduled for version $($manifest.version) in $InstallDir" -LogPath $mainLogPath
             return
@@ -1706,10 +1742,22 @@ try {
 
     Write-UpdateLog -Message 'Stopping the supervisor before scheduling package replacement.' -LogPath $mainLogPath
     Write-UpdateProgress -Status 'installing' -DownloadedBytes $declaredSizeBytes -TotalBytes $declaredSizeBytes -Message 'Download verified. Installing the client update.'
+    $requiresElevation = Test-InstallNeedsElevation -TargetInstallDir $InstallDir
     Remove-ObsoleteLaunchRegistrations -TargetInstallDir $InstallDir -LogPath $mainLogPath
     Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
-    Stop-SupervisorProcesses -TargetInstallDir $InstallDir
-    Stop-AgentProcesses -TargetInstallDir $InstallDir
+    if (-not $requiresElevation) {
+        try {
+            Stop-SupervisorProcesses -TargetInstallDir $InstallDir
+            Stop-AgentProcesses -TargetInstallDir $InstallDir
+        }
+        catch {
+            $requiresElevation = $true
+            Write-UpdateLog -Message "Normal update handoff was denied; requesting standard Windows administrator consent: $($_.Exception.Message)" -LogPath $mainLogPath
+        }
+    }
+    if ($requiresElevation) {
+        Write-UpdateProgress -Status 'installing' -DownloadedBytes $declaredSizeBytes -TotalBytes $declaredSizeBytes -Message 'Windows administrator approval is required once to replace the protected client installation.'
+    }
     Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath
     Start-DeferredInstall `
         -PayloadDir $payloadDir `
@@ -1718,6 +1766,7 @@ try {
         -ParentProcessId $PID `
         -DeleteListPath $deleteListPath `
         -Version ([string] $manifest.version) `
+        -Elevated:$requiresElevation `
         -NoStart:$NoStart
     Write-UpdateLog -Message "Updater scheduled for version $($manifest.version) in $InstallDir" -LogPath $mainLogPath
 }

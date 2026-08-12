@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 109)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 110)}
         observed_ids = set()
 
         for row in rows:
@@ -443,6 +443,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("$launchText = Get-PowerShellLaunchText", stop_supervisor)
         self.assertIn("$launchText.IndexOf($supervisorPath", stop_supervisor)
         self.assertNotIn("$_.CommandLine.IndexOf($supervisorPath", stop_supervisor)
+
+    def test_protected_install_retries_handoff_with_standard_uac(self):
+        updater = read_text("update.ps1")
+
+        self.assertIn("function Test-InstallNeedsElevation", updater)
+        self.assertIn("[string]::IsNullOrWhiteSpace($_.ExecutablePath)", updater)
+        self.assertIn("-Verb RunAs", updater)
+        self.assertIn("-Elevated:$requiresElevation", updater)
+        self.assertIn("Windows administrator approval is required once", updater)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")
