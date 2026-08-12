@@ -1117,6 +1117,50 @@ function Remove-EmptyParentDirectories {
     }
 }
 
+function Stop-ObsoleteInstallProcesses {
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+
+    $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
+    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
+    $targetSupervisor = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+    $stoppedSupervisors = 0
+    $stoppedAgents = 0
+
+    $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
+            $_.ProcessId -ne $PID -and
+            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
+            (
+                $_.CommandLine.IndexOf('sync_windows_agent_supervisor.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $_.CommandLine.IndexOf('sync_windows_agent_watchdog.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            ) -and
+            $_.CommandLine.IndexOf($targetSupervisor, [System.StringComparison]::OrdinalIgnoreCase) -lt 0
+        })
+    foreach ($process in $powershellProcesses) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        $stoppedSupervisors += 1
+    }
+
+    $agentProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+            -not ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith(
+                $targetPrefix,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        })
+    foreach ($process in $agentProcesses) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        $stoppedAgents += 1
+    }
+
+    Write-UpdateLog -Message "Updater retired obsolete running installs before replacement. supervisors=$stoppedSupervisors agents=$stoppedAgents" -LogPath $LogPath
+}
+
 function Save-InstallRollbackSnapshot {
     param(
         [Parameter(Mandatory = $true)][string] $PayloadDir,
@@ -1523,6 +1567,7 @@ try {
             Write-UpdateLog -Message 'Stopping the supervisor before scheduling differential replacement.' -LogPath $mainLogPath
             Write-UpdateProgress -Status 'installing' -DownloadedBytes $totalDownloadBytes -TotalBytes $totalDownloadBytes -Message 'Download verified. Installing the client update.'
             Remove-ObsoleteLaunchRegistrations -TargetInstallDir $InstallDir -LogPath $mainLogPath
+            Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
             Stop-SupervisorProcesses -TargetInstallDir $InstallDir
             Stop-AgentProcesses -TargetInstallDir $InstallDir
             Write-UpdateLog -Message "Scheduling differential install. files=$downloadCount bytes=$downloadBytes deletes=$($staleManagedPaths.Count)" -LogPath $mainLogPath
@@ -1566,6 +1611,7 @@ try {
     Write-UpdateLog -Message 'Stopping the supervisor before scheduling package replacement.' -LogPath $mainLogPath
     Write-UpdateProgress -Status 'installing' -DownloadedBytes $declaredSizeBytes -TotalBytes $declaredSizeBytes -Message 'Download verified. Installing the client update.'
     Remove-ObsoleteLaunchRegistrations -TargetInstallDir $InstallDir -LogPath $mainLogPath
+    Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
     Stop-SupervisorProcesses -TargetInstallDir $InstallDir
     Stop-AgentProcesses -TargetInstallDir $InstallDir
     Write-UpdateLog -Message "Scheduling deferred install. payload=$payloadDir" -LogPath $mainLogPath

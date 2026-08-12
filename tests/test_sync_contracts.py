@@ -1905,6 +1905,22 @@ class SyncContractsTests(unittest.TestCase):
             install_handoff = updater.split(marker, 1)[1].split("Start-DeferredInstall", 1)[0]
             self.assertIn("Remove-ObsoleteLaunchRegistrations", install_handoff)
 
+    def test_web_delivered_updater_stops_obsolete_running_installs(self):
+        updater = read_text("update.ps1")
+        cleanup = updater.split("function Stop-ObsoleteInstallProcesses {", 1)[1].split(
+            "function Start-SupervisorProcess {", 1
+        )[0]
+        self.assertIn("sync_windows_agent_supervisor.ps1", cleanup)
+        self.assertIn("sync_windows_agent_watchdog.ps1", cleanup)
+        self.assertIn("sync_windows_agent.exe", cleanup)
+        self.assertIn("Updater retired obsolete running installs", cleanup)
+        for marker in (
+            "Stopping the supervisor before scheduling differential replacement.",
+            "Stopping the supervisor before scheduling package replacement.",
+        ):
+            install_handoff = updater.split(marker, 1)[1].split("Start-DeferredInstall", 1)[0]
+            self.assertIn("Stop-ObsoleteInstallProcesses", install_handoff)
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")
