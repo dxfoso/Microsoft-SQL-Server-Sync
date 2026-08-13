@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 111)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 112)}
         observed_ids = set()
 
         for row in rows:
@@ -463,6 +463,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             updater.count("$priorInstallHandoffNeedsElevation -or (Test-InstallNeedsElevation"),
             2,
         )
+
+    def test_staggered_old_client_retries_cannot_suppress_uac(self):
+        updater = read_text("update.ps1")
+
+        retry_guard = updater.split(
+            "function Test-PriorInstallHandoffNeedsElevation", 1
+        )[1].split("function Start-DeferredInstall", 1)[0]
+        self.assertIn("[int] $MinimumAgeSeconds = 5", retry_guard)
+        self.assertIn("TotalSeconds -ge", retry_guard)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

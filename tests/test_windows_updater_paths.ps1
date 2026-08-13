@@ -87,6 +87,11 @@ try {
     if (Test-PriorInstallHandoffNeedsElevation -ProgressPath $progressPath -TargetVersion '1.0.276+280') {
         throw 'A newly scheduled install incorrectly requested elevation before its normal handoff had time to finish.'
     }
+    $recentProgress.updatedAt = [DateTimeOffset]::UtcNow.AddSeconds(-6).ToString('o')
+    $recentProgress | ConvertTo-Json -Compress | Set-Content -LiteralPath $progressPath -Encoding UTF8
+    if (-not (Test-PriorInstallHandoffNeedsElevation -ProgressPath $progressPath -TargetVersion '1.0.276+280')) {
+        throw 'A separate verified handoff retry remained non-elevated after the bounded grace period.'
+    }
 
     Start-DeferredInstall `
         -PayloadDir $payloadDir `

@@ -868,7 +868,7 @@ function Test-PriorInstallHandoffNeedsElevation {
     param(
         [Parameter(Mandatory = $true)][string] $ProgressPath,
         [Parameter(Mandatory = $true)][string] $TargetVersion,
-        [int] $MinimumAgeSeconds = 90
+        [int] $MinimumAgeSeconds = 5
     )
 
     if (-not (Test-Path -LiteralPath $ProgressPath -PathType Leaf)) {

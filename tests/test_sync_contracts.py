@@ -1793,6 +1793,15 @@ class SyncContractsTests(unittest.TestCase):
             2,
         )
 
+    def test_windows_update_retry_grace_is_bounded_for_staggered_old_clients(self):
+        update_script = read_text("update.ps1")
+        retry_guard = update_script.split(
+            "function Test-PriorInstallHandoffNeedsElevation", 1
+        )[1].split("function Start-DeferredInstall", 1)[0]
+
+        self.assertIn("[int] $MinimumAgeSeconds = 5", retry_guard)
+        self.assertIn("[Math]::Max(1, $MinimumAgeSeconds)", retry_guard)
+
     def test_update_script_encodes_paths_passed_to_hidden_powershell(self):
         update_script = read_text("update.ps1")
         self.assertIn("[Text.Encoding]::Unicode.GetBytes($deferredCommand)", update_script)
