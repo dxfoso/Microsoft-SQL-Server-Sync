@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 115)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 116)}
         observed_ids = set()
 
         for row in rows:
@@ -503,6 +503,16 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         for source in (updater, supervisor):
             self.assertIn("$_.PSObject.Properties['Execute']", source)
             self.assertIn("$null -ne $executeProperty", source)
+
+    def test_incomplete_install_fixture_waits_for_agent_validation(self):
+        test_script = read_text("tests/test_windows_supervisor.ps1")
+        lifecycle_launch = test_script.split("$supervisorProcess = Start-Process", 1)[1]
+
+        self.assertIn("Agent install is incomplete; launch suppressed", lifecycle_launch)
+        self.assertNotIn("'-SkipAgentStart'", lifecycle_launch)
+        self.assertIn("$logDeadline = [DateTime]::UtcNow.AddSeconds(15)", lifecycle_launch)
+        self.assertIn("do {", lifecycle_launch)
+        self.assertIn("isolated_supervisor_fixture.ps1", test_script)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

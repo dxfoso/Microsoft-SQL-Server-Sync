@@ -21,7 +21,7 @@ $supervisorProcess = $null
 $testInstall = Join-Path $testRoot 'portable client with spaces'
 New-Item -Path $testInstall -ItemType Directory -Force | Out-Null
 try {
-    $testSupervisor = Join-Path $testInstall 'sync_windows_agent_supervisor.ps1'
+    $testSupervisor = Join-Path $testInstall 'isolated_supervisor_fixture.ps1'
     Copy-Item -LiteralPath $SupervisorPath -Destination $testSupervisor -Force
     @'
 param([string] $ManifestUrl, [string] $InstallDir, [switch] $NoStart)
@@ -70,12 +70,19 @@ exit 0
         -WorkingDirectory $testInstall `
         -WindowStyle Hidden `
         -PassThru
-    Start-Sleep -Seconds 2
-    if ($supervisorProcess.HasExited) {
-        throw "Supervisor exited while the client executable was absent. exit=$($supervisorProcess.ExitCode)"
-    }
+    $supervisorLogPath = Join-Path $testInstall 'sync_windows_agent_supervisor.log'
+    $supervisorLog = ''
+    $logDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 200
+        if ($supervisorProcess.HasExited) {
+            throw "Supervisor exited while the client executable was absent. exit=$($supervisorProcess.ExitCode)"
+        }
+        if (Test-Path -LiteralPath $supervisorLogPath -PathType Leaf) {
+            $supervisorLog = Get-Content -LiteralPath $supervisorLogPath -Raw
+        }
+    } while ($supervisorLog -notmatch 'Agent install is incomplete; launch suppressed' -and [DateTime]::UtcNow -lt $logDeadline)
 
-    $supervisorLog = Get-Content -LiteralPath (Join-Path $testInstall 'sync_windows_agent_supervisor.log') -Raw
     if ($supervisorLog -notmatch 'Agent install is incomplete; launch suppressed') {
         throw 'The supervisor did not log incomplete-install launch suppression.'
     }
