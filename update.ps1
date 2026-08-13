@@ -864,6 +864,31 @@ function Test-InstallNeedsElevation {
     return $hiddenAgent.Count -gt 0
 }
 
+function Test-PriorInstallHandoffNeedsElevation {
+    param(
+        [Parameter(Mandatory = $true)][string] $ProgressPath,
+        [Parameter(Mandatory = $true)][string] $TargetVersion,
+        [int] $MinimumAgeSeconds = 90
+    )
+
+    if (-not (Test-Path -LiteralPath $ProgressPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $progress = Get-Content -LiteralPath $ProgressPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        if (([string] $progress.version).Trim() -ne $TargetVersion.Trim() -or
+            ([string] $progress.status).Trim().ToLowerInvariant() -ne 'installing' -or
+            [int] $progress.percent -lt 100) {
+            return $false
+        }
+        $updatedAt = [DateTimeOffset]::Parse([string] $progress.updatedAt).ToUniversalTime()
+        return ([DateTimeOffset]::UtcNow - $updatedAt).TotalSeconds -ge [Math]::Max(1, $MinimumAgeSeconds)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Start-DeferredInstall {
     param(
         [Parameter(Mandatory = $true)][string] $PayloadDir,
@@ -1527,6 +1552,12 @@ if (-not $updateMutexAcquired) {
 
 $manifest = Invoke-UpdateRestMethod -Uri $ManifestUrl
 $script:UpdateTargetVersion = [string] $manifest.version
+$priorInstallHandoffNeedsElevation = Test-PriorInstallHandoffNeedsElevation `
+    -ProgressPath $script:UpdateProgressPath `
+    -TargetVersion $script:UpdateTargetVersion
+if ($priorInstallHandoffNeedsElevation) {
+    Write-UpdateLog -Message 'A prior verified install handoff did not finish; this retry will request standard Windows administrator consent.' -LogPath $mainLogPath
+}
 $installedExeForVersion = Join-Path -Path $InstallDir -ChildPath 'sync_windows_agent.exe'
 if (Test-Path -LiteralPath $installedExeForVersion -PathType Leaf) {
     $installedVersion = [string] (Get-Item -LiteralPath $installedExeForVersion).VersionInfo.ProductVersion
@@ -1685,7 +1716,7 @@ try {
 
             Write-UpdateLog -Message 'Stopping the supervisor before scheduling differential replacement.' -LogPath $mainLogPath
             Write-UpdateProgress -Status 'installing' -DownloadedBytes $totalDownloadBytes -TotalBytes $totalDownloadBytes -Message 'Download verified. Installing the client update.'
-            $requiresElevation = Test-InstallNeedsElevation -TargetInstallDir $InstallDir
+            $requiresElevation = $priorInstallHandoffNeedsElevation -or (Test-InstallNeedsElevation -TargetInstallDir $InstallDir)
             Remove-ObsoleteLaunchRegistrations -TargetInstallDir $InstallDir -LogPath $mainLogPath
             Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
             if (-not $requiresElevation) {
@@ -1742,7 +1773,7 @@ try {
 
     Write-UpdateLog -Message 'Stopping the supervisor before scheduling package replacement.' -LogPath $mainLogPath
     Write-UpdateProgress -Status 'installing' -DownloadedBytes $declaredSizeBytes -TotalBytes $declaredSizeBytes -Message 'Download verified. Installing the client update.'
-    $requiresElevation = Test-InstallNeedsElevation -TargetInstallDir $InstallDir
+    $requiresElevation = $priorInstallHandoffNeedsElevation -or (Test-InstallNeedsElevation -TargetInstallDir $InstallDir)
     Remove-ObsoleteLaunchRegistrations -TargetInstallDir $InstallDir -LogPath $mainLogPath
     Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
     if (-not $requiresElevation) {

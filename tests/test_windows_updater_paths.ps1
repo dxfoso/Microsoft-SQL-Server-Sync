@@ -34,6 +34,19 @@ if ($null -eq $functionAst) {
 }
 Invoke-Expression $functionAst.Extent.Text
 
+$retryElevationFunctionAst = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Test-PriorInstallHandoffNeedsElevation'
+    },
+    $true
+)
+if ($null -eq $retryElevationFunctionAst) {
+    throw 'Test-PriorInstallHandoffNeedsElevation was not found in update.ps1.'
+}
+Invoke-Expression $retryElevationFunctionAst.Extent.Text
+
 $testParent = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'sql sync updater path tests'
 $unicodeClient = [string]([char]0x0639) + [char]0x0645 + [char]0x064A + [char]0x0644
 $testRoot = Join-Path -Path $testParent -ChildPath ("user O'Brien $unicodeClient " + [guid]::NewGuid().ToString('N'))
@@ -52,6 +65,28 @@ try {
     New-Item -Path $workRoot -ItemType Directory -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $payloadDir 'sync_windows_agent.exe') -Value 'test-executable' -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $payloadDir 'data\app.so') -Value 'test-aot' -Encoding ASCII
+
+    $progressPath = Join-Path $installDir 'update-progress.json'
+    @{
+        version = '1.0.276+280'
+        status = 'installing'
+        downloadedBytes = 100
+        totalBytes = 100
+        percent = 100
+        updatedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString('o')
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath $progressPath -Encoding UTF8
+    if (-not (Test-PriorInstallHandoffNeedsElevation -ProgressPath $progressPath -TargetVersion '1.0.276+280')) {
+        throw 'A stale verified install handoff did not request elevation on retry.'
+    }
+    if (Test-PriorInstallHandoffNeedsElevation -ProgressPath $progressPath -TargetVersion '1.0.275+279') {
+        throw 'A progress checkpoint for another version incorrectly requested elevation.'
+    }
+    $recentProgress = Get-Content -LiteralPath $progressPath -Raw | ConvertFrom-Json
+    $recentProgress.updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    $recentProgress | ConvertTo-Json -Compress | Set-Content -LiteralPath $progressPath -Encoding UTF8
+    if (Test-PriorInstallHandoffNeedsElevation -ProgressPath $progressPath -TargetVersion '1.0.276+280') {
+        throw 'A newly scheduled install incorrectly requested elevation before its normal handoff had time to finish.'
+    }
 
     Start-DeferredInstall `
         -PayloadDir $payloadDir `
@@ -87,7 +122,7 @@ try {
         throw 'Deferred updater did not complete the no-start test path.'
     }
 
-    Write-Host 'PASS deferred updater handles Windows paths containing spaces, apostrophes, and Unicode-safe encoded arguments.'
+    Write-Host 'PASS deferred updater handles Windows paths and escalates only stale verified install retries.'
 }
 finally {
     if (Test-Path -LiteralPath $resolvedTestRoot) {

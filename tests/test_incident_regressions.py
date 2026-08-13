@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 110)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 111)}
         observed_ids = set()
 
         for row in rows:
@@ -452,6 +452,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("-Verb RunAs", updater)
         self.assertIn("-Elevated:$requiresElevation", updater)
         self.assertIn("Windows administrator approval is required once", updater)
+
+    def test_stale_verified_install_retry_requests_standard_uac(self):
+        updater = read_text("update.ps1")
+
+        self.assertIn("function Test-PriorInstallHandoffNeedsElevation", updater)
+        self.assertIn("$priorInstallHandoffNeedsElevation", updater)
+        self.assertIn("A prior verified install handoff did not finish", updater)
+        self.assertGreaterEqual(
+            updater.count("$priorInstallHandoffNeedsElevation -or (Test-InstallNeedsElevation"),
+            2,
+        )
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

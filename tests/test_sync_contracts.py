@@ -1774,12 +1774,24 @@ class SyncContractsTests(unittest.TestCase):
     def test_windows_update_elevates_only_for_protected_install_handoff(self):
         update_script = read_text("update.ps1")
 
-        self.assertIn("$requiresElevation = Test-InstallNeedsElevation", update_script)
+        self.assertGreaterEqual(update_script.count("Test-InstallNeedsElevation -TargetInstallDir"), 2)
         self.assertIn("if (-not $requiresElevation)", update_script)
         self.assertIn("Normal update handoff was denied", update_script)
         self.assertIn("if ($Elevated)", update_script)
         self.assertIn("-WindowStyle Hidden -Verb RunAs", update_script)
         self.assertGreaterEqual(update_script.count("-Elevated:$requiresElevation"), 2)
+
+    def test_windows_update_escalates_stale_verified_handoff_retry(self):
+        update_script = read_text("update.ps1")
+
+        self.assertIn("function Test-PriorInstallHandoffNeedsElevation", update_script)
+        self.assertIn("([string] $progress.status).Trim().ToLowerInvariant() -ne 'installing'", update_script)
+        self.assertIn("[int] $progress.percent -lt 100", update_script)
+        self.assertIn("$priorInstallHandoffNeedsElevation = Test-PriorInstallHandoffNeedsElevation", update_script)
+        self.assertGreaterEqual(
+            update_script.count("$priorInstallHandoffNeedsElevation -or (Test-InstallNeedsElevation"),
+            2,
+        )
 
     def test_update_script_encodes_paths_passed_to_hidden_powershell(self):
         update_script = read_text("update.ps1")
