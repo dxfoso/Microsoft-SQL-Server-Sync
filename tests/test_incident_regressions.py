@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 118)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 119)}
         observed_ids = set()
 
         for row in rows:
@@ -210,6 +210,30 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("docker manifest inspect $Image", deployer)
         self.assertIn("Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))", deployer)
         self.assertIn("Assert-RegistryManifestAvailable -Image $image", deployer)
+
+    def test_production_image_build_fails_fast_without_registry_access(self):
+        builder = read_text("scripts/build_production_images.ps1")
+
+        preflight = builder.split(
+            "function Assert-RegistryAccessBeforeBuild {", 1
+        )[1].split("\n}\n", 1)[0]
+        call_index = builder.index(
+            "Assert-RegistryAccessBeforeBuild -RepositoryRoot $RegistryRoot"
+        )
+        context_index = builder.index(
+            "New-Item -ItemType Directory -Force -Path $backendContext"
+        )
+        backend_build_index = builder.index(
+            'Building $backendImage...'
+        )
+
+        self.assertIn("docker manifest inspect $probeImage", preflight)
+        self.assertIn("docker login", preflight)
+        self.assertIn("$ErrorActionPreference = 'Continue'", preflight)
+        self.assertIn("$probeExitCode = $LASTEXITCODE", preflight)
+        self.assertLess(call_index, context_index)
+        self.assertLess(call_index, backend_build_index)
+        self.assertIn("if (-not $SkipPush)", builder)
 
     def test_production_deployer_uses_exact_container_mappings_and_namespace(self):
         deployer = read_text("scripts/deploy_production_images.ps1")

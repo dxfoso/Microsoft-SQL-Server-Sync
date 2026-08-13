@@ -1,5 +1,6 @@
 param(
     [string] $RegistryRoot = 'registry.cloud.divclouds.com/microsoft-sql-server-sync',
+    [string] $RegistryAccessProbeTag = 'dev',
     [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call',
     [string] $ClientArtifactsDir = "$PSScriptRoot\..\artifacts\client-updates",
     [switch] $SkipPush
@@ -58,7 +59,32 @@ function Invoke-NativeCheckedWithRetry {
     throw "$Description failed after $Attempts attempts with exit code $lastExitCode."
 }
 
+function Assert-RegistryAccessBeforeBuild {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepositoryRoot,
+        [Parameter(Mandatory = $true)][string] $ProbeTag
+    )
+    foreach ($component in @('backend', 'frontend')) {
+        $probeImage = "$RepositoryRoot/${component}:$ProbeTag"
+        $previousErrorPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & docker manifest inspect $probeImage 1> $null 2> $null
+            $probeExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorPreference
+        }
+        if ($probeExitCode -ne 0) {
+            throw "Production registry access preflight failed for $probeImage. Authenticate this Windows Docker client with 'docker login $($RepositoryRoot.Split('/')[0])' before building; no production image build or deployment was attempted."
+        }
+    }
+}
+
 try {
+    if (-not $SkipPush) {
+        Assert-RegistryAccessBeforeBuild -RepositoryRoot $RegistryRoot -ProbeTag $RegistryAccessProbeTag
+    }
     New-Item -ItemType Directory -Force -Path $backendContext, $frontendContext | Out-Null
 
     # Use tracked archives instead of recursively copying the working tree.
