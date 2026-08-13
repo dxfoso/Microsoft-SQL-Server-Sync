@@ -930,6 +930,16 @@ class ControlPlaneContractsTests(unittest.TestCase):
             scheduler,
         )
         self.assertIn("periodic_sync_table_due_after_attempt(", scheduler)
+        self.assertIn(
+            "if (latest_completed_table_batch_was_union(table, recentUploadModes))",
+            scheduler,
+        )
+        self.assertLess(
+            scheduler.index(
+                "if (latest_completed_table_batch_was_union(table, recentUploadModes))"
+            ),
+            scheduler.index("let retryDue = false;"),
+        )
         self.assertIn("record_periodic_sync_table_attempt(ownerUserId, table)", scheduler)
         self.assertIn(
             "if (queuedTableCount >= periodic_sync_scheduler_table_limit())",
@@ -938,6 +948,30 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("mode: 'union_bootstrap'", planner)
         self.assertIn(
             "Clients report different complete table fingerprints", planner
+        )
+
+    def test_completed_union_suppresses_unchanged_automatic_full_table_loop(self):
+        source = read_text("business/control_plane.tru")
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+
+        self.assertIn(
+            "const recentUploadModes = latest_completed_upload_modes_for_owner(",
+            scheduler,
+        )
+        self.assertIn(
+            "if (latest_completed_table_batch_was_union(table, recentUploadModes))",
+            scheduler,
+        )
+        self.assertIn(
+            "due_periodic_sync_tables_for_agent_with_policies(", scheduler
+        )
+        self.assertLess(
+            scheduler.index("due_periodic_sync_tables_for_agent_with_policies("),
+            scheduler.index(
+                "if (latest_completed_table_batch_was_union(table, recentUploadModes))"
+            ),
         )
 
     def test_pending_change_with_valid_cursors_stays_on_delta_path(self):

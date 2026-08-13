@@ -4144,6 +4144,16 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       tableCaches,
       0
     )) {
+      // A complete union may legitimately leave fingerprints different when
+      // a target-only row is protected by the explicit-delete-only rule or a
+      // local row changes after its upload snapshot. Do not turn that stable
+      // protected difference into an endless full-table transfer loop. A
+      // genuine later SQL change is still selected above from Change
+      // Tracking and runs as a delta; after that delta, a remaining historical
+      // difference becomes eligible for one more bounded union attempt.
+      if (latest_completed_table_batch_was_union(table, recentUploadModes)) {
+        continue;
+      }
       let retryDue = false;
       for (const agent of ownerAgents) {
         if (periodic_sync_table_due_after_attempt(
