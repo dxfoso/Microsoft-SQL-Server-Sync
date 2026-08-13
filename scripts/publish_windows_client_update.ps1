@@ -470,7 +470,7 @@ $manifest = [ordered]@{
     packageType = 'files-v1'
     filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json"
     zipUrl = "$publicRoot/$zipName"
-    updateScriptUrl = "$publicRoot/update.ps1"
+    updateScriptUrl = "$publicRoot/packages/$packageDirName/update.ps1"
     sha256 = $zipHash
     sizeBytes = $zipSize
 }

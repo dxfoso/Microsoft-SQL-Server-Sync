@@ -1596,6 +1596,15 @@ class SyncContractsTests(unittest.TestCase):
             update_script.index("$persistentCacheRoot ="),
             update_script.index("$workRoot ="),
         )
+
+    def test_client_manifest_uses_immutable_release_scoped_updater(self):
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+
+        self.assertIn(
+            'updateScriptUrl = "$publicRoot/packages/$packageDirName/update.ps1"',
+            publisher,
+        )
+        self.assertNotIn('updateScriptUrl = "$publicRoot/update.ps1"', publisher)
         self.assertIn("Test-InstalledFileMatchesManifest -Path $partialFile", update_script)
         self.assertIn("Copy-Item -LiteralPath $cachedPath -Destination $stagedPath -Force", update_script)
 

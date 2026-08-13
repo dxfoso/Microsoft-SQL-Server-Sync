@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 116)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 117)}
         observed_ids = set()
 
         for row in rows:
@@ -513,6 +513,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("$logDeadline = [DateTime]::UtcNow.AddSeconds(15)", lifecycle_launch)
         self.assertIn("do {", lifecycle_launch)
         self.assertIn("isolated_supervisor_fixture.ps1", test_script)
+
+    def test_client_updater_url_is_immutable_per_release(self):
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+
+        self.assertIn(
+            'updateScriptUrl = "$publicRoot/packages/$packageDirName/update.ps1"',
+            publisher,
+        )
+        self.assertNotIn('updateScriptUrl = "$publicRoot/update.ps1"', publisher)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")
