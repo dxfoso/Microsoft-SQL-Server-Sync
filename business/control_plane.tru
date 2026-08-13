@@ -1998,6 +1998,91 @@ function client_update_ack_should_retry(status: string, message: string): bool {
       'control plane request timed out during checking client update manifest. check network connectivity.';
 }
 
+function latest_confirmed_client_release_for_owner(ownerUserId: string): map<json>? {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  if (normalizedOwnerUserId.length == 0) {
+    return null;
+  }
+  const rows = db.selectMany(Agent, {
+    where: {
+      ownerUserId: normalizedOwnerUserId,
+      clientUpdateStatus: 'current',
+      clientUpdateLastAcknowledgedAt: { lte: now_iso() }
+    },
+    orderBy: { field: 'clientUpdateLastAcknowledgedAt', dir: 'desc' },
+    fields: ['clientName', 'clientVersion', 'clientUpdateLastAcknowledgedAt'],
+    limit: 1
+  });
+  if (rows == null || rows.length == 0) {
+    return null;
+  }
+  const version = string.from(rows[0].clientVersion ?? '').trim();
+  if (version.length == 0) {
+    return null;
+  }
+  return rows[0];
+}
+
+function client_update_retarget_cooldown_elapsed(agent: map<json>): bool {
+  const status = string.from(agent.clientUpdateStatus ?? '').trim().toLowerCase();
+  if (status != 'failed' && status != 'retrying') {
+    return true;
+  }
+  const ageMs = safe_date_diff_ms_since(string.from(agent.clientUpdateRequestedAt ?? ''));
+  return ageMs == null || ageMs >= 600000;
+}
+
+function retarget_outdated_client_update_on_heartbeat(agent: map<json>, ownerUserId: string): map<json> {
+  if (client_update_request_pending(agent) || !client_update_retarget_cooldown_elapsed(agent)) {
+    return agent;
+  }
+  const installedVersion = string.from(agent.clientVersion ?? '').trim();
+  if (installedVersion.length == 0) {
+    return agent;
+  }
+  const latest = latest_confirmed_client_release_for_owner(ownerUserId);
+  if (latest == null) {
+    return agent;
+  }
+  const latestVersion = string.from(latest.clientVersion ?? '').trim();
+  if (latestVersion.length == 0 || latestVersion == installedVersion) {
+    return agent;
+  }
+  const status = string.from(agent.clientUpdateStatus ?? '').trim().toLowerCase();
+  if (status == 'current') {
+    const agentAcknowledgedAt = string.from(agent.clientUpdateLastAcknowledgedAt ?? '').trim();
+    const latestAcknowledgedAt = string.from(latest.clientUpdateLastAcknowledgedAt ?? '').trim();
+    if (agentAcknowledgedAt.length != 0) {
+      try {
+        if (date.diff(latestAcknowledgedAt, agentAcknowledgedAt, 'ms') <= 0) {
+          return agent;
+        }
+      } catch (err) {
+        return agent;
+      }
+    }
+  }
+  const requestedAt = now_iso();
+  const updated = db.update(Agent, { clientName: string.from(agent.clientName) }, {
+    clientUpdateRequestId: uuid.v4(),
+    clientUpdateRequestedAt: requestedAt,
+    clientUpdateRequestedByUserId: null,
+    // An untargeted request makes the client resolve the current immutable
+    // manifest instead of replaying a release that has already been superseded.
+    clientUpdateTargetVersion: null,
+    clientUpdateStatus: 'requested',
+    clientUpdateMessage: 'A newer confirmed client release will be resolved from the live immutable manifest.',
+    clientUpdateDownloadedBytes: null,
+    clientUpdateTotalBytes: null,
+    clientUpdateProgressPercent: null,
+    updatedAt: requestedAt
+  });
+  if (updated == null) {
+    return agent;
+  }
+  return updated;
+}
+
 function agent_client_update_payload(agent: map<json>, authenticatedClientPoll: bool = false): map<json> {
   const pending = client_update_request_pending(agent);
   const waitingForClient = !authenticatedClientPoll && pending_request_awaits_online_client(agent, pending);
@@ -6089,10 +6174,11 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   // Administrative commands can be written while a heartbeat is processing
   // its bounded table inventory. Re-read the row immediately before forming
   // the response so a command cannot be hidden by the earlier Agent snapshot.
-  const deliveryAgent = db.selectOne(Agent, { clientName: resolvedClientName });
+  let deliveryAgent = db.selectOne(Agent, { clientName: resolvedClientName });
   if (deliveryAgent == null) {
     return raw_json_error(500, 'agent command delivery state unavailable');
   }
+  deliveryAgent = retarget_outdated_client_update_on_heartbeat(deliveryAgent, ownerUserId);
   return {
     ok: true,
     serverTimeUtc: now_iso(),

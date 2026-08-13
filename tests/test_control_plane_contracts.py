@@ -33,7 +33,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
 
         self.assertIn(
-            "const deliveryAgent = db.selectOne(Agent, { clientName: resolvedClientName });",
+            "let deliveryAgent = db.selectOne(Agent, { clientName: resolvedClientName });",
             heartbeat,
         )
         self.assertIn("agent_diagnostics_payload(deliveryAgent, false, true)", heartbeat)
@@ -384,6 +384,32 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertEqual(
             heartbeat.count("clientUpdateMessage: nextClientUpdateMessage"), 2
+        )
+
+    def test_heartbeat_retargets_outdated_clients_to_latest_confirmed_release(self):
+        source = read_text("business/control_plane.tru")
+        latest = source.split(
+            "function latest_confirmed_client_release_for_owner(", 1
+        )[1].split("function client_update_retarget_cooldown_elapsed", 1)[0]
+        retarget = source.split(
+            "function retarget_outdated_client_update_on_heartbeat(", 1
+        )[1].split("function agent_client_update_payload", 1)[0]
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick", 1
+        )[0]
+
+        self.assertIn("clientUpdateStatus: 'current'", latest)
+        self.assertIn("orderBy: { field: 'clientUpdateLastAcknowledgedAt', dir: 'desc' }", latest)
+        self.assertIn("limit: 1", latest)
+        self.assertIn("client_update_request_pending(agent)", retarget)
+        self.assertIn("ageMs >= 600000", source)
+        self.assertIn("date.diff(latestAcknowledgedAt, agentAcknowledgedAt, 'ms') <= 0", retarget)
+        self.assertIn("clientUpdateTargetVersion: null", retarget)
+        self.assertIn("clientUpdateStatus: 'requested'", retarget)
+        self.assertIn("clientUpdateRequestedByUserId: null", retarget)
+        self.assertIn(
+            "deliveryAgent = retarget_outdated_client_update_on_heartbeat(deliveryAgent, ownerUserId);",
+            heartbeat,
         )
 
     def test_live_state_prioritizes_active_jobs_before_bounded_history(self):

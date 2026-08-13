@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 120)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 121)}
         observed_ids = set()
 
         for row in rows:
@@ -549,6 +549,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             publisher,
         )
         self.assertNotIn('updateScriptUrl = "$publicRoot/update.ps1"', publisher)
+
+    def test_outdated_client_reconnect_retargets_current_immutable_release(self):
+        source = read_text("business/control_plane.tru")
+        retarget = source.split(
+            "function retarget_outdated_client_update_on_heartbeat(", 1
+        )[1].split("function agent_client_update_payload", 1)[0]
+
+        self.assertIn("latest_confirmed_client_release_for_owner", retarget)
+        self.assertIn("client_update_retarget_cooldown_elapsed", retarget)
+        self.assertIn("clientUpdateTargetVersion: null", retarget)
+        self.assertIn("clientUpdateStatus: 'requested'", retarget)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")
