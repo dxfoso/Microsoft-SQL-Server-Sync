@@ -151,7 +151,14 @@ function Remove-ObsoleteLaunchRegistrations {
     if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
         foreach ($task in Get-ScheduledTask -ErrorAction SilentlyContinue) {
             try {
-                $launchText = (($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' ')
+                $launchText = ((@($task.Actions) | ForEach-Object {
+                    $executeProperty = $_.PSObject.Properties['Execute']
+                    $argumentsProperty = $_.PSObject.Properties['Arguments']
+                    if ($null -ne $executeProperty) {
+                        $argumentsValue = if ($null -eq $argumentsProperty) { '' } else { [string] $argumentsProperty.Value }
+                        "$([string] $executeProperty.Value) $argumentsValue"
+                    }
+                }) -join ' ')
                 if ($launchText.IndexOf('sync_windows_agent', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
                 if ($launchText.IndexOf($scriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { continue }
                 Disable-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop | Out-Null

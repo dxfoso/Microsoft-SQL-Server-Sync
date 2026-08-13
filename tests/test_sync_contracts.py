@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -1544,8 +1545,42 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Updated client startup verification passed.", update_script)
         self.assertIn("rolling back the complete managed-file change set", update_script)
         self.assertIn("The previous version was restored and restarted safely", update_script)
-        self.assertGreaterEqual(update_script.count("Independent supervisor exited during every bounded startup attempt."), 2)
+        self.assertGreaterEqual(update_script.count("no target client appeared during the bounded startup attempts"), 2)
         self.assertGreaterEqual(update_script.count("$supervisorProcess.Refresh()"), 2)
+
+    def test_web_updater_cleanup_is_available_in_parent_and_deferred_scopes(self):
+        update_script = read_text("update.ps1")
+        helper_start = update_script.index("$helper = @'")
+        cleanup_positions = [
+            match.start()
+            for match in re.finditer(
+                r"function Stop-ObsoleteInstallProcesses \{", update_script
+            )
+        ]
+
+        self.assertEqual(len(cleanup_positions), 2)
+        self.assertLess(cleanup_positions[0], helper_start)
+        self.assertGreater(cleanup_positions[1], helper_start)
+
+    def test_updater_waits_for_existing_supervisor_to_launch_target_client(self):
+        update_script = read_text("update.ps1")
+        self.assertGreaterEqual(update_script.count("$attempt -le 45"), 2)
+        self.assertGreaterEqual(
+            update_script.count("Get-AgentProcesses -TargetInstallDir $TargetInstallDir"),
+            6,
+        )
+        self.assertGreaterEqual(
+            update_script.count("no target client appeared during the bounded startup attempts"),
+            2,
+        )
+
+    def test_windows_task_cleanup_skips_non_executable_action_types(self):
+        update_script = read_text("update.ps1")
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        for source in (update_script, supervisor):
+            self.assertIn("$_.PSObject.Properties['Execute']", source)
+            self.assertIn("$null -ne $executeProperty", source)
+            self.assertNotIn('"$($_.Execute) $($_.Arguments)"', source)
 
     def test_windows_update_resumes_verified_differential_payloads(self):
         update_script = read_text("update.ps1")

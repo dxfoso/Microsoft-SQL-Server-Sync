@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 112)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 115)}
         observed_ids = set()
 
         for row in rows:
@@ -472,6 +472,37 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("function Start-DeferredInstall", 1)[0]
         self.assertIn("[int] $MinimumAgeSeconds = 5", retry_guard)
         self.assertIn("TotalSeconds -ge", retry_guard)
+
+    def test_direct_web_updater_has_obsolete_install_cleanup_in_parent_scope(self):
+        updater = read_text("update.ps1")
+
+        helper_start = updater.index("$helper = @'")
+        definitions = [
+            match.start()
+            for match in re.finditer(
+                r"function Stop-ObsoleteInstallProcesses \{", updater
+            )
+        ]
+        self.assertEqual(len(definitions), 2)
+        self.assertLess(definitions[0], helper_start)
+
+    def test_existing_supervisor_mutex_does_not_force_update_rollback(self):
+        updater = read_text("update.ps1")
+
+        self.assertGreaterEqual(updater.count("$attempt -le 45"), 2)
+        self.assertGreaterEqual(
+            updater.count("Get-AgentProcesses -TargetInstallDir $TargetInstallDir"),
+            6,
+        )
+        self.assertIn("no target client appeared", updater)
+
+    def test_non_exec_scheduled_task_actions_do_not_break_scoped_cleanup(self):
+        updater = read_text("update.ps1")
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+
+        for source in (updater, supervisor):
+            self.assertIn("$_.PSObject.Properties['Execute']", source)
+            self.assertIn("$null -ne $executeProperty", source)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

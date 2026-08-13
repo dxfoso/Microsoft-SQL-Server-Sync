@@ -615,7 +615,14 @@ function Remove-ObsoleteLaunchRegistrations {
     if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
         foreach ($task in Get-ScheduledTask -ErrorAction SilentlyContinue) {
             try {
-                $launchText = (($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' ')
+                $launchText = ((@($task.Actions) | ForEach-Object {
+                    $executeProperty = $_.PSObject.Properties['Execute']
+                    $argumentsProperty = $_.PSObject.Properties['Arguments']
+                    if ($null -ne $executeProperty) {
+                        $argumentsValue = if ($null -eq $argumentsProperty) { '' } else { [string] $argumentsProperty.Value }
+                        "$([string] $executeProperty.Value) $argumentsValue"
+                    }
+                }) -join ' ')
                 if ($launchText.IndexOf('sync_windows_agent', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
                 if ($launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { continue }
                 Disable-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop | Out-Null
@@ -672,14 +679,16 @@ function Start-SupervisorProcess {
         '-WindowStyle', 'Hidden',
         '-EncodedCommand', $encodedCommand
     )
-    for ($attempt = 1; $attempt -le 10; $attempt++) {
+    for ($attempt = 1; $attempt -le 45; $attempt++) {
+        if (@(Get-AgentProcesses -TargetInstallDir $TargetInstallDir).Count -gt 0) { return }
         $supervisorProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -PassThru -ErrorAction Stop
         Start-Sleep -Milliseconds 500
         $supervisorProcess.Refresh()
         if (-not $supervisorProcess.HasExited) { return }
-        if ($attempt -lt 10) { Start-Sleep -Milliseconds 500 }
+        if (@(Get-AgentProcesses -TargetInstallDir $TargetInstallDir).Count -gt 0) { return }
+        if ($attempt -lt 45) { Start-Sleep -Milliseconds 500 }
     }
-    throw 'Independent supervisor exited during every bounded startup attempt.'
+    throw 'Independent supervisor exited and no target client appeared during the bounded startup attempts.'
 }
 
 function Update-StartupShortcutToSupervisor {
@@ -845,6 +854,51 @@ function Save-UpdateDeleteList {
 
     $lines = @($RelativePaths | Sort-Object -Unique)
     Set-Content -LiteralPath $Path -Value $lines -Encoding ASCII
+}
+
+function Stop-ObsoleteInstallProcesses {
+    param(
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+
+    $targetFull = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\', '/')
+    $targetPrefix = $targetFull + [System.IO.Path]::DirectorySeparatorChar
+    $targetSupervisor = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+    $stoppedSupervisors = 0
+    $stoppedAgents = 0
+
+    $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
+            ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
+            $_.ProcessId -ne $PID -and
+            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
+            (
+                $launchText.IndexOf('sync_windows_agent_supervisor.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $launchText.IndexOf('sync_windows_agent_watchdog.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            ) -and
+            $launchText.IndexOf($targetSupervisor, [System.StringComparison]::OrdinalIgnoreCase) -lt 0
+        })
+    foreach ($process in $powershellProcesses) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        $stoppedSupervisors += 1
+    }
+
+    $agentProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+            -not ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith(
+                $targetPrefix,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        })
+    foreach ($process in $agentProcesses) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        $stoppedAgents += 1
+    }
+
+    Write-UpdateLog -Message "Updater retired obsolete running installs before replacement. supervisors=$stoppedSupervisors agents=$stoppedAgents" -LogPath $LogPath
 }
 
 function Test-InstallNeedsElevation {
@@ -1077,14 +1131,16 @@ function Start-SupervisorProcess {
         [Text.Encoding]::Unicode.GetBytes("& $quotedSupervisorPath")
     )
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', $encodedCommand)
-    for ($attempt = 1; $attempt -le 10; $attempt++) {
+    for ($attempt = 1; $attempt -le 45; $attempt++) {
+        if (@(Get-AgentProcesses -TargetInstallDir $TargetInstallDir).Count -gt 0) { return }
         $supervisorProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetInstallDir -WindowStyle Hidden -PassThru -ErrorAction Stop
         Start-Sleep -Milliseconds 500
         $supervisorProcess.Refresh()
         if (-not $supervisorProcess.HasExited) { return }
-        if ($attempt -lt 10) { Start-Sleep -Milliseconds 500 }
+        if (@(Get-AgentProcesses -TargetInstallDir $TargetInstallDir).Count -gt 0) { return }
+        if ($attempt -lt 45) { Start-Sleep -Milliseconds 500 }
     }
-    throw 'Independent supervisor exited during every bounded startup attempt.'
+    throw 'Independent supervisor exited and no target client appeared during the bounded startup attempts.'
 }
 
 function Update-StartupShortcutToSupervisor {
