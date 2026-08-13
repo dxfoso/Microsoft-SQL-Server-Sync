@@ -1,6 +1,6 @@
 param(
     [string] $RegistryRoot = 'registry.cloud.divclouds.com/microsoft-sql-server-sync',
-    [string] $RegistryAccessProbeTag = 'dev',
+    [string] $RegistryAccessProbeTag = '',
     [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call',
     [string] $ClientArtifactsDir = "$PSScriptRoot\..\artifacts\client-updates",
     [switch] $SkipPush
@@ -83,6 +83,9 @@ function Assert-RegistryAccessBeforeBuild {
 
 try {
     if (-not $SkipPush) {
+        if ([string]::IsNullOrWhiteSpace($RegistryAccessProbeTag)) {
+            throw 'RegistryAccessProbeTag must name a known existing immutable tag when push is enabled; do not assume a mutable dev/latest tag exists.'
+        }
         Assert-RegistryAccessBeforeBuild -RepositoryRoot $RegistryRoot -ProbeTag $RegistryAccessProbeTag
     }
     New-Item -ItemType Directory -Force -Path $backendContext, $frontendContext | Out-Null

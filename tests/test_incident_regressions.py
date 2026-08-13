@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 119)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 120)}
         observed_ids = set()
 
         for row in rows:
@@ -231,6 +231,9 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("docker login", preflight)
         self.assertIn("$ErrorActionPreference = 'Continue'", preflight)
         self.assertIn("$probeExitCode = $LASTEXITCODE", preflight)
+        self.assertIn("[string] $RegistryAccessProbeTag = ''", builder)
+        self.assertIn("RegistryAccessProbeTag must name a known existing immutable tag", builder)
+        self.assertNotIn("[string] $RegistryAccessProbeTag = 'dev'", builder)
         self.assertLess(call_index, context_index)
         self.assertLess(call_index, backend_build_index)
         self.assertIn("if (-not $SkipPush)", builder)
