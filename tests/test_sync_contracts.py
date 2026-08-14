@@ -2037,6 +2037,27 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertIn("Get-PowerShellLaunchText", stop_obsolete)
 
+    def test_updater_uses_exact_launcher_pid_and_verified_supervisor_shutdown(self):
+        updater = read_text("update.ps1")
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        helper = updater.split("$helper = @'", 1)[1].split("\n'@", 1)[0]
+
+        self.assertIn("[int] $LauncherSupervisorProcessId = 0", updater)
+        self.assertIn("'-LauncherSupervisorProcessId', $PID", supervisor)
+        self.assertIn("Get-LauncherSupervisorProcessId -TargetInstallDir", updater)
+        self.assertIn(
+            "-LauncherSupervisorProcessId $effectiveLauncherSupervisorProcessId",
+            updater,
+        )
+        self.assertIn(
+            "Stop-LauncherSupervisorProcess -ProcessId $LauncherSupervisorProcessId",
+            helper,
+        )
+        self.assertGreaterEqual(
+            updater.count("Timed out waiting for the target supervisor to stop"), 2
+        )
+        self.assertGreaterEqual(updater.count("Stop-Process -Id $ProcessId -Force"), 2)
+
     def test_bulk_diagnostics_requests_are_batched_from_the_dashboard(self):
         web_api = read_text("frontend/lib/live_sync_api.dart")
         dashboard = read_text("frontend/lib/dashboard_page.dart")

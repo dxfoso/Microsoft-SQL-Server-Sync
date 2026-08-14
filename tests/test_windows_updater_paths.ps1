@@ -47,6 +47,25 @@ if ($null -eq $retryElevationFunctionAst) {
 }
 Invoke-Expression $retryElevationFunctionAst.Extent.Text
 
+foreach ($functionName in @(
+    'Get-SupervisorScriptPath',
+    'Get-PowerShellLaunchText',
+    'Stop-LauncherSupervisorProcess'
+)) {
+    $launcherFunctionAst = $ast.Find(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+        },
+        $true
+    )
+    if ($null -eq $launcherFunctionAst) {
+        throw "$functionName was not found in update.ps1."
+    }
+    Invoke-Expression $launcherFunctionAst.Extent.Text
+}
+
 $testParent = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'sql sync updater path tests'
 $unicodeClient = [string]([char]0x0639) + [char]0x0645 + [char]0x064A + [char]0x0644
 $testRoot = Join-Path -Path $testParent -ChildPath ("user O'Brien $unicodeClient " + [guid]::NewGuid().ToString('N'))
@@ -93,6 +112,53 @@ try {
         throw 'A separate verified handoff retry remained non-elevated after the bounded grace period.'
     }
 
+    $supervisorScriptPath = Join-Path $installDir 'sync_windows_agent_supervisor.ps1'
+    Set-Content -LiteralPath $supervisorScriptPath -Value 'Start-Sleep -Seconds 60' -Encoding ASCII
+    $supervisorProcess = Start-Process powershell.exe `
+        -ArgumentList @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', ('"{0}"' -f $supervisorScriptPath.Replace('"', '\"'))
+        ) `
+        -WindowStyle Hidden `
+        -PassThru
+    try {
+        Start-Sleep -Milliseconds 500
+        Stop-LauncherSupervisorProcess -ProcessId $supervisorProcess.Id -TargetInstallDir $installDir
+        $supervisorProcess.Refresh()
+        if (-not $supervisorProcess.HasExited) {
+            throw 'The exact updater-launching supervisor survived the verified handoff stop.'
+        }
+    }
+    finally {
+        Stop-Process -Id $supervisorProcess.Id -Force -ErrorAction SilentlyContinue
+    }
+
+    $manualCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes('Start-Sleep -Seconds 60')
+    )
+    $manualProcess = Start-Process powershell.exe `
+        -ArgumentList @('-NoProfile', '-EncodedCommand', $manualCommand) `
+        -WindowStyle Hidden `
+        -PassThru
+    try {
+        Start-Sleep -Milliseconds 500
+        $refusedManualConsole = $false
+        try {
+            Stop-LauncherSupervisorProcess -ProcessId $manualProcess.Id -TargetInstallDir $installDir
+        }
+        catch {
+            $refusedManualConsole = $true
+        }
+        $manualProcess.Refresh()
+        if (-not $refusedManualConsole -or $manualProcess.HasExited) {
+            throw 'Updater launcher validation did not preserve an unrelated manual PowerShell process.'
+        }
+    }
+    finally {
+        Stop-Process -Id $manualProcess.Id -Force -ErrorAction SilentlyContinue
+    }
+
     Start-DeferredInstall `
         -PayloadDir $payloadDir `
         -TargetInstallDir $installDir `
@@ -127,7 +193,7 @@ try {
         throw 'Deferred updater did not complete the no-start test path.'
     }
 
-    Write-Host 'PASS deferred updater handles Windows paths and escalates only stale verified install retries.'
+    Write-Host 'PASS deferred updater handles Windows paths, exact supervisor handoff, and stale verified install retries.'
 }
 finally {
     if (Test-Path -LiteralPath $resolvedTestRoot) {

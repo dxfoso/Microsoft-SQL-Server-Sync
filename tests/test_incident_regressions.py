@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 122)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 123)}
         observed_ids = set()
 
         for row in rows:
@@ -522,6 +522,28 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             6,
         )
         self.assertIn("no target client appeared", updater)
+
+    def test_updater_stops_exact_launcher_supervisor_before_mutex_handoff(self):
+        updater = read_text("update.ps1")
+        supervisor = read_text("sync_windows_agent_supervisor.ps1")
+        helper = updater.split("$helper = @'", 1)[1].split("\n'@", 1)[0]
+
+        self.assertIn("'-LauncherSupervisorProcessId', $PID", supervisor)
+        self.assertIn("function Get-LauncherSupervisorProcessId", updater)
+        self.assertGreaterEqual(
+            updater.count("function Stop-LauncherSupervisorProcess"), 2
+        )
+        self.assertIn(
+            "Stop-LauncherSupervisorProcess -ProcessId $LauncherSupervisorProcessId",
+            helper,
+        )
+        self.assertIn(
+            "Stop-LauncherSupervisorProcess -ProcessId $effectiveLauncherSupervisorProcessId",
+            updater,
+        )
+        self.assertGreaterEqual(
+            updater.count("Timed out waiting for the target supervisor to stop"), 2
+        )
 
     def test_non_exec_scheduled_task_actions_do_not_break_scoped_cleanup(self):
         updater = read_text("update.ps1")

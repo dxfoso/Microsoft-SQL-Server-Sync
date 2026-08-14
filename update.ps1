@@ -1,6 +1,7 @@
 param(
     [string] $ManifestUrl = 'https://sync.velvet-leaf.com/client/latest.json',
     [string] $InstallDir = '',
+    [int] $LauncherSupervisorProcessId = 0,
     [switch] $NoStart
 )
 
@@ -644,20 +645,69 @@ function Stop-SupervisorProcesses {
     $legacyWatchdogPath = [System.IO.Path]::GetFullPath(
         (Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1')
     )
-    $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
-            ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
-            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
-            (
-                $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $launchText.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-            )
-        })
-
-    foreach ($process in $powershellProcesses) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
+                ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
+                -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
+                (
+                    $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                    $launchText.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                )
+            })
+        if ($powershellProcesses.Count -eq 0) { return }
+        foreach ($process in $powershellProcesses) {
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 250
     }
+
+    $remainingIds = @($powershellProcesses | ForEach-Object { $_.ProcessId }) -join ', '
+    throw "Timed out waiting for the target supervisor to stop. processIds=$remainingIds"
+}
+
+function Get-LauncherSupervisorProcessId {
+    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+
+    try {
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+        $parentId = [int] $current.ParentProcessId
+        if ($parentId -le 0) { return 0 }
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $parentId" -ErrorAction Stop
+        if ($parent.Name -ine 'powershell.exe' -and $parent.Name -ine 'pwsh.exe') { return 0 }
+        $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+        $launchText = Get-PowerShellLaunchText -CommandLine $parent.CommandLine
+        if ($launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            return $parentId
+        }
+    }
+    catch {
+    }
+    return 0
+}
+
+function Stop-LauncherSupervisorProcess {
+    param(
+        [int] $ProcessId,
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir
+    )
+
+    if ($ProcessId -le 0) { return }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    if ($null -eq $process) { return }
+    $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+    $launchText = Get-PowerShellLaunchText -CommandLine $process.CommandLine
+    if (($process.Name -ine 'powershell.exe' -and $process.Name -ine 'pwsh.exe') -or
+        $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Refusing to stop launcher process $ProcessId because it is not the target supervisor."
+    }
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        if ($null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Timed out waiting for launcher supervisor process $ProcessId to stop."
 }
 
 function Start-SupervisorProcess {
@@ -949,6 +999,7 @@ function Start-DeferredInstall {
         [Parameter(Mandatory = $true)][string] $TargetInstallDir,
         [Parameter(Mandatory = $true)][string] $WorkRoot,
         [Parameter(Mandatory = $true)][int] $ParentProcessId,
+        [int] $LauncherSupervisorProcessId = 0,
         [string] $DeleteListPath = '',
         [string] $Version = '',
         [switch] $Elevated,
@@ -962,6 +1013,7 @@ param(
     [Parameter(Mandatory = $true)][string] $InstallDir,
     [Parameter(Mandatory = $true)][string] $WorkRoot,
     [Parameter(Mandatory = $true)][int] $ParentProcessId,
+    [int] $LauncherSupervisorProcessId = 0,
     [string] $DeleteListPath = '',
     [string] $Version = '',
     [switch] $NoStart
@@ -1103,20 +1155,71 @@ function Stop-SupervisorProcesses {
 
     $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
     $legacyWatchdogPath = [System.IO.Path]::GetFullPath((Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1'))
-    $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
-            ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
-            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
-            (
-                $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $launchText.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-            )
-        })
-
-    foreach ($process in $powershellProcesses) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
+                ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
+                -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
+                (
+                    $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                    $launchText.IndexOf($legacyWatchdogPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                )
+            })
+        if ($powershellProcesses.Count -eq 0) {
+            return
+        }
+        foreach ($process in $powershellProcesses) {
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 250
     }
+
+    $remainingIds = @($powershellProcesses | ForEach-Object { $_.ProcessId }) -join ', '
+    throw "Timed out waiting for the target supervisor to stop. processIds=$remainingIds"
+}
+
+function Get-LauncherSupervisorProcessId {
+    param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
+
+    try {
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+        $parentId = [int] $current.ParentProcessId
+        if ($parentId -le 0) { return 0 }
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $parentId" -ErrorAction Stop
+        if ($parent.Name -ine 'powershell.exe' -and $parent.Name -ine 'pwsh.exe') { return 0 }
+        $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+        $launchText = Get-PowerShellLaunchText -CommandLine $parent.CommandLine
+        if ($launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            return $parentId
+        }
+    }
+    catch {
+    }
+    return 0
+}
+
+function Stop-LauncherSupervisorProcess {
+    param(
+        [int] $ProcessId,
+        [Parameter(Mandatory = $true)][string] $TargetInstallDir
+    )
+
+    if ($ProcessId -le 0) { return }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    if ($null -eq $process) { return }
+    $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
+    $launchText = Get-PowerShellLaunchText -CommandLine $process.CommandLine
+    if (($process.Name -ine 'powershell.exe' -and $process.Name -ine 'pwsh.exe') -or
+        $launchText.IndexOf($supervisorPath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Refusing to stop launcher process $ProcessId because it is not the target supervisor."
+    }
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        if ($null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Timed out waiting for launcher supervisor process $ProcessId to stop."
 }
 
 function Start-SupervisorProcess {
@@ -1460,6 +1563,7 @@ for ($attempt = 0; $attempt -lt 120; $attempt++) {
 }
 
 Write-UpdateLog -Message "Stopping the supervisor before replacing client files." -LogPath $logPath
+Stop-LauncherSupervisorProcess -ProcessId $LauncherSupervisorProcessId -TargetInstallDir $InstallDir
 Stop-SupervisorProcesses -TargetInstallDir $InstallDir
 Write-UpdateLog -Message "Ensuring the prior client instance from this install is stopped before install." -LogPath $logPath
 Stop-AgentProcesses -TargetInstallDir $InstallDir
@@ -1552,6 +1656,9 @@ Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
     $quotedInstallDir = "'" + $TargetInstallDir.Replace("'", "''") + "'"
     $quotedWorkRoot = "'" + $WorkRoot.Replace("'", "''") + "'"
     $deferredCommand = "& $quotedHelperPath -PayloadDir $quotedPayloadDir -InstallDir $quotedInstallDir -WorkRoot $quotedWorkRoot -ParentProcessId $ParentProcessId"
+    if ($LauncherSupervisorProcessId -gt 0) {
+        $deferredCommand += " -LauncherSupervisorProcessId $LauncherSupervisorProcessId"
+    }
     if (-not [string]::IsNullOrWhiteSpace($DeleteListPath)) {
         $quotedDeleteListPath = "'" + $DeleteListPath.Replace("'", "''") + "'"
         $deferredCommand += " -DeleteListPath $quotedDeleteListPath"
@@ -1586,12 +1693,16 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $mainLogPath = Join-Path -Path $InstallDir -ChildPath 'update.log'
+$effectiveLauncherSupervisorProcessId = $LauncherSupervisorProcessId
+if ($effectiveLauncherSupervisorProcessId -le 0) {
+    $effectiveLauncherSupervisorProcessId = Get-LauncherSupervisorProcessId -TargetInstallDir $InstallDir
+}
 $script:UpdateProgressPath = Join-Path -Path $InstallDir -ChildPath 'update-progress.json'
 $script:UpdateTargetVersion = ''
 $script:LastUpdateProgressAt = [DateTime]::MinValue
 $script:LastUpdateProgressBytes = [int64]-1
 $script:LastUpdateProgressPercent = -1
-Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir noStart=$NoStart" -LogPath $mainLogPath
+Write-UpdateLog -Message "Updater starting. manifest=$ManifestUrl install=$InstallDir launcherSupervisor=$effectiveLauncherSupervisorProcessId noStart=$NoStart" -LogPath $mainLogPath
 $updateMutex = [System.Threading.Mutex]::new($false, (Get-UpdateMutexName -TargetInstallDir $InstallDir))
 $updateMutexAcquired = $false
 try {
@@ -1777,6 +1888,7 @@ try {
             Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
             if (-not $requiresElevation) {
                 try {
+                    Stop-LauncherSupervisorProcess -ProcessId $effectiveLauncherSupervisorProcessId -TargetInstallDir $InstallDir
                     Stop-SupervisorProcesses -TargetInstallDir $InstallDir
                     Stop-AgentProcesses -TargetInstallDir $InstallDir
                 }
@@ -1794,6 +1906,7 @@ try {
                 -TargetInstallDir $InstallDir `
                 -WorkRoot $workRoot `
                 -ParentProcessId $PID `
+                -LauncherSupervisorProcessId $effectiveLauncherSupervisorProcessId `
                 -DeleteListPath $deleteListPath `
                 -Version ([string] $manifest.version) `
                 -Elevated:$requiresElevation `
@@ -1834,6 +1947,7 @@ try {
     Stop-ObsoleteInstallProcesses -TargetInstallDir $InstallDir -LogPath $mainLogPath
     if (-not $requiresElevation) {
         try {
+            Stop-LauncherSupervisorProcess -ProcessId $effectiveLauncherSupervisorProcessId -TargetInstallDir $InstallDir
             Stop-SupervisorProcesses -TargetInstallDir $InstallDir
             Stop-AgentProcesses -TargetInstallDir $InstallDir
         }
@@ -1851,6 +1965,7 @@ try {
         -TargetInstallDir $InstallDir `
         -WorkRoot $workRoot `
         -ParentProcessId $PID `
+        -LauncherSupervisorProcessId $effectiveLauncherSupervisorProcessId `
         -DeleteListPath $deleteListPath `
         -Version ([string] $manifest.version) `
         -Elevated:$requiresElevation `

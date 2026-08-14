@@ -276,7 +276,8 @@ function Invoke-IndependentUpdateCheck {
             '-WindowStyle', 'Hidden',
             '-File', ('"{0}"' -f $updateScriptPath.Replace('"', '\"')),
             '-ManifestUrl', ('"{0}"' -f $ManifestUrl.Replace('"', '\"')),
-            '-InstallDir', ('"{0}"' -f $installDir.Replace('"', '\"'))
+            '-InstallDir', ('"{0}"' -f $installDir.Replace('"', '\"')),
+            '-LauncherSupervisorProcessId', $PID
         )
         $updateProcess = Start-Process -FilePath 'powershell.exe' `
             -ArgumentList $updateArguments `
