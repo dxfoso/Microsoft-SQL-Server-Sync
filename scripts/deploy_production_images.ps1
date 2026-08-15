@@ -50,9 +50,14 @@ function Invoke-RemoteKubectl {
     }
 }
 
-# Deployment names and container names intentionally differ. Keep both mappings
-# explicit so a release cannot assume that they are interchangeable.
-Invoke-RemoteKubectl @('set', 'image', 'deployment/sql-sync-back', "backend=$backendImage")
+# Deployment names and container names intentionally differ. Keep every main
+# and init-container mapping explicit so one pod template cannot reference two
+# different immutable backend releases.
+Invoke-RemoteKubectl @(
+    'set', 'image', 'deployment/sql-sync-back',
+    "backend=$backendImage",
+    "backend-data-permissions=$backendImage"
+)
 Invoke-RemoteKubectl @('set', 'image', 'deployment/sql-sync-front', "frontend=$frontendImage")
 Invoke-RemoteKubectl @('rollout', 'status', 'deployment/sql-sync-back', '--timeout=300s')
 Invoke-RemoteKubectl @('rollout', 'status', 'deployment/sql-sync-front', '--timeout=300s')

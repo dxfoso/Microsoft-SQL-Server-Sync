@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 129)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 130)}
         observed_ids = set()
 
         for row in rows:
@@ -241,7 +241,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_production_deployer_uses_exact_container_mappings_and_namespace(self):
         deployer = read_text("scripts/deploy_production_images.ps1")
 
-        self.assertIn("deployment/sql-sync-back', \"backend=$backendImage\"", deployer)
+        self.assertIn("\"backend=$backendImage\"", deployer)
+        self.assertIn("\"backend-data-permissions=$backendImage\"", deployer)
         self.assertIn("deployment/sql-sync-front', \"frontend=$frontendImage\"", deployer)
         self.assertNotIn("sql-sync-back=$backendImage", deployer)
         self.assertNotIn("sql-sync-front=$frontendImage", deployer)
@@ -251,6 +252,16 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("for ($attempt = 1; $attempt -le 24; $attempt += 1)", deployer)
         self.assertIn("$stableObservations -ge 2", deployer)
         self.assertIn("Start-Sleep -Seconds 5", deployer)
+
+    def test_backend_rollout_pins_init_and_main_containers_to_same_release(self):
+        deployer = read_text("scripts/deploy_production_images.ps1")
+
+        backend_rollout = deployer.split(
+            "Invoke-RemoteKubectl @(\n    'set', 'image', 'deployment/sql-sync-back'",
+            1,
+        )[1].split("Invoke-RemoteKubectl", 1)[0]
+        self.assertIn('"backend=$backendImage"', backend_rollout)
+        self.assertIn('"backend-data-permissions=$backendImage"', backend_rollout)
 
     def test_manual_sync_dispatch_helper_uses_valid_tru_function_declaration(self):
         control_plane = read_text("business/control_plane.tru")
