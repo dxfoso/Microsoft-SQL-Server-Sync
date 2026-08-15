@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 130)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 131)}
         observed_ids = set()
 
         for row in rows:
@@ -262,6 +262,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("Invoke-RemoteKubectl", 1)[0]
         self.assertIn('"backend=$backendImage"', backend_rollout)
         self.assertIn('"backend-data-permissions=$backendImage"', backend_rollout)
+
+    def test_production_rollout_retries_transient_ssh_disconnects(self):
+        deployer = read_text("scripts/deploy_production_images.ps1")
+
+        remote_helper = deployer.split("function Invoke-RemoteKubectl", 1)[1].split(
+            "# Deployment names", 1
+        )[0]
+        self.assertIn("[ValidateRange(1, 5)][int] $Attempts = 3", remote_helper)
+        self.assertIn("ServerAliveInterval=15", remote_helper)
+        self.assertIn("ServerAliveCountMax=4", remote_helper)
+        self.assertIn("for ($attempt = 1; $attempt -le $Attempts", remote_helper)
+        self.assertIn("Start-Sleep -Seconds", remote_helper)
+        self.assertIn("failed after $Attempts attempts", remote_helper)
 
     def test_manual_sync_dispatch_helper_uses_valid_tru_function_declaration(self):
         control_plane = read_text("business/control_plane.tru")

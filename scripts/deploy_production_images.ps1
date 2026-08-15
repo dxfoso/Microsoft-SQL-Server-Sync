@@ -43,11 +43,22 @@ foreach ($image in @($backendImage, $frontendImage)) {
 }
 
 function Invoke-RemoteKubectl {
-    param([Parameter(Mandatory = $true)][string[]] $Arguments)
-    & ssh $SshAlias kubectl @Arguments -n $Namespace
-    if ($LASTEXITCODE -ne 0) {
-        throw "Remote kubectl failed: kubectl $($Arguments -join ' ') -n $Namespace"
+    param(
+        [Parameter(Mandatory = $true)][string[]] $Arguments,
+        [ValidateRange(1, 5)][int] $Attempts = 3
+    )
+    $lastExitCode = 0
+    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        & ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 $SshAlias kubectl @Arguments -n $Namespace
+        $lastExitCode = $LASTEXITCODE
+        if ($lastExitCode -eq 0) {
+            return
+        }
+        if ($attempt -lt $Attempts) {
+            Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
+        }
     }
+    throw "Remote kubectl failed after $Attempts attempts: kubectl $($Arguments -join ' ') -n $Namespace (exit code $lastExitCode)"
 }
 
 # Deployment names and container names intentionally differ. Keep every main
