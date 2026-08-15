@@ -2567,6 +2567,22 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertEqual(heartbeat_body.count("db.updateMany(Agent"), 2)
 
+    def test_complete_snapshot_counts_only_content_changes(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        apply_body = agent.split(
+            "final rowsForApply = coalesceSqlSyncDeltaRows(", 1
+        )[1].split("final deleteRows = contentCheckedRows", 1)[0]
+        verification_body = agent.split(
+            "if (fullSnapshotApply) {", 2
+        )[2].split("if (_selectedDatabase == targetDatabase)", 1)[0]
+
+        self.assertIn(
+            "final contentCheckedRows = await _rowsWhoseContentChanged(",
+            apply_body,
+        )
+        self.assertNotIn("applyDelta\n            ? await _rowsWhoseContentChanged", apply_body)
+        self.assertIn("rows: rowsForApply", verification_body)
+
 
 if __name__ == "__main__":
     unittest.main()

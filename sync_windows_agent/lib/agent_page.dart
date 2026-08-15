@@ -6215,38 +6215,39 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'Multi-writer conflict coalesced ${snapshot.rows.length - rowsForApply.length} older primary or unique/business-key version(s) for ${job.table}; snapshot=${applyDelta ? 'delta' : 'complete'}; policy=latest-change-wins.',
       );
     }
-    final contentCheckedRows =
-        applyDelta
-            ? await _rowsWhoseContentChanged(
-              operationId: job.id,
-              profile: targetProfile,
-              database: targetDatabase,
-              schema: targetTable.schema,
-              table: targetTable.table,
-              columns: syncColumns,
-              primaryKeyColumns: primaryKeyColumns,
-              rows: rowsForApply,
-              onLookupStageProgress: (loadedRows, totalRows) async {
-                final fraction = totalRows <= 0 ? 1.0 : loadedRows / totalRows;
-                final progress = 55 + (fraction.clamp(0.0, 1.0) * 10).round();
-                try {
-                  final progressJob = await _controlPlaneClient.updateJobProgress(
-                    job.id,
-                    status: 'applying',
-                    progress: progress,
-                    message:
-                        'Prepared $loadedRows of $totalRows keys in resumable comparison chunks for ${_localTableName(job.table)}.',
-                    rowCount: loadedRows,
-                  );
-                  _applyRemoteJobState(progressJob);
-                } catch (error) {
-                  logStartupEvent(
-                    'Non-fatal comparison progress update failed for ${job.id}: $error',
-                  );
-                }
-              },
-            )
-            : rowsForApply;
+    // Compare every received snapshot type, including complete union/bootstrap
+    // snapshots, with the target before staging the merge. This prevents a
+    // canonical verification snapshot from rewriting and reporting every row
+    // as a downloaded change when only a small subset actually differs.
+    final contentCheckedRows = await _rowsWhoseContentChanged(
+      operationId: job.id,
+      profile: targetProfile,
+      database: targetDatabase,
+      schema: targetTable.schema,
+      table: targetTable.table,
+      columns: syncColumns,
+      primaryKeyColumns: primaryKeyColumns,
+      rows: rowsForApply,
+      onLookupStageProgress: (loadedRows, totalRows) async {
+        final fraction = totalRows <= 0 ? 1.0 : loadedRows / totalRows;
+        final progress = 55 + (fraction.clamp(0.0, 1.0) * 10).round();
+        try {
+          final progressJob = await _controlPlaneClient.updateJobProgress(
+            job.id,
+            status: 'applying',
+            progress: progress,
+            message:
+                'Prepared $loadedRows of $totalRows keys in resumable comparison chunks for ${_localTableName(job.table)}.',
+            rowCount: loadedRows,
+          );
+          _applyRemoteJobState(progressJob);
+        } catch (error) {
+          logStartupEvent(
+            'Non-fatal comparison progress update failed for ${job.id}: $error',
+          );
+        }
+      },
+    );
     if (contentCheckedRows.length != rowsForApply.length) {
       logStartupEvent(
         'Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged ${job.table} row(s) after canonical SHA-256 comparison.',

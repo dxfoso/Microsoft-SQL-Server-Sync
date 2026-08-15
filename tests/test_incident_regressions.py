@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 125)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 126)}
         observed_ids = set()
 
         for row in rows:
@@ -698,6 +698,22 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn(
             "Copy-Item -LiteralPath $rootBusinessConfig -Destination $backendRuntimeConfig -Force",
             extract,
+        )
+
+    def test_complete_snapshot_download_metric_excludes_unchanged_rows(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        apply_body = agent.split(
+            "final rowsForApply = coalesceSqlSyncDeltaRows(", 1
+        )[1].split("final deleteRows = contentCheckedRows", 1)[0]
+
+        self.assertIn(
+            "final contentCheckedRows = await _rowsWhoseContentChanged(",
+            apply_body,
+        )
+        self.assertNotIn("applyDelta\n            ? await _rowsWhoseContentChanged", apply_body)
+        self.assertIn(
+            "Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged",
+            apply_body,
         )
 
 
