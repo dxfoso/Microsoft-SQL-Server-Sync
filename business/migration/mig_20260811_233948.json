@@ -1,0 +1,49 @@
+{
+  "name": "mig_20260811_233948",
+  "timestamp": "2026-08-11T23:39:48.028879600+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "clientUpdateProgressPercent",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": true,
+            "min": "0",
+            "max": "100",
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateDownloadedBytes",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": true,
+            "min": "0",
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "clientUpdateTotalBytes",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": true,
+            "min": "0",
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

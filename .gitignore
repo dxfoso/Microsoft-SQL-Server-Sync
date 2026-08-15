@@ -16,6 +16,17 @@ update.log
 business/logs/
 .codex-run/
 /.codex-tmp/
+# Generated local validation output and runtime caches.
+/test-results/
+/.pytest_cache/
+frontend/.pytest_cache/
+sync_windows_agent/.pytest_cache/
+business/.tru_spec_cache.sqlite
+/sync_windows_agent_startup.log*
+/sync_windows_agent_supervisor.log*
+/sync_windows_agent_update_requests.log*
+# Historical client diagnostics copied locally for investigation.
+/d/
 # Local portable-client verification output.
 /New folder/
 __pycache__/
