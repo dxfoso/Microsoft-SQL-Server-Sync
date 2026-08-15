@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 123)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 124)}
         observed_ids = set()
 
         for row in rows:
@@ -669,6 +669,22 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("_pendingForcedClientUpdateInfo = updateInfo", update_body)
         self.assertIn("Pausing the local sync queue at a safe boundary", queue_body)
         self.assertIn("_retryAutomaticClientUpdateIfReady();", queue_body)
+
+    def test_owner_resume_cannot_misreport_global_admin_pause(self):
+        source = read_text("business/control_plane.tru")
+        control = source.split(
+            "function automatic_sync_control_set(", 1
+        )[1].split("function row_key(", 1)[0]
+        owner = control.split("if (is_owner_user(current))", 1)[1].split(
+            "const controlOwnerUserId", 1
+        )[0]
+
+        guard = "if (!paused && automatic_sync_is_paused())"
+        mutation = "set_owner_automatic_sync_paused(current.id, paused)"
+        self.assertIn(guard, owner)
+        self.assertIn("raw_json_error(", owner)
+        self.assertIn("Automatic sync remains paused globally by an administrator", owner)
+        self.assertLess(owner.index(guard), owner.index(mutation))
 
 
 if __name__ == "__main__":

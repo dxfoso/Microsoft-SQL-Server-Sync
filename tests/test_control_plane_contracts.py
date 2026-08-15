@@ -581,6 +581,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function ", 1
         )[0]
         self.assertIn("if (!is_admin_user(current) && !is_owner_user(current))", control_body)
+        owner_body = control_body.split("if (is_owner_user(current))", 1)[1].split(
+            "const controlOwnerUserId", 1
+        )[0]
+        self.assertIn("if (!paused && automatic_sync_is_paused())", owner_body)
+        self.assertIn("Automatic sync remains paused globally by an administrator", owner_body)
+        self.assertLess(
+            owner_body.index("if (!paused && automatic_sync_is_paused())"),
+            owner_body.index("set_owner_automatic_sync_paused(current.id, paused)"),
+        )
         self.assertIn("set_owner_automatic_sync_paused(current.id, paused)", control_body)
         self.assertIn("controlOwnerUserId = '__automatic_sync_control__'", control_body)
         self.assertIn("automaticSyncPaused: paused", control_body)
