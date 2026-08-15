@@ -111,6 +111,12 @@ try {
     Invoke-NativeChecked 'Extracting root business context...' {
         & tar -xf $businessArchive -C $backendContext
     }
+    $rootBusinessConfig = Join-Path $backendContext 'business\tru.json'
+    $backendRuntimeConfig = Join-Path $backendContext 'tru.json'
+    if (-not (Test-Path -LiteralPath $rootBusinessConfig -PathType Leaf)) {
+        throw 'The tracked root business/tru.json configuration is missing from the production backend context.'
+    }
+    Copy-Item -LiteralPath $rootBusinessConfig -Destination $backendRuntimeConfig -Force
     Invoke-NativeChecked 'Extracting frontend context...' {
         & tar -xf $frontendArchive -C $contextRoot
     }

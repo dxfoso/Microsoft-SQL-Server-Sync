@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 124)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 125)}
         observed_ids = set()
 
         for row in rows:
@@ -685,6 +685,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("raw_json_error(", owner)
         self.assertIn("Automatic sync remains paused globally by an administrator", owner)
         self.assertLess(owner.index(guard), owner.index(mutation))
+
+    def test_production_backend_context_uses_root_business_config(self):
+        builder = read_text("scripts/build_production_images.ps1")
+        extract = builder.split(
+            "Invoke-NativeChecked 'Extracting root business context...'", 1
+        )[1].split("Invoke-NativeChecked 'Extracting frontend context...'", 1)[0]
+
+        self.assertIn("business\\tru.json", extract)
+        self.assertIn("Join-Path $backendContext 'tru.json'", extract)
+        self.assertIn("Test-Path -LiteralPath $rootBusinessConfig -PathType Leaf", extract)
+        self.assertIn(
+            "Copy-Item -LiteralPath $rootBusinessConfig -Destination $backendRuntimeConfig -Force",
+            extract,
+        )
 
 
 if __name__ == "__main__":
