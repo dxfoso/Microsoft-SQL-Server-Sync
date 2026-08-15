@@ -207,6 +207,8 @@ def main() -> int:
     parser.add_argument("--skip-idempotent-retry", action="store_true")
     parser.add_argument("--result-path", default="")
     args = parser.parse_args()
+    if not args.username or not args.password:
+        parser.error("administrator credentials are required via arguments or SQL_SYNC_ADMIN_USERNAME/SQL_SYNC_ADMIN_PASSWORD")
 
     token, user = login(args.base_url, args.username, args.password)
     pause = invoke_function(

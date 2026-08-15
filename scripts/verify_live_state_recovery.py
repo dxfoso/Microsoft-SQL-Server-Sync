@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -11,8 +12,8 @@ from pathlib import Path
 
 
 DEFAULT_BASE_URL = "https://sync.velvet-leaf.com"
-DEFAULT_USERNAME = "dxfoso@gmail.com"
-DEFAULT_PASSWORD = "Admin@123"
+DEFAULT_USERNAME = os.environ.get("SQL_SYNC_ADMIN_USERNAME", "")
+DEFAULT_PASSWORD = os.environ.get("SQL_SYNC_ADMIN_PASSWORD", "")
 DEFAULT_EXPECTED_VERSION = "1.0.105+109"
 DEFAULT_EXPECTED_COMMIT = "6b8b76bcf084c3f4b80088d9749f3fcfc5d1be36"
 
@@ -273,6 +274,8 @@ def main() -> int:
     parser.add_argument("--max-heartbeat-age-minutes", type=float, default=5.0)
     parser.add_argument("--min-table-count", type=int, default=1)
     args = parser.parse_args()
+    if not args.username or not args.password:
+        parser.error("administrator credentials are required via arguments or SQL_SYNC_ADMIN_USERNAME/SQL_SYNC_ADMIN_PASSWORD")
 
     health = fetch_health(args.base_url)
     live_commit = str((((health.get("build") or {}) if isinstance(health, dict) else {}).get("git_commit")) or "")

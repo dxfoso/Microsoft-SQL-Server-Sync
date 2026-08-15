@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 131)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 132)}
         observed_ids = set()
 
         for row in rows:
@@ -275,6 +275,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("for ($attempt = 1; $attempt -le $Attempts", remote_helper)
         self.assertIn("Start-Sleep -Seconds", remote_helper)
         self.assertIn("failed after $Attempts attempts", remote_helper)
+
+    def test_live_update_verifier_never_embeds_admin_credentials(self):
+        verifier_paths = sorted((ROOT / "scripts").glob("verify_live_*.py"))
+        self.assertGreater(len(verifier_paths), 1)
+        verifiers = "\n".join(path.read_text(encoding="utf-8") for path in verifier_paths)
+
+        self.assertIn('os.environ.get("SQL_SYNC_ADMIN_USERNAME", "")', verifiers)
+        self.assertIn('os.environ.get("SQL_SYNC_ADMIN_PASSWORD", "")', verifiers)
+        self.assertIn("administrator credentials are required", verifiers)
+        self.assertNotRegex(verifiers, r'DEFAULT_PASSWORD\s*=\s*["\'][^"\']+["\']')
+        self.assertNotIn("dxfoso@gmail.com", verifiers)
 
     def test_manual_sync_dispatch_helper_uses_valid_tru_function_declaration(self):
         control_plane = read_text("business/control_plane.tru")

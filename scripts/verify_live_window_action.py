@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -9,8 +10,8 @@ from datetime import datetime, timezone
 
 
 DEFAULT_BASE_URL = "https://sync.velvet-leaf.com"
-DEFAULT_USERNAME = "dxfoso@gmail.com"
-DEFAULT_PASSWORD = "Admin@123"
+DEFAULT_USERNAME = os.environ.get("SQL_SYNC_ADMIN_USERNAME", "")
+DEFAULT_PASSWORD = os.environ.get("SQL_SYNC_ADMIN_PASSWORD", "")
 
 
 class ApiError(RuntimeError):
@@ -250,6 +251,8 @@ def main() -> int:
     parser.add_argument("--action", default="minimize")
     parser.add_argument("--expect-commit", default="")
     args = parser.parse_args()
+    if not args.username or not args.password:
+        parser.error("administrator credentials are required via arguments or SQL_SYNC_ADMIN_USERNAME/SQL_SYNC_ADMIN_PASSWORD")
 
     health = fetch_health(args.base_url)
     live_commit = str((((health.get("build") or {}) if isinstance(health, dict) else {}).get("git_commit")) or "")
