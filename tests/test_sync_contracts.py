@@ -591,7 +591,7 @@ class SyncContractsTests(unittest.TestCase):
     def test_diagnostics_force_fresh_complete_selected_table_fingerprints(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         diagnostics_body = agent_page.split(
-            "Future<String> _buildDiagnosticsPayload() async {", 1
+            "Future<String> _buildDiagnosticsPayload({", 1
         )[1].split(
             "Future<Map<String, dynamic>>\n  _buildChangeTrackingDiagnosticsForUpload", 1
         )[0]
@@ -612,6 +612,29 @@ class SyncContractsTests(unittest.TestCase):
             "'selectedTableFingerprints': payload['selectedTableFingerprints']",
             encoder_body,
         )
+        self.assertIn("'fingerprintCapture': payload['fingerprintCapture']", encoder_body)
+
+    def test_diagnostics_upload_logs_before_full_fingerprint_enrichment(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        upload_body = agent_page.split(
+            "Future<void> _uploadRequestedDiagnostics(", 1
+        )[1].split("Future<void> _refreshAndUploadDiagnosticsFingerprints", 1)[0]
+        enrichment_body = agent_page.split(
+            "Future<void> _refreshAndUploadDiagnosticsFingerprints", 1
+        )[1].split("void _scheduleRequestedDiagnosticsUpload", 1)[0]
+
+        initial_payload = upload_body.index("refreshFingerprints: false")
+        initial_upload = upload_body.index(
+            "await _controlPlaneClient.uploadDiagnostics("
+        )
+        background_enrichment = upload_body.index(
+            "_refreshAndUploadDiagnosticsFingerprints("
+        )
+        self.assertLess(initial_payload, initial_upload)
+        self.assertLess(initial_upload, background_enrichment)
+        self.assertIn("refreshFingerprints: true", enrichment_body)
+        self.assertIn("_diagnosticsUploadRequestId != requestId", enrichment_body)
+        self.assertIn("'status': refreshFingerprints ? 'completed' : 'refreshing'", agent_page)
 
     def test_cancelled_job_forces_physical_fingerprint_refresh(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

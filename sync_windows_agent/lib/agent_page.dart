@@ -3760,7 +3760,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'activeJobCount': _activeJobs.length,
       },
     );
-    final payload = await _buildDiagnosticsPayload();
     final failedTableCount =
         _syncState.tables.values
             .where((table) => table.status.toLowerCase() == 'failed')
@@ -3770,6 +3769,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'failed tables $failedTableCount, active jobs ${_activeJobs.length}, '
         'server connected ${_serverConnected ? 'yes' : 'no'}, sql connected ${_selectedDatabase != null ? 'yes' : 'no'}.';
 
+    // A complete physical fingerprint refresh can scan hundreds of tables.
+    // Publish the retained logs and current health immediately, then enrich
+    // the same request asynchronously after the fresh scan finishes.
+    final payload = await _buildDiagnosticsPayload(refreshFingerprints: false);
     await _controlPlaneClient.uploadDiagnostics(
       clientName: widget.clientName,
       requestId: diagnostics.requestId,
@@ -3786,8 +3789,54 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'elapsedMs': captureStopwatch.elapsedMilliseconds,
       },
       message:
-          'Uploaded requested diagnostics including the complete retained client log.',
+          'Uploaded requested diagnostics including the complete retained client log; fresh fingerprint enrichment continues in the background.',
     );
+    unawaited(
+      _refreshAndUploadDiagnosticsFingerprints(
+        diagnostics: diagnostics,
+        summary: summary,
+      ),
+    );
+  }
+
+  Future<void> _refreshAndUploadDiagnosticsFingerprints({
+    required RemoteAgentDiagnostics diagnostics,
+    required String summary,
+  }) async {
+    final requestId = diagnostics.requestId?.trim() ?? '';
+    try {
+      final payload = await _buildDiagnosticsPayload(refreshFingerprints: true);
+      // A newer request owns the server slot. Never let a slow older physical
+      // scan acknowledge or overwrite diagnostics requested later.
+      if (requestId.isNotEmpty && _diagnosticsUploadRequestId != requestId) {
+        logStartupEvent(
+          'Skipped stale diagnostics fingerprint enrichment for request $requestId because a newer request is active.',
+        );
+        return;
+      }
+      await _controlPlaneClient.uploadDiagnostics(
+        clientName: widget.clientName,
+        requestId: diagnostics.requestId,
+        summary: summary,
+        payload: payload,
+      );
+      logAgentDiagnostic(
+        'diagnostics.fingerprints.uploaded',
+        context: {'clientName': widget.clientName, 'requestId': requestId},
+        message:
+            'Enriched requested diagnostics with fresh complete selected-table fingerprints.',
+      );
+    } catch (error, stackTrace) {
+      // The initial retained-log upload remains useful and complete even when
+      // the optional physical enrichment is interrupted or temporarily slow.
+      logAgentDiagnostic(
+        'diagnostics.fingerprints.failed',
+        level: AgentLogLevel.warning,
+        context: {'clientName': widget.clientName, 'requestId': requestId},
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   void _scheduleRequestedDiagnosticsUpload(RemoteAgentDiagnostics diagnostics) {
@@ -4418,10 +4467,16 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
   }
 
-  Future<String> _buildDiagnosticsPayload() async {
+  Future<String> _buildDiagnosticsPayload({
+    bool refreshFingerprints = true,
+  }) async {
     // Diagnostics are used for remote recovery decisions. Always base them
-    // on a fresh physical SQL fingerprint rather than cached job progress.
-    await _refreshSelectedTableFingerprints();
+    // on a fresh physical SQL fingerprint when enrichment is requested. The
+    // initial log response intentionally uses the latest cached physical
+    // values so remote troubleshooting is not blocked by a full-table scan.
+    if (refreshFingerprints) {
+      await _refreshSelectedTableFingerprints();
+    }
 
     final failedTables = _syncState.tables.entries
         .where((entry) => entry.value.status.toLowerCase() == 'failed')
@@ -4550,6 +4605,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       // This compact list is retained even if verbose diagnostics must be
       // reduced, so every selected table remains remotely verifiable.
       'selectedTableFingerprints': selectedTableFingerprints,
+      'fingerprintCapture': {
+        'status': refreshFingerprints ? 'completed' : 'refreshing',
+        'complete': refreshFingerprints,
+      },
       'clientLog': {
         'format': 'json-lines',
         'retention': 'current file plus one rotated segment',
@@ -4664,6 +4723,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         maxItems: 5,
       ),
       'selectedTableFingerprints': payload['selectedTableFingerprints'],
+      'fingerprintCapture': payload['fingerprintCapture'],
       'startupLogTail': _truncateUploadText(
         payload['startupLogTail'],
         maxChars: 40000,

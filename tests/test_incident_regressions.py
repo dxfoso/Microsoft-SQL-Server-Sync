@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 126)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 127)}
         observed_ids = set()
 
         for row in rows:
@@ -715,6 +715,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "Skipped ${rowsForApply.length - contentCheckedRows.length} unchanged",
             apply_body,
         )
+
+    def test_client_log_request_is_not_blocked_by_complete_fingerprint_scan(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        upload_body = agent.split(
+            "Future<void> _uploadRequestedDiagnostics(", 1
+        )[1].split("Future<void> _refreshAndUploadDiagnosticsFingerprints", 1)[0]
+        enrichment_body = agent.split(
+            "Future<void> _refreshAndUploadDiagnosticsFingerprints", 1
+        )[1].split("void _scheduleRequestedDiagnosticsUpload", 1)[0]
+
+        self.assertIn("refreshFingerprints: false", upload_body)
+        self.assertIn("await _controlPlaneClient.uploadDiagnostics(", upload_body)
+        self.assertIn("_refreshAndUploadDiagnosticsFingerprints(", upload_body)
+        self.assertIn("refreshFingerprints: true", enrichment_body)
+        self.assertIn("_diagnosticsUploadRequestId != requestId", enrichment_body)
 
 
 if __name__ == "__main__":
