@@ -1846,7 +1846,12 @@ function latest_completed_sync_summary_for_client(clientName: string, completedJ
     }
   }
   if (latestJob == null) {
-    return { completedAt: '', durationMs: null };
+    return {
+      completedAt: '',
+      durationMs: null,
+      uploadedRows: 0,
+      downloadedRows: 0
+    };
   }
   const createdAt = string.from(latestJob.createdAt ?? '').trim();
   const completedAt = string.from(latestJob.completedAt ?? '').trim();
@@ -1861,7 +1866,29 @@ function latest_completed_sync_summary_for_client(clientName: string, completedJ
       durationMs = null;
     }
   }
-  return { completedAt, durationMs };
+  let uploadedRows = 0;
+  let downloadedRows = int.from(latestJob.rowCount ?? 0);
+  const latestBatchId = string.from(latestJob.batchId ?? '').trim();
+  for (const job of completedJobs ?? []) {
+    if (latestBatchId.length == 0 ||
+        string.from(job.status).trim().toLowerCase() != 'completed' ||
+        string.from(job.batchId ?? '').trim() != latestBatchId) {
+      continue;
+    }
+    const matchesClient = string.from(job.clientName).trim() == clientName ||
+      string.from(job.subscriberClientName ?? '').trim() == clientName;
+    if (!matchesClient) {
+      continue;
+    }
+    const direction = string.from(job.direction).trim().toLowerCase();
+    if (direction == 'upload') {
+      uploadedRows += int.from(job.rowCount ?? 0);
+    }
+    if (direction == 'download') {
+      downloadedRows = int.from(job.rowCount ?? 0);
+    }
+  }
+  return { completedAt, durationMs, uploadedRows, downloadedRows };
 }
 
 function periodic_sync_last_checked_at_for_owner(ownerUserId: string, periodicStates: array<json>? = null): string {
@@ -1929,6 +1956,8 @@ function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null,
     ),
     lastSyncCompletedAt: lastCompletedSync.completedAt,
     lastSyncDurationMs: lastCompletedSync.durationMs,
+    lastUploadedRows: lastCompletedSync.uploadedRows,
+    lastDownloadedRows: lastCompletedSync.downloadedRows,
     uploadedRowTotal: rowTotals.uploaded,
     downloadedRowTotal: rowTotals.downloaded,
     status: runtimeStatus,
@@ -2657,7 +2686,7 @@ function live_state_completed_job_rows_for(current: map<json>): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'completedAt', dir: 'desc' },
-    fields: ['clientName', 'subscriberClientName', 'direction', 'status', 'createdAt', 'completedAt'],
+    fields: ['clientName', 'subscriberClientName', 'direction', 'status', 'rowCount', 'createdAt', 'completedAt', 'batchId'],
     limit: 1000
   });
   if (rows == null) {

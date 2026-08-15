@@ -83,10 +83,14 @@ void main() {
   test('client exposes cumulative completed upload and download rows', () {
     final agent = AdminAgent.fromJson({
       'clientName': 'client-a',
+      'lastUploadedRows': 12,
+      'lastDownloadedRows': 34,
       'uploadedRowTotal': 1234,
       'downloadedRowTotal': 5678,
     });
 
+    expect(agent.lastUploadedRows, 12);
+    expect(agent.lastDownloadedRows, 34);
     expect(agent.uploadedRowTotal, 1234);
     expect(agent.downloadedRowTotal, 5678);
   });

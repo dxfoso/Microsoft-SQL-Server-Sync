@@ -260,6 +260,7 @@ class _ClientsPageState extends State<ClientsPage> {
   final TextEditingController _filterController = TextEditingController();
   final TextEditingController _logFilterController = TextEditingController();
   final TextEditingController _tableFilterController = TextEditingController();
+  final ScrollController _clientTableHorizontalController = ScrollController();
   final ScrollController _tableHorizontalController = ScrollController();
   Timer? _refreshTimer;
   AdminLiveState? _state;
@@ -372,6 +373,7 @@ class _ClientsPageState extends State<ClientsPage> {
     _filterController.dispose();
     _logFilterController.dispose();
     _tableFilterController.dispose();
+    _clientTableHorizontalController.dispose();
     _tableHorizontalController.dispose();
     _api.dispose();
     super.dispose();
@@ -1150,42 +1152,69 @@ class _ClientsPageState extends State<ClientsPage> {
           else
             LayoutBuilder(
               builder:
-                  (context, constraints) => SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minWidth: constraints.maxWidth,
-                      ),
-                      child: DataTable(
-                        columnSpacing: 22,
-                        headingRowHeight: 42,
-                        dataRowMinHeight: 62,
-                        dataRowMaxHeight: 72,
-                        columns: const [
-                          DataColumn(label: Text('Client')),
-                          DataColumn(label: Text('Client version')),
-                          DataColumn(label: Text('Active')),
-                          DataColumn(label: Text('Conflict source')),
-                          DataColumn(label: Text('Status')),
-                          DataColumn(label: Text('Database')),
-                          DataColumn(label: Text('Tables')),
-                          DataColumn(label: Text('Row changes')),
-                          DataColumn(label: Text('Last synced')),
-                          DataColumn(label: Text('Last change check')),
-                          DataColumn(label: Text('Last sync duration')),
-                          DataColumn(label: Text('Last Sync All total')),
-                          DataColumn(label: Text('Last heartbeat')),
-                          DataColumn(label: Text('Actions')),
-                        ],
-                        rows: clients.map(_buildClientDataRow).toList(),
-                      ),
-                    ),
-                  ),
+                  (context, constraints) => _buildClientsDataTable(clients),
             ),
           const SizedBox(height: 10),
           _buildConflictPolicyFooter(),
         ],
       ),
+    );
+  }
+
+  Widget _buildClientsDataTable(List<AdminAgent> clients) {
+    const rowHeight = 72.0;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DataTable(
+          key: const ValueKey('fixed-client-name-column'),
+          columnSpacing: 0,
+          horizontalMargin: 12,
+          headingRowHeight: 42,
+          dataRowMinHeight: rowHeight,
+          dataRowMaxHeight: rowHeight,
+          columns: const [DataColumn(label: Text('Client'))],
+          rows: clients.map(_buildClientNameDataRow).toList(),
+        ),
+        const VerticalDivider(width: 1, thickness: 1),
+        Expanded(
+          child: Scrollbar(
+            controller: _clientTableHorizontalController,
+            thumbVisibility: true,
+            trackVisibility: true,
+            scrollbarOrientation: ScrollbarOrientation.bottom,
+            child: SingleChildScrollView(
+              key: const ValueKey('scrollable-client-details'),
+              controller: _clientTableHorizontalController,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(bottom: 12),
+              child: DataTable(
+                columnSpacing: 22,
+                headingRowHeight: 42,
+                dataRowMinHeight: rowHeight,
+                dataRowMaxHeight: rowHeight,
+                columns: const [
+                  DataColumn(label: Text('Client version')),
+                  DataColumn(label: Text('Active')),
+                  DataColumn(label: Text('Conflict source')),
+                  DataColumn(label: Text('Status')),
+                  DataColumn(label: Text('Database')),
+                  DataColumn(label: Text('Tables')),
+                  DataColumn(label: Text('Last row changes')),
+                  DataColumn(label: Text('Total row changes')),
+                  DataColumn(label: Text('Last synced')),
+                  DataColumn(label: Text('Last change check')),
+                  DataColumn(label: Text('Last sync duration')),
+                  DataColumn(label: Text('Last Sync All total')),
+                  DataColumn(label: Text('Last heartbeat')),
+                  DataColumn(label: Text('Actions')),
+                ],
+                rows: clients.map(_buildClientDataRow).toList(),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1623,17 +1652,6 @@ class _ClientsPageState extends State<ClientsPage> {
       selected: selected,
       cells: [
         DataCell(
-          SizedBox(
-            width: 210,
-            child: Text(
-              agent.clientName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-        ),
-        DataCell(
           Text(
             agent.clientVersion.trim().isEmpty
                 ? '-'
@@ -1652,6 +1670,12 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(Text('${agent.tables.length}')),
+        DataCell(
+          Text(
+            'Uploaded: ${_number(agent.lastUploadedRows)}\n'
+            'Downloaded: ${_number(agent.lastDownloadedRows)}',
+          ),
+        ),
         DataCell(
           Text(
             'Uploaded: ${_number(agent.uploadedRowTotal)}\n'
@@ -1686,6 +1710,25 @@ class _ClientsPageState extends State<ClientsPage> {
                 label: const Text('View'),
               ),
             ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  DataRow _buildClientNameDataRow(AdminAgent agent) {
+    return DataRow(
+      selected: agent.clientName == _selectedClientName,
+      cells: [
+        DataCell(
+          SizedBox(
+            width: 210,
+            child: Text(
+              agent.clientName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
           ),
         ),
       ],

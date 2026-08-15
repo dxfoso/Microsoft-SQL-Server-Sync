@@ -46,9 +46,14 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertEqual(completed_rows_body.count("db.selectMany("), 1)
         self.assertIn("status: 'completed'", completed_rows_body)
         self.assertIn("'direction'", completed_rows_body)
+        self.assertIn("'rowCount'", completed_rows_body)
+        self.assertIn("'batchId'", completed_rows_body)
         self.assertIn("limit: 1000", completed_rows_body)
         self.assertNotIn("db.", summary_body)
         self.assertIn("string.from(job.direction).trim().toLowerCase() != 'download'", summary_body)
+        self.assertIn("string.from(job.batchId ?? '').trim() != latestBatchId", summary_body)
+        self.assertIn("uploadedRows += int.from(job.rowCount ?? 0)", summary_body)
+        self.assertIn("downloadedRows = int.from(job.rowCount ?? 0)", summary_body)
 
     def test_live_state_aggregates_completed_row_totals_in_one_scoped_read(self):
         control_plane = read_text("business/control_plane.tru")
