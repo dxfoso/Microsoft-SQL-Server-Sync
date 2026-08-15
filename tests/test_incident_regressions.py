@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 132)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 133)}
         observed_ids = set()
 
         for row in rows:
@@ -286,6 +286,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("administrator credentials are required", verifiers)
         self.assertNotRegex(verifiers, r'DEFAULT_PASSWORD\s*=\s*["\'][^"\']+["\']')
         self.assertNotIn("dxfoso@gmail.com", verifiers)
+
+    def test_live_client_state_resolves_current_manifest_version(self):
+        verifier = read_text("scripts/verify_live_clients_state.py")
+
+        self.assertIn('parser.add_argument("--expected-version", default="")', verifier)
+        self.assertIn("def fetch_latest_client_version", verifier)
+        self.assertIn('/client/latest.json"', verifier)
+        self.assertIn(
+            "args.expected_version.strip() or fetch_latest_client_version(args.base_url)",
+            verifier,
+        )
+        self.assertNotIn('default="1.0.105+109"', verifier)
 
     def test_manual_sync_dispatch_helper_uses_valid_tru_function_declaration(self):
         control_plane = read_text("business/control_plane.tru")

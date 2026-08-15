@@ -93,6 +93,20 @@ def fetch_health(base_url: str) -> dict:
     return decoded
 
 
+def fetch_latest_client_version(base_url: str) -> str:
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/client/latest.json",
+        method="GET",
+    )
+    decoded = read_json_request(request)
+    if not isinstance(decoded, dict):
+        raise ApiError(f"unexpected client manifest payload: {decoded!r}")
+    version = str(decoded.get("version") or "").strip()
+    if not version:
+        raise ApiError("live client manifest does not declare a version")
+    return version
+
+
 def login(base_url: str, username: str, password: str) -> tuple[str, dict]:
     decoded = invoke_function(
         base_url,
@@ -220,13 +234,14 @@ def main() -> int:
     parser.add_argument("--username", default=DEFAULT_USERNAME)
     parser.add_argument("--password", default=DEFAULT_PASSWORD)
     parser.add_argument("--clients", nargs="+", default=["c1", "c2"])
-    parser.add_argument("--expected-version", default="1.0.105+109")
+    parser.add_argument("--expected-version", default="")
     parser.add_argument("--max-heartbeat-age-minutes", type=float, default=5.0)
     parser.add_argument("--require-window-minimized", action="store_true")
     parser.add_argument("--expect-commit", default="")
     args = parser.parse_args()
     if not args.username or not args.password:
         parser.error("administrator credentials are required via arguments or SQL_SYNC_ADMIN_USERNAME/SQL_SYNC_ADMIN_PASSWORD")
+    expected_version = args.expected_version.strip() or fetch_latest_client_version(args.base_url)
 
     health = fetch_health(args.base_url)
     live_commit = str((((health.get("build") or {}) if isinstance(health, dict) else {}).get("git_commit")) or "")
@@ -249,7 +264,7 @@ def main() -> int:
         summaries.append(summary)
         client_failures = validate_summary(
             summary,
-            args.expected_version,
+            expected_version,
             args.max_heartbeat_age_minutes,
             args.require_window_minimized,
         )
