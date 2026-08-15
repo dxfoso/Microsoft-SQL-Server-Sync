@@ -4707,6 +4707,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       return encoded;
     }
 
+    final compactFingerprints = _compactSelectedFingerprintsForUpload(
+      payload['selectedTableFingerprints'],
+    );
     final emergency = <String, dynamic>{
       'capturedAt': payload['capturedAt'],
       'clientName': payload['clientName'],
@@ -4722,20 +4725,95 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         payload['tableSummaries'],
         maxItems: 5,
       ),
-      'selectedTableFingerprints': payload['selectedTableFingerprints'],
+      'selectedTableFingerprints': compactFingerprints,
+      'selectedTableFingerprintsEncoding': 'table-to-count-checksum-v1',
       'fingerprintCapture': payload['fingerprintCapture'],
-      'startupLogTail': _truncateUploadText(
-        payload['startupLogTail'],
-        maxChars: 40000,
-      ),
-      'updateLogTail': _truncateUploadText(
-        payload['updateLogTail'],
-        maxChars: 8000,
-      ),
+      'startupLogTail': '',
+      'updateLogTail': '',
       'clientLog': payload['clientLog'],
       'payloadReduced': true,
     };
-    return encode(emergency);
+    var emergencyEncoded = encode(emergency);
+    var includedFingerprintCount = compactFingerprints.length;
+    while (emergencyEncoded.length > _maxDiagnosticsUploadPayloadChars &&
+        includedFingerprintCount > 0) {
+      includedFingerprintCount = math.max(
+        0,
+        (includedFingerprintCount * 0.8).floor(),
+      );
+      emergency['selectedTableFingerprints'] = Map<String, dynamic>.fromEntries(
+        compactFingerprints.entries.take(includedFingerprintCount),
+      );
+      emergency['fingerprintCapture'] = {
+        ...?payload['fingerprintCapture'] as Map?,
+        'complete': false,
+        'includedCount': includedFingerprintCount,
+        'omittedCount': compactFingerprints.length - includedFingerprintCount,
+        'reason': 'diagnostics-payload-limit',
+      };
+      emergencyEncoded = encode(emergency);
+    }
+
+    // Spend the remaining bounded payload budget on the newest retained log
+    // text. Re-encoding may expand quotes and backslashes, so reduce the text
+    // budget until the final JSON itself is within the server field limit.
+    var logBudget = math.max(
+      0,
+      _maxDiagnosticsUploadPayloadChars - emergencyEncoded.length - 512,
+    );
+    while (logBudget > 0) {
+      emergency['startupLogTail'] = _truncateUploadText(
+        payload['startupLogTail'],
+        maxChars: (logBudget * 0.75).floor(),
+      );
+      emergency['updateLogTail'] = _truncateUploadText(
+        payload['updateLogTail'],
+        maxChars: (logBudget * 0.25).floor(),
+      );
+      emergencyEncoded = encode(emergency);
+      if (emergencyEncoded.length <= _maxDiagnosticsUploadPayloadChars) {
+        return emergencyEncoded;
+      }
+      logBudget = (logBudget * 0.8).floor();
+    }
+    emergency['startupLogTail'] = '';
+    emergency['updateLogTail'] = '';
+    emergencyEncoded = encode(emergency);
+    if (emergencyEncoded.length > _maxDiagnosticsUploadPayloadChars) {
+      // The non-list metadata is intentionally tiny, but fail closed to a
+      // minimal valid JSON document if an unforeseen value grows excessively.
+      return encode({
+        'capturedAt': payload['capturedAt'],
+        'clientName': payload['clientName'],
+        'machineName': payload['machineName'],
+        'app': payload['app'],
+        'errors': payload['errors'],
+        'payloadReduced': true,
+        'payloadLimitExceeded': true,
+      });
+    }
+    return emergencyEncoded;
+  }
+
+  Map<String, dynamic> _compactSelectedFingerprintsForUpload(dynamic value) {
+    if (value is! List) {
+      return const <String, dynamic>{};
+    }
+    final entries = <MapEntry<String, dynamic>>[];
+    for (final item in value.whereType<Map>()) {
+      final table = item['table']?.toString().trim() ?? '';
+      if (table.isEmpty) {
+        continue;
+      }
+      entries.add(
+        MapEntry<String, dynamic>(table, <dynamic>[
+          item['rowCount'],
+          item['tableChecksum'],
+        ]),
+      );
+    }
+    entries.sort((left, right) => left.key.compareTo(right.key));
+    return Map<String, dynamic>.fromEntries(entries);
   }
 
   List<dynamic> _boundedUploadList(dynamic value, {required int maxItems}) {
@@ -4788,6 +4866,16 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       return const <String, dynamic>{};
     }
     final sql = Map<String, dynamic>.from(value);
+    final discovery = sql['databaseAccessDiscovery'];
+    final accessProblems =
+        discovery is List
+            ? discovery
+                .whereType<Map>()
+                .where((item) => item['hasAccess'] != true)
+                .take(25)
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList(growable: false)
+            : const <Map<String, dynamic>>[];
     return <String, dynamic>{
       'server': sql['server'],
       'database': sql['database'],
@@ -4797,7 +4885,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       'databaseAccessGrantBusy': sql['databaseAccessGrantBusy'],
       'databaseAccessGrantError': sql['databaseAccessGrantError'],
       'databaseAccessRequiredCount': sql['databaseAccessRequiredCount'],
-      'databaseAccessDiscovery': sql['databaseAccessDiscovery'],
+      'databaseAccessDiscoveryCount': discovery is List ? discovery.length : 0,
+      'databaseAccessProblems': accessProblems,
       'databaseAccessIssue': sql['databaseAccessIssue'],
       'changeTracking':
           sql['changeTracking'] is Map

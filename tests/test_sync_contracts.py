@@ -609,9 +609,10 @@ class SyncContractsTests(unittest.TestCase):
             diagnostics_body,
         )
         self.assertIn(
-            "'selectedTableFingerprints': payload['selectedTableFingerprints']",
+            "payload['selectedTableFingerprints']",
             encoder_body,
         )
+        self.assertIn("_compactSelectedFingerprintsForUpload", encoder_body)
         self.assertIn("'fingerprintCapture': payload['fingerprintCapture']", encoder_body)
 
     def test_diagnostics_upload_logs_before_full_fingerprint_enrichment(self):
@@ -635,6 +636,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("refreshFingerprints: true", enrichment_body)
         self.assertIn("_diagnosticsUploadRequestId != requestId", enrichment_body)
         self.assertIn("'status': refreshFingerprints ? 'completed' : 'refreshing'", agent_page)
+
+    def test_diagnostics_emergency_payload_is_bounded_valid_json(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        encoder = agent_page.split(
+            "String _encodeDiagnosticsPayloadForUpload", 1
+        )[1].split("List<dynamic> _boundedUploadList", 1)[0]
+
+        self.assertIn("_compactSelectedFingerprintsForUpload(", encoder)
+        self.assertIn("table-to-count-checksum-v1", encoder)
+        self.assertIn("emergencyEncoded.length > _maxDiagnosticsUploadPayloadChars", encoder)
+        self.assertIn("emergencyEncoded.length <= _maxDiagnosticsUploadPayloadChars", encoder)
+        self.assertIn("logBudget = (logBudget * 0.8).floor()", encoder)
+        self.assertIn("databaseAccessProblems", agent_page)
 
     def test_cancelled_job_forces_physical_fingerprint_refresh(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

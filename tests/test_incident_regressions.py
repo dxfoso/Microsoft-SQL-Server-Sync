@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 127)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 128)}
         observed_ids = set()
 
         for row in rows:
@@ -730,6 +730,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("_refreshAndUploadDiagnosticsFingerprints(", upload_body)
         self.assertIn("refreshFingerprints: true", enrichment_body)
         self.assertIn("_diagnosticsUploadRequestId != requestId", enrichment_body)
+
+    def test_large_client_diagnostics_cannot_be_truncated_mid_json(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        encoder = agent.split(
+            "String _encodeDiagnosticsPayloadForUpload", 1
+        )[1].split("List<dynamic> _boundedUploadList", 1)[0]
+
+        self.assertIn("_compactSelectedFingerprintsForUpload(", encoder)
+        self.assertIn("selectedTableFingerprintsEncoding", encoder)
+        self.assertIn("while (emergencyEncoded.length > _maxDiagnosticsUploadPayloadChars", encoder)
+        self.assertIn("while (logBudget > 0)", encoder)
+        self.assertIn("payloadLimitExceeded", encoder)
 
 
 if __name__ == "__main__":
