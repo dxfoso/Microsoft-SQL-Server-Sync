@@ -2678,9 +2678,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           content: Text(
             fromActionUrl
                 ? waitForUploads
-                    ? 'Requested logs from ${requestedNamesView.length} clients in batches of $_bulkDiagnosticsBatchSize in this tab. Waiting for uploads now.$suffix'
-                    : 'Requested logs from ${requestedNamesView.length} clients from the action URL in batches of $_bulkDiagnosticsBatchSize.$suffix'
-                : 'Requested logs from ${requestedNamesView.length} clients in batches of $_bulkDiagnosticsBatchSize.$suffix',
+                    ? 'Requested automated self-tests from ${requestedNamesView.length} clients in batches of $_bulkDiagnosticsBatchSize in this tab. Waiting for reports now.$suffix'
+                    : 'Requested automated self-tests from ${requestedNamesView.length} clients from the action URL in batches of $_bulkDiagnosticsBatchSize.$suffix'
+                : 'Requested automated self-tests from ${requestedNamesView.length} clients in batches of $_bulkDiagnosticsBatchSize.$suffix',
           ),
           duration: const Duration(seconds: 6),
         ),
@@ -2952,6 +2952,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return;
       }
       final payload = diagnostics.payload?.trim() ?? '';
+      Map<String, dynamic> supportReport = const <String, dynamic>{};
+      if (payload.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(payload);
+          if (decoded is Map) {
+            supportReport = Map<String, dynamic>.from(decoded);
+          }
+        } catch (_) {}
+      }
       await showDialog<void>(
         context: context,
         builder: (context) {
@@ -2971,11 +2980,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: diagnostics.progressPercent.clamp(0, 100) / 100,
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    'Stage ${diagnostics.stage} · ${diagnostics.progressPercent}%',
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   if (diagnostics.summary.trim().isNotEmpty) ...[
                     const SizedBox(height: 12),
                     SelectableText(diagnostics.summary),
                   ],
                   const SizedBox(height: 12),
+                  if (supportReport.isNotEmpty) ...[
+                    _buildRemoteSupportOverview(supportReport),
+                    const SizedBox(height: 12),
+                  ],
                   Expanded(
                     child: Container(
                       width: double.infinity,
@@ -3003,6 +3029,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ),
             actions: [
+              TextButton.icon(
+                onPressed:
+                    payload.isEmpty
+                        ? null
+                        : () => unawaited(
+                          downloadBrowserTextFile(
+                            filename:
+                                'sync-support-${agent.clientName.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')}-${DateTime.now().toUtc().toIso8601String().replaceAll(':', '-')}.json',
+                            content: payload,
+                          ),
+                        ),
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Download support report'),
+              ),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('Close'),
@@ -3019,6 +3059,76 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         context,
       ).showSnackBar(SnackBar(content: SelectableText(error.toString())));
     }
+  }
+
+  Widget _buildRemoteSupportOverview(Map<String, dynamic> report) {
+    final support =
+        report['supportReport'] is Map
+            ? Map<String, dynamic>.from(report['supportReport'] as Map)
+            : const <String, dynamic>{};
+    final checks = (support['checks'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final timeline = (report['timeline'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    if (support.isEmpty && timeline.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxHeight: 260),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: ListView(
+        children: [
+          if (support.isNotEmpty) ...[
+            Text(
+              'Automated self-test: ${support['overallStatus'] ?? 'unknown'} · ${support['passedCheckCount'] ?? 0} passed · ${support['warningCheckCount'] ?? 0} warnings · ${support['failedCheckCount'] ?? 0} failed',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 6),
+            for (final check in checks)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: SelectableText(
+                  '${check['status'] == 'passed'
+                      ? '✓'
+                      : check['status'] == 'warning'
+                      ? '⚠'
+                      : '✕'} ${check['label'] ?? 'Check'}: ${check['message'] ?? ''}',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color:
+                        check['status'] == 'failed'
+                            ? const Color(0xFFB42318)
+                            : check['status'] == 'warning'
+                            ? const Color(0xFFB54708)
+                            : const Color(0xFF027A48),
+                  ),
+                ),
+              ),
+          ],
+          if (timeline.isNotEmpty) ...[
+            const Divider(height: 16),
+            const Text(
+              'Unified client timeline (newest first)',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+            ),
+            const SizedBox(height: 5),
+            for (final event in timeline.reversed.take(12))
+              SelectableText(
+                '${event['timestamp'] ?? ''} · ${event['source'] ?? 'client'} · ${event['level'] ?? 'INFO'} · ${event['event'] ?? ''}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 10.5),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 
   String _tablePolicyBusyKey(String clientName, String table) =>
@@ -6424,7 +6534,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           Icons.health_and_safety_outlined,
                           size: 16,
                         ),
-                label: Text(diagnostics.pending ? 'Getting Logs…' : 'Get Logs'),
+                label: Text(
+                  diagnostics.pending || diagnostics.status == 'running'
+                      ? 'Running Self-Test…'
+                      : 'Run Remote Self-Test',
+                ),
               ),
               FilledButton.tonalIcon(
                 onPressed:
@@ -6449,7 +6563,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         ? () => unawaited(_openDiagnosticsDialog(agent))
                         : null,
                 icon: const Icon(Icons.description_outlined, size: 16),
-                label: const Text('View Logs'),
+                label: const Text('View Support Report'),
               ),
             ],
           ),
@@ -6512,8 +6626,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 children: [
                   Text(
                     diagnostics.pending
-                        ? 'Diagnostics request pending'
-                        : 'Latest diagnostics',
+                        ? 'Remote self-test request pending'
+                        : diagnostics.status == 'running'
+                        ? 'Remote self-test running'
+                        : 'Latest remote self-test',
                     style: const TextStyle(
                       color: Color(0xFF101828),
                       fontSize: 13,
@@ -6521,6 +6637,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                   ),
                   const SizedBox(height: 4),
+                  if (diagnostics.pending ||
+                      diagnostics.status == 'running') ...[
+                    LinearProgressIndicator(
+                      value: diagnostics.progressPercent.clamp(0, 100) / 100,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${diagnostics.stage} · ${diagnostics.progressPercent}%',
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
                   Text(
                     diagnostics.summary.trim().isEmpty
                         ? 'Requested ${_formatTimestamp(diagnostics.requestedAt ?? '')}'
@@ -7379,7 +7511,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   Icons.receipt_long_rounded,
                                   size: 16,
                                 ),
-                        label: const Text('Request All Logs'),
+                        label: const Text('Run All Self-Tests'),
                       ),
             ),
           if (_showBulkActionsInLegacyDashboard &&

@@ -564,6 +564,10 @@ class AdminAgentDiagnostics {
     this.uploadedAt,
     this.lastRequestId,
     this.status = 'idle',
+    this.stage = 'idle',
+    this.progressPercent = 0,
+    this.startedAt,
+    this.completedAt,
     this.summary = '',
     this.payload,
   });
@@ -575,6 +579,10 @@ class AdminAgentDiagnostics {
   final String? uploadedAt;
   final String? lastRequestId;
   final String status;
+  final String stage;
+  final int progressPercent;
+  final String? startedAt;
+  final String? completedAt;
   final String summary;
   final String? payload;
 
@@ -587,6 +595,10 @@ class AdminAgentDiagnostics {
       uploadedAt: json['uploadedAt'] as String?,
       lastRequestId: json['lastRequestId'] as String?,
       status: json['status'] as String? ?? 'idle',
+      stage: json['stage'] as String? ?? 'idle',
+      progressPercent: (json['progressPercent'] as num? ?? 0).round(),
+      startedAt: json['startedAt'] as String?,
+      completedAt: json['completedAt'] as String?,
       summary: json['summary'] as String? ?? '',
       payload: json['payload'] as String?,
     );

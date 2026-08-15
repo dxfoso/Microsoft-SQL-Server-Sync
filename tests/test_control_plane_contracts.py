@@ -11,6 +11,23 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
+    def test_diagnostics_progress_contract_is_authenticated_and_bounded(self):
+        source = read_text("business/control_plane.tru")
+        progress = source.split(
+            "function agent_diagnostics_progress", 1
+        )[1].split("function agent_diagnostics_upload", 1)[0]
+        payload = source.split("function agent_diagnostics_payload", 1)[1].split(
+            "function client_update_request_pending", 1
+        )[0]
+
+        self.assertIn("current_user_record(token)", progress)
+        self.assertIn("authenticated_user_matches_client", progress)
+        self.assertIn("safeProgress > 99", progress)
+        self.assertIn("diagnosticStage", progress)
+        self.assertIn("diagnosticProgressPercent", progress)
+        self.assertIn("stage: agent.diagnosticStage", payload)
+        self.assertIn("progressPercent: agent.diagnosticProgressPercent", payload)
+
     def test_heartbeat_preserves_full_selected_database_inventory_for_planning(self):
         source = read_text("business/control_plane.tru")
         bounded = source.split(
@@ -357,7 +374,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("'failed' => 'failed'", handler)
         self.assertIn("Verified files and partial downloads will be reused", handler)
         self.assertIn("continuing the durable update", handler)
-        self.assertIn("'updateLogTail': _readUpdateLogTail()", agent)
+        self.assertIn("final updateLogTail = _readUpdateLogTail()", agent)
+        self.assertIn("'updateLogTail': updateLogTail", agent)
         ack = source.split("function agent_client_update_ack(", 1)[1].split(
             "function agent_window_action_request_all(", 1
         )[0]

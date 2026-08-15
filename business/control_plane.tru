@@ -55,6 +55,10 @@ class Agent {
   field diagnosticLastRequestId: string? min=0 max=64
   field diagnosticLastUploadedAt: datetime?
   field diagnosticStatus: string min=0 max=32
+  field diagnosticStage: string? min=0 max=64
+  field diagnosticProgressPercent: int? min=0 max=100
+  field diagnosticStartedAt: datetime?
+  field diagnosticCompletedAt: datetime?
   field diagnosticSummary: string min=0 max=4000
   field diagnosticPayload: string min=0 max=64000
   field clientUpdateRequestId: string? min=0 max=64
@@ -1634,7 +1638,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -2013,6 +2017,10 @@ function agent_diagnostics_payload(agent: map<json>, includePayload: bool = fals
     uploadedAt: agent.diagnosticLastUploadedAt,
     lastRequestId: agent.diagnosticLastRequestId,
     status: statusValue,
+    stage: agent.diagnosticStage,
+    progressPercent: agent.diagnosticProgressPercent,
+    startedAt: agent.diagnosticStartedAt,
+    completedAt: agent.diagnosticCompletedAt,
     summary: summaryValue,
     payload: payload
   };
@@ -2564,7 +2572,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -2823,6 +2831,10 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       diagnosticLastRequestId: null,
       diagnosticLastUploadedAt: null,
       diagnosticStatus: 'idle',
+      diagnosticStage: 'idle',
+      diagnosticProgressPercent: 0,
+      diagnosticStartedAt: null,
+      diagnosticCompletedAt: null,
       diagnosticSummary: '',
       diagnosticPayload: '',
       clientUpdateRequestId: null,
@@ -2894,6 +2906,10 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     diagnosticLastRequestId: null,
     diagnosticLastUploadedAt: null,
     diagnosticStatus: 'idle',
+    diagnosticStage: 'idle',
+    diagnosticProgressPercent: 0,
+    diagnosticStartedAt: null,
+    diagnosticCompletedAt: null,
     diagnosticSummary: '',
     diagnosticPayload: '',
     clientUpdateRequestId: null,
@@ -6800,6 +6816,10 @@ function agent_diagnostics_request(clientName: string, token: string? = null): m
     diagnosticRequestedAt: now_iso(),
     diagnosticRequestedByUserId: current.id,
     diagnosticStatus: 'requested',
+    diagnosticStage: 'queued',
+    diagnosticProgressPercent: 0,
+    diagnosticStartedAt: null,
+    diagnosticCompletedAt: null,
     updatedAt: now_iso()
   });
   if (updated == null) {
@@ -6876,6 +6896,10 @@ function agent_diagnostics_request_batch(clientNames: array<string>? = null, req
     diagnosticRequestedAt: requestedAt,
     diagnosticRequestedByUserId: current.id,
     diagnosticStatus: 'requested',
+    diagnosticStage: 'queued',
+    diagnosticProgressPercent: 0,
+    diagnosticStartedAt: null,
+    diagnosticCompletedAt: null,
     updatedAt: requestedAt
   });
 
@@ -7422,7 +7446,7 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
   };
 }
 
-function agent_diagnostics_upload(clientName: string? = null, requestId: string? = null, summary: string = '', payload: string = '', token: string? = null): map<json> {
+function agent_diagnostics_progress(clientName: string? = null, requestId: string? = null, stage: string = 'running', progressPercent: int = 0, summary: string = '', token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -7437,17 +7461,71 @@ function agent_diagnostics_upload(clientName: string? = null, requestId: string?
   } else {
     resolvedClientName = normalize_user_name(clientName);
   }
-  const targetUser = find_user_by_identity(resolvedClientName);
-  if (!authenticated_user_matches_client(current, resolvedClientName) && targetUser != null && !can_manage_user(current, targetUser)) {
+  if (is_client_user(current) && !authenticated_user_matches_client(current, resolvedClientName)) {
     return raw_json_error(403, 'permission denied');
   }
-  let targetOwnerUserId = owner_namespace_for_user(current);
-  let targetClientUserId = current.id;
-  if (targetUser != null) {
-    targetOwnerUserId = targetUser.ownerUserId;
-    targetClientUserId = targetUser.id;
+  const agent = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (agent == null) {
+    return raw_json_error(404, 'client not found');
   }
-  const agent = ensure_agent(resolvedClientName, targetClientUserId, targetOwnerUserId);
+  if (!can_read_agent(current, agent.ownerUserId, agent.clientUserId)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  let safeProgress = progressPercent;
+  if (safeProgress < 0) {
+    safeProgress = 0;
+  }
+  if (safeProgress > 99) {
+    safeProgress = 99;
+  }
+  const updatedCount = db.updateMany(Agent, { clientName: resolvedClientName }, {
+    diagnosticStatus: 'running',
+    diagnosticStage: truncate_text(stage.trim(), 64),
+    diagnosticProgressPercent: safeProgress,
+    diagnosticStartedAt: agent.diagnosticStartedAt ?? now_iso(),
+    diagnosticCompletedAt: null,
+    diagnosticSummary: truncate_text(summary, 4000),
+    updatedAt: now_iso()
+  });
+  if (updatedCount == 0) {
+    return raw_json_error(404, 'client not found');
+  }
+  const updated = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (updated == null) {
+    return raw_json_error(500, 'diagnostics progress state unavailable');
+  }
+  return {
+    ok: true,
+    clientName: resolvedClientName,
+    diagnostics: agent_diagnostics_payload(updated)
+  };
+}
+
+function agent_diagnostics_upload(clientName: string? = null, requestId: string? = null, summary: string = '', payload: string = '', stage: string = 'completed', progressPercent: int = 100, complete: bool = true, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  let resolvedClientName = '';
+  if (clientName == null || clientName.trim().length == 0) {
+    if (current.username == null) {
+      resolvedClientName = normalize_user_name(current.name);
+    } else {
+      resolvedClientName = normalize_user_name(current.username);
+    }
+  } else {
+    resolvedClientName = normalize_user_name(clientName);
+  }
+  if (is_client_user(current) && !authenticated_user_matches_client(current, resolvedClientName)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const agent = db.selectOne(Agent, { clientName: resolvedClientName });
+  if (agent == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  if (!can_read_agent(current, agent.ownerUserId, agent.clientUserId)) {
+    return raw_json_error(403, 'permission denied');
+  }
   // See agent_client_update_ack: use the current persisted request because
   // the TRU envelope reserves the `requestId` argument name.
   let resolvedRequestId = '';
@@ -7458,10 +7536,30 @@ function agent_diagnostics_upload(clientName: string? = null, requestId: string?
   if (resolvedRequestId.length != 0) {
     resolvedRequestIdOrNull = resolvedRequestId;
   }
+  let safeProgress = progressPercent;
+  if (safeProgress < 0) {
+    safeProgress = 0;
+  }
+  if (safeProgress > 100) {
+    safeProgress = 100;
+  }
+  if (complete) {
+    safeProgress = 100;
+  } else if (safeProgress >= 100) {
+    safeProgress = 99;
+  }
+  let completedAt = null;
+  if (complete) {
+    completedAt = now_iso();
+  }
   const updatedCount = db.updateMany(Agent, { clientName: resolvedClientName }, {
     diagnosticLastRequestId: resolvedRequestIdOrNull,
     diagnosticLastUploadedAt: now_iso(),
-    diagnosticStatus: 'uploaded',
+    diagnosticStatus: complete ? 'uploaded' : 'running',
+    diagnosticStage: truncate_text(stage.trim(), 64),
+    diagnosticProgressPercent: safeProgress,
+    diagnosticStartedAt: agent.diagnosticStartedAt ?? now_iso(),
+    diagnosticCompletedAt: completedAt,
     diagnosticSummary: truncate_text(summary, 4000),
     diagnosticPayload: truncate_text(payload, 64000),
     updatedAt: now_iso()
@@ -7684,6 +7782,10 @@ function reset_all_agent_saved_state(): int {
     diagnosticLastRequestId: null,
     diagnosticLastUploadedAt: null,
     diagnosticStatus: 'idle',
+    diagnosticStage: 'idle',
+    diagnosticProgressPercent: 0,
+    diagnosticStartedAt: null,
+    diagnosticCompletedAt: null,
     diagnosticSummary: '',
     diagnosticPayload: '',
     clientUpdateRequestId: null,

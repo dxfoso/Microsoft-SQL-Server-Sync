@@ -713,6 +713,9 @@ class AgentControlPlaneClient {
     String? requestId,
     required String summary,
     required String payload,
+    String stage = 'completed',
+    int progressPercent = 100,
+    bool complete = true,
   }) async {
     final response = await _invokeFunction(
       'agent_diagnostics_upload',
@@ -722,6 +725,9 @@ class AgentControlPlaneClient {
           'requestId': requestId.trim(),
         'summary': summary,
         'payload': payload,
+        'stage': stage,
+        'progressPercent': progressPercent.clamp(0, 100),
+        'complete': complete,
       },
       'uploading diagnostics',
       timeout: _diagnosticsUploadRequestTimeout,
@@ -734,6 +740,37 @@ class AgentControlPlaneClient {
     return _parseRemoteAgentDiagnosticsPayload(
       response['diagnostics'],
       'Unexpected diagnostics upload payload.',
+    );
+  }
+
+  Future<RemoteAgentDiagnostics> reportDiagnosticsProgress({
+    required String clientName,
+    String? requestId,
+    required String stage,
+    required int progressPercent,
+    required String summary,
+  }) async {
+    final response = await _invokeFunction(
+      'agent_diagnostics_progress',
+      {
+        'clientName': clientName,
+        if (requestId != null && requestId.trim().isNotEmpty)
+          'requestId': requestId.trim(),
+        'stage': stage,
+        'progressPercent': progressPercent.clamp(0, 99),
+        'summary': summary,
+      },
+      'reporting diagnostics progress',
+      timeout: _diagnosticsUploadRequestTimeout,
+    );
+    if (response is! Map || response['diagnostics'] is! Map) {
+      throw const AgentControlPlaneException(
+        'Unexpected diagnostics progress payload.',
+      );
+    }
+    return _parseRemoteAgentDiagnosticsPayload(
+      response['diagnostics'],
+      'Unexpected diagnostics progress payload.',
     );
   }
 
@@ -1986,6 +2023,10 @@ class RemoteAgentDiagnostics {
     this.uploadedAt,
     this.lastRequestId,
     this.status = 'idle',
+    this.stage = 'idle',
+    this.progressPercent = 0,
+    this.startedAt,
+    this.completedAt,
     this.summary = '',
     this.payload,
   });
@@ -1997,6 +2038,10 @@ class RemoteAgentDiagnostics {
   final String? uploadedAt;
   final String? lastRequestId;
   final String status;
+  final String stage;
+  final int progressPercent;
+  final String? startedAt;
+  final String? completedAt;
   final String summary;
   final String? payload;
 
@@ -2009,6 +2054,10 @@ class RemoteAgentDiagnostics {
       uploadedAt: json['uploadedAt'] as String?,
       lastRequestId: json['lastRequestId'] as String?,
       status: json['status'] as String? ?? 'idle',
+      stage: json['stage'] as String? ?? 'idle',
+      progressPercent: (json['progressPercent'] as num? ?? 0).round(),
+      startedAt: json['startedAt'] as String?,
+      completedAt: json['completedAt'] as String?,
       summary: json['summary'] as String? ?? '',
       payload: json['payload'] as String?,
     );

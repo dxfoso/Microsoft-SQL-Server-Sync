@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 128)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 129)}
         observed_ids = set()
 
         for row in rows:
@@ -326,7 +326,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("normalizedStatus == 'downloading'", control_plane)
         self.assertIn("normalizedNextStatus != 'downloading'", control_plane)
         self.assertIn("status: 'downloading'", agent)
-        self.assertIn("'updateLogTail': _readUpdateLogTail()", agent)
+        self.assertIn("final updateLogTail = _readUpdateLogTail()", agent)
+        self.assertIn("'updateLogTail': updateLogTail", agent)
         self.assertIn('$partialFile = "$OutFile.part"', updater)
         self.assertIn('ChildPath ".update-cache\\$safeTargetVersion"', updater)
 
@@ -742,6 +743,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("while (emergencyEncoded.length > _maxDiagnosticsUploadPayloadChars", encoder)
         self.assertIn("while (logBudget > 0)", encoder)
         self.assertIn("payloadLimitExceeded", encoder)
+
+    def test_remote_support_report_excludes_account_identity_and_has_progress(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        backend = read_text("business/control_plane.tru")
+        frontend = read_text("frontend/lib/dashboard_page.dart")
+
+        self.assertIn("'accountIdentityIncluded': false", agent)
+        self.assertNotIn("'username': widget.authenticatedAccountUsername", agent)
+        self.assertIn("function agent_diagnostics_progress", backend)
+        self.assertIn("diagnosticProgressPercent", backend)
+        self.assertIn("complete: false", agent)
+        self.assertIn("complete: true", agent)
+        self.assertIn("Download support report", frontend)
 
 
 if __name__ == "__main__":

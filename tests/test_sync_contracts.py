@@ -11,6 +11,26 @@ def read_text(relative_path: str) -> str:
 
 
 class SyncContractsTests(unittest.TestCase):
+    def test_remote_support_self_test_is_server_driven_sanitized_and_staged(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        frontend = read_text("frontend/lib/dashboard_page.dart")
+
+        self.assertIn("reportDiagnosticsProgress", client_api)
+        self.assertIn("agent_diagnostics_progress", client_api)
+        self.assertIn("stage: 'collecting-client-state'", agent_page)
+        self.assertIn("stage: 'running-self-tests'", agent_page)
+        self.assertIn("stage: 'refreshing-table-fingerprints'", agent_page)
+        self.assertIn("_buildDiagnosticsSelfTests", agent_page)
+        self.assertIn("_buildDiagnosticsTimeline", agent_page)
+        self.assertIn("'supportReport':", agent_page)
+        self.assertIn("'accountIdentityIncluded': false", agent_page)
+        self.assertNotIn("'username': widget.authenticatedAccountUsername", agent_page)
+        self.assertNotIn("'email': widget.authenticatedAccountEmail", agent_page)
+        self.assertIn("Run Remote Self-Test", frontend)
+        self.assertIn("Download support report", frontend)
+        self.assertIn("Unified client timeline", frontend)
+
     def test_windows_snapshot_staging_uses_resumable_sql_bulk_copy(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
         bulk_policy = read_text("sync_windows_agent/lib/sql_bulk_stage.dart")
@@ -209,15 +229,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_maxRetainedAgentLogChars = 40 * 1024", startup_log)
         self.assertIn("current file plus one rotated segment", agent_page)
         self.assertIn("'completeRetainedLog': true", agent_page)
-        self.assertIn("'startupLogTail': _readStartupLogTail()", agent_page)
+        self.assertIn("final startupLogTail = _readStartupLogTail()", agent_page)
+        self.assertIn("'startupLogTail': startupLogTail", agent_page)
         self.assertIn("readRetainedAgentLog()", agent_page)
         self.assertIn("'control_plane.request.completed'", client_api)
         self.assertIn("'sync.job.processing.started'", agent_page)
         self.assertIn("'sync.upload.chunk.completed'", agent_page)
         self.assertIn("'sync.apply.committed'", agent_page)
         self.assertIn("'sqlcmd.completed'", agent_page)
-        self.assertIn("'Get Logs'", dashboard)
-        self.assertIn("'View Logs'", dashboard)
+        self.assertIn("'Run Remote Self-Test'", dashboard)
+        self.assertIn("'View Support Report'", dashboard)
 
     def test_change_tracking_delta_query_avoids_reserved_current_alias(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -398,7 +419,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("syncBlocked ? 'Sync stopped' : 'Sync All'", clients_page)
         self.assertIn("label: const Text('Minimize All')", clients_page)
         self.assertIn("label: const Text('Update All')", clients_page)
-        self.assertIn("label: const Text('Request All Logs')", clients_page)
+        self.assertIn("label: const Text('Run All Self-Tests')", clients_page)
         self.assertIn("DataColumn(label: Text('Last synced'))", clients_page)
         self.assertIn("DataColumn(label: Text('Last row changes'))", clients_page)
         self.assertIn("DataColumn(label: Text('Total row changes'))", clients_page)

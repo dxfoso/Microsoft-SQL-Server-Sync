@@ -1,0 +1,61 @@
+{
+  "name": "mig_20260815_182813",
+  "timestamp": "2026-08-15T18:28:13.914960600+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "diagnosticProgressPercent",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "int",
+            "optional": true,
+            "min": "0",
+            "max": "100",
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticStartedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticStage",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "64",
+            "default": null
+          }
+        },
+        {
+          "field": "diagnosticCompletedAt",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "datetime",
+            "optional": true,
+            "min": null,
+            "max": null,
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

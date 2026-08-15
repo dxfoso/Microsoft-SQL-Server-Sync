@@ -1440,7 +1440,7 @@ class _ClientsPageState extends State<ClientsPage> {
             busy: _bulkLogsBusy,
             icon: Icons.receipt_long_rounded,
           ),
-          label: const Text('Request All Logs'),
+          label: const Text('Run All Self-Tests'),
         ),
         if (widget.authenticatedUser.canManageUsers)
           OutlinedButton.icon(
@@ -1938,6 +1938,11 @@ class _ClientsPageState extends State<ClientsPage> {
         'retrying' => 'Update retrying',
         _ => 'Update pending',
       };
+    }
+    if (agent.diagnostics.pending || agent.diagnostics.status == 'running') {
+      final stage = agent.diagnostics.stage.trim();
+      final label = stage.isEmpty ? 'Self-test' : stage.replaceAll('-', ' ');
+      return '$label ${agent.diagnostics.progressPercent.clamp(0, 100)}%';
     }
     return 'Ready';
   }
@@ -4332,8 +4337,8 @@ class _ClientsPageState extends State<ClientsPage> {
       if (!mounted) return;
       _showActionMessage(
         requestedCount == 0
-            ? 'No online clients were available for log collection.'
-            : 'Requested logs from $requestedCount online client(s).',
+            ? 'No online clients were available for remote self-testing.'
+            : 'Requested automated self-tests from $requestedCount online client(s).',
       );
       await _refresh(silent: true);
     } catch (error) {

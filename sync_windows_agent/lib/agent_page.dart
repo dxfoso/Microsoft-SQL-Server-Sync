@@ -3760,6 +3760,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         'activeJobCount': _activeJobs.length,
       },
     );
+    await _reportDiagnosticsProgress(
+      diagnostics,
+      stage: 'collecting-client-state',
+      progressPercent: 10,
+      summary:
+          'Collecting sanitized client, SQL Server, sync, update, and retained-log state.',
+    );
     final failedTableCount =
         _syncState.tables.values
             .where((table) => table.status.toLowerCase() == 'failed')
@@ -3772,12 +3779,22 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     // A complete physical fingerprint refresh can scan hundreds of tables.
     // Publish the retained logs and current health immediately, then enrich
     // the same request asynchronously after the fresh scan finishes.
+    await _reportDiagnosticsProgress(
+      diagnostics,
+      stage: 'running-self-tests',
+      progressPercent: 35,
+      summary:
+          'Running automated connectivity, SQL access, table health, and log checks.',
+    );
     final payload = await _buildDiagnosticsPayload(refreshFingerprints: false);
     await _controlPlaneClient.uploadDiagnostics(
       clientName: widget.clientName,
       requestId: diagnostics.requestId,
       summary: summary,
       payload: payload,
+      stage: 'refreshing-table-fingerprints',
+      progressPercent: 75,
+      complete: false,
     );
     captureStopwatch.stop();
     logAgentDiagnostic(
@@ -3799,12 +3816,50 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  Future<void> _reportDiagnosticsProgress(
+    RemoteAgentDiagnostics diagnostics, {
+    required String stage,
+    required int progressPercent,
+    required String summary,
+  }) async {
+    try {
+      await _controlPlaneClient.reportDiagnosticsProgress(
+        clientName: widget.clientName,
+        requestId: diagnostics.requestId,
+        stage: stage,
+        progressPercent: progressPercent,
+        summary: summary,
+      );
+    } catch (error) {
+      // Progress is observability only. A transient progress upload failure
+      // must never prevent the final support report from being produced.
+      logAgentDiagnostic(
+        'diagnostics.progress.failed',
+        level: AgentLogLevel.warning,
+        context: {
+          'clientName': widget.clientName,
+          'requestId': diagnostics.requestId ?? 'manual',
+          'stage': stage,
+          'progressPercent': progressPercent,
+        },
+        error: error,
+      );
+    }
+  }
+
   Future<void> _refreshAndUploadDiagnosticsFingerprints({
     required RemoteAgentDiagnostics diagnostics,
     required String summary,
   }) async {
     final requestId = diagnostics.requestId?.trim() ?? '';
     try {
+      await _reportDiagnosticsProgress(
+        diagnostics,
+        stage: 'refreshing-table-fingerprints',
+        progressPercent: 80,
+        summary:
+            'The support report is available. Refreshing complete physical table fingerprints in the background.',
+      );
       final payload = await _buildDiagnosticsPayload(refreshFingerprints: true);
       // A newer request owns the server slot. Never let a slow older physical
       // scan acknowledge or overwrite diagnostics requested later.
@@ -3819,6 +3874,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         requestId: diagnostics.requestId,
         summary: summary,
         payload: payload,
+        stage: 'completed',
+        progressPercent: 100,
+        complete: true,
       );
       logAgentDiagnostic(
         'diagnostics.fingerprints.uploaded',
@@ -4539,6 +4597,22 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         .toList(growable: false);
 
     final changeTracking = await _buildChangeTrackingDiagnosticsForUpload();
+    final startupLogTail = _readStartupLogTail();
+    final updateLogTail = _readUpdateLogTail();
+    final supportTimeline = _buildDiagnosticsTimeline(
+      startupLogTail,
+      updateLogTail,
+    );
+    final selfTests = _buildDiagnosticsSelfTests(
+      failedTableCount: failedTables.length,
+      changeTracking: changeTracking,
+    );
+    final passedSelfTests =
+        selfTests.where((test) => test['status'] == 'passed').length;
+    final failedSelfTests =
+        selfTests.where((test) => test['status'] == 'failed').length;
+    final warningSelfTests =
+        selfTests.where((test) => test['status'] == 'warning').length;
 
     final payload = <String, dynamic>{
       'capturedAt': DateTime.now().toIso8601String(),
@@ -4549,10 +4623,26 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'buildCommitHash': _agentBuildCommitHash,
         'buildReleaseDate': _agentBuildReleaseDate,
       },
-      'account': {
-        'username': widget.authenticatedAccountUsername,
-        'email': widget.authenticatedAccountEmail,
-        'name': widget.authenticatedAccountName,
+      'privacy': {
+        'sanitized': true,
+        'credentialsIncluded': false,
+        'accountIdentityIncluded': false,
+      },
+      'supportReport': {
+        'formatVersion': 1,
+        'correlationId': _diagnosticsUploadRequestId,
+        'automated': true,
+        'requestedByServer': true,
+        'overallStatus':
+            failedSelfTests > 0
+                ? 'failed'
+                : warningSelfTests > 0
+                ? 'warning'
+                : 'passed',
+        'passedCheckCount': passedSelfTests,
+        'warningCheckCount': warningSelfTests,
+        'failedCheckCount': failedSelfTests,
+        'checks': selfTests,
       },
       'controlPlane': {
         'baseUrl': _controlPlaneClient.baseUrl,
@@ -4577,6 +4667,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
                 'hasAccess': status.hasAccess,
                 'state': status.state,
                 'accessProblem': status.accessProblem,
+                if (status.accessError.trim().isNotEmpty)
+                  'accessError': redactAgentLogText(status.accessError),
               },
             )
             .toList(growable: false),
@@ -4601,6 +4693,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       },
       'activeJobs': activeJobs,
       'failedTables': failedTables,
+      'timeline': supportTimeline,
       'tableSummaries': tableSummaries,
       // This compact list is retained even if verbose diagnostics must be
       // reduced, so every selected table remains remotely verifiable.
@@ -4615,11 +4708,176 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'redacted': true,
         'completeRetainedLog': true,
       },
-      'startupLogTail': _readStartupLogTail(),
-      'updateLogTail': _readUpdateLogTail(),
+      'startupLogTail': startupLogTail,
+      'updateLogTail': updateLogTail,
     };
 
     return _encodeDiagnosticsPayloadForUpload(payload);
+  }
+
+  List<Map<String, dynamic>> _buildDiagnosticsSelfTests({
+    required int failedTableCount,
+    required Map<String, dynamic> changeTracking,
+  }) {
+    Map<String, dynamic> check(
+      String id,
+      String label,
+      String status,
+      String message,
+    ) => <String, dynamic>{
+      'id': id,
+      'label': label,
+      'status': status,
+      'message': redactAgentLogText(message),
+    };
+
+    final server = _serverController.text.trim();
+    final database = _selectedDatabase?.trim() ?? '';
+    DatabaseAccessStatus? selectedAccess;
+    for (final status in _databaseAccessStatuses) {
+      if (status.database.toLowerCase() == database.toLowerCase()) {
+        selectedAccess = status;
+        break;
+      }
+    }
+    final selectedTableCount =
+        _syncState.tables.values.where(_isTableSelectedForSync).length;
+    final accessProblemCount =
+        _databaseAccessStatuses.where((status) => !status.hasAccess).length;
+    final changeTrackingStatus =
+        changeTracking['captureStatus']?.toString() ?? 'unknown';
+
+    return <Map<String, dynamic>>[
+      check(
+        'control-plane',
+        'Web server connection',
+        _serverConnected ? 'passed' : 'failed',
+        _serverConnected
+            ? 'The client is connected to the web control plane.'
+            : 'The client cannot currently reach the web control plane.',
+      ),
+      check(
+        'sql-configuration',
+        'SQL Server configuration',
+        server.isNotEmpty && database.isNotEmpty ? 'passed' : 'failed',
+        server.isEmpty || database.isEmpty
+            ? 'A SQL Server instance or synchronized database is not selected.'
+            : 'SQL Server $server and database $database are selected.',
+      ),
+      check(
+        'selected-database-access',
+        'Selected database access',
+        selectedAccess == null
+            ? 'warning'
+            : selectedAccess.hasAccess
+            ? 'passed'
+            : 'failed',
+        selectedAccess == null
+            ? 'The selected database was not present in the latest access discovery result.'
+            : selectedAccess.hasAccess
+            ? '$database is online and accessible.'
+            : '$database is not accessible: ${selectedAccess.accessError.isNotEmpty ? selectedAccess.accessError : selectedAccess.accessProblem}.',
+      ),
+      check(
+        'sync-table-selection',
+        'Synchronizable tables',
+        selectedTableCount > 0 ? 'passed' : 'warning',
+        '$selectedTableCount table(s) are currently selected for automatic synchronization.',
+      ),
+      check(
+        'failed-tables',
+        'Failed table operations',
+        failedTableCount == 0 ? 'passed' : 'failed',
+        failedTableCount == 0
+            ? 'No table is in a failed state.'
+            : '$failedTableCount table(s) are in a failed state.',
+      ),
+      check(
+        'active-jobs',
+        'Active synchronization jobs',
+        'passed',
+        '${_activeJobs.length} synchronization job(s) are currently active.',
+      ),
+      check(
+        'change-tracking',
+        'SQL Server Change Tracking diagnostics',
+        changeTrackingStatus == 'completed'
+            ? 'passed'
+            : changeTrackingStatus == 'timeout'
+            ? 'warning'
+            : 'failed',
+        changeTrackingStatus == 'completed'
+            ? 'Change Tracking diagnostics completed.'
+            : changeTracking['message']?.toString() ??
+                'Change Tracking diagnostics did not complete.',
+      ),
+      check(
+        'other-database-access',
+        'Other discovered databases',
+        accessProblemCount == 0 ? 'passed' : 'warning',
+        accessProblemCount == 0
+            ? 'Every discovered database is accessible.'
+            : '$accessProblemCount other database(s) require access or SQL recovery attention.',
+      ),
+    ];
+  }
+
+  List<Map<String, dynamic>> _buildDiagnosticsTimeline(
+    String startupLogTail,
+    String updateLogTail,
+  ) {
+    final events = <Map<String, dynamic>>[];
+    void addLog(String source, String content) {
+      for (final line in content.split(RegExp(r'\r?\n'))) {
+        if (line.trim().isEmpty) continue;
+        try {
+          final decoded = jsonDecode(line);
+          if (decoded is! Map) continue;
+          final context = decoded['context'];
+          final compactContext = <String, dynamic>{};
+          if (context is Map) {
+            for (final key in const <String>[
+              'requestId',
+              'jobId',
+              'table',
+              'database',
+              'status',
+              'progressPercent',
+              'elapsedMs',
+              'downloadedBytes',
+              'totalBytes',
+              'version',
+            ]) {
+              if (context[key] != null) compactContext[key] = context[key];
+            }
+          }
+          events.add(<String, dynamic>{
+            'timestamp': decoded['timestamp'],
+            'source': source,
+            'level': decoded['level'] ?? 'INFO',
+            'event': decoded['event'] ?? 'client.event',
+            if ((decoded['message']?.toString().trim() ?? '').isNotEmpty)
+              'message': redactAgentLogText(decoded['message'].toString()),
+            if ((decoded['error']?.toString().trim() ?? '').isNotEmpty)
+              'error': redactAgentLogText(decoded['error'].toString()),
+            if (compactContext.isNotEmpty) 'context': compactContext,
+          });
+        } catch (_) {
+          // Native runner lines are retained in the raw log tail. The unified
+          // timeline intentionally contains structured JSON events only.
+        }
+      }
+    }
+
+    addLog('client', startupLogTail);
+    addLog('updater', updateLogTail);
+    events.sort(
+      (left, right) => (left['timestamp']?.toString() ?? '').compareTo(
+        right['timestamp']?.toString() ?? '',
+      ),
+    );
+    final start = math.max(0, events.length - 80);
+    return events.sublist(start);
   }
 
   Future<Map<String, dynamic>>
@@ -4715,12 +4973,15 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       'clientName': payload['clientName'],
       'machineName': payload['machineName'],
       'app': payload['app'],
+      'privacy': payload['privacy'],
+      'supportReport': payload['supportReport'],
       'controlPlane': payload['controlPlane'],
       'sql': _minimalSqlDiagnosticsForUpload(payload['sql']),
       'syncSettings': payload['syncSettings'],
       'errors': payload['errors'],
       'activeJobs': _boundedUploadList(payload['activeJobs'], maxItems: 3),
       'failedTables': _boundedUploadList(payload['failedTables'], maxItems: 3),
+      'timeline': _boundedTailUploadList(payload['timeline'], maxItems: 30),
       'tableSummaries': _boundedUploadList(
         payload['tableSummaries'],
         maxItems: 5,
@@ -4787,6 +5048,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'clientName': payload['clientName'],
         'machineName': payload['machineName'],
         'app': payload['app'],
+        'privacy': payload['privacy'],
+        'supportReport': payload['supportReport'],
         'errors': payload['errors'],
         'payloadReduced': true,
         'payloadLimitExceeded': true,
@@ -4824,6 +5087,19 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       return List<dynamic>.from(value, growable: false);
     }
     return List<dynamic>.from(value.take(maxItems), growable: false);
+  }
+
+  List<dynamic> _boundedTailUploadList(dynamic value, {required int maxItems}) {
+    if (value is! List || maxItems < 1) {
+      return const <dynamic>[];
+    }
+    if (value.length <= maxItems) {
+      return List<dynamic>.from(value, growable: false);
+    }
+    return List<dynamic>.from(
+      value.skip(value.length - maxItems),
+      growable: false,
+    );
   }
 
   String _truncateUploadText(dynamic value, {required int maxChars}) {
