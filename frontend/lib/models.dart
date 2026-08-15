@@ -399,6 +399,8 @@ class AdminAgent {
     this.lastChangeCheckAt = '',
     this.lastSyncCompletedAt = '',
     this.lastSyncDurationMs,
+    this.uploadedRowTotal = 0,
+    this.downloadedRowTotal = 0,
     required this.selectedTable,
     required this.diagnostics,
     required this.clientUpdate,
@@ -428,6 +430,8 @@ class AdminAgent {
   final String lastChangeCheckAt;
   final String lastSyncCompletedAt;
   final int? lastSyncDurationMs;
+  final int uploadedRowTotal;
+  final int downloadedRowTotal;
   final String runtimeStatusCode;
   final String runtimeStatusLabel;
   final bool runtimeReady;
@@ -463,6 +467,8 @@ class AdminAgent {
       lastChangeCheckAt: json['lastChangeCheckAt'] as String? ?? '',
       lastSyncCompletedAt: json['lastSyncCompletedAt'] as String? ?? '',
       lastSyncDurationMs: (json['lastSyncDurationMs'] as num?)?.round(),
+      uploadedRowTotal: (json['uploadedRowTotal'] as num? ?? 0).round(),
+      downloadedRowTotal: (json['downloadedRowTotal'] as num? ?? 0).round(),
       runtimeStatusCode: status['code'] as String? ?? '',
       runtimeStatusLabel: status['label'] as String? ?? '',
       runtimeReady: status['ready'] as bool? ?? false,

@@ -80,6 +80,17 @@ void main() {
     expect(agent.lastSyncCompletedAt, '2026-08-09T19:20:33Z');
   });
 
+  test('client exposes cumulative completed upload and download rows', () {
+    final agent = AdminAgent.fromJson({
+      'clientName': 'client-a',
+      'uploadedRowTotal': 1234,
+      'downloadedRowTotal': 5678,
+    });
+
+    expect(agent.uploadedRowTotal, 1234);
+    expect(agent.downloadedRowTotal, 5678);
+  });
+
   test('Sync All duration covers the complete durable operation', () {
     final completed = AdminSyncAllOperation.fromJson({
       'ownerUserId': 'owner-a',

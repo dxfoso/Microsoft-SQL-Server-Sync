@@ -1874,7 +1874,20 @@ function periodic_sync_last_checked_at_for_owner(ownerUserId: string, periodicSt
   return '';
 }
 
-function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null): map<json> {
+function completed_row_totals_for_client(clientName: string, completedRowTotals: array<json>? = null): map<json> {
+  for (const totals of completedRowTotals ?? []) {
+    if (string.from(totals.clientName ?? '').trim() != clientName.trim()) {
+      continue;
+    }
+    return {
+      uploaded: int.from(totals.uploaded ?? 0),
+      downloaded: int.from(totals.downloaded ?? 0)
+    };
+  }
+  return { uploaded: 0, downloaded: 0 };
+}
+
+function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null, completedRowTotals: array<json>? = null): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
     const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
@@ -1890,6 +1903,10 @@ function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null,
   const lastCompletedSync = latest_completed_sync_summary_for_client(
     string.from(agent.clientName),
     completedJobs
+  );
+  const rowTotals = completed_row_totals_for_client(
+    string.from(agent.clientName),
+    completedRowTotals
   );
   return {
     clientName: agent.clientName,
@@ -1912,6 +1929,8 @@ function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null,
     ),
     lastSyncCompletedAt: lastCompletedSync.completedAt,
     lastSyncDurationMs: lastCompletedSync.durationMs,
+    uploadedRowTotal: rowTotals.uploaded,
+    downloadedRowTotal: rowTotals.downloaded,
     status: runtimeStatus,
     selectedTable: agent.selectedTable,
     diagnostics: agent_diagnostics_payload(agent),
@@ -2647,6 +2666,31 @@ function live_state_completed_job_rows_for(current: map<json>): array<json> {
   return rows;
 }
 
+function live_state_completed_row_totals_for(current: map<json>): array<json> {
+  let where = { status: 'completed' };
+  if (is_client_user(current)) {
+    where = { clientUserId: current.id, status: 'completed' };
+  }
+  if (is_owner_user(current)) {
+    where = { ownerUserId: current.id, status: 'completed' };
+  }
+  const rows = db.aggregate(SyncJob, {
+    where,
+    select: [
+      { field: 'clientName' },
+      { fn: 'sum', field: 'rowCount', where: { direction: 'upload' }, as: 'uploaded' },
+      { fn: 'sum', field: 'rowCount', where: { direction: 'download' }, as: 'downloaded' }
+    ],
+    groupBy: ['clientName'],
+    orderBy: [{ field: 'clientName', dir: 'asc' }],
+    limit: 1000
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
 function live_state_manual_sync_rows_for_owner_ids(ownerUserIds: array<string>): array<json> {
   if (ownerUserIds.length == 0) {
     return [];
@@ -2678,13 +2722,13 @@ function public_client_activity_payloads(rows: array<json>): array<json> {
   });
 }
 
-function bounded_public_agent_payloads(rows: array<json>, limit: int, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null): map<json> {
+function bounded_public_agent_payloads(rows: array<json>, limit: int, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null, completedRowTotals: array<json>? = null): map<json> {
   let items = [];
   let seen = 0;
   for (const row of rows) {
     seen += 1;
     if (items.length < limit) {
-      items = items.concat([public_agent_payload(row, activeJobs, completedJobs, periodicStates)]);
+      items = items.concat([public_agent_payload(row, activeJobs, completedJobs, periodicStates, completedRowTotals)]);
     }
   }
   return {
@@ -6007,6 +6051,7 @@ function live_state(token: string? = null): map<json> {
   const agentRows = live_state_agent_rows_for(current, agentLimit);
   const activeJobRows = live_state_active_job_rows_for(current);
   const completedJobRows = live_state_completed_job_rows_for(current);
+  const completedRowTotals = live_state_completed_row_totals_for(current);
   const visibleOwnerUserIds = unique_string_values(
     agentRows.map((agent) => string.from(agent.ownerUserId))
   );
@@ -6016,7 +6061,8 @@ function live_state(token: string? = null): map<json> {
     agentLimit,
     activeJobRows,
     completedJobRows,
-    periodicSyncRows
+    periodicSyncRows,
+    completedRowTotals
   );
   const recentJobRows = live_state_job_rows_for(current, jobLimit);
   const jobPage = bounded_public_job_payloads(

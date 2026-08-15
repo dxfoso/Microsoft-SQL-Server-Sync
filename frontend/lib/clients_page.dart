@@ -1169,6 +1169,7 @@ class _ClientsPageState extends State<ClientsPage> {
                           DataColumn(label: Text('Status')),
                           DataColumn(label: Text('Database')),
                           DataColumn(label: Text('Tables')),
+                          DataColumn(label: Text('Row changes')),
                           DataColumn(label: Text('Last synced')),
                           DataColumn(label: Text('Last change check')),
                           DataColumn(label: Text('Last sync duration')),
@@ -1651,6 +1652,12 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(Text('${agent.tables.length}')),
+        DataCell(
+          Text(
+            'Uploaded: ${_number(agent.uploadedRowTotal)}\n'
+            'Downloaded: ${_number(agent.downloadedRowTotal)}',
+          ),
+        ),
         DataCell(Text(_formatTimestamp(_latestClientSync(agent)))),
         DataCell(Text(_formatTimestamp(agent.lastChangeCheckAt))),
         DataCell(Text(formatSyncDuration(agent.lastSyncDuration))),
