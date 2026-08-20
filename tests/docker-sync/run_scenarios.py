@@ -1416,7 +1416,7 @@ def run_scenarios():
         )
     apply(DATABASES[0], rows=[row(914, "ZOMBIE-AFTER-DELETE", "Must be re-deleted")])
     for database in DATABASES:
-        apply(database, rows=stale_bootstrap_vs_delete)
+        apply(database, deletes=stale_bootstrap_vs_delete)
         if scalar_int(database, "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = 914;") != 0:
             raise AssertionError(
                 f"Durable tombstone did not remove a zombie full row from {database}."
