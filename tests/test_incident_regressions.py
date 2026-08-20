@@ -1,5 +1,6 @@
 import pathlib
 import re
+import subprocess
 import unittest
 
 
@@ -15,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 141)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 142)}
         observed_ids = set()
 
         for row in rows:
@@ -136,7 +137,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
     def test_hidden_standard_launcher_refreshes_exit_code_after_wait(self):
         launcher = read_text("tests/run_local_test_standard.ps1")
-        wait_block = launcher.split("Wait-Process -Id $childProcess.Id", 1)[1].split(
+        wait_block = launcher.split("$childProcess.WaitForExit()", 1)[1].split(
             "$statusPath =", 1
         )[0]
 
@@ -145,6 +146,25 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             wait_block.index("$childProcess.Refresh()"),
             wait_block.index("$exitCode = $childProcess.ExitCode"),
         )
+
+    def test_hidden_process_waitfor_exit_returns_concrete_exit_code(self):
+        probe = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "$p = Start-Process -FilePath 'powershell.exe' "
+                "-ArgumentList @('-NoProfile', '-Command', 'exit 7') "
+                "-WindowStyle Hidden -PassThru; "
+                "$p.WaitForExit(); $p.Refresh(); "
+                "if ($p.ExitCode -ne 7) { exit 1 }",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
 
     def test_optional_windows_theme_api_is_guarded(self):
         source = read_text("sync_windows_agent/windows/runner/win32_window.cpp")
