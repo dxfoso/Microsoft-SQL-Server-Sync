@@ -6210,7 +6210,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       );
     }
 
-    final syncColumns = columnAssessment.writableColumns;
+    final syncColumns = filterApplicationMaintainedSyncColumns(
+      table: tableParts.table,
+      columns: columnAssessment.writableColumns,
+    );
     if (syncColumns.isEmpty) {
       throw Exception(
         'Table ${tableParts.schema}.${tableParts.table} has no writable columns to sync.',
@@ -6533,8 +6536,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
 
     final availableColumns = {
-      for (final column in columnDefinitions.where(
-        (column) => column.isWritable,
+      for (final column in filterApplicationMaintainedSyncColumns(
+        table: targetTable.table,
+        columns: columnDefinitions.where((column) => column.isWritable),
       ))
         column.name: column,
     };
@@ -8732,7 +8736,10 @@ ORDER BY r.display_name;
         schema: parts.schema,
         table: parts.table,
       );
-      final writableColumns = assessSqlSyncColumns(definitions).writableColumns;
+      final writableColumns = filterApplicationMaintainedSyncColumns(
+        table: parts.table,
+        columns: assessSqlSyncColumns(definitions).writableColumns,
+      );
       final primaryKeyColumns = await _queryPrimaryKeyColumns(
         profile: profile,
         database: database,

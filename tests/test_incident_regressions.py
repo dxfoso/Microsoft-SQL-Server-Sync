@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 143)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 144)}
         observed_ids = set()
 
         for row in rows:
@@ -939,6 +939,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("complete: false", agent)
         self.assertIn("complete: true", agent)
         self.assertIn("Download support report", frontend)
+
+    def test_ac000_application_aggregates_remain_client_local(self):
+        schema = read_text("sync_windows_agent/lib/sql_sync_schema.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("filterApplicationMaintainedSyncColumns", schema)
+        self.assertIn("localTable != 'ac000'", schema)
+        self.assertIn("{'debit', 'credit', 'useflag'}", schema)
+        self.assertEqual(agent.count("filterApplicationMaintainedSyncColumns("), 3)
 
 
 if __name__ == "__main__":

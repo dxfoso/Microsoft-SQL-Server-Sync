@@ -65,6 +65,106 @@ void main() {
     expect(assessment.writableColumns.single.isIdentity, isTrue);
   });
 
+  test('ac000 volatile aggregate columns remain local', () {
+    SqlSyncColumnDefinition column(String name) => SqlSyncColumnDefinition(
+      name: name,
+      sqlType: 'float',
+      maxLength: 8,
+      precision: 53,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+
+    final filtered = filterApplicationMaintainedSyncColumns(
+      table: 'dbo.AC000',
+      columns: [
+        column('GUID'),
+        column('Name'),
+        column('Debit'),
+        column('Credit'),
+        column('UseFlag'),
+        column('InitDebit'),
+        column('InitCredit'),
+      ],
+    );
+
+    expect(filtered.map((item) => item.name), [
+      'GUID',
+      'Name',
+      'InitDebit',
+      'InitCredit',
+    ]);
+  });
+
+  test('application-maintained filter does not change other tables', () {
+    final columns = [
+      const SqlSyncColumnDefinition(
+        name: 'Debit',
+        sqlType: 'float',
+        maxLength: 8,
+        precision: 53,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+
+    expect(
+      filterApplicationMaintainedSyncColumns(
+        table: 'dbo.en000',
+        columns: columns,
+      ),
+      equals(columns),
+    );
+  });
+
+  test('three clients keep ac000 aggregate caches local', () {
+    SqlSyncColumnDefinition column(String name) => SqlSyncColumnDefinition(
+      name: name,
+      sqlType: name == 'Name' ? 'nvarchar' : 'float',
+      maxLength: name == 'Name' ? 100 : 8,
+      precision: name == 'Name' ? 0 : 53,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+
+    final synchronizedNames = filterApplicationMaintainedSyncColumns(
+      table: 'ac000',
+      columns: [
+        column('GUID'),
+        column('Name'),
+        column('Debit'),
+        column('Credit'),
+        column('UseFlag'),
+        column('InitDebit'),
+      ],
+    ).map((item) => item.name).toList(growable: false);
+
+    Map<String, Object> projection(Map<String, Object> row) => {
+      for (final name in synchronizedNames) name: row[name]!,
+    };
+
+    final velvet = {
+      'GUID': 'account-121006',
+      'Name': 'shared account',
+      'Debit': 3373000,
+      'Credit': 19000,
+      'UseFlag': 55,
+      'InitDebit': 0,
+    };
+    final alshallan = {...velvet, 'Debit': 2044000, 'UseFlag': 49};
+    final offlinePeer = {...velvet, 'Debit': 0, 'Credit': 0, 'UseFlag': 0};
+
+    expect(projection(velvet), projection(alshallan));
+    expect(projection(alshallan), projection(offlinePeer));
+    expect(
+      synchronizedNames,
+      isNot(containsAll(['Debit', 'Credit', 'UseFlag'])),
+    );
+  });
+
   test('text and XML columns use code-page-independent hex transport', () {
     SqlSyncColumnDefinition column(String sqlType) => SqlSyncColumnDefinition(
       name: 'Value',
