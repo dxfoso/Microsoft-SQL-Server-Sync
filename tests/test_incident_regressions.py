@@ -52,7 +52,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("quadratic amplification", incident)
         self.assertIn("retention or archival semantics", incident)
         self.assertIn("targeted class-level `history minimal`", incident)
-        self.assertIn("90-day/1,000,000-entry bound", incident)
+        self.assertIn("7-day/100,000-entry bound", incident)
 
         control_plane = read_text("business/control_plane.tru")
         config = read_text("business/tru.json")
@@ -70,8 +70,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "bounded_table_relationships(database, tableRelationships, resolvedClientName, false)",
             control_plane,
         )
-        self.assertIn("retentionDays: 90", values)
-        self.assertIn("maxEntries: 1000000", values)
+        self.assertIn("retentionDays: 7", values)
+        self.assertIn("maxEntries: 100000", values)
         self.assertIn("DELETE FROM tru_history", maintenance)
         self.assertIn("VACUUM (ANALYZE) tru_history", maintenance)
 
@@ -82,8 +82,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )
 
         self.assertIn('schedule: "17 3 * * *"', values)
-        self.assertIn("retentionDays: 90", values)
-        self.assertIn("maxEntries: 1000000", values)
+        self.assertIn("retentionDays: 7", values)
+        self.assertIn("maxEntries: 100000", values)
         self.assertIn("concurrencyPolicy: Forbid", template)
         self.assertIn("activeDeadlineSeconds:", template)
         self.assertIn("secretKeyRef:", template)

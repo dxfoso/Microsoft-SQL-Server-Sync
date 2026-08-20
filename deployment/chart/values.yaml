@@ -92,8 +92,8 @@ autoScheduler:
 historyMaintenance:
   enabled: true
   schedule: "17 3 * * *"
-  retentionDays: 90
-  maxEntries: 1000000
+  retentionDays: 7
+  maxEntries: 100000
   activeDeadlineSeconds: 900
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

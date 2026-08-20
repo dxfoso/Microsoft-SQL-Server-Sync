@@ -180,8 +180,8 @@ class ChartContractsTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('schedule: "17 3 * * *"', values_yaml)
-        self.assertIn("retentionDays: 90", values_yaml)
-        self.assertIn("maxEntries: 1000000", values_yaml)
+        self.assertIn("retentionDays: 7", values_yaml)
+        self.assertIn("maxEntries: 100000", values_yaml)
         self.assertIn("concurrencyPolicy: Forbid", maintenance)
         self.assertIn("activeDeadlineSeconds:", maintenance)
         self.assertIn("POSTGRES_PASSWORD", maintenance)
