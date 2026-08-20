@@ -89,6 +89,16 @@ autoScheduler:
   failedJobsHistoryLimit: 0
   backoffLimit: 0
 
+historyMaintenance:
+  enabled: true
+  schedule: "17 3 * * *"
+  retentionDays: 90
+  maxEntries: 1000000
+  activeDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 1
+
 postgres:
   enabled: true
   image: docker.io/library/postgres:16-alpine

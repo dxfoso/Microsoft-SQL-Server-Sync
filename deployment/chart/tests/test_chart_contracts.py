@@ -173,6 +173,24 @@ class ChartContractsTests(unittest.TestCase):
         self.assertIn("sync-admin-web.postgresSecretName", helpers)
         self.assertNotIn("sync-admin-web.adminSecretName", helpers)
 
+    def test_history_maintenance_is_bounded_secret_backed_and_scheduled(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        maintenance = (
+            ROOT / "templates" / "history-maintenance-cronjob.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('schedule: "17 3 * * *"', values_yaml)
+        self.assertIn("retentionDays: 90", values_yaml)
+        self.assertIn("maxEntries: 1000000", values_yaml)
+        self.assertIn("concurrencyPolicy: Forbid", maintenance)
+        self.assertIn("activeDeadlineSeconds:", maintenance)
+        self.assertIn("POSTGRES_PASSWORD", maintenance)
+        self.assertIn('CREATE INDEX IF NOT EXISTS tru_history_timestamp_idx', maintenance)
+        self.assertIn("history.timestamp < bounds.oldest_timestamp", maintenance)
+        self.assertIn("bounds.max_seq - {{ .Values.historyMaintenance.maxEntries }}", maintenance)
+        self.assertIn("VACUUM (ANALYZE) tru_history", maintenance)
+        self.assertNotIn("TRUNCATE", maintenance)
+
     def test_chart_removes_legacy_postgres_compat_job(self):
         self.assertFalse(
             (ROOT / "templates" / "postgres-compat-migration-job.yaml").exists()

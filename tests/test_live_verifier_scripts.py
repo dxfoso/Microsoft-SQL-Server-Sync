@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import os
 import pathlib
 import sys
 import unittest
@@ -21,6 +22,17 @@ def load_script_module(name: str, relative_path: str):
 
 
 class LiveVerifierScriptsTests(unittest.TestCase):
+    def setUp(self):
+        self._credential_environment = mock.patch.dict(
+            os.environ,
+            {
+                "SQL_SYNC_ADMIN_USERNAME": "isolated-test-admin",
+                "SQL_SYNC_ADMIN_PASSWORD": "isolated-test-password",
+            },
+        )
+        self._credential_environment.start()
+        self.addCleanup(self._credential_environment.stop)
+
     def test_client_update_read_retries_direct_windows_connection_reset(self):
         verifier = load_script_module(
             "verify_live_client_update_direct_reset_script",
@@ -2264,6 +2276,8 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         argv = sys.argv
         sys.argv = [
             "verify_live_clients_state.py",
+            "--expected-version",
+            "1.0.282+286",
             "--expect-commit",
             "commit-expected",
         ]

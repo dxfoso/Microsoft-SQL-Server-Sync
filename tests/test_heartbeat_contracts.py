@@ -36,6 +36,29 @@ class HeartbeatContractsTests(unittest.TestCase):
         self.assertIn("const lightweightHeartbeatChanged = lightweight_agent_heartbeat_state_changed(", heartbeat_body)
         self.assertIn("lastHeartbeat: now_iso(),", heartbeat_body)
 
+    def test_relationship_timestamps_are_stable_when_client_omits_them(self):
+        control_plane = read_text("business/control_plane.tru")
+        normalizer = control_plane.split(
+            "function normalized_table_dependency_payload(", 1
+        )[1].split("function bounded_table_relationships(", 1)[0]
+        bounded = control_plane.split("function bounded_table_relationships(", 1)[1].split(
+            "function table_dependency_payloads_for_database(", 1
+        )[0]
+
+        self.assertIn("updatedAt: string = ''", normalizer)
+        self.assertIn("stampMissingUpdatedAt: bool = true", normalizer)
+        self.assertIn("if (normalizedUpdatedAt.length == 0 && stampMissingUpdatedAt)", normalizer)
+        self.assertIn("updatedAt: normalizedUpdatedAt", normalizer)
+        self.assertIn("string.from(relationship.updatedAt ?? '')", bounded)
+        self.assertIn("stampMissingUpdatedAt", bounded)
+        heartbeat = control_plane.split("function agents_heartbeat(", 1)[1].split(
+            "function begin_manual_sync_operation(", 1
+        )[0]
+        self.assertIn(
+            "bounded_table_relationships(database, tableRelationships, resolvedClientName, false)",
+            heartbeat,
+        )
+
     def test_public_client_status_is_server_owned_and_ready_is_terminal(self):
         control_plane = read_text("business/control_plane.tru")
         frontend_models = read_text("frontend/lib/models.dart")

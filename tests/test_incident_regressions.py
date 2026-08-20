@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 133)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 140)}
         observed_ids = set()
 
         for row in rows:
@@ -36,6 +36,103 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
                     self.assertIn(selector, source, f"{incident_id}: missing {reference}")
 
         self.assertEqual(observed_ids, expected_ids)
+
+    def test_unbounded_history_disk_incident_has_bounded_regression_fix(self):
+        document = ISSUES.read_text(encoding="utf-8")
+        incident = next(
+            line for line in document.splitlines() if line.startswith("| INC-133 |")
+        )
+
+        self.assertIn("FreeDiskSpaceFailed", incident)
+        self.assertIn("public.tru_history", incident)
+        self.assertIn("unbounded default `full` audit history", incident)
+        self.assertIn("persists after 10 seconds", incident)
+        self.assertIn("updatedAt: now_iso()", incident)
+        self.assertIn("quadratic amplification", incident)
+        self.assertIn("retention or archival semantics", incident)
+        self.assertIn("targeted class-level `history minimal`", incident)
+        self.assertIn("90-day/1,000,000-entry bound", incident)
+
+        control_plane = read_text("business/control_plane.tru")
+        config = read_text("business/tru.json")
+        maintenance = read_text(
+            "deployment/chart/templates/history-maintenance-cronjob.yaml"
+        )
+        values = read_text("deployment/chart/values.yaml")
+        self.assertIn("class Agent {\n  history minimal", control_plane)
+        self.assertIn("class UploadSession {\n  history minimal", control_plane)
+        self.assertIn("class DownloadSession {\n  history minimal", control_plane)
+        self.assertNotIn('"historyMode": "minimal"', config)
+        self.assertIn("updatedAt: normalizedUpdatedAt", control_plane)
+        self.assertIn("string.from(relationship.updatedAt ?? '')", control_plane)
+        self.assertIn(
+            "bounded_table_relationships(database, tableRelationships, resolvedClientName, false)",
+            control_plane,
+        )
+        self.assertIn("retentionDays: 90", values)
+        self.assertIn("maxEntries: 1000000", values)
+        self.assertIn("DELETE FROM tru_history", maintenance)
+        self.assertIn("VACUUM (ANALYZE) tru_history", maintenance)
+
+    def test_history_maintenance_is_bounded_secret_backed_and_scheduled(self):
+        values = read_text("deployment/chart/values.yaml")
+        template = read_text(
+            "deployment/chart/templates/history-maintenance-cronjob.yaml"
+        )
+
+        self.assertIn('schedule: "17 3 * * *"', values)
+        self.assertIn("retentionDays: 90", values)
+        self.assertIn("maxEntries: 1000000", values)
+        self.assertIn("concurrencyPolicy: Forbid", template)
+        self.assertIn("activeDeadlineSeconds:", template)
+        self.assertIn("secretKeyRef:", template)
+        self.assertIn("DELETE FROM tru_history", template)
+        self.assertIn("VACUUM (ANALYZE) tru_history", template)
+
+    def test_production_builder_requires_root_and_submodule_commits_on_remote(self):
+        builder = read_text("scripts/build_production_images.ps1")
+        preflight = builder.split("function Assert-CommitAvailableOnRemote", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+
+        self.assertIn("git -C $RepositoryPath fetch --quiet origin master", preflight)
+        self.assertIn("merge-base --is-ancestor $Commit origin/master", preflight)
+        self.assertIn("force-pushing is not allowed", preflight)
+        self.assertIn("-RepositoryPath $backendRepo -Commit $backendCommit", builder)
+        self.assertIn("-RepositoryPath $repoRoot -Commit $commit", builder)
+
+    def test_live_verifier_unit_harness_injects_fake_runtime_credentials(self):
+        source = read_text("tests/test_live_verifier_scripts.py")
+
+        setup = source.split("class LiveVerifierScriptsTests", 1)[1].split(
+            "def test_client_update_read_retries", 1
+        )[0]
+        self.assertIn('"SQL_SYNC_ADMIN_USERNAME": "isolated-test-admin"', setup)
+        self.assertIn('"SQL_SYNC_ADMIN_PASSWORD": "isolated-test-password"', setup)
+        self.assertIn("self.addCleanup(self._credential_environment.stop)", setup)
+
+    def test_client_state_commit_fixture_supplies_unrelated_version_prerequisite(self):
+        source = read_text("tests/test_live_verifier_scripts.py")
+        body = source.split(
+            "def test_clients_state_main_returns_commit_mismatch_code", 1
+        )[1].split("def test_clients_state_run_cli_converts_api_error", 1)[0]
+
+        self.assertIn('"--expected-version"', body)
+        self.assertIn('"1.0.282+286"', body)
+        self.assertIn('"--expect-commit"', body)
+        self.assertIn("self.assertEqual(exit_code, 2)", body)
+
+    def test_hidden_standard_launcher_refreshes_exit_code_after_wait(self):
+        launcher = read_text("tests/run_local_test_standard.ps1")
+        wait_block = launcher.split("Wait-Process -Id $childProcess.Id", 1)[1].split(
+            "$statusPath =", 1
+        )[0]
+
+        self.assertIn("$childProcess.Refresh()", wait_block)
+        self.assertLess(
+            wait_block.index("$childProcess.Refresh()"),
+            wait_block.index("$exitCode = $childProcess.ExitCode"),
+        )
 
     def test_optional_windows_theme_api_is_guarded(self):
         source = read_text("sync_windows_agent/windows/runner/win32_window.cpp")

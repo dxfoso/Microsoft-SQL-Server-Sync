@@ -29,6 +29,7 @@ class Session {
 }
 
 class Agent {
+  history minimal
   field clientName: string min=1 max=128
   field machineName: string min=0 max=128
   field server: string min=0 max=256
@@ -248,6 +249,7 @@ class SyncRowWinner {
 }
 
 class UploadSession {
+  history minimal
   field id: string min=1 max=64
   field jobId: string min=1 max=64
   field uploadId: string min=1 max=128
@@ -265,6 +267,7 @@ class UploadSession {
 }
 
 class DownloadSession {
+  history minimal
   field id: string min=1 max=64
   field jobId: string min=1 max=64
   field snapshotId: string min=1 max=64
@@ -820,7 +823,7 @@ function table_dependency_sync_key(database: string, table: string): string {
   return string.concat(databaseName, kSyncTableKeySeparator(), localTable);
 }
 
-function normalized_table_dependency_payload(database: string = '', table: string, relatedTable: string, relationshipType: string = 'business', updatedByClientName: string = ''): map<json>? {
+function normalized_table_dependency_payload(database: string = '', table: string, relatedTable: string, relationshipType: string = 'business', updatedByClientName: string = '', updatedAt: string = '', stampMissingUpdatedAt: bool = true): map<json>? {
   const databaseName = database.trim();
   const tableRef = sync_table_reference(table);
   const relatedRef = sync_table_reference(relatedTable);
@@ -837,16 +840,20 @@ function normalized_table_dependency_payload(database: string = '', table: strin
     return null;
   }
   const normalizedType = relationshipType.trim().length == 0 ? 'business' : relationshipType.trim();
+  let normalizedUpdatedAt = updatedAt.trim();
+  if (normalizedUpdatedAt.length == 0 && stampMissingUpdatedAt) {
+    normalizedUpdatedAt = now_iso();
+  }
   return {
     table: table_dependency_sync_key(resolvedDatabase, tableName),
     relatedTable: table_dependency_sync_key(resolvedDatabase, relatedTableName),
     relationshipType: normalizedType,
-    updatedAt: now_iso(),
+    updatedAt: normalizedUpdatedAt,
     updatedByClientName
   };
 }
 
-function bounded_table_relationships(database: string = '', relationships: array<json>? = null, updatedByClientName: string = ''): array<json> {
+function bounded_table_relationships(database: string = '', relationships: array<json>? = null, updatedByClientName: string = '', stampMissingUpdatedAt: bool = true): array<json> {
   if (relationships == null || relationships.length == 0) {
     return [];
   }
@@ -863,7 +870,9 @@ function bounded_table_relationships(database: string = '', relationships: array
       tableName,
       relatedTableName,
       relationshipType.length == 0 ? 'business' : relationshipType,
-      updatedByClientName
+      updatedByClientName,
+      string.from(relationship.updatedAt ?? ''),
+      stampMissingUpdatedAt
     );
   }).filter((relationship) => {
     if (relationship == null || acceptedCount >= 1000) {
@@ -6179,7 +6188,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   if (tables != null) {
     nextTables = tables;
   }
-  const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName);
+  const nextTableRelationships = bounded_table_relationships(database, tableRelationships, resolvedClientName, false);
   nextTables = bounded_heartbeat_tables(nextTables, selectedTable, database);
   const tablesChanged = json_payload_changed(agent.tables, nextTables);
   const relationshipsChanged = json_payload_changed(agent.tableRelationships, nextTableRelationships);

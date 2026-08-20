@@ -17,6 +17,11 @@ if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
 }
 $commitDate = (& git -C $repoRoot show -s --format=%cI $commit).Trim()
 $commitMessage = (& git -C $repoRoot show -s --format=%s $commit).Trim()
+$backendRepo = Join-Path $repoRoot 'backend'
+$backendCommit = (& git -C $backendRepo rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $backendCommit -notmatch '^[0-9a-f]{40}$') {
+    throw 'Unable to resolve the exact backend submodule commit for production images.'
+}
 $releaseDate = [DateTime]::UtcNow.ToString('o')
 $backendImage = "$RegistryRoot/backend:$commit"
 $frontendImage = "$RegistryRoot/frontend:$commit"
@@ -81,7 +86,26 @@ function Assert-RegistryAccessBeforeBuild {
     }
 }
 
+function Assert-CommitAvailableOnRemote {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepositoryPath,
+        [Parameter(Mandatory = $true)][string] $Commit,
+        [Parameter(Mandatory = $true)][string] $Label
+    )
+
+    & git -C $RepositoryPath fetch --quiet origin master
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to refresh origin/master for $Label before the production build."
+    }
+    & git -C $RepositoryPath merge-base --is-ancestor $Commit origin/master
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label commit $Commit is not available on origin/master. Push or safely rebase it before building production images; force-pushing is not allowed."
+    }
+}
+
 try {
+    Assert-CommitAvailableOnRemote -RepositoryPath $backendRepo -Commit $backendCommit -Label 'backend submodule'
+    Assert-CommitAvailableOnRemote -RepositoryPath $repoRoot -Commit $commit -Label 'root repository'
     if (-not $SkipPush) {
         if ([string]::IsNullOrWhiteSpace($RegistryAccessProbeTag)) {
             throw 'RegistryAccessProbeTag must name a known existing immutable tag when push is enabled; do not assume a mutable dev/latest tag exists.'

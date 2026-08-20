@@ -77,6 +77,7 @@ Set-Content -LiteralPath (Join-Path $resultsRoot 'launcher.pid') -Value $childPr
 
 try {
     Wait-Process -Id $childProcess.Id
+    $childProcess.Refresh()
     $exitCode = $childProcess.ExitCode
 }
 finally {

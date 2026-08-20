@@ -1,0 +1,85 @@
+{{- if and .Values.postgres.enabled .Values.historyMaintenance.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "sync-admin-web.componentFullname" (list . "history-maintenance") }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.historyMaintenance.schedule | quote }}
+  suspend: false
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.historyMaintenance.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.historyMaintenance.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.historyMaintenance.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.historyMaintenance.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "sync-admin-web.labels" . | nindent 12 }}
+            app.kubernetes.io/component: history-maintenance
+        spec:
+          restartPolicy: Never
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: prune-history
+              image: {{ .Values.postgres.image | quote }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: {{ include "sync-admin-web.postgresFullname" . | quote }}
+                - name: PGPORT
+                  value: {{ .Values.postgres.service.port | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.postgres.database | quote }}
+                - name: PGUSER
+                  value: {{ .Values.postgres.username | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "sync-admin-web.postgresSecretName" . }}
+                      key: POSTGRES_PASSWORD
+              command:
+                - /bin/sh
+                - -ec
+              args:
+                - |
+                  psql -v ON_ERROR_STOP=1 <<'SQL'
+                  SET lock_timeout = '30s';
+                  SET statement_timeout = '12min';
+                  CREATE INDEX IF NOT EXISTS tru_history_timestamp_idx ON tru_history (timestamp);
+                  SELECT count(*) AS history_rows_before,
+                         pg_size_pretty(pg_total_relation_size('tru_history')) AS history_size_before
+                    FROM tru_history;
+                  WITH bounds AS (
+                    SELECT COALESCE(MAX(seq), 0) AS max_seq,
+                           to_char(
+                             (current_timestamp AT TIME ZONE 'UTC') - make_interval(days => {{ .Values.historyMaintenance.retentionDays }}),
+                             'YYYY-MM-DD"T"HH24:MI:SS'
+                           ) AS oldest_timestamp
+                      FROM tru_history
+                  )
+                  DELETE FROM tru_history history
+                   USING bounds
+                   WHERE history.timestamp < bounds.oldest_timestamp
+                      OR history.seq <= GREATEST(bounds.max_seq - {{ .Values.historyMaintenance.maxEntries }}, 0);
+                  VACUUM (ANALYZE) tru_history;
+                  SELECT count(*) AS history_rows_after,
+                         pg_size_pretty(pg_total_relation_size('tru_history')) AS history_size_after
+                    FROM tru_history;
+                  SQL
+{{- end }}
