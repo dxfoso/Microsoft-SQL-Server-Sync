@@ -8589,6 +8589,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       let accepted = true;
       let currentWinner = null;
       let matchesDurableWinnerContent = false;
+      let reassertsDurableTombstone = false;
       if (winnerPolicyApplied) {
         accepted = operationId.length == 64;
         const operation = string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase();
@@ -8603,6 +8604,11 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         if (currentWinner == null) {
           currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
         }
+        reassertsDurableTombstone =
+          multiClientUnionBootstrap &&
+          operation != 'D' &&
+          currentWinner != null &&
+          string.from(currentWinner.operation).trim().toUpperCase() == 'D';
         let logicalWinnerRefs = [];
         if (operation == 'D' && currentWinner != null) {
           for (const logicalWinnerId of currentWinner.logicalWinnerIds ?? []) {
@@ -8646,7 +8652,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           operation != 'D' &&
           string.from(currentWinner.operation).trim().toUpperCase() != 'D';
         let relevantWinnerRefs = [{ id: winnerId, identityKey }].concat(logicalWinnerRefs);
-        if (accepted && !matchesDurableWinnerContent) {
+        if (accepted && !matchesDurableWinnerContent && !reassertsDurableTombstone) {
           for (const winnerRef of relevantWinnerRefs) {
             let relevantWinner = sync_row_winner_find_by_id(
               pendingWinners,
@@ -8674,6 +8680,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         }
         if (accepted &&
             !matchesDurableWinnerContent &&
+            !reassertsDurableTombstone &&
             (currentWinner == null || string.from(currentWinner.operationId) != operationId)) {
           const logicalWinnerIds = logicalWinnerRefs.map((value) => string.from(value.id));
           for (const winnerRef of relevantWinnerRefs) {
@@ -8775,13 +8782,30 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       }
       if (accepted) {
         let durableOperationId = operationId;
+        let authoritativeModifiedAtUtc = sync_row_effective_modified_at(
+          incomingRow,
+          string.from(serverReceivedAt)
+        );
+        let authoritativeOperation = string.from(
+          incomingRow.__sync_op ?? 'S'
+        ).trim().toUpperCase();
+        if (reassertsDurableTombstone && currentWinner != null) {
+          // A complete snapshot never creates a delete. When it reports a
+          // zombie row that is already covered by a durable explicit
+          // tombstone, relay that existing tombstone back to every
+          // participant. This repairs a client that retained or historically
+          // reacquired the row without inferring deletion from absence.
+          durableOperationId = string.from(currentWinner.operationId).trim();
+          authoritativeModifiedAtUtc = string.from(
+            currentWinner.modifiedAtUtc ?? authoritativeModifiedAtUtc
+          ).trim();
+          authoritativeOperation = 'D';
+        }
         acceptedOperationIds = acceptedOperationIds.concat([{
           operationId,
           durableOperationId,
-          authoritativeModifiedAtUtc: sync_row_effective_modified_at(
-            incomingRow,
-            string.from(serverReceivedAt)
-          )
+          authoritativeModifiedAtUtc,
+          authoritativeOperation
         }]);
         acceptedRows = acceptedRows.concat([incomingRow]);
       }
@@ -8944,7 +8968,10 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
               durableOperationId,
               authoritativeModifiedAtUtc: string.from(
                 acceptedRow.authoritativeModifiedAtUtc ?? ''
-              ).trim()
+              ).trim(),
+              authoritativeOperation: string.from(
+                acceptedRow.authoritativeOperation ?? ''
+              ).trim().toUpperCase()
             }]);
           }
         }
@@ -8964,7 +8991,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
         operationId: { in: candidateDurableOperationIds }
       },
       orderBy: { field: 'id', dir: 'asc' },
-      fields: ['operationId', 'modifiedAtUtc'],
+      fields: ['operationId', 'modifiedAtUtc', 'operation'],
       limit: 500
     });
     let durableWinnerOperationIds = [];
@@ -8986,17 +9013,24 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
         let authoritativeModifiedAtUtc = string.from(
           candidateOperation.authoritativeModifiedAtUtc ?? ''
         ).trim();
+        let authoritativeOperation = string.from(
+          candidateOperation.authoritativeOperation ?? ''
+        ).trim().toUpperCase();
         for (const durableWinner of durableWinners) {
           if (string.from(durableWinner.operationId).trim() == durableOperationId) {
             authoritativeModifiedAtUtc = string.from(
               durableWinner.modifiedAtUtc ?? authoritativeModifiedAtUtc
             ).trim();
+            authoritativeOperation = string.from(
+              durableWinner.operation ?? authoritativeOperation
+            ).trim().toUpperCase();
           }
         }
         acceptedOperationIds = acceptedOperationIds.concat([operationId]);
         acceptedOperations = acceptedOperations.concat([{
           operationId,
-          authoritativeModifiedAtUtc
+          authoritativeModifiedAtUtc,
+          authoritativeOperation
         }]);
       }
     }

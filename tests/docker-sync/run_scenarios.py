@@ -1414,6 +1414,13 @@ def run_scenarios():
             "A stale full-union row outranked a durable delete: "
             f"{stale_bootstrap_vs_delete}"
         )
+    apply(DATABASES[0], rows=[row(914, "ZOMBIE-AFTER-DELETE", "Must be re-deleted")])
+    for database in DATABASES:
+        apply(database, rows=stale_bootstrap_vs_delete)
+        if scalar_int(database, "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = 914;") != 0:
+            raise AssertionError(
+                f"Durable tombstone did not remove a zombie full row from {database}."
+            )
     for database in DATABASES:
         apply(database, rows=initial_union)
     assert_equal(*DATABASES)
@@ -1846,6 +1853,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "lossless-float-real-9999999-capture-roundtrip",
             "initial-three-client-primary-key-union-bootstrap",
             "full-union-does-not-resurrect-durable-delete",
+            "durable-delete-reasserts-against-zombie-full-row",
             "independent-multi-writer",
             "offline-peer-online-continuity-and-reconnect-catch-up",
             "latest-unique-business-key-winner-atomic-replacement",

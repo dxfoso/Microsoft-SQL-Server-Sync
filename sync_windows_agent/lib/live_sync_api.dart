@@ -1470,6 +1470,7 @@ class AgentControlPlaneClient {
               .where((value) => value.isNotEmpty)
               .toSet();
       final authoritativeModifiedAtByOperation = <String, String>{};
+      final authoritativeOperationByOperation = <String, String>{};
       for (final value
           in snapshotPayload['acceptedOperations'] as List<dynamic>? ??
               const <dynamic>[]) {
@@ -1479,8 +1480,16 @@ class AgentControlPlaneClient {
         final operationId = value['operationId']?.toString() ?? '';
         final modifiedAtUtc =
             value['authoritativeModifiedAtUtc']?.toString() ?? '';
+        final authoritativeOperation =
+            value['authoritativeOperation']?.toString().trim().toUpperCase() ??
+            '';
         if (operationId.isNotEmpty && modifiedAtUtc.isNotEmpty) {
           authoritativeModifiedAtByOperation[operationId] = modifiedAtUtc;
+          acceptedOperationIds.add(operationId);
+        }
+        if (operationId.isNotEmpty && authoritativeOperation.isNotEmpty) {
+          authoritativeOperationByOperation[operationId] =
+              authoritativeOperation;
           acceptedOperationIds.add(operationId);
         }
       }
@@ -1502,10 +1511,14 @@ class AgentControlPlaneClient {
             final operationId = row['__sync_operation_id']?.trim() ?? '';
             final authoritativeModifiedAtUtc =
                 authoritativeModifiedAtByOperation[operationId];
+            final authoritativeOperation =
+                authoritativeOperationByOperation[operationId];
             return <String, String?>{
               ...row,
               if (authoritativeModifiedAtUtc != null)
                 '__sync_modified_at_utc': authoritativeModifiedAtUtc,
+              if (authoritativeOperation != null)
+                '__sync_op': authoritativeOperation,
               if (serverReceivedAtUtc.isNotEmpty)
                 '__sync_server_received_at_utc': serverReceivedAtUtc,
               if (serverSequence.isNotEmpty)

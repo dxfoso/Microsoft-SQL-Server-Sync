@@ -2218,6 +2218,22 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("values: ['physical', physicalKey]", identity_body)
         self.assertNotIn("ParentGUID", identity_body)
 
+    def test_full_union_zombie_row_reasserts_existing_durable_tombstone(self):
+        source = read_text("business/control_plane.tru")
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+        download_body = source.split(
+            "function jobs_multi_writer_download(", 1
+        )[1].split("function jobs_upload_chunk(", 1)[0]
+
+        self.assertIn("let reassertsDurableTombstone = false", upload_body)
+        self.assertIn("multiClientUnionBootstrap &&", upload_body)
+        self.assertIn("currentWinner.operation).trim().toUpperCase() == 'D'", upload_body)
+        self.assertIn("authoritativeOperation = 'D'", upload_body)
+        self.assertIn("durableOperationId = string.from(currentWinner.operationId)", upload_body)
+        self.assertIn("authoritativeOperation", download_body)
+
     def test_table_row_comparison_is_scoped_read_only_and_multi_client(self):
         source = read_text("business/control_plane.tru")
         request_body = source.split(

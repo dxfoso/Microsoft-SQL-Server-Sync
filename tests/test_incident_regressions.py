@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 144)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 145)}
         observed_ids = set()
 
         for row in rows:
@@ -940,14 +940,25 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("complete: true", agent)
         self.assertIn("Download support report", frontend)
 
-    def test_ac000_application_aggregates_remain_client_local(self):
+    def test_ac000_columns_remain_schema_discovered_and_synchronized(self):
         schema = read_text("sync_windows_agent/lib/sql_sync_schema.dart")
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
 
-        self.assertIn("filterApplicationMaintainedSyncColumns", schema)
-        self.assertIn("localTable != 'ac000'", schema)
-        self.assertIn("{'debit', 'credit', 'useflag'}", schema)
-        self.assertEqual(agent.count("filterApplicationMaintainedSyncColumns("), 3)
+        self.assertNotIn("filterApplicationMaintainedSyncColumns", schema)
+        self.assertNotIn("filterApplicationMaintainedSyncColumns", agent)
+        self.assertIn("final syncColumns = columnAssessment.writableColumns", agent)
+        self.assertIn("columnDefinitions.where(", agent)
+        self.assertIn("(column) => column.isWritable", agent)
+
+    def test_durable_tombstone_reasserts_against_zombie_snapshot_row(self):
+        backend = read_text("business/control_plane.tru")
+        client = read_text("sync_windows_agent/lib/live_sync_api.dart")
+
+        self.assertIn("reassertsDurableTombstone", backend)
+        self.assertIn("authoritativeOperation = 'D'", backend)
+        self.assertIn("durableOperationId = string.from(currentWinner.operationId)", backend)
+        self.assertIn("authoritativeOperationByOperation", client)
+        self.assertIn("'__sync_op': authoritativeOperation", client)
 
 
 if __name__ == "__main__":

@@ -216,29 +216,3 @@ SqlSyncColumnAssessment assessSqlSyncColumns(
         .toList(growable: false),
   );
 }
-
-/// Removes application-maintained cache columns that must remain local.
-///
-/// Al-Ameen recalculates these `ac000` fields independently from the ledger
-/// detail rows. Transporting them as canonical account-definition data makes
-/// whichever client uploads last overwrite another client's freshly computed
-/// totals. Identity, names, codes, opening balances, and all other account
-/// definition fields remain synchronized.
-List<SqlSyncColumnDefinition> filterApplicationMaintainedSyncColumns({
-  required String table,
-  required Iterable<SqlSyncColumnDefinition> columns,
-}) {
-  final normalizedTable = table.trim().toLowerCase();
-  final localTable = normalizedTable.split('.').last;
-  if (localTable != 'ac000') {
-    return List<SqlSyncColumnDefinition>.from(columns, growable: false);
-  }
-
-  const locallyMaintained = {'debit', 'credit', 'useflag'};
-  return columns
-      .where(
-        (column) =>
-            !locallyMaintained.contains(column.name.trim().toLowerCase()),
-      )
-      .toList(growable: false);
-}

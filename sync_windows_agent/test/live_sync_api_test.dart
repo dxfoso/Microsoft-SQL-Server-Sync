@@ -4072,13 +4072,18 @@ void main() {
   );
 
   test(
-    'multi-writer download removes operations rejected by durable server winner',
+    'multi-writer download reasserts durable tombstone over zombie full row',
     () async {
       final acceptedId = 'a' * 64;
       final rejectedId = 'b' * 64;
       final payloadBytes = utf8.encode(
         jsonEncode([
-          {'Id': '1', 'Name': 'newest', '__sync_operation_id': acceptedId},
+          {
+            'Id': '1',
+            'Name': 'zombie full row',
+            '__sync_op': 'S',
+            '__sync_operation_id': acceptedId,
+          },
           {
             'Id': '1',
             'Name': 'stale offline value',
@@ -4112,6 +4117,7 @@ void main() {
                     {
                       'operationId': acceptedId,
                       'authoritativeModifiedAtUtc': '2026-07-25T09:59:59.000Z',
+                      'authoritativeOperation': 'D',
                     },
                   ],
                   'rowCount': 1,
@@ -4141,7 +4147,8 @@ void main() {
       );
 
       expect(snapshot.rows, hasLength(1));
-      expect(snapshot.rows.single['Name'], 'newest');
+      expect(snapshot.rows.single['Name'], 'zombie full row');
+      expect(snapshot.rows.single['__sync_op'], 'D');
       expect(
         snapshot.rows.single['__sync_modified_at_utc'],
         '2026-07-25T09:59:59.000Z',
