@@ -268,7 +268,8 @@ class ChartContractsTests(unittest.TestCase):
         self.assertIn(".Values.backend.env.truMemoryCapMb", backend_deployment)
         self.assertIn("TRU_EXECUTION_MEMORY_MAX_BYTES", backend_deployment)
         self.assertIn(
-            ".Values.backend.env.truExecutionMemoryMaxBytes", backend_deployment
+            '.Values.backend.env.truExecutionMemoryMaxBytes | default "536870912"',
+            backend_deployment,
         )
         self.assertIn("TRU_WASM_TIMEOUT_MS", backend_deployment)
         self.assertIn(".Values.backend.env.truWasmTimeoutMs", backend_deployment)

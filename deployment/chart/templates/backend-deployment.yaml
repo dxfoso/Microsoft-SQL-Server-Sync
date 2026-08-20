@@ -77,7 +77,7 @@ spec:
             - name: TRU_MEMORY_CAP_MB
               value: {{ .Values.backend.env.truMemoryCapMb | quote }}
             - name: TRU_EXECUTION_MEMORY_MAX_BYTES
-              value: {{ .Values.backend.env.truExecutionMemoryMaxBytes | quote }}
+              value: {{ .Values.backend.env.truExecutionMemoryMaxBytes | default "536870912" | quote }}
             - name: TRU_WASM_TIMEOUT_MS
               value: {{ .Values.backend.env.truWasmTimeoutMs | quote }}
           resources:

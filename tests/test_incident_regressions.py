@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 142)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 143)}
         observed_ids = set()
 
         for row in rows:
@@ -89,6 +89,13 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("secretKeyRef:", template)
         self.assertIn("DELETE FROM tru_history", template)
         self.assertIn("VACUUM (ANALYZE) tru_history", template)
+
+    def test_backend_memory_limit_survives_helm_reuse_values(self):
+        deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
+        self.assertIn(
+            '.Values.backend.env.truExecutionMemoryMaxBytes | default "536870912"',
+            deployment,
+        )
 
     def test_production_builder_requires_root_and_submodule_commits_on_remote(self):
         builder = read_text("scripts/build_production_images.ps1")
