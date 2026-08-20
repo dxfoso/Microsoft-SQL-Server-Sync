@@ -81,7 +81,7 @@ function Assert-RegistryAccessBeforeBuild {
             $ErrorActionPreference = $previousErrorPreference
         }
         if ($probeExitCode -ne 0) {
-            throw "Production registry access preflight failed for $probeImage. Authenticate this Windows Docker client with 'docker login $($RepositoryRoot.Split('/')[0])' before building; no production image build or deployment was attempted."
+            throw "Production registry probe failed for $probeImage. Confirm that RegistryAccessProbeTag is the exact existing immutable tag and that this Windows Docker client is authenticated with 'docker login $($RepositoryRoot.Split('/')[0])'; no production image build or deployment was attempted."
         }
     }
 }

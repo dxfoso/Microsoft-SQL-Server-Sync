@@ -15,7 +15,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 140)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 141)}
         observed_ids = set()
 
         for row in rows:
@@ -100,6 +100,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("force-pushing is not allowed", preflight)
         self.assertIn("-RepositoryPath $backendRepo -Commit $backendCommit", builder)
         self.assertIn("-RepositoryPath $repoRoot -Commit $commit", builder)
+
+    def test_registry_probe_diagnostics_are_non_destructive_and_tag_aware(self):
+        scripts = [
+            read_text("scripts/build_production_images.ps1"),
+            read_text("scripts/deploy_production_images.ps1"),
+        ]
+        builder = scripts[0]
+
+        self.assertIn("RegistryAccessProbeTag is the exact existing immutable tag", builder)
+        self.assertIn("Windows Docker client is authenticated", builder)
+        for source in scripts:
+            self.assertNotIn("docker logout", source.lower())
 
     def test_live_verifier_unit_harness_injects_fake_runtime_credentials(self):
         source = read_text("tests/test_live_verifier_scripts.py")
