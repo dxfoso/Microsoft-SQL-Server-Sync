@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 145)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 146)}
         observed_ids = set()
 
         for row in rows:
@@ -959,6 +959,14 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("durableOperationId = string.from(currentWinner.operationId)", backend)
         self.assertIn("authoritativeOperationByOperation", client)
         self.assertIn("'__sync_op': authoritativeOperation", client)
+
+    def test_updater_rollback_log_read_retries_transient_file_sharing(self):
+        rollback_test = read_text("tests/test_windows_updater_rollback.ps1")
+
+        self.assertIn("function Read-UpdateLogWithRetry", rollback_test)
+        self.assertIn("catch [System.IO.IOException]", rollback_test)
+        self.assertIn("Start-Sleep -Milliseconds 50", rollback_test)
+        self.assertIn("Read-UpdateLogWithRetry -Path $logPath", rollback_test)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,21 @@ $functionAst = $ast.Find({
 if ($null -eq $functionAst) { throw 'Start-DeferredInstall was not found.' }
 Invoke-Expression $functionAst.Extent.Text
 
+function Read-UpdateLogWithRetry {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        if (-not (Test-Path -LiteralPath $Path)) { return '' }
+        try {
+            return Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+        }
+        catch [System.IO.IOException] {
+            if ($attempt -eq 10) { throw }
+            Start-Sleep -Milliseconds 50
+        }
+    }
+}
+
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sql-sync-updater-rollback-" + [guid]::NewGuid().ToString('N'))
 $installDir = Join-Path $testRoot 'install'
 $payloadDir = Join-Path $testRoot 'payload'
@@ -56,7 +71,7 @@ public static class Program {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         Start-Sleep -Milliseconds 200
-        $logText = if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Raw } else { '' }
+        $logText = Read-UpdateLogWithRetry -Path $logPath
     } while ($logText -notmatch 'Rollback files restored and verified' -and [DateTime]::UtcNow -lt $deadline)
 
     if ($logText -notmatch 'rolling back the complete managed-file change set') { throw 'Failed startup did not trigger rollback.' }
