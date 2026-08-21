@@ -93,10 +93,10 @@ function Assert-CommitAvailableOnRemote {
         [Parameter(Mandatory = $true)][string] $Label
     )
 
-    & git -C $RepositoryPath fetch --quiet origin master
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to refresh origin/master for $Label before the production build."
-    }
+    Invoke-NativeCheckedWithRetry `
+        -Description "Refreshing origin/master for $Label before the production build..." `
+        -Command { & git -C $RepositoryPath fetch --quiet origin master } `
+        -Attempts 3
     & git -C $RepositoryPath merge-base --is-ancestor $Commit origin/master
     if ($LASTEXITCODE -ne 0) {
         throw "$Label commit $Commit is not available on origin/master. Push or safely rebase it before building production images; force-pushing is not allowed."

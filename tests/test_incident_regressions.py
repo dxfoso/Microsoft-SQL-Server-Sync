@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 149)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 150)}
         observed_ids = set()
 
         for row in rows:
@@ -799,6 +799,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0",
             scheduler,
         )
+
+    def test_production_builder_retries_transient_remote_refresh(self):
+        builder = read_text("scripts/build_production_images.ps1")
+        remote_check = builder.split("function Assert-CommitAvailableOnRemote", 1)[1].split(
+            "try {", 1
+        )[0]
+
+        self.assertIn("Invoke-NativeCheckedWithRetry", remote_check)
+        self.assertIn("git -C $RepositoryPath fetch --quiet origin master", remote_check)
+        self.assertIn("-Attempts 3", remote_check)
+        self.assertIn("git -C $RepositoryPath merge-base --is-ancestor", remote_check)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")
