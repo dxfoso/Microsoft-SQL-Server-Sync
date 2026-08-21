@@ -9129,7 +9129,11 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   const canonicalFullMerge = unionBootstrapJob != null &&
     sync_source_is_union_bootstrap(string.from(unionBootstrapJob.sourceClientName));
   const storedChunkPage = db.page(SnapshotRecord, {
-    where: { sourceJobId: batch.id },
+    // Upload snapshots can contain thousands of rows while the durable winner
+    // register accepts only a handful. A zero-row relay record has no current
+    // operation that any subscriber may apply, so advancing the cursor across
+    // it would transfer an entire rejected/stale payload for no effect.
+    where: { sourceJobId: batch.id, rowCount: { gt: 0 } },
     // Normal protocol-v4 pages contain Change Tracking deltas. Initial union
     // bootstrap pages are the guarded exception: every participant uploads a
     // full snapshot before any participant is allowed to download.
@@ -9260,9 +9264,32 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       }
     }
   }
+  // Progress and immutable transfer identity describe relayable winner rows,
+  // not the raw inventory rows received from every union participant.
   let totalRowCount = batch.rows.length;
-  for (const receivedChunk of batch.receivedChunks) {
-    totalRowCount += int.from(receivedChunk.rowCount ?? 0);
+  if (batch.receivedChunks.length > 0) {
+    const relayTotals = db.aggregate(SnapshotRecord, {
+      where: { sourceJobId: batch.id, rowCount: { gt: 0 } },
+      select: [{ fn: 'sum', field: 'rowCount', as: 'rowCount' }]
+    });
+    totalRowCount = relayTotals.length == 0
+      ? 0
+      : int.from(relayTotals[0].rowCount ?? 0);
+  }
+  // A canonical union remains a complete, insert/update-only verification
+  // even when every stored upload chunk was safely pruned. Never let an empty
+  // optimized relay be interpreted as an ordinary delta or inferred delete.
+  if (canonicalFullMerge) {
+    chunkIsDelta = false;
+  }
+  const omitCurrentPayload = winnerPolicyApplied &&
+    storedChunks.length > 0 &&
+    chunkPayloadBase64.length != 0 &&
+    acceptedOperationIds.length == 0;
+  if (omitCurrentPayload) {
+    chunkRows = [];
+    chunkPayloadBase64 = '';
+    chunkPayloadEncoding = 'json';
   }
   const nextCursor = storedChunkPage.nextCursor;
   const done = nextCursor == null || string.from(nextCursor).trim().length == 0;
@@ -9277,7 +9304,7 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       : string.from(storedChunks[0].checksum),
     createdAt: batch.updatedAt,
     snapshotBytes: json.stringify(chunkRows).length,
-    compressedBytes: storedChunks.length == 0
+    compressedBytes: storedChunks.length == 0 || omitCurrentPayload
       ? 0
       : int.from(storedChunks[0].compressedBytes ?? 0),
     chunkCount: 0,
@@ -9312,6 +9339,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   if (chunkPayloadBase64.length != 0) {
     snapshot.rows = [];
     snapshot.snapshotBytes = int.from(storedChunks[0].snapshotBytes ?? 0);
+  } else if (omitCurrentPayload) {
+    snapshot.snapshotBytes = 0;
   }
   const transferManifestId = crypto.hash(json.stringify({
     version: 1,

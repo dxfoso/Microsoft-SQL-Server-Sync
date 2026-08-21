@@ -1618,7 +1618,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("payloadBase64", source)
         self.assertIn("payloadRowCount", source)
         self.assertIn("let incomingRowCount = incomingRows.length", source)
-        self.assertIn("where: { sourceJobId: batch.id }", source)
+        self.assertIn(
+            "where: { sourceJobId: batch.id, rowCount: { gt: 0 } }",
+            download_body,
+        )
         self.assertIn("rows: []", source)
         self.assertIn("rows: [],", source)
 
@@ -2373,6 +2376,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("_queryTableFingerprints", agent)
         self.assertIn("SqlSyncRangeFingerprintAccumulator", fingerprint)
         self.assertIn("kSqlSyncRangeBucketCount = 16", fingerprint)
+
+    def test_canonical_union_relays_only_chunks_with_accepted_winner_rows(self):
+        source = read_text("business/control_plane.tru")
+        download = source.split("function jobs_multi_writer_download(", 1)[1].split(
+            "function jobs_upload_chunk(", 1
+        )[0]
+
+        self.assertIn(
+            "where: { sourceJobId: batch.id, rowCount: { gt: 0 } }",
+            download,
+        )
+        self.assertGreaterEqual(
+            download.count("rowCount: { gt: 0 }"),
+            2,
+        )
+        self.assertIn("const omitCurrentPayload = winnerPolicyApplied", download)
+        self.assertIn("chunkPayloadBase64.length != 0", download)
+        self.assertIn("acceptedOperationIds.length == 0", download)
+        self.assertIn("chunkPayloadBase64 = ''", download)
+        self.assertIn("if (canonicalFullMerge) {\n    chunkIsDelta = false;", download)
+        self.assertIn("db.aggregate(SnapshotRecord", download)
+        self.assertIn("fn: 'sum', field: 'rowCount'", download)
 
     def test_read_only_data_export_credentials_are_heartbeat_only(self):
         source = read_text("business/control_plane.tru")

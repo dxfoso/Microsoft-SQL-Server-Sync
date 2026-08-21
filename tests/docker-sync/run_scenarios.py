@@ -1487,6 +1487,90 @@ def run_scenarios():
         raise AssertionError(
             "Selective range convergence removed a snapshot-absent row."
         )
+
+    # accepted-winner-chunk-pruning-three-client-safety: the server may omit a
+    # stored full-union chunk only when its durable accepted-operation set is
+    # empty. Prove that pruning no-effect inventory pages preserves unrelated
+    # target-only rows, still relays an accepted upsert and an explicit exact-
+    # key tombstone, and remains idempotent after an interrupted retry.
+    protected_rows = [
+        row(8600 + index, f"PROTECTED-{index}", f"Client {index} target-only")
+        for index in range(len(DATABASES))
+    ]
+    for database, protected in zip(DATABASES, protected_rows):
+        apply(database, rows=[protected])
+    accepted_upsert = {
+        **row(8700, "ACCEPTED-WINNER", "Only accepted winner is relayed"),
+        "__sync_operation_id": "accepted-upsert",
+    }
+    accepted_delete = {
+        "Id": 8000,
+        "__sync_op": "D",
+        "__sync_operation_id": "accepted-delete",
+        "__sync_modified_at_utc": "2026-08-21T12:30:00Z",
+    }
+    relay_chunks = [
+        {
+            "rows": [
+                {**value, "__sync_operation_id": f"stale-{value['Id']}"}
+                for value in common_rows[:32]
+            ],
+            "accepted": set(),
+        },
+        {
+            "rows": [accepted_upsert, *[
+                {**value, "__sync_operation_id": f"stale-tail-{value['Id']}"}
+                for value in common_rows[32:48]
+            ]],
+            "accepted": {"accepted-upsert"},
+        },
+        {
+            "rows": [accepted_delete],
+            "accepted": {"accepted-delete"},
+        },
+    ]
+    pruned_chunks = [chunk for chunk in relay_chunks if chunk["accepted"]]
+    if len(pruned_chunks) != 2:
+        raise AssertionError("Zero-winner union chunks were not pruned.")
+    relayed_rows = [
+        value
+        for chunk in pruned_chunks
+        for value in chunk["rows"]
+        if value.get("__sync_operation_id") in chunk["accepted"]
+        and value.get("__sync_op") != "D"
+    ]
+    relayed_deletes = [
+        value
+        for chunk in pruned_chunks
+        for value in chunk["rows"]
+        if value.get("__sync_operation_id") in chunk["accepted"]
+        and value.get("__sync_op") == "D"
+    ]
+    for database in DATABASES:
+        apply(database, rows=relayed_rows, deletes=relayed_deletes)
+        apply(database, rows=relayed_rows, deletes=relayed_deletes)
+    for database, protected in zip(DATABASES, protected_rows):
+        if scalar_int(
+            database,
+            f"SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = {protected['Id']};",
+        ) != 1:
+            raise AssertionError(
+                "Pruned canonical relay removed a target-only row."
+            )
+        if scalar_int(
+            database,
+            "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = 8000;",
+        ) != 0:
+            raise AssertionError(
+                "Accepted explicit tombstone was lost during chunk pruning."
+            )
+        if scalar_int(
+            database,
+            "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = 8700;",
+        ) != 1:
+            raise AssertionError(
+                "Accepted winner row was lost during chunk pruning."
+            )
     reset_databases()
 
     inserted = row(2, "INSERT-2", "Inserted on client 1", arabic="إضافة جديدة")
@@ -1908,6 +1992,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "lossless-float-real-9999999-capture-roundtrip",
             "initial-three-client-primary-key-union-bootstrap",
             "selective-range-three-client-convergence",
+            "accepted-winner-chunk-pruning-three-client-safety",
             "full-union-does-not-resurrect-durable-delete",
             "durable-delete-reasserts-against-zombie-full-row",
             "independent-multi-writer",

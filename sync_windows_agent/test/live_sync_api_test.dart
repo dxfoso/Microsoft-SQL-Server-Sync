@@ -4072,6 +4072,58 @@ void main() {
   );
 
   test(
+    'multi-writer download preserves an empty pruned canonical full merge',
+    () async {
+      final client = _ScriptedClient(
+        responseForRequest: (name, args, callIndex) => (
+          statusCode: 200,
+          body: {
+            'status': 'success',
+            'value': {
+              'done': true,
+              'nextCursor': null,
+              'totalRowCount': 0,
+              'payloadBase64': '',
+              'snapshot': {
+                'id': 'batch-pruned-empty',
+                'clientName': 'server-merge',
+                'table': 'any_database::items',
+                'createdAt': '2026-08-22T00:00:00Z',
+                'rowCount': 0,
+                'checksum': 'empty-relay',
+                'snapshotBytes': 0,
+                'columns': ['Id', 'Name'],
+                'rows': const [],
+                'sourceJobId': 'job-pruned-empty',
+                'isDelta': false,
+                'canonicalFullMerge': true,
+                'mergeParticipantCount': 2,
+              },
+            },
+          },
+        ),
+      );
+      final api = AgentControlPlaneClient(
+        client: client,
+        baseUrl: 'https://example.com/call',
+      );
+
+      final snapshot = await api.downloadMultiWriterDelta(
+        'job-pruned-empty',
+        batchId: 'batch-pruned-empty',
+        protocolVersion: kSyncProtocolVersion,
+        syncEpoch: 'epoch-test',
+      );
+
+      expect(snapshot.canonicalFullMerge, isTrue);
+      expect(snapshot.isDelta, isFalse);
+      expect(snapshot.rows, isEmpty);
+      expect(snapshot.rowCount, 0);
+      expect(snapshot.snapshotBytes, 0);
+    },
+  );
+
+  test(
     'multi-writer download reasserts durable tombstone over zombie full row',
     () async {
       final acceptedId = 'a' * 64;

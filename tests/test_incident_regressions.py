@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 154)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 155)}
         observed_ids = set()
 
         for row in rows:
@@ -1078,6 +1078,23 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "function sync_range_manifest_parts(state: map<json>? = null): array<string>",
             backend,
         )
+
+    def test_zero_winner_union_chunks_are_not_downloaded(self):
+        backend = read_text("business/control_plane.tru")
+        download = backend.split("function jobs_multi_writer_download(", 1)[1].split(
+            "function jobs_upload_chunk(", 1
+        )[0]
+
+        self.assertIn(
+            "where: { sourceJobId: batch.id, rowCount: { gt: 0 } }",
+            download,
+        )
+        self.assertIn("chunkPayloadBase64.length != 0", download)
+        self.assertIn("acceptedOperationIds.length == 0", download)
+        self.assertIn("chunkPayloadBase64 = ''", download)
+        self.assertIn("snapshot.snapshotBytes = 0", download)
+        self.assertIn("if (canonicalFullMerge) {", download)
+        self.assertIn("chunkIsDelta = false", download)
 
 
 if __name__ == "__main__":
