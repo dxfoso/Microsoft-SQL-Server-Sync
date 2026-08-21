@@ -147,4 +147,84 @@ void main() {
     expect(retry, first);
     expect(otherOrigin, isNot(first));
   });
+
+  test('range manifest localizes one changed row to one primary-key bucket', () {
+    final columns = [
+      const SqlSyncColumnDefinition(
+        name: 'Id',
+        sqlType: 'int',
+        maxLength: 4,
+        precision: 10,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+      const SqlSyncColumnDefinition(
+        name: 'Value',
+        sqlType: 'nvarchar',
+        maxLength: 80,
+        precision: 0,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    final beforeRows = [
+      for (var id = 1; id <= 64; id++) {'Id': '$id', 'Value': 'value-$id'},
+    ];
+    final afterRows = [
+      for (final row in beforeRows)
+        row['Id'] == '37' ? {...row, 'Value': 'changed'} : Map.of(row),
+    ];
+
+    final before = buildSqlSyncRangeFingerprintManifest(
+      columns: columns,
+      keyColumns: const ['Id'],
+      rows: beforeRows,
+    );
+    final after = buildSqlSyncRangeFingerprintManifest(
+      columns: columns,
+      keyColumns: const ['Id'],
+      rows: afterRows,
+    );
+    final differingBuckets = [
+      for (var bucket = 0; bucket < kSqlSyncRangeBucketCount; bucket++)
+        if (before.bucketFingerprints[bucket] !=
+            after.bucketFingerprints[bucket])
+          bucket,
+    ];
+
+    expect(before.rowCount, 64);
+    expect(after.rowCount, 64);
+    expect(before.tableChecksum, isNot(after.tableChecksum));
+    expect(differingBuckets, hasLength(1));
+    expect(
+      differingBuckets.single,
+      sqlSyncRangeBucketForRow(
+        keyColumns: const ['Id'],
+        row: const {'Id': '37', 'Value': 'changed'},
+      ),
+    );
+    expect(
+      SqlSyncRangeFingerprintManifest.tryParse(before.encode())?.encode(),
+      before.encode(),
+    );
+  });
+
+  test('selective range source is parsed strictly and filters deterministically', () {
+    final selected = parseSqlSyncRangeUnionBuckets(
+      'server-range-union-v1:2,7,12',
+    );
+    expect(selected, {2, 7, 12});
+    expect(isSqlSyncRangeUnionSource('server-range-union-v1:2'), isTrue);
+    expect(isSqlSyncRangeUnionSource('server-union-bootstrap-v3'), isFalse);
+    expect(
+      () => parseSqlSyncRangeUnionBuckets('server-range-union-v1:16'),
+      throwsFormatException,
+    );
+    expect(
+      SqlSyncRangeFingerprintManifest.tryParse('v1|16|1|checksum|too-short'),
+      isNull,
+    );
+  });
 }

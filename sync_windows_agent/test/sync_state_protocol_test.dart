@@ -40,6 +40,23 @@ void main() {
     );
   });
 
+  test('range fingerprint manifest survives state serialization', () {
+    final state = SyncTableState.fromJson(const <String, dynamic>{
+      'enabled': true,
+      'rowCount': 3,
+      'tableChecksum': '3:abc',
+      'rangeFingerprint': 'v1|16|3|3:abc|bucket-manifest',
+    });
+
+    expect(state.rangeFingerprint, 'v1|16|3|3:abc|bucket-manifest');
+    expect(
+      state
+          .copyWith(rangeFingerprint: 'new-manifest')
+          .toJson()['rangeFingerprint'],
+      'new-manifest',
+    );
+  });
+
   test('state writes are serialized and recover from the valid backup', () async {
     final directory = await Directory.systemTemp.createTemp(
       'sql-sync-state-regression-',

@@ -81,6 +81,7 @@ class SyncTableState {
     required this.rowCount,
     required this.savedRowCount,
     required this.tableChecksum,
+    this.rangeFingerprint = '',
     required this.changeTrackingVersion,
     required this.changeTrackingOwner,
     required this.changeTrackingStatus,
@@ -98,6 +99,7 @@ class SyncTableState {
   final int rowCount;
   final int? savedRowCount;
   final String tableChecksum;
+  final String rangeFingerprint;
   final int? changeTrackingVersion;
   final String? changeTrackingOwner;
   final String changeTrackingStatus;
@@ -122,6 +124,7 @@ class SyncTableState {
       rowCount: (json['rowCount'] as num? ?? 0).round(),
       savedRowCount: (json['savedRowCount'] as num?)?.round(),
       tableChecksum: json['tableChecksum'] as String? ?? '',
+      rangeFingerprint: json['rangeFingerprint'] as String? ?? '',
       changeTrackingVersion: (json['changeTrackingVersion'] as num?)?.round(),
       changeTrackingOwner: json['changeTrackingOwner'] as String?,
       changeTrackingStatus:
@@ -142,6 +145,7 @@ class SyncTableState {
     'rowCount': rowCount,
     'savedRowCount': savedRowCount,
     'tableChecksum': tableChecksum,
+    'rangeFingerprint': rangeFingerprint,
     'changeTrackingVersion': changeTrackingVersion,
     'changeTrackingOwner': changeTrackingOwner,
     'changeTrackingStatus': changeTrackingStatus,
@@ -160,6 +164,7 @@ class SyncTableState {
     int? rowCount,
     Object? savedRowCount = _syncTableStateUnset,
     String? tableChecksum,
+    String? rangeFingerprint,
     Object? changeTrackingVersion = _syncTableStateUnset,
     Object? changeTrackingOwner = _syncTableStateUnset,
     String? changeTrackingStatus,
@@ -180,6 +185,7 @@ class SyncTableState {
               ? this.savedRowCount
               : savedRowCount as int?,
       tableChecksum: tableChecksum ?? this.tableChecksum,
+      rangeFingerprint: rangeFingerprint ?? this.rangeFingerprint,
       changeTrackingVersion:
           identical(changeTrackingVersion, _syncTableStateUnset)
               ? this.changeTrackingVersion
@@ -428,14 +434,12 @@ class SyncAppStateStore {
       'lastAutoUpdateAttemptedAt': lastAutoUpdateAttemptedAt,
       'clients': clients.map((key, value) => MapEntry(key, value.toJson())),
     });
-    final pending = _saveQueue.then(
-      (_) async {
-        if (!await dir.exists()) {
-          await dir.create(recursive: true);
-        }
-        await _writeAtomically(dir: dir, file: file, payload: payload);
-      },
-    );
+    final pending = _saveQueue.then((_) async {
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      await _writeAtomically(dir: dir, file: file, payload: payload);
+    });
     _saveQueue = pending.catchError((Object _) {});
     await pending;
   }

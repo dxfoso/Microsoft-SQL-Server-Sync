@@ -1019,10 +1019,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("!= 'retry-scheduled'", retry_selector)
         self.assertIn("latest_completed_upload_mode_for_owner_table(", scheduler)
         self.assertIn("batchId: latestBatchId", retry_selector)
-        self.assertIn(
-            "string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0",
-            scheduler,
-        )
+        self.assertIn("planIsUnion && failedUnionRetryBatchId.length != 0", scheduler)
         self.assertIn("mark_failed_union_download_retry_scheduled(", scheduler)
         self.assertIn("failedUnionRetryBatchId,", scheduler)
         self.assertEqual(rows.count("automaticRetryKind,"), 2)
@@ -1830,8 +1827,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function sync_batch_client_names(", source)
         self.assertIn("sync_batch_all_jobs_completed(completedBatchId)", source)
         self.assertIn("string.from(job.sourceClientName).trim() == 'server-partial-merge'", source)
+        self.assertIn("sync_source_is_union_bootstrap(string.from(job.sourceClientName))", source)
         self.assertIn("sync_batch_client_names(completedBatchId)", source)
-        self.assertIn("sourceClientName: preserveChangeTrackingBaselines ? 'server-partial-merge'", source)
+        self.assertIn("? 'server-partial-merge'", source)
+        self.assertIn("server-range-union-v1:", source)
         self.assertIn(
             "authoritative baseline reconciliation waits until every enabled client is online",
             source,
@@ -2348,6 +2347,32 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("unionBootstrapSnapshot", agent_page)
         self.assertIn("job.sourceClientName == 'server-union-bootstrap-v3'", agent_page)
         self.assertIn("row['__sync_modified_at_utc'] = '1970-01-01T00:00:00.000Z'", agent_page)
+
+    def test_range_manifest_selects_only_differing_primary_key_buckets_with_safe_fallback(self):
+        source = read_text("business/control_plane.tru")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+
+        planner = source.split("function sync_table_baseline_plan(", 1)[1].split(
+            "function enabled_sync_policy_tables_for_agent", 1
+        )[0]
+        range_plan = source.split("function sync_selective_range_plan(", 1)[1].split(
+            "// After a full union", 1
+        )[0]
+        self.assertIn("rangeManifests.length != participantCount", range_plan)
+        self.assertIn("differingBuckets.length > 0 && differingBuckets.length < 16", range_plan)
+        self.assertIn("mode: 'range_union'", planner)
+        self.assertLess(planner.index("mode: 'range_union'"), planner.index("mode: 'union_bootstrap'"))
+        self.assertIn("sync_range_manifest_parts(state)", planner)
+        self.assertIn("string.from(parts[2]) != string.from(state.rowCount", source)
+        self.assertIn("string.from(parts[3]) != string.from(state.tableChecksum", source)
+        self.assertIn("server-range-union-v1:", source)
+        self.assertIn("sync_source_is_union_bootstrap", source)
+        self.assertIn("parseSqlSyncRangeUnionBuckets", agent)
+        self.assertIn("payloadRows = rows", agent)
+        self.assertIn("_queryTableFingerprints", agent)
+        self.assertIn("SqlSyncRangeFingerprintAccumulator", fingerprint)
+        self.assertIn("kSqlSyncRangeBucketCount = 16", fingerprint)
 
     def test_read_only_data_export_credentials_are_heartbeat_only(self):
         source = read_text("business/control_plane.tru")

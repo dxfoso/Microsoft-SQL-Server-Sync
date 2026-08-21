@@ -1144,6 +1144,7 @@ function apply_table_sync_policies_with_policies(ownerUserId: string? = null, ta
       progress: tableState.progress,
       rowCount: tableState.rowCount,
       tableChecksum: tableState.tableChecksum,
+      rangeFingerprint: tableState.rangeFingerprint,
       changeTrackingVersion: tableState.changeTrackingVersion,
       changeTrackingOwner: tableState.changeTrackingOwner,
       changeTrackingStatus: tableState.changeTrackingStatus,
@@ -1203,6 +1204,7 @@ function bounded_heartbeat_tables(tables: array<json>? = null, selectedTable: st
       progress: int.from(tableState.progress ?? 0),
       rowCount: int.from(tableState.rowCount ?? 0),
       tableChecksum: string.from(tableState.tableChecksum ?? ''),
+      rangeFingerprint: string.from(tableState.rangeFingerprint ?? ''),
       changeTrackingVersion: tableState.changeTrackingVersion,
       changeTrackingOwner: tableState.changeTrackingOwner,
       changeTrackingStatus: string.from(tableState.changeTrackingStatus ?? ''),
@@ -3433,6 +3435,7 @@ function normalize_agent_table_payload_state(agent: map<json>, tableState: map<j
       progress: activeJob.progress,
       rowCount: activeJob.rowCount,
       tableChecksum: tableState.tableChecksum,
+      rangeFingerprint: tableState.rangeFingerprint,
       changeTrackingVersion: tableState.changeTrackingVersion,
       changeTrackingOwner: tableState.changeTrackingOwner,
       changeTrackingStatus: tableState.changeTrackingStatus,
@@ -3455,6 +3458,7 @@ function normalize_agent_table_payload_state(agent: map<json>, tableState: map<j
       progress: 100,
       rowCount: tableState.rowCount,
       tableChecksum: tableState.tableChecksum,
+      rangeFingerprint: tableState.rangeFingerprint,
       changeTrackingVersion: tableState.changeTrackingVersion,
       changeTrackingOwner: tableState.changeTrackingOwner,
       changeTrackingStatus: tableState.changeTrackingStatus,
@@ -3584,6 +3588,7 @@ function mark_agent_table_baseline_pending(clientName: string, table: string, re
       progress: 0,
       rowCount: tableState.rowCount,
       tableChecksum: tableState.tableChecksum,
+      rangeFingerprint: tableState.rangeFingerprint,
       changeTrackingVersion: tableState.changeTrackingVersion,
       changeTrackingOwner: tableState.changeTrackingOwner,
       changeTrackingStatus: 'baseline_pending',
@@ -3647,6 +3652,65 @@ function sync_agents_enabled_for_table(agents: array<json>, table: string, polic
   return participants;
 }
 
+function sync_source_is_union_bootstrap(sourceClientName: string): bool {
+  const normalized = sourceClientName.trim();
+  if (normalized == 'server-union-bootstrap-v3') {
+    return true;
+  }
+  const parts = normalized.split(':');
+  return parts.length == 2 &&
+    string.from(parts[0]).trim() == 'server-range-union-v1' &&
+    string.from(parts[1]).trim().length != 0;
+}
+
+// A range manifest is usable only when it describes the exact complete table
+// inventory currently reported by that client. This prevents stale or partial
+// diagnostics from narrowing a repair unsafely.
+function sync_range_manifest_parts(state: map<json>?): array<string> {
+  if (state == null) {
+    return [];
+  }
+  const encoded = string.from(state.rangeFingerprint ?? '').trim();
+  if (encoded.length == 0) {
+    return [];
+  }
+  const parts = encoded.split('|');
+  if (parts.length != 20 ||
+      string.from(parts[0]) != 'v1' ||
+      string.from(parts[1]) != '16' ||
+      string.from(parts[2]) != string.from(state.rowCount ?? '') ||
+      string.from(parts[3]) != string.from(state.tableChecksum ?? '')) {
+    return [];
+  }
+  return parts;
+}
+
+function sync_selective_range_plan(rangeManifests: array<json>, participantCount: int): map<json> {
+  if (participantCount < 2 || rangeManifests.length != participantCount) {
+    return { eligible: false, bucketCsv: '', differingBucketCount: 0 };
+  }
+  let differingBuckets = [];
+  for (const bucket of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
+    let values = [];
+    for (const manifest of rangeManifests) {
+      const value = string.from(manifest.parts[4 + bucket]);
+      if (!string_array_contains(values, value)) {
+        values = values.concat([value]);
+      }
+    }
+    if (values.length > 1) {
+      differingBuckets = differingBuckets.concat([string.from(bucket)]);
+    }
+  }
+  // All buckets differing provides no bandwidth benefit and is deliberately
+  // handled by the proven full-union fallback.
+  return {
+    eligible: differingBuckets.length > 0 && differingBuckets.length < 16,
+    bucketCsv: differingBuckets.join(','),
+    differingBucketCount: differingBuckets.length
+  };
+}
+
 // After a full union, allow the next observed inventory mismatch through the
 // normal delta protocol first. If that delta cannot make inventories equal,
 // its upload becomes the latest batch and the following pass performs another
@@ -3672,7 +3736,7 @@ function latest_completed_upload_modes_for_owner(ownerUserId: string): array<jso
     }
     modes = modes.concat([{
       table: rowTable,
-      union: string.from(row.sourceClientName).trim() == 'server-union-bootstrap-v3'
+      union: sync_source_is_union_bootstrap(string.from(row.sourceClientName))
     }]);
     seenTables = seenTables.concat([rowTable]);
   }
@@ -3707,6 +3771,7 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
   let reportedClientCount = 0;
   let reportedRowCountClientCount = 0;
   let allReportedRowCounts = [];
+  let rangeManifests = [];
   let hasPendingLocalChanges = false;
   for (const agent of participants) {
     const cache = scheduler_agent_table_state_cache_for_agent(
@@ -3718,6 +3783,10 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       states = cache.tables;
     }
     const state = scheduler_agent_table_state(states, table);
+    const rangeManifestParts = sync_range_manifest_parts(state);
+    if (rangeManifestParts.length != 0) {
+      rangeManifests = rangeManifests.concat([{ parts: rangeManifestParts }]);
+    }
     if (sync_table_state_has_pending_local_changes(state)) {
       hasPendingLocalChanges = true;
     }
@@ -3775,6 +3844,29 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
   // the active-job table fence prevent overlap; suppressing the retry here
   // would permanently preserve an incomplete or legacy union result.
   const establishedInventoryCanUnion = allowInventoryUnion;
+  const selectiveRangePlan = sync_selective_range_plan(
+    rangeManifests,
+    participants.length
+  );
+  const inventoriesDiffer = allReportedRowCounts.length > 1 || allFingerprints.length > 1;
+  if (participants.length >= 2 &&
+      establishedInventoryCanUnion &&
+      inventoriesDiffer &&
+      selectiveRangePlan.eligible == true) {
+    return {
+      mode: 'range_union',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: participants,
+      rangeBucketCsv: selectiveRangePlan.bucketCsv,
+      message: string.concat(
+        'Clients differ in ',
+        string.from(selectiveRangePlan.differingBucketCount),
+        ' of 16 primary-key ranges; only those ranges will be unioned.'
+      )
+    };
+  }
   if (participants.length >= 2 &&
       reportedRowCountClientCount == participants.length &&
       allReportedRowCounts.length > 1 &&
@@ -3944,7 +4036,7 @@ function latest_completed_upload_mode_for_owner_table(ownerUserId: string, table
     return null;
   }
   return {
-    union: string.from(rows[0].sourceClientName).trim() == 'server-union-bootstrap-v3',
+    union: sync_source_is_union_bootstrap(string.from(rows[0].sourceClientName)),
     batchId: string.from(rows[0].batchId ?? '').trim(),
     automaticRetryKind: string.from(rows[0].automaticRetryKind ?? '').trim()
   };
@@ -4430,8 +4522,11 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         plan.targetAgents
       );
     } else if (string.from(plan.mode) == 'delta' ||
-        string.from(plan.mode) == 'union_bootstrap') {
-      if (string.from(plan.mode) == 'union_bootstrap' && preserveChangeTrackingBaselines) {
+        string.from(plan.mode) == 'union_bootstrap' ||
+        string.from(plan.mode) == 'range_union') {
+      const planIsUnion = string.from(plan.mode) == 'union_bootstrap' ||
+        string.from(plan.mode) == 'range_union';
+      if (planIsUnion && preserveChangeTrackingBaselines) {
         continue;
       }
       jobs = create_multi_writer_batch(
@@ -4440,15 +4535,18 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         tableAgents,
         '',
         preserveChangeTrackingBaselines,
-        string.from(plan.mode) == 'union_bootstrap',
+        planIsUnion,
         ownerPolicies,
-        string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0
+        planIsUnion && failedUnionRetryBatchId.length != 0
           ? 'failed-download'
-          : ''
+          : '',
+        string.from(plan.rangeBucketCsv ?? '')
       );
     }
     if (jobs.length > 0) {
-      if (string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0) {
+      if ((string.from(plan.mode) == 'union_bootstrap' ||
+          string.from(plan.mode) == 'range_union') &&
+          failedUnionRetryBatchId.length != 0) {
         mark_failed_union_download_retry_scheduled(
           normalizedOwnerUserId,
           failedUnionRetryBatchId,
@@ -5693,7 +5791,7 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = ''): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = '', rangeBucketCsv: string = ''): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
@@ -5710,7 +5808,9 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       id: uuid.v4(),
       clientName,
       sourceClientName: unionBootstrap
-        ? 'server-union-bootstrap-v3'
+        ? rangeBucketCsv.trim().length != 0
+          ? string.concat('server-range-union-v1:', rangeBucketCsv.trim())
+          : 'server-union-bootstrap-v3'
         : bootstrapSourceClientName.length != 0
         ? 'server-bootstrap-v3'
         : preserveChangeTrackingBaselines
@@ -5735,7 +5835,9 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       startedAt: null,
       completedAt: null,
       message: unionBootstrap
-        ? string.concat('Queued multi-client union bootstrap upload for ', table, '.')
+        ? rangeBucketCsv.trim().length != 0
+          ? string.concat('Queued selective primary-key range union upload for ', table, '.')
+          : string.concat('Queued multi-client union bootstrap upload for ', table, '.')
         : bootstrapSourceClientName.length == 0
         ? string.concat('Queued protocol-v4 delta upload for ', table, '.')
         : string.concat('Queued explicit protocol-v4 bootstrap upload for ', table, '.'),
@@ -5749,7 +5851,11 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     }, {
       id: uuid.v4(),
       clientName,
-      sourceClientName: preserveChangeTrackingBaselines ? 'server-partial-merge' : 'server-merge',
+      sourceClientName: unionBootstrap && rangeBucketCsv.trim().length != 0
+        ? string.concat('server-range-union-v1:', rangeBucketCsv.trim())
+        : preserveChangeTrackingBaselines
+          ? 'server-partial-merge'
+          : 'server-merge',
       subscriberClientName: clientName,
       table,
       direction: 'download',
@@ -5781,7 +5887,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
   return rows;
 }
 
-function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = ''): array<json> {
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = '', rangeBucketCsv: string = ''): array<json> {
   if (agents.length == 0) {
     return [];
   }
@@ -5823,7 +5929,8 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     preserveChangeTrackingBaselines,
     unionBootstrap,
     policies,
-    automaticRetryKind
+    automaticRetryKind,
+    rangeBucketCsv
   ));
 }
 
@@ -8283,7 +8390,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   const comparisonPreview =
     string.from(job.sourceClientName).trim() == 'server-diff-preview';
   const multiClientUnionBootstrap =
-    string.from(job.sourceClientName).trim() == 'server-union-bootstrap-v3' &&
+    sync_source_is_union_bootstrap(string.from(job.sourceClientName)) &&
     batch.expectedClients.length >= 2;
   if (!payloadIsDelta &&
       !explicitSingleClientBootstrap &&
@@ -9013,12 +9120,14 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   if (batch.status != 'ready') {
     return raw_json_error(409, 'sync batch is still waiting for client uploads');
   }
+  // Every upload job in a multi-writer batch has the same source mode, so one
+  // representative row is sufficient and avoids an additional bounded list.
   const unionBootstrapJob = db.selectOne(SyncJob, {
     batchId,
-    direction: 'upload',
-    sourceClientName: 'server-union-bootstrap-v3'
+    direction: 'upload'
   });
-  const canonicalFullMerge = unionBootstrapJob != null;
+  const canonicalFullMerge = unionBootstrapJob != null &&
+    sync_source_is_union_bootstrap(string.from(unionBootstrapJob.sourceClientName));
   const storedChunkPage = db.page(SnapshotRecord, {
     where: { sourceJobId: batch.id },
     // Normal protocol-v4 pages contain Change Tracking deltas. Initial union
@@ -9784,8 +9893,11 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
         plan.targetAgents
       );
     } else if (string.from(plan.mode) == 'delta' ||
-        string.from(plan.mode) == 'union_bootstrap') {
-      if (string.from(plan.mode) == 'union_bootstrap' && preserveChangeTrackingBaselines) {
+        string.from(plan.mode) == 'union_bootstrap' ||
+        string.from(plan.mode) == 'range_union') {
+      const planIsUnion = string.from(plan.mode) == 'union_bootstrap' ||
+        string.from(plan.mode) == 'range_union';
+      if (planIsUnion && preserveChangeTrackingBaselines) {
         return raw_json_error(
           409,
           'multi-client union bootstrap waits until every enabled client is online'
@@ -9797,8 +9909,10 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
         plan.participants ?? [],
         '',
         preserveChangeTrackingBaselines,
-        string.from(plan.mode) == 'union_bootstrap',
-        ownerPolicies
+        planIsUnion,
+        ownerPolicies,
+        '',
+        string.from(plan.rangeBucketCsv ?? '')
       );
     }
     if (nextJobs.length > 0) {
@@ -10646,7 +10760,8 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   if (status.trim().toLowerCase() == 'completed' &&
       string.from(job.direction).trim() == 'download' &&
       (string.from(job.sourceClientName).trim() == 'server-merge' ||
-       string.from(job.sourceClientName).trim() == 'server-partial-merge') &&
+       string.from(job.sourceClientName).trim() == 'server-partial-merge' ||
+       sync_source_is_union_bootstrap(string.from(job.sourceClientName))) &&
       completedBatchId.length != 0 &&
       sync_batch_all_jobs_completed(completedBatchId)) {
     // A partial batch proves only its participating clients caught up. Clear

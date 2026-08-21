@@ -822,12 +822,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("final targetFingerprints = await _queryTableFingerprints(", apply_body)
         self.assertIn("bool refreshFingerprint = false", apply_body)
         self.assertIn("if (refreshFingerprint) {", apply_body)
-        self.assertIn(
-            "!snapshotToApply.isDelta &&\n"
-            "          !authoritativeReconcile &&\n"
-            "          !canonicalFullMerge",
-            agent_page,
-        )
+        self.assertIn("selectiveRangeReconcile ||", agent_page)
+        self.assertIn("(!snapshotToApply.isDelta &&", agent_page)
+        self.assertIn("!authoritativeReconcile &&", agent_page)
+        self.assertIn("!canonicalFullMerge", agent_page)
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
 
@@ -856,7 +854,7 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("rowCount:", upload_body)
         self.assertIn("snapshot.checksum.isNotEmpty", upload_body)
-        self.assertIn("? snapshot.rowCount", upload_body)
+        self.assertIn("? snapshot.sourceRowCount", upload_body)
         self.assertIn("tableChecksum:", upload_body)
         self.assertIn("? snapshot.checksum", upload_body)
         self.assertIn("unawaited(_syncWithControlPlane());", upload_body)
@@ -951,7 +949,7 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn(
             "canUseDelta &&\n"
-            "        !unionBootstrapSnapshot &&\n"
+            "        !multiClientUnionSnapshot &&\n"
             "        job.sourceClientName != 'server-authoritative-reconcile'",
             snapshot_body,
         )
@@ -976,7 +974,7 @@ class SyncContractsTests(unittest.TestCase):
             "Future<int> _applyDownloadedSnapshotToTarget({", 1
         )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
 
-        self.assertIn("!unionBootstrapSnapshot", agent_page)
+        self.assertIn("!multiClientUnionSnapshot", agent_page)
         self.assertIn("downloadedSnapshot.canonicalFullMerge", agent_page)
         self.assertIn(
             "fullSnapshotApply: authoritativeReconcile || canonicalFullMerge",

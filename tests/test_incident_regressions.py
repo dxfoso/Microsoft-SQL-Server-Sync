@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 152)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 153)}
         observed_ids = set()
 
         for row in rows:
@@ -795,10 +795,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("!= 'retry-scheduled'", selector)
         self.assertIn("batchId: latestBatchId", selector)
         self.assertIn("mark_failed_union_download_retry_scheduled(", scheduler)
-        self.assertIn(
-            "string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0",
-            scheduler,
-        )
+        self.assertIn("planIsUnion && failedUnionRetryBatchId.length != 0", scheduler)
 
     def test_production_builder_retries_transient_remote_refresh(self):
         builder = read_text("scripts/build_production_images.ps1")
@@ -1056,6 +1053,23 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>()", agent)
         self.assertIn("rowCountBefore.value - deleteRows.length", agent)
         self.assertIn("sqlSyncDurableTombstoneReassertionField", merge)
+
+    def test_selective_range_union_is_safe_and_backward_compatible(self):
+        backend = read_text("business/control_plane.tru")
+        client = read_text("sync_windows_agent/lib/agent_page.dart")
+        fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+
+        self.assertIn("function sync_selective_range_plan", backend)
+        self.assertIn("rangeManifests.length != participantCount", backend)
+        self.assertIn("differingBuckets.length < 16", backend)
+        self.assertIn("mode: 'range_union'", backend)
+        self.assertIn("mode: 'union_bootstrap'", backend)
+        self.assertIn("sync_source_is_union_bootstrap", backend)
+        self.assertIn("rangeUnionSnapshot", client)
+        self.assertIn("selectedBuckets.contains", client)
+        self.assertIn("selectiveRangeReconcile", client)
+        self.assertIn("canonicalFullMerge", backend)
+        self.assertIn("SqlSyncRangeFingerprintManifest", fingerprint)
 
 
 if __name__ == "__main__":

@@ -753,12 +753,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       final current = _syncTableState(entry.key, syncKey: syncKey);
       final fingerprint = entry.value;
       if (current.rowCount == fingerprint.rowCount &&
-          current.tableChecksum == fingerprint.checksum) {
+          current.tableChecksum == fingerprint.checksum &&
+          current.rangeFingerprint == fingerprint.rangeFingerprint) {
         continue;
       }
       nextTables[syncKey] = current.copyWith(
         rowCount: fingerprint.rowCount,
         tableChecksum: fingerprint.checksum,
+        rangeFingerprint: fingerprint.rangeFingerprint,
       );
       changed = true;
     }
@@ -3354,6 +3356,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         left.progress == right.progress &&
         left.rowCount == right.rowCount &&
         left.tableChecksum == right.tableChecksum &&
+        left.rangeFingerprint == right.rangeFingerprint &&
         left.message == right.message;
   }
 
@@ -4547,6 +4550,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             'progress': entry.value.progress,
             'rowCount': entry.value.rowCount,
             'tableChecksum': entry.value.tableChecksum,
+            'rangeFingerprint': entry.value.rangeFingerprint,
             'changeTrackingStatus': entry.value.changeTrackingStatus,
             'changeTrackingMessage': entry.value.changeTrackingMessage,
             'message': entry.value.message,
@@ -4579,6 +4583,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             'progress': entry.value.progress,
             'rowCount': entry.value.rowCount,
             'tableChecksum': entry.value.tableChecksum,
+            'rangeFingerprint': entry.value.rangeFingerprint,
             'changeTrackingStatus': entry.value.changeTrackingStatus,
             'changeTrackingMessage': entry.value.changeTrackingMessage,
             'message': entry.value.message,
@@ -4592,6 +4597,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             'table': entry.key,
             'rowCount': entry.value.rowCount,
             'tableChecksum': entry.value.tableChecksum,
+            'rangeFingerprint': entry.value.rangeFingerprint,
           },
         )
         .toList(growable: false);
@@ -5832,12 +5838,16 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         current.copyWith(
           rowCount:
               snapshot.checksum.isNotEmpty
-                  ? snapshot.rowCount
+                  ? snapshot.sourceRowCount
                   : current.rowCount,
           tableChecksum:
               snapshot.checksum.isNotEmpty
                   ? snapshot.checksum
                   : current.tableChecksum,
+          rangeFingerprint:
+              snapshot.rangeFingerprint.isNotEmpty
+                  ? snapshot.rangeFingerprint
+                  : current.rangeFingerprint,
           changeTrackingVersion: uploadedVersion,
           changeTrackingOwner: widget.clientName,
           changeTrackingStatus: 'enabled',
@@ -5878,6 +5888,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final applyStats = _DeltaApplyStats();
     final authoritativeReconcile =
         job.sourceClientName == 'server-authoritative-reconcile';
+    final selectiveRangeReconcile = isSqlSyncRangeUnionSource(
+      job.sourceClientName,
+    );
     if (authoritativeReconcile) {
       final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
       final targetTable = _splitQualifiedName(_localTableName(job.table));
@@ -6048,9 +6061,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final reconciledTargetRowCount = await _refreshTargetStateAfterRemoteApply(
       job,
       refreshFingerprint:
-          !snapshotToApply.isDelta &&
-          !authoritativeReconcile &&
-          !canonicalFullMerge,
+          selectiveRangeReconcile ||
+          (!snapshotToApply.isDelta &&
+              !authoritativeReconcile &&
+              !canonicalFullMerge),
     );
     // The remote job records changed rows; targetRowCount remains local state.
     if (reconciledTargetRowCount < 0) {
@@ -6253,11 +6267,14 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final comparisonSnapshot = job.sourceClientName == 'server-diff-preview';
     final unionBootstrapSnapshot =
         job.sourceClientName == 'server-union-bootstrap-v3';
+    final rangeUnionSnapshot = isSqlSyncRangeUnionSource(job.sourceClientName);
+    final multiClientUnionSnapshot =
+        unionBootstrapSnapshot || rangeUnionSnapshot;
     final completeSnapshot =
-        authoritativeSnapshot || comparisonSnapshot || unionBootstrapSnapshot;
+        authoritativeSnapshot || comparisonSnapshot || multiClientUnionSnapshot;
     final previousVersion = _syncState.tables[job.table]?.changeTrackingVersion;
     if (job.sourceClientName == 'server-bootstrap-v3' ||
-        unionBootstrapSnapshot ||
+        multiClientUnionSnapshot ||
         authoritativeSnapshot) {
       await _ensureChangeTrackingEnabledForDatabase(
         database: database,
@@ -6281,7 +6298,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     var snapshotChangeTrackingVersion = tracking?.currentVersion;
     var isDelta = false;
     if (canUseDelta &&
-        !unionBootstrapSnapshot &&
+        !multiClientUnionSnapshot &&
         job.sourceClientName != 'server-authoritative-reconcile' &&
         !comparisonSnapshot) {
       final deltaRows = await _fetchChangeTrackingRows(
@@ -6297,7 +6314,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       rows.addAll(deltaRows);
       isDelta = true;
     } else if (job.sourceClientName == 'server-bootstrap-v3' ||
-        unionBootstrapSnapshot ||
+        multiClientUnionSnapshot ||
         completeSnapshot) {
       if (job.batchId?.trim().isNotEmpty != true) {
         throw StateError('Explicit protocol-v4 bootstrap requires a batch.');
@@ -6366,7 +6383,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     for (final row in rows) {
       // A durable delta winner (especially a delete) must outrank an undated
       // legacy row encountered during a full all-client anti-entropy pass.
-      if (unionBootstrapSnapshot &&
+      if (multiClientUnionSnapshot &&
           row['__sync_modified_at_utc']?.trim().isNotEmpty != true) {
         row['__sync_modified_at_utc'] = '1970-01-01T00:00:00.000Z';
       }
@@ -6394,12 +6411,38 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
 
     var snapshotChecksum = '';
+    var rangeFingerprint = '';
     if (completeSnapshot) {
-      final accumulator = SqlSyncFingerprintAccumulator();
-      for (final row in rows) {
-        accumulator.addRow(syncColumns, row);
+      if (primaryKeyColumns.isNotEmpty) {
+        final manifest = buildSqlSyncRangeFingerprintManifest(
+          columns: syncColumns,
+          keyColumns: primaryKeyColumns,
+          rows: rows,
+        );
+        snapshotChecksum = manifest.tableChecksum;
+        rangeFingerprint = manifest.encode();
+      } else {
+        final accumulator = SqlSyncFingerprintAccumulator();
+        for (final row in rows) {
+          accumulator.addRow(syncColumns, row);
+        }
+        snapshotChecksum = accumulator.build();
       }
-      snapshotChecksum = accumulator.build();
+    }
+
+    final sourceRowCount = rows.length;
+    var payloadRows = rows;
+    if (rangeUnionSnapshot) {
+      final selectedBuckets = parseSqlSyncRangeUnionBuckets(
+        job.sourceClientName,
+      );
+      payloadRows = rows
+          .where(
+            (row) => selectedBuckets.contains(
+              sqlSyncRangeBucketForRow(keyColumns: primaryKeyColumns, row: row),
+            ),
+          )
+          .toList(growable: false);
     }
 
     final createdAt = DateTime.now().toIso8601String();
@@ -6408,7 +6451,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       'clientName': widget.clientName,
       'table': job.table,
       'createdAt': createdAt,
-      'rowCount': rows.length,
+      'rowCount': payloadRows.length,
       'checksum': snapshotChecksum,
       'snapshotBytes': 0,
       'columns': syncColumns
@@ -6416,7 +6459,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           .toList(growable: false),
       'keyColumns': primaryKeyColumns,
       'uniqueKeyColumnSets': uniqueKeyColumnSets,
-      'rows': rows,
+      'rows': payloadRows,
       'sourceJobId': job.id,
       'changeTrackingVersion': snapshotChangeTrackingVersion,
       'delta': isDelta,
@@ -6428,10 +6471,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
 
     return _RelaySnapshotDocument(
       createdAt: createdAt,
-      rowCount: rows.length,
+      rowCount: payloadRows.length,
+      sourceRowCount: sourceRowCount,
       snapshotBytes: utf8.encode(snapshotJson).length,
       snapshotJson: snapshotJson,
       checksum: snapshotChecksum,
+      rangeFingerprint: rangeFingerprint,
       changeTrackingVersion: snapshotChangeTrackingVersion,
       keyColumns: primaryKeyColumns,
       uniqueKeyColumnSets: uniqueKeyColumnSets,
@@ -8769,6 +8814,7 @@ ORDER BY r.display_name;
         schema: parts.schema,
         table: parts.table,
         writableColumns: writableColumns,
+        keyColumns: primaryKeyColumns,
         orderColumns: orderColumns,
       );
       if (fingerprint == null) {
@@ -8802,6 +8848,7 @@ ORDER BY r.display_name;
     required String schema,
     required String table,
     required List<_SqlColumnDefinition> writableColumns,
+    required List<String> keyColumns,
     required List<String> orderColumns,
   }) async {
     if (writableColumns.isEmpty) {
@@ -8817,6 +8864,7 @@ ORDER BY r.display_name;
       return _TableFingerprint(
         rowCount: rowCountResult.value,
         checksum: '${rowCountResult.value}:empty',
+        rangeFingerprint: '',
       );
     }
     if (orderColumns.isEmpty) {
@@ -8825,6 +8873,13 @@ ORDER BY r.display_name;
 
     const batchSize = 200;
     final accumulator = SqlSyncFingerprintAccumulator();
+    final rangeAccumulator =
+        keyColumns.isEmpty
+            ? null
+            : SqlSyncRangeFingerprintAccumulator(
+              columns: writableColumns,
+              keyColumns: keyColumns,
+            );
     for (var offset = 0; true; offset += batchSize) {
       final rows = await _fetchSourceTableBatch(
         profile: profile,
@@ -8841,6 +8896,7 @@ ORDER BY r.display_name;
       }
       for (final row in rows) {
         accumulator.addRow(writableColumns, row);
+        rangeAccumulator?.addRow(row);
       }
       if (rows.length < batchSize) {
         break;
@@ -8850,6 +8906,7 @@ ORDER BY r.display_name;
     return _TableFingerprint(
       rowCount: accumulator.rowCount,
       checksum: accumulator.build(),
+      rangeFingerprint: rangeAccumulator?.build().encode() ?? '',
     );
   }
 
@@ -12576,19 +12633,26 @@ class _SqlConnectionProfile {
 }
 
 class _TableFingerprint {
-  const _TableFingerprint({required this.rowCount, required this.checksum});
+  const _TableFingerprint({
+    required this.rowCount,
+    required this.checksum,
+    this.rangeFingerprint = '',
+  });
 
   final int rowCount;
   final String checksum;
+  final String rangeFingerprint;
 }
 
 class _RelaySnapshotDocument {
   const _RelaySnapshotDocument({
     required this.createdAt,
     required this.rowCount,
+    required this.sourceRowCount,
     required this.snapshotBytes,
     required this.snapshotJson,
     this.checksum = '',
+    this.rangeFingerprint = '',
     this.changeTrackingVersion,
     this.keyColumns = const [],
     this.uniqueKeyColumnSets = const <List<String>>[],
@@ -12597,9 +12661,11 @@ class _RelaySnapshotDocument {
 
   final String createdAt;
   final int rowCount;
+  final int sourceRowCount;
   final int snapshotBytes;
   final String snapshotJson;
   final String checksum;
+  final String rangeFingerprint;
   final int? changeTrackingVersion;
   final List<String> keyColumns;
   final List<List<String>> uniqueKeyColumnSets;
@@ -12613,9 +12679,14 @@ class _RelaySnapshotDocument {
     return _RelaySnapshotDocument(
       createdAt: json['createdAt']?.toString() ?? '',
       rowCount: (json['rowCount'] as num?)?.toInt() ?? 0,
+      sourceRowCount:
+          (json['sourceRowCount'] as num?)?.toInt() ??
+          (json['rowCount'] as num?)?.toInt() ??
+          0,
       snapshotBytes: (json['snapshotBytes'] as num?)?.toInt() ?? 0,
       snapshotJson: snapshotJson,
       checksum: json['checksum']?.toString() ?? '',
+      rangeFingerprint: json['rangeFingerprint']?.toString() ?? '',
       changeTrackingVersion: (json['changeTrackingVersion'] as num?)?.toInt(),
       keyColumns: (json['keyColumns'] as List<dynamic>? ?? const [])
           .map((value) => value.toString())
@@ -12635,9 +12706,11 @@ class _RelaySnapshotDocument {
   Map<String, dynamic> toJson() => {
     'createdAt': createdAt,
     'rowCount': rowCount,
+    'sourceRowCount': sourceRowCount,
     'snapshotBytes': snapshotBytes,
     'snapshotJson': snapshotJson,
     'checksum': checksum,
+    'rangeFingerprint': rangeFingerprint,
     if (changeTrackingVersion != null)
       'changeTrackingVersion': changeTrackingVersion,
     'keyColumns': keyColumns,

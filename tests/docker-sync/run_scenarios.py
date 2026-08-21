@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import os
 import random
@@ -1434,6 +1435,60 @@ def run_scenarios():
             )
     reset_databases()
 
+    # Selective anti-entropy reads a complete consistent inventory but relays
+    # only primary-key buckets proven to differ. Exercise the deterministic key
+    # framing across three isolated clients and prove that unioning one bucket
+    # converges without treating snapshot absence as deletion.
+    def selective_bucket(id_):
+        framed = json.dumps([["id", str(id_)]], separators=(",", ":"))
+        digest = hashlib.sha256(framed.encode("utf-8")).digest()
+        return int.from_bytes(digest[:4], "big") % 16
+
+    grouped_ids = {}
+    for candidate in range(8100, 8500):
+        bucket = selective_bucket(candidate)
+        grouped_ids.setdefault(bucket, []).append(candidate)
+    selected_bucket, selected_ids = next(
+        (bucket, ids) for bucket, ids in grouped_ids.items() if len(ids) >= 4
+    )
+    common_rows = [
+        row(8000 + offset, f"RANGE-{offset}", f"Common {offset}")
+        for offset in range(64)
+    ]
+    for database in DATABASES:
+        apply(database, rows=common_rows)
+    range_client_rows = []
+    for index, database in enumerate(DATABASES):
+        changed = {
+            **row(
+                selected_ids[index],
+                f"RANGE-C{index + 1}",
+                f"Client {index + 1} range row",
+            ),
+            "__sync_modified_at_utc": f"2026-08-21T10:00:0{index}Z",
+        }
+        apply(database, rows=[changed])
+        range_client_rows.append(changed)
+    selective_union = coalesce(range_client_rows)
+    if any(
+        selective_bucket(value["Id"]) != selected_bucket
+        for value in selective_union
+    ):
+        raise AssertionError(
+            "Selective range union escaped its deterministic primary-key bucket."
+        )
+    for database in DATABASES:
+        apply(database, rows=selective_union)
+    assert_equal(*DATABASES)
+    if any(
+        scalar_int(database, "SELECT COUNT(*) FROM dbo.SyncItems;") != 68
+        for database in DATABASES
+    ):
+        raise AssertionError(
+            "Selective range convergence removed a snapshot-absent row."
+        )
+    reset_databases()
+
     inserted = row(2, "INSERT-2", "Inserted on client 1", arabic="إضافة جديدة")
     for database in DATABASES[1:]:
         apply(database, rows=[inserted])
@@ -1852,6 +1907,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
             "initial-three-client-primary-key-union-bootstrap",
+            "selective-range-three-client-convergence",
             "full-union-does-not-resurrect-durable-delete",
             "durable-delete-reasserts-against-zombie-full-row",
             "independent-multi-writer",
