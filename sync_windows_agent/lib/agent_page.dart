@@ -6949,7 +6949,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         table: targetTable.table,
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
-        rows: rowsForApply,
+        rows: completeSnapshotRowsForContentVerification(rowsForApply),
       );
       final unexpectedUnappliedRows = unexpectedCompleteSnapshotMismatchCount(
         unappliedRowCount: unappliedRows.length,

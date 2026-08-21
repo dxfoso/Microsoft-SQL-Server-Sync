@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 151)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 152)}
         observed_ids = set()
 
         for row in rows:
@@ -828,6 +828,25 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("return db.updateMany(SyncJob", marker)
         self.assertEqual(rows.count("automaticRetryKind,"), 2)
         self.assertNotIn("? null : automaticRetryKind", rows)
+
+    def test_validated_full_snapshot_delete_is_not_content_verified_as_a_row(self):
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        tests = read_text("sync_windows_agent/test/sql_sync_merge_test.dart")
+
+        self.assertIn(
+            "List<Map<String, dynamic>> completeSnapshotRowsForContentVerification(",
+            merge,
+        )
+        self.assertIn("!isSqlSyncDurableTombstoneReassertion(row)", merge)
+        self.assertIn(
+            "rows: completeSnapshotRowsForContentVerification(rowsForApply)",
+            agent,
+        )
+        self.assertIn(
+            "complete snapshot content verification excludes only validated deletes",
+            tests,
+        )
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

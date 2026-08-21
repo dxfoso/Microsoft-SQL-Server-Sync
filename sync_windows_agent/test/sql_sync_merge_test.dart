@@ -22,6 +22,28 @@ void main() {
   });
 
   test(
+    'complete snapshot content verification excludes only validated deletes',
+    () {
+      final upsert = <String, dynamic>{'Id': 1, '__sync_op': 'S'};
+      final validatedDelete = <String, dynamic>{
+        'Id': 2,
+        '__sync_op': 'D',
+        sqlSyncDurableTombstoneReassertionField: 'true',
+      };
+      final untrustedDelete = <String, dynamic>{'Id': 3, '__sync_op': 'D'};
+
+      expect(
+        completeSnapshotRowsForContentVerification([
+          upsert,
+          validatedDelete,
+          untrustedDelete,
+        ]),
+        equals([upsert, untrustedDelete]),
+      );
+    },
+  );
+
+  test(
     'large snapshot staging uses one script with bounded SQL statements',
     () {
       const columns = [

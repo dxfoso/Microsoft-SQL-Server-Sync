@@ -27,6 +27,17 @@ bool isSqlSyncDurableTombstoneReassertion(Map<String, dynamic> row) {
           'true';
 }
 
+/// A validated tombstone is proven by its expected absence after apply, not
+/// by row-content equality. Keep ordinary snapshot rows in content
+/// verification while excluding only server-validated delete reassertions.
+List<Map<String, dynamic>> completeSnapshotRowsForContentVerification(
+  Iterable<Map<String, dynamic>> rows,
+) {
+  return rows
+      .where((row) => !isSqlSyncDurableTombstoneReassertion(row))
+      .toList(growable: false);
+}
+
 // SQL Server accepts at most 1,000 rows in one INSERT ... VALUES statement.
 // Keep that server-side bound and separate statements with sqlcmd's GO batch
 // delimiter. This preserves one sqlcmd process/connection without asking SQL

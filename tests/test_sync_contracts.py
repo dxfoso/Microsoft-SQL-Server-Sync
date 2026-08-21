@@ -2643,7 +2643,10 @@ class SyncContractsTests(unittest.TestCase):
             apply_body,
         )
         self.assertNotIn("applyDelta\n            ? await _rowsWhoseContentChanged", apply_body)
-        self.assertIn("rows: rowsForApply", verification_body)
+        self.assertIn(
+            "rows: completeSnapshotRowsForContentVerification(rowsForApply)",
+            verification_body,
+        )
 
 
 if __name__ == "__main__":
