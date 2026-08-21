@@ -958,12 +958,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIn("periodic_sync_table_due_after_attempt(", scheduler)
         self.assertIn(
-            "if (latest_completed_table_batch_was_union(table, recentUploadModes))",
+            "retryable_failed_union_download_batch_id(",
             scheduler,
         )
         self.assertLess(
             scheduler.index(
-                "if (latest_completed_table_batch_was_union(table, recentUploadModes))"
+                "if (latestUploadMode != null && latestUploadMode.union == true)"
             ),
             scheduler.index("let retryDue = false;"),
         )
@@ -988,7 +988,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             scheduler,
         )
         self.assertIn(
-            "if (latest_completed_table_batch_was_union(table, recentUploadModes))",
+            "if (latestUploadMode != null && latestUploadMode.union == true)",
             scheduler,
         )
         self.assertIn(
@@ -997,9 +997,37 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertLess(
             scheduler.index("due_periodic_sync_tables_for_agent_with_policies("),
             scheduler.index(
-                "if (latest_completed_table_batch_was_union(table, recentUploadModes))"
+                "if (latestUploadMode != null && latestUploadMode.union == true)"
             ),
         )
+
+    def test_failed_union_download_gets_one_bounded_automatic_retry(self):
+        source = read_text("business/control_plane.tru")
+        retry_selector = source.split(
+            "function retryable_failed_union_download_batch_id(", 1
+        )[1].split("function sync_table_state_due_for_interval(", 1)[0]
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        rows = source.split("function multi_writer_job_rows(", 1)[1].split(
+            "function create_multi_writer_batch(", 1
+        )[0]
+
+        self.assertIn("field automaticRetryKind: string? min=0 max=32", source)
+        self.assertIn("latestMode.union != true", retry_selector)
+        self.assertIn("== 'failed-download'", retry_selector)
+        self.assertIn("!= 'retry-scheduled'", retry_selector)
+        self.assertIn("latest_completed_upload_mode_for_owner_table(", scheduler)
+        self.assertIn("batchId: latestBatchId", retry_selector)
+        self.assertIn(
+            "string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0",
+            scheduler,
+        )
+        self.assertIn("automaticRetryKind: 'retry-scheduled'", scheduler)
+        self.assertIn("batchId: failedUnionRetryBatchId", scheduler)
+        self.assertEqual(rows.count(
+            "automaticRetryKind: automaticRetryKind.length == 0 ? null : automaticRetryKind"
+        ), 2)
 
     def test_pending_change_with_valid_cursors_stays_on_delta_path(self):
         source = read_text("business/control_plane.tru")
@@ -1772,7 +1800,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("db.selectMany(", planner)
         self.assertIn("recentUploadModes", planner)
         self.assertIn("function latest_completed_upload_modes_for_owner(", source)
-        self.assertIn("fields: ['table', 'sourceClientName']", source)
+        self.assertIn(
+            "fields: ['table', 'sourceClientName']",
+            source,
+        )
         self.assertIn("mode: 'delta'", planner)
         self.assertIn("mode: 'reconcile'", planner)
         self.assertIn("mode: 'needs_input'", planner)

@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 148)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 149)}
         observed_ids = set()
 
         for row in rows:
@@ -774,12 +774,31 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
 
         self.assertIn(
-            "latest_completed_table_batch_was_union(table, recentUploadModes)",
+            "latestUploadMode != null && latestUploadMode.union == true",
             scheduler,
         )
         self.assertIn("continue;", scheduler.split(
-            "latest_completed_table_batch_was_union(table, recentUploadModes)", 1
+            "latestUploadMode != null && latestUploadMode.union == true", 1
         )[1].split("let retryDue = false", 1)[0])
+
+    def test_failed_full_download_receives_only_one_automatic_retry(self):
+        source = read_text("business/control_plane.tru")
+        selector = source.split(
+            "function retryable_failed_union_download_batch_id(", 1
+        )[1].split("function sync_table_state_due_for_interval(", 1)[0]
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+
+        self.assertIn("latestMode.union != true", selector)
+        self.assertIn("== 'failed-download'", selector)
+        self.assertIn("!= 'retry-scheduled'", selector)
+        self.assertIn("batchId: latestBatchId", selector)
+        self.assertIn("automaticRetryKind: 'retry-scheduled'", scheduler)
+        self.assertIn(
+            "string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0",
+            scheduler,
+        )
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")

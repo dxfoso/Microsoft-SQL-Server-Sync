@@ -138,6 +138,9 @@ class SyncJob {
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field batchId: string? min=0 max=128
+  // Internal scheduler provenance. A failed full-download repair is allowed
+  // exactly one automatic retry; ordinary/manual batches leave this null.
+  field automaticRetryKind: string? min=0 max=32
   field protocolVersion: int? min=3 max=4
   field syncEpoch: string? min=0 max=64
 }
@@ -3922,6 +3925,62 @@ function enabled_sync_policy_tables_for_agent(agent: map<json>, policies: array<
   return enabledTables;
 }
 
+// Return the failed union batch that may receive one automatic retry. The
+// retry batch is tagged, and the original failure is marked once scheduled,
+// so a persistent client error cannot create an endless full-table loop.
+function latest_completed_upload_mode_for_owner_table(ownerUserId: string, table: string): map<json>? {
+  const rows = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      table,
+      direction: 'upload',
+      status: 'completed'
+    },
+    orderBy: { field: 'completedAt', dir: 'desc' },
+    fields: ['sourceClientName', 'batchId', 'automaticRetryKind'],
+    limit: 1
+  });
+  if (rows.length == 0) {
+    return null;
+  }
+  return {
+    union: string.from(rows[0].sourceClientName).trim() == 'server-union-bootstrap-v3',
+    batchId: string.from(rows[0].batchId ?? '').trim(),
+    automaticRetryKind: string.from(rows[0].automaticRetryKind ?? '').trim()
+  };
+}
+
+function retryable_failed_union_download_batch_id(ownerUserId: string, table: string): string {
+  const latestMode = latest_completed_upload_mode_for_owner_table(ownerUserId, table);
+  if (latestMode == null ||
+      latestMode.union != true ||
+      string.from(latestMode.automaticRetryKind ?? '').trim() == 'failed-download') {
+    return '';
+  }
+  const latestBatchId = string.from(latestMode.batchId ?? '').trim();
+  if (latestBatchId.length == 0) {
+    return '';
+  }
+  const failedDownloads = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      table,
+      batchId: latestBatchId,
+      direction: 'download',
+      status: 'failed'
+    },
+    orderBy: { field: 'completedAt', dir: 'desc' },
+    fields: ['automaticRetryKind'],
+    limit: 1000
+  });
+  for (const failedJob of failedDownloads) {
+    if (string.from(failedJob.automaticRetryKind ?? '').trim() != 'retry-scheduled') {
+      return latestBatchId;
+    }
+  }
+  return '';
+}
+
 function sync_table_state_due_for_interval(tableState: map<json>? = null, intervalMinutes: int? = null): bool {
   const interval = clamp_auto_sync_interval(intervalMinutes);
   if (tableState == null || tableState.lastSync == null) {
@@ -4214,6 +4273,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   const tableCaches = ownerAgents.map((agent) => scheduler_agent_table_state_cache(agent, ownerPolicies));
   const recentUploadModes = latest_completed_upload_modes_for_owner(normalizedOwnerUserId);
   const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
+  let failedUnionRetryBatches = [];
   let dueTables = manualPendingTables;
   if (manualPendingTables.length == 0) {
     dueTables = unique_string_values(
@@ -4249,8 +4309,22 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       // genuine later SQL change is still selected above from Change
       // Tracking and runs as a delta; after that delta, a remaining historical
       // difference becomes eligible for one more bounded union attempt.
-      if (latest_completed_table_batch_was_union(table, recentUploadModes)) {
-        continue;
+      const latestUploadMode = latest_completed_upload_mode_for_owner_table(
+        normalizedOwnerUserId,
+        table
+      );
+      if (latestUploadMode != null && latestUploadMode.union == true) {
+        const failedBatchId = retryable_failed_union_download_batch_id(
+          normalizedOwnerUserId,
+          table
+        );
+        if (failedBatchId.length == 0) {
+          continue;
+        }
+        failedUnionRetryBatches = failedUnionRetryBatches.concat([{
+          table,
+          batchId: failedBatchId
+        }]);
       }
       let retryDue = false;
       for (const agent of ownerAgents) {
@@ -4322,6 +4396,13 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       continue;
     }
     let jobs = [];
+    let failedUnionRetryBatchId = '';
+    for (const retryBatch of failedUnionRetryBatches) {
+      if (string.from(retryBatch.table).trim() == table) {
+        failedUnionRetryBatchId = string.from(retryBatch.batchId ?? '').trim();
+        break;
+      }
+    }
     if (string.from(plan.mode) == 'reconcile' &&
         plan.sourceAgent != null &&
         (plan.targetAgents ?? []).length > 0) {
@@ -4346,10 +4427,25 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         '',
         preserveChangeTrackingBaselines,
         string.from(plan.mode) == 'union_bootstrap',
-        ownerPolicies
+        ownerPolicies,
+        string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0
+          ? 'failed-download'
+          : ''
       );
     }
     if (jobs.length > 0) {
+      if (string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0) {
+        db.updateMany(SyncJob, {
+          ownerUserId: normalizedOwnerUserId,
+          batchId: failedUnionRetryBatchId,
+          table,
+          direction: 'download',
+          status: 'failed'
+        }, {
+          automaticRetryKind: 'retry-scheduled',
+          updatedAt: now_iso()
+        });
+      }
       if (preserveChangeTrackingBaselines) {
         mark_offline_sync_debt(
           normalizedOwnerUserId,
@@ -5588,7 +5684,7 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = ''): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
@@ -5638,6 +5734,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       clientUserId: agent.clientUserId,
       ownerUserId,
       batchId,
+      automaticRetryKind: automaticRetryKind.length == 0 ? null : automaticRetryKind,
       protocolVersion: protocol.protocolVersion,
       syncEpoch: protocol.syncEpoch
     }, {
@@ -5667,6 +5764,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       clientUserId: agent.clientUserId,
       ownerUserId,
       batchId,
+      automaticRetryKind: automaticRetryKind.length == 0 ? null : automaticRetryKind,
       protocolVersion: protocol.protocolVersion,
       syncEpoch: protocol.syncEpoch
     }]);
@@ -5674,7 +5772,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
   return rows;
 }
 
-function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null): array<json> {
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = ''): array<json> {
   if (agents.length == 0) {
     return [];
   }
@@ -5715,7 +5813,8 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     bootstrapSourceClientName,
     preserveChangeTrackingBaselines,
     unionBootstrap,
-    policies
+    policies,
+    automaticRetryKind
   ));
 }
 
