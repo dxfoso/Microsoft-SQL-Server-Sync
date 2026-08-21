@@ -3666,7 +3666,7 @@ function sync_source_is_union_bootstrap(sourceClientName: string): bool {
 // A range manifest is usable only when it describes the exact complete table
 // inventory currently reported by that client. This prevents stale or partial
 // diagnostics from narrowing a repair unsafely.
-function sync_range_manifest_parts(state: map<json>?): array<string> {
+function sync_range_manifest_parts(state: map<json>? = null): array<string> {
   if (state == null) {
     return [];
   }

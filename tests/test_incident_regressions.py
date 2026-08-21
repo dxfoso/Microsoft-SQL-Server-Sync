@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 153)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 154)}
         observed_ids = set()
 
         for row in rows:
@@ -1070,6 +1070,14 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("selectiveRangeReconcile", client)
         self.assertIn("canonicalFullMerge", backend)
         self.assertIn("SqlSyncRangeFingerprintManifest", fingerprint)
+
+    def test_range_manifest_helper_declares_tru_optional_default(self):
+        backend = read_text("business/control_plane.tru")
+
+        self.assertIn(
+            "function sync_range_manifest_parts(state: map<json>? = null): array<string>",
+            backend,
+        )
 
 
 if __name__ == "__main__":
