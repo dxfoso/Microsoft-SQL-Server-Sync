@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 147)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 148)}
         observed_ids = set()
 
         for row in rows:
@@ -967,6 +967,14 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("catch [System.IO.IOException]", rollback_test)
         self.assertIn("Start-Sleep -Milliseconds 50", rollback_test)
         self.assertIn("Read-UpdateLogWithRetry -Path $logPath", rollback_test)
+
+    def test_updater_rollback_observer_outlives_supervisor_retry_bound(self):
+        rollback_test = read_text("tests/test_windows_updater_rollback.ps1")
+        updater = read_text("update.ps1")
+
+        self.assertIn("for ($attempt = 1; $attempt -le 45; $attempt++)", updater)
+        self.assertIn("$deadline = [DateTime]::UtcNow.AddSeconds(75)", rollback_test)
+        self.assertIn("Final update log: $logText", rollback_test)
 
     def test_complete_union_accepts_only_server_verified_tombstone_reassertions(self):
         backend = read_text("business/control_plane.tru")

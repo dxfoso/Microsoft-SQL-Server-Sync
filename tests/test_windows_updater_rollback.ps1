@@ -68,14 +68,21 @@ public static class Program {
 
     Start-DeferredInstall -PayloadDir $payloadDir -TargetInstallDir $installDir -WorkRoot $workRoot -ParentProcessId ([int]::MaxValue) -Version 'rollback-test'
     $logPath = Join-Path $installDir 'update.log'
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    # The independent supervisor deliberately retries an immediately failing
+    # executable for up to 45 seconds before the finalizer can begin rollback.
+    # Keep this observer outside that product bound plus rollback verification.
+    $deadline = [DateTime]::UtcNow.AddSeconds(75)
     do {
         Start-Sleep -Milliseconds 200
         $logText = Read-UpdateLogWithRetry -Path $logPath
     } while ($logText -notmatch 'Rollback files restored and verified' -and [DateTime]::UtcNow -lt $deadline)
 
-    if ($logText -notmatch 'rolling back the complete managed-file change set') { throw 'Failed startup did not trigger rollback.' }
-    if ($logText -notmatch 'Rollback files restored and verified') { throw 'Rollback restoration was not logged.' }
+    if ($logText -notmatch 'rolling back the complete managed-file change set') {
+        throw "Failed startup did not trigger rollback. Final update log: $logText"
+    }
+    if ($logText -notmatch 'Rollback files restored and verified') {
+        throw "Rollback restoration was not logged. Final update log: $logText"
+    }
     if ((Get-FileHash -LiteralPath $oldExe -Algorithm SHA256).Hash -ne $oldHash) { throw 'Rollback did not restore the original executable.' }
     if ($logText -notmatch 'restarting the previous client') { throw 'Rollback did not request restart of the previous executable.' }
     Write-Host 'PASS failed replacement startup atomically restores the previous Windows client and requests its supervised restart.'
