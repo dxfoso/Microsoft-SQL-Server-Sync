@@ -3981,6 +3981,20 @@ function retryable_failed_union_download_batch_id(ownerUserId: string, table: st
   return '';
 }
 
+// Keep the strict-mode database mutation outside the scheduler's table loop.
+function mark_failed_union_download_retry_scheduled(ownerUserId: string, batchId: string, table: string): int {
+  return db.updateMany(SyncJob, {
+    ownerUserId,
+    batchId,
+    table,
+    direction: 'download',
+    status: 'failed'
+  }, {
+    automaticRetryKind: 'retry-scheduled',
+    updatedAt: now_iso()
+  });
+}
+
 function sync_table_state_due_for_interval(tableState: map<json>? = null, intervalMinutes: int? = null): bool {
   const interval = clamp_auto_sync_interval(intervalMinutes);
   if (tableState == null || tableState.lastSync == null) {
@@ -4435,16 +4449,11 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     }
     if (jobs.length > 0) {
       if (string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0) {
-        db.updateMany(SyncJob, {
-          ownerUserId: normalizedOwnerUserId,
-          batchId: failedUnionRetryBatchId,
-          table,
-          direction: 'download',
-          status: 'failed'
-        }, {
-          automaticRetryKind: 'retry-scheduled',
-          updatedAt: now_iso()
-        });
+        mark_failed_union_download_retry_scheduled(
+          normalizedOwnerUserId,
+          failedUnionRetryBatchId,
+          table
+        );
       }
       if (preserveChangeTrackingBaselines) {
         mark_offline_sync_debt(
@@ -5734,7 +5743,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       clientUserId: agent.clientUserId,
       ownerUserId,
       batchId,
-      automaticRetryKind: automaticRetryKind.length == 0 ? null : automaticRetryKind,
+      automaticRetryKind,
       protocolVersion: protocol.protocolVersion,
       syncEpoch: protocol.syncEpoch
     }, {
@@ -5764,7 +5773,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       clientUserId: agent.clientUserId,
       ownerUserId,
       batchId,
-      automaticRetryKind: automaticRetryKind.length == 0 ? null : automaticRetryKind,
+      automaticRetryKind,
       protocolVersion: protocol.protocolVersion,
       syncEpoch: protocol.syncEpoch
     }]);

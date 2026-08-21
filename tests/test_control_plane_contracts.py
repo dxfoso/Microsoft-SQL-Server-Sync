@@ -1023,11 +1023,13 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0",
             scheduler,
         )
-        self.assertIn("automaticRetryKind: 'retry-scheduled'", scheduler)
-        self.assertIn("batchId: failedUnionRetryBatchId", scheduler)
-        self.assertEqual(rows.count(
-            "automaticRetryKind: automaticRetryKind.length == 0 ? null : automaticRetryKind"
-        ), 2)
+        self.assertIn("mark_failed_union_download_retry_scheduled(", scheduler)
+        self.assertIn("failedUnionRetryBatchId,", scheduler)
+        self.assertEqual(rows.count("automaticRetryKind,"), 2)
+        self.assertNotIn(
+            "automaticRetryKind.length == 0 ? null : automaticRetryKind",
+            rows,
+        )
 
     def test_pending_change_with_valid_cursors_stays_on_delta_path(self):
         source = read_text("business/control_plane.tru")

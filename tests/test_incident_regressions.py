@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 150)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 151)}
         observed_ids = set()
 
         for row in rows:
@@ -794,7 +794,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("== 'failed-download'", selector)
         self.assertIn("!= 'retry-scheduled'", selector)
         self.assertIn("batchId: latestBatchId", selector)
-        self.assertIn("automaticRetryKind: 'retry-scheduled'", scheduler)
+        self.assertIn("mark_failed_union_download_retry_scheduled(", scheduler)
         self.assertIn(
             "string.from(plan.mode) == 'union_bootstrap' && failedUnionRetryBatchId.length != 0",
             scheduler,
@@ -810,6 +810,24 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("git -C $RepositoryPath fetch --quiet origin master", remote_check)
         self.assertIn("-Attempts 3", remote_check)
         self.assertIn("git -C $RepositoryPath merge-base --is-ancestor", remote_check)
+
+    def test_failed_download_retry_uses_tru_strict_mode_safe_shapes(self):
+        source = read_text("business/control_plane.tru")
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        rows = source.split("function multi_writer_job_rows(", 1)[1].split(
+            "function create_multi_writer_batch(", 1
+        )[0]
+        marker = source.split(
+            "function mark_failed_union_download_retry_scheduled(", 1
+        )[1].split("function sync_table_state_due_for_interval(", 1)[0]
+
+        self.assertNotIn("db.updateMany(SyncJob", scheduler)
+        self.assertIn("mark_failed_union_download_retry_scheduled(", scheduler)
+        self.assertIn("return db.updateMany(SyncJob", marker)
+        self.assertEqual(rows.count("automaticRetryKind,"), 2)
+        self.assertNotIn("? null : automaticRetryKind", rows)
 
     def test_client_update_retrying_has_one_reachable_color_case(self):
         source = read_text("frontend/lib/clients_page.dart")
