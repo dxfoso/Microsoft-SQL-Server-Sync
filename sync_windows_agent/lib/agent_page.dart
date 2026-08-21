@@ -6731,9 +6731,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
 
     var protectedFullSnapshotUpsertRows = 0;
     if (fullSnapshotApply) {
-      if (deleteRows.isNotEmpty) {
+      final untrustedDeleteRows = deleteRows
+          .where((row) => !isSqlSyncDurableTombstoneReassertion(row))
+          .toList(growable: false);
+      if (untrustedDeleteRows.isNotEmpty) {
         throw StateError(
-          'Complete snapshots cannot contain explicit delete tombstones.',
+          'Complete snapshots can apply only server-validated durable tombstone reassertions; snapshot absence is never a delete instruction.',
         );
       }
       final rowCountBefore = await _queryTableRowCount(
@@ -6765,6 +6768,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         primaryKeyColumns: primaryKeyColumns,
         uniqueIndexColumnSets: uniqueIndexColumnSets,
         rows: rows,
+        deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>(),
         protectLocalChangesAfterVersion: postUploadChangeTrackingVersion,
         manageTriggers: true,
         insertOnly: false,
@@ -6792,6 +6796,11 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             applyResult.insertedRows,
       );
       stats.protectedUpsertRows += applyResult.protectedUpsertRows;
+      stats.protectedDeleteRows += applyResult.protectedDeleteRows;
+      stats.deletedRows += math.max(
+        0,
+        rowCountBefore.value + applyResult.insertedRows - rowCountAfter.value,
+      );
       protectedFullSnapshotUpsertRows = applyResult.protectedUpsertRows;
       if (applyResult.protectedRows > 0) {
         logAgentDiagnostic(
@@ -6808,9 +6817,13 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           },
         );
       }
-      if (rowCountAfter.value < rowCountBefore.value) {
+      final minimumExpectedRowCount = math.max(
+        0,
+        rowCountBefore.value - deleteRows.length,
+      );
+      if (rowCountAfter.value < minimumExpectedRowCount) {
         throw StateError(
-          'Complete snapshot apply reduced ${job.table} from ${rowCountBefore.value} to ${rowCountAfter.value} rows. Snapshot absence is never a delete instruction.',
+          'Complete snapshot apply reduced ${job.table} from ${rowCountBefore.value} to ${rowCountAfter.value} rows, beyond its ${deleteRows.length} server-validated explicit tombstone(s). Snapshot absence is never a delete instruction.',
         );
       }
     } else {

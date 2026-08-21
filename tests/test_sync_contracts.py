@@ -956,6 +956,9 @@ class SyncContractsTests(unittest.TestCase):
             snapshot_body,
         )
         self.assertIn("Snapshot absence is never a delete instruction", apply_body)
+        self.assertIn("isSqlSyncDurableTombstoneReassertion", apply_body)
+        self.assertIn("server-validated durable tombstone reassertions", apply_body)
+        self.assertIn("rowCountBefore.value - deleteRows.length", apply_body)
         self.assertIn("} else {", apply_body)
         self.assertIn("Unable to read the target row count before atomic delta apply.", apply_body)
         self.assertIn("deltaDeleteRows:", apply_body)
@@ -986,6 +989,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("TABLOCKX", merge)
         self.assertNotIn("DELETE TOP", merge)
         self.assertIn("explicit-tombstones-only", merge)
+        self.assertIn("sqlSyncDurableTombstoneReassertionField", merge)
         self.assertNotIn("authoritativeReplace", merge)
         self.assertNotIn("DELETE FROM $targetTable", merge)
         self.assertIn("resolveUniqueConflictsLatestWins", merge)

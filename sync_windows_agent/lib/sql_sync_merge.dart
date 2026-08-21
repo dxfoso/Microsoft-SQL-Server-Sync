@@ -11,6 +11,22 @@ const sqlSyncChangeTrackingContextHex = '0x53514C53594E43';
 /// delete instruction.
 const sqlSyncDeletePolicy = 'explicit-tombstones-only';
 
+/// Transport-only proof that a delete inside a canonical full merge is the
+/// server-validated reassertion of an existing durable explicit tombstone.
+/// Raw snapshot rows cannot create this trust marker; [live_sync_api.dart]
+/// attaches it only from the server's accepted-operation envelope.
+const sqlSyncDurableTombstoneReassertionField =
+    '__sync_durable_tombstone_reassertion';
+
+bool isSqlSyncDurableTombstoneReassertion(Map<String, dynamic> row) {
+  return row['__sync_op']?.toString().trim().toUpperCase() == 'D' &&
+      row[sqlSyncDurableTombstoneReassertionField]
+              ?.toString()
+              .trim()
+              .toLowerCase() ==
+          'true';
+}
+
 // SQL Server accepts at most 1,000 rows in one INSERT ... VALUES statement.
 // Keep that server-side bound and separate statements with sqlcmd's GO batch
 // delimiter. This preserves one sqlcmd process/connection without asking SQL

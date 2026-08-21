@@ -3,6 +3,24 @@ import 'package:sync_windows_agent/sql_sync_merge.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
 
 void main() {
+  test('only marked explicit deletes are durable tombstone reassertions', () {
+    expect(
+      isSqlSyncDurableTombstoneReassertion({
+        '__sync_op': 'D',
+        sqlSyncDurableTombstoneReassertionField: 'true',
+      }),
+      isTrue,
+    );
+    expect(isSqlSyncDurableTombstoneReassertion({'__sync_op': 'D'}), isFalse);
+    expect(
+      isSqlSyncDurableTombstoneReassertion({
+        '__sync_op': 'S',
+        sqlSyncDurableTombstoneReassertionField: 'true',
+      }),
+      isFalse,
+    );
+  });
+
   test(
     'large snapshot staging uses one script with bounded SQL statements',
     () {

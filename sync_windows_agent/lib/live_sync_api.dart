@@ -1471,6 +1471,7 @@ class AgentControlPlaneClient {
               .toSet();
       final authoritativeModifiedAtByOperation = <String, String>{};
       final authoritativeOperationByOperation = <String, String>{};
+      final durableTombstoneReassertionOperations = <String>{};
       for (final value
           in snapshotPayload['acceptedOperations'] as List<dynamic>? ??
               const <dynamic>[]) {
@@ -1490,6 +1491,12 @@ class AgentControlPlaneClient {
         if (operationId.isNotEmpty && authoritativeOperation.isNotEmpty) {
           authoritativeOperationByOperation[operationId] =
               authoritativeOperation;
+          acceptedOperationIds.add(operationId);
+        }
+        if (operationId.isNotEmpty &&
+            authoritativeOperation == 'D' &&
+            value['durableTombstoneReassertion'] == true) {
+          durableTombstoneReassertionOperations.add(operationId);
           acceptedOperationIds.add(operationId);
         }
       }
@@ -1519,6 +1526,8 @@ class AgentControlPlaneClient {
                 '__sync_modified_at_utc': authoritativeModifiedAtUtc,
               if (authoritativeOperation != null)
                 '__sync_op': authoritativeOperation,
+              if (durableTombstoneReassertionOperations.contains(operationId))
+                '__sync_durable_tombstone_reassertion': 'true',
               if (serverReceivedAtUtc.isNotEmpty)
                 '__sync_server_received_at_utc': serverReceivedAtUtc,
               if (serverSequence.isNotEmpty)

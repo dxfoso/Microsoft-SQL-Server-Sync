@@ -4118,6 +4118,7 @@ void main() {
                       'operationId': acceptedId,
                       'authoritativeModifiedAtUtc': '2026-07-25T09:59:59.000Z',
                       'authoritativeOperation': 'D',
+                      'durableTombstoneReassertion': true,
                     },
                   ],
                   'rowCount': 1,
@@ -4149,6 +4150,10 @@ void main() {
       expect(snapshot.rows, hasLength(1));
       expect(snapshot.rows.single['Name'], 'zombie full row');
       expect(snapshot.rows.single['__sync_op'], 'D');
+      expect(
+        snapshot.rows.single['__sync_durable_tombstone_reassertion'],
+        'true',
+      );
       expect(
         snapshot.rows.single['__sync_modified_at_utc'],
         '2026-07-25T09:59:59.000Z',

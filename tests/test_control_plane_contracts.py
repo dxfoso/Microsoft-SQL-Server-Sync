@@ -2232,7 +2232,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("currentWinner.operation).trim().toUpperCase() == 'D'", upload_body)
         self.assertIn("authoritativeOperation = 'D'", upload_body)
         self.assertIn("durableOperationId = string.from(currentWinner.operationId)", upload_body)
+        self.assertIn("durableTombstoneReassertion: reassertsDurableTombstone", upload_body)
         self.assertIn("authoritativeOperation", download_body)
+        self.assertIn("candidateOperation.durableTombstoneReassertion == true", download_body)
+        self.assertIn("authoritativeOperation == 'D'", download_body)
+        self.assertIn("durableTombstoneReassertion", download_body)
 
     def test_table_row_comparison_is_scoped_read_only_and_multi_client(self):
         source = read_text("business/control_plane.tru")

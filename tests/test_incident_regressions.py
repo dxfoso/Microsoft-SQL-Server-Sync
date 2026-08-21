@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 146)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 147)}
         observed_ids = set()
 
         for row in rows:
@@ -967,6 +967,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("catch [System.IO.IOException]", rollback_test)
         self.assertIn("Start-Sleep -Milliseconds 50", rollback_test)
         self.assertIn("Read-UpdateLogWithRetry -Path $logPath", rollback_test)
+
+    def test_complete_union_accepts_only_server_verified_tombstone_reassertions(self):
+        backend = read_text("business/control_plane.tru")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+
+        self.assertIn("durableTombstoneReassertion: reassertsDurableTombstone", backend)
+        self.assertIn("candidateOperation.durableTombstoneReassertion == true", backend)
+        self.assertIn("durableTombstoneReassertionOperations", api)
+        self.assertIn("isSqlSyncDurableTombstoneReassertion", agent)
+        self.assertIn("deltaDeleteRows: deleteRows.cast<Map<String, dynamic>>()", agent)
+        self.assertIn("rowCountBefore.value - deleteRows.length", agent)
+        self.assertIn("sqlSyncDurableTombstoneReassertionField", merge)
 
 
 if __name__ == "__main__":
