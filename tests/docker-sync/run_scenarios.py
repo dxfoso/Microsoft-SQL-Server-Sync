@@ -1815,6 +1815,7 @@ VALUES
                     "HISTORICAL-FLOAT-DRIFT",
                     "Same PK, no later CT delta",
                     float_value="13934625",
+                    real_value="13934625",
                 )
             ],
         )
@@ -1826,6 +1827,7 @@ VALUES
                 "HISTORICAL-FLOAT-DRIFT",
                 "Same PK, no later CT delta",
                 float_value="13934600",
+                real_value="13934600",
             )
         ],
     )
@@ -1856,6 +1858,7 @@ VALUES
             "HISTORICAL-FLOAT-DRIFT",
             "Same PK, no later CT delta",
             float_value="13934625",
+            real_value="13934625",
         ),
         "__sync_modified_at_utc": "2026-08-22T22:54:36Z",
     }
