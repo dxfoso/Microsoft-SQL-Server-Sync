@@ -25,7 +25,8 @@ if ($LASTEXITCODE -ne 0 -or $backendCommit -notmatch '^[0-9a-f]{40}$') {
 $releaseDate = [DateTime]::UtcNow.ToString('o')
 $backendImage = "$RegistryRoot/backend:$commit"
 $frontendImage = "$RegistryRoot/frontend:$commit"
-$contextRoot = Join-Path $workspaceRoot ("production-image-context-{0}" -f ([guid]::NewGuid().ToString('N')))
+$systemTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/')
+$contextRoot = Join-Path $systemTempRoot ("sql-sync-production-{0}" -f ([guid]::NewGuid().ToString('N')))
 $backendContext = Join-Path $contextRoot 'backend'
 $frontendContext = Join-Path $contextRoot 'frontend'
 
@@ -184,7 +185,12 @@ try {
 }
 finally {
     $resolvedContext = [System.IO.Path]::GetFullPath($contextRoot)
-    if ($resolvedContext.StartsWith($workspaceRoot.TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolvedContext)) {
-        Remove-Item -LiteralPath $resolvedContext -Recurse -Force -ErrorAction SilentlyContinue
+    $expectedPrefix = $systemTempRoot + '\sql-sync-production-'
+    if ($resolvedContext.StartsWith($expectedPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolvedContext -PathType Container)) {
+        $contextItem = Get-Item -LiteralPath $resolvedContext -Force -ErrorAction Stop
+        if (($contextItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing to remove production context reparse point: $resolvedContext"
+        }
+        Remove-Item -LiteralPath $resolvedContext -Recurse -Force -ErrorAction Stop
     }
 }

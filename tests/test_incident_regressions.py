@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 162)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 163)}
         observed_ids = set()
 
         for row in rows:
@@ -893,6 +893,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("PowerShell recovery command", dashboard)
         self.assertIn("writeBrowserClipboardText(command)", dashboard)
         self.assertIn("-File '$quotedScript'", dashboard)
+
+    def test_production_context_avoids_long_worktree_paths_and_cleans_safely(self):
+        builder = read_text("scripts/build_production_images.ps1")
+
+        self.assertIn("[System.IO.Path]::GetTempPath()", builder)
+        self.assertIn('"sql-sync-production-{0}"', builder)
+        self.assertIn("$expectedPrefix = $systemTempRoot + '\\sql-sync-production-'", builder)
+        self.assertIn("[System.IO.FileAttributes]::ReparsePoint", builder)
+        self.assertIn("Remove-Item -LiteralPath $resolvedContext -Recurse -Force -ErrorAction Stop", builder)
 
     def test_large_hash_comparison_resumes_bounded_key_staging(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
