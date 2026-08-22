@@ -5462,12 +5462,7 @@ function sync_row_logical_winner_refs(ownerUserId: string, table: string, row: m
   return refs;
 }
 
-function sync_row_durable_tombstone_for_reassertion(
-  logicalWinnerRefs: array<json>,
-  pendingWinners: array<json>,
-  currentWinners: array<json>,
-  currentPhysicalWinner: map<json>? = null
-): map<json>? {
+function sync_row_durable_tombstone_for_reassertion(logicalWinnerRefs: array<json>, pendingWinners: array<json>, currentWinners: array<json>, currentPhysicalWinner: map<json>? = null): map<json>? {
   if (currentPhysicalWinner != null) {
     if (string.from(currentPhysicalWinner.operation).trim().toUpperCase() == 'D') {
       return currentPhysicalWinner;

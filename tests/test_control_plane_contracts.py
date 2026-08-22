@@ -2309,6 +2309,13 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
     def test_full_union_reasserts_unambiguous_business_key_tombstone(self):
         source = read_text("business/control_plane.tru")
+        self.assertIn(
+            "function sync_row_durable_tombstone_for_reassertion("
+            "logicalWinnerRefs: array<json>, pendingWinners: array<json>, "
+            "currentWinners: array<json>, "
+            "currentPhysicalWinner: map<json>? = null): map<json>? {",
+            source,
+        )
         helper = source.split(
             "function sync_row_durable_tombstone_for_reassertion(", 1
         )[1].split("function sync_timestamp_compare_ms(", 1)[0]
