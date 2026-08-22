@@ -1886,7 +1886,14 @@ class _ClientsPageState extends State<ClientsPage> {
         const <AdminClientActivity>[],
   }) {
     if (!agent.syncEnabled) return 'Disabled';
-    if (!agent.isOnline) return 'Offline';
+    final clientUpdate = agent.clientUpdate;
+    if (!agent.isOnline) {
+      if (clientUpdate.pending &&
+          clientUpdate.status.trim().toLowerCase() == 'installing') {
+        return 'Update restarting';
+      }
+      return 'Offline';
+    }
     final ownerIssues =
         (_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).where(
           (issue) =>
@@ -2069,6 +2076,7 @@ class _ClientsPageState extends State<ClientsPage> {
       case 'update pending':
       case 'update downloading':
       case 'update installing':
+      case 'update restarting':
       case 'update retrying':
       case 'syncing':
         return const Color(0xFF2563EB);

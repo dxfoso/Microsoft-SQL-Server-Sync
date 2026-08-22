@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 160)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 161)}
         observed_ids = set()
 
         for row in rows:
@@ -865,6 +865,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertNotIn("token", updater.lower())
         self.assertIn("clientUpdateProgressPercent", backend)
         self.assertIn("Update downloading $percent%", web)
+
+    def test_web_client_update_card_shows_progress_retry_and_restart(self):
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        clients = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("_buildClientUpdateStatusCard(agent)", dashboard)
+        self.assertIn("label: 'Client update progress'", dashboard)
+        self.assertIn("Downloaded ${_formatClientUpdateBytes(downloaded)} of", dashboard)
+        self.assertIn("Retrying update automatically", dashboard)
+        self.assertIn("verified partial download is preserved", dashboard)
+        self.assertIn("Restarting after update", dashboard)
+        self.assertIn("Current ${_simpleClientVersion(agent)} • Target", dashboard)
+        self.assertIn("clientUpdate.status.trim().toLowerCase() == 'installing'", clients)
+        self.assertIn("return 'Update restarting';", clients)
 
     def test_large_hash_comparison_resumes_bounded_key_staging(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

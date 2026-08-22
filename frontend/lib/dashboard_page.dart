@@ -6482,6 +6482,185 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Widget _buildClientUpdateStatusCard(AdminAgent agent) {
+    final update = agent.clientUpdate;
+    final status = update.status.trim().toLowerCase();
+    final percent = _clientUpdatePercent(update, status);
+    final downloaded = update.downloadedBytes;
+    final total = update.totalBytes;
+    final targetVersion = update.targetVersion?.trim() ?? '';
+    final showProgress =
+        update.pending &&
+        const <String>{
+          'requested',
+          'downloading',
+          'retrying',
+          'installing',
+        }.contains(status);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                status == 'retrying'
+                    ? Icons.refresh_rounded
+                    : status == 'installing' && !agent.isOnline
+                    ? Icons.restart_alt_rounded
+                    : Icons.system_update_alt_rounded,
+                size: 18,
+                color: const Color(0xFF2563EB),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  _clientUpdateStageLabel(agent),
+                  style: const TextStyle(
+                    color: Color(0xFF101828),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (percent != null)
+                Text(
+                  '$percent%',
+                  style: const TextStyle(
+                    color: Color(0xFF2563EB),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
+          ),
+          if (showProgress) ...[
+            const SizedBox(height: 8),
+            Semantics(
+              label: 'Client update progress',
+              value: percent == null ? 'Waiting' : '$percent percent',
+              child: LinearProgressIndicator(
+                value: percent == null ? null : percent / 100,
+                minHeight: 7,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (downloaded != null && total != null && total > 0)
+              Text(
+                'Downloaded ${_formatClientUpdateBytes(downloaded)} of ${_formatClientUpdateBytes(total)}',
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            if (status == 'retrying')
+              const Text(
+                'The verified partial download is preserved and will resume automatically after the connection returns.',
+                style: TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            else if (status == 'installing')
+              Text(
+                agent.isOnline
+                    ? 'Installing safely; the client will restart automatically.'
+                    : 'The client is restarting to finish the update.',
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            else if (downloaded == null || total == null || total <= 0)
+              const Text(
+                'Waiting for the client to report download progress.',
+                style: TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+          ],
+          const SizedBox(height: 7),
+          Text(
+            'Current ${_simpleClientVersion(agent)} • Target ${targetVersion.isEmpty ? 'latest' : targetVersion}',
+            style: const TextStyle(
+              color: Color(0xFF475467),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Requested ${_formatTimestamp(update.requestedAt ?? '')} • Last report ${_formatTimestamp(update.acknowledgedAt ?? '')}',
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (update.message.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            SelectableText(update.message),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _clientUpdateStageLabel(AdminAgent agent) {
+    final update = agent.clientUpdate;
+    return switch (update.status.trim().toLowerCase()) {
+      'requested' => 'Waiting for client',
+      'downloading' => 'Downloading update',
+      'retrying' => 'Retrying update automatically',
+      'installing' =>
+        agent.isOnline ? 'Installing update' : 'Restarting after update',
+      'current' || 'completed' => 'Update complete',
+      'failed' => 'Update failed',
+      'unsupported' => 'Update unsupported',
+      _ => update.pending ? 'Update pending' : 'No update pending',
+    };
+  }
+
+  int? _clientUpdatePercent(
+    AdminAgentClientUpdate update,
+    String normalizedStatus,
+  ) {
+    final reported = update.progressPercent;
+    if (reported != null) return reported.clamp(0, 100).toInt();
+    final downloaded = update.downloadedBytes;
+    final total = update.totalBytes;
+    if (downloaded != null && total != null && total > 0) {
+      return ((downloaded * 100) / total).round().clamp(0, 100).toInt();
+    }
+    if (normalizedStatus == 'installing') return 100;
+    return null;
+  }
+
+  String _formatClientUpdateBytes(int bytes) {
+    const units = <String>['B', 'KB', 'MB', 'GB'];
+    var value = bytes.toDouble();
+    var unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    final digits = unitIndex == 0 || value >= 100 ? 0 : 1;
+    return '${value.toStringAsFixed(digits)} ${units[unitIndex]}';
+  }
+
   Widget _buildClientHeroCard(AdminAgent agent) {
     final serverItem = _serverItemForClientName(agent.clientName);
     final diagnostics = agent.diagnostics;
@@ -6510,7 +6689,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               MetricPill(label: 'Role', value: _roleLabel()),
               MetricPill(label: 'Online', value: agent.isOnline ? 'Yes' : 'No'),
               MetricPill(label: 'Diagnostics', value: diagnostics.status),
-              MetricPill(label: 'Update', value: clientUpdate.status),
+              MetricPill(
+                label: 'Update',
+                value: _clientUpdateStageLabel(agent),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -6571,43 +6753,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               clientUpdate.message.trim().isNotEmpty ||
               (clientUpdate.acknowledgedAt?.trim().isNotEmpty ?? false)) ...[
             const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFDDE3EA)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    clientUpdate.pending
-                        ? 'Client update request pending'
-                        : 'Latest client update status',
-                    style: const TextStyle(
-                      color: Color(0xFF101828),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Status ${clientUpdate.status} • Requested ${_formatTimestamp(clientUpdate.requestedAt ?? '')} • Acknowledged ${_formatTimestamp(clientUpdate.acknowledgedAt ?? '')}',
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (clientUpdate.message.trim().isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    SelectableText(clientUpdate.message),
-                  ],
-                ],
-              ),
-            ),
+            _buildClientUpdateStatusCard(agent),
           ],
           if (diagnostics.pending ||
               diagnostics.summary.trim().isNotEmpty ||
