@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 159)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 160)}
         observed_ids = set()
 
         for row in rows:
@@ -1147,6 +1147,26 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertIn("if (pending.isEmpty) return <T>[];", policy)
         self.assertNotIn("const <T>[]", policy)
+
+    def test_dns_client_update_failure_keeps_durable_request_pending(self):
+        source = read_text("business/control_plane.tru")
+        retry = source.split(
+            "function client_update_ack_should_retry(", 1
+        )[1].split("function latest_confirmed_client_release_for_owner(", 1)[0]
+        ack = source.split("function agent_client_update_ack(", 1)[1].split(
+            "function agent_window_action_request_all(", 1
+        )[0]
+
+        self.assertIn(
+            "resumable update payload download failed after 3 bounded attempts:",
+            retry,
+        )
+        self.assertIn("remote name could not be resolved", retry)
+        self.assertIn("no such host is known", retry)
+        self.assertIn("name resolution", retry)
+        self.assertIn("client_update_ack_should_retry(status, message)", ack)
+        self.assertIn("nextStatus = 'retrying'", ack)
+        self.assertIn("nextLastRequestId = resolvedRequestIdOrNull", ack)
 
 
 if __name__ == "__main__":

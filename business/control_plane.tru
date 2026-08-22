@@ -2061,11 +2061,25 @@ function client_update_ack_should_retry(status: string, message: string): bool {
   }
   // Compatibility for installed clients that predate the typed `retrying`
   // acknowledgement. Their manifest timeout text is deterministic; treating
-  // only this transport failure as retryable avoids looping permanent version
-  // or package-validation errors.
-  return normalizedStatus == 'failed' &&
-    message.trim().toLowerCase() ==
-      'control plane request timed out during checking client update manifest. check network connectivity.';
+  // only deterministic transport failures as retryable avoids looping
+  // permanent version or package-validation errors.
+  if (normalizedStatus != 'failed') {
+    return false;
+  }
+  const normalizedMessage = message.trim().toLowerCase();
+  if (normalizedMessage ==
+      'control plane request timed out during checking client update manifest. check network connectivity.') {
+    return true;
+  }
+  // Differential downloads preserve their verified partial file. Keep the
+  // same durable request pending only for known DNS-resolution failures so a
+  // later heartbeat can resume it; package/hash/version failures remain
+  // terminal and cannot loop automatically.
+  return normalizedMessage.contains(
+      'resumable update payload download failed after 3 bounded attempts:') &&
+    (normalizedMessage.contains('remote name could not be resolved') ||
+      normalizedMessage.contains('no such host is known') ||
+      normalizedMessage.contains('name resolution'));
 }
 
 function latest_confirmed_client_release_for_owner(ownerUserId: string): map<json>? {

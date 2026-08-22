@@ -356,6 +356,22 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "clientUpdateLastRequestId: resolvedRequestIdOrNull", ack
         )
 
+    def test_dns_client_update_download_failure_remains_pending(self):
+        source = read_text("business/control_plane.tru")
+        retry = source.split(
+            "function client_update_ack_should_retry(", 1
+        )[1].split("function latest_confirmed_client_release_for_owner(", 1)[0]
+
+        self.assertIn(
+            "resumable update payload download failed after 3 bounded attempts:",
+            retry,
+        )
+        self.assertIn("remote name could not be resolved", retry)
+        self.assertIn("no such host is known", retry)
+        self.assertIn("name resolution", retry)
+        self.assertIn("normalizedStatus != 'failed'", retry)
+        self.assertIn("return false;", retry)
+
     def test_client_update_download_phase_is_durable_and_visible(self):
         source = read_text("business/control_plane.tru")
         retry = source.split(
