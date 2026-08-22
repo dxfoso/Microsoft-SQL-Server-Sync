@@ -1652,10 +1652,29 @@ class _ClientsPageState extends State<ClientsPage> {
       selected: selected,
       cells: [
         DataCell(
-          Text(
-            agent.clientVersion.trim().isEmpty
-                ? '-'
-                : agent.clientVersion.trim(),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                agent.clientVersion.trim().isEmpty
+                    ? '-'
+                    : agent.clientVersion.trim(),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                key: ValueKey('client-update-recovery-${agent.clientName}'),
+                onPressed:
+                    () => unawaited(_showClientUpdateRecoveryDialog(agent)),
+                tooltip: 'Show update recovery command',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(
+                  width: 30,
+                  height: 30,
+                ),
+                icon: const Icon(Icons.terminal_rounded, size: 18),
+              ),
+            ],
           ),
         ),
         DataCell(_buildClientActiveCheckbox(agent)),
@@ -1713,6 +1732,95 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
       ],
+    );
+  }
+
+  String _powershellSingleQuotedValue(String value) =>
+      value.replaceAll("'", "''");
+
+  String? _clientUpdateInstallDirectory(String scriptPath) {
+    final normalized = scriptPath.trim().replaceAll('/', r'\');
+    final separator = normalized.lastIndexOf(r'\');
+    if (separator <= 2) return null;
+    return normalized.substring(0, separator);
+  }
+
+  String? _clientUpdateRecoveryCommand(AdminAgentClientUpdate update) {
+    final scriptPath = update.scriptPath.trim();
+    final installDirectory = _clientUpdateInstallDirectory(scriptPath);
+    if (scriptPath.isEmpty || installDirectory == null) return null;
+    final quotedScript = _powershellSingleQuotedValue(scriptPath);
+    final quotedInstall = _powershellSingleQuotedValue(installDirectory);
+    return "powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$quotedScript' -ManifestUrl 'https://sync.velvet-leaf.com/client/latest.json' -InstallDir '$quotedInstall'";
+  }
+
+  Future<void> _showClientUpdateRecoveryDialog(AdminAgent agent) async {
+    final scriptPath = agent.clientUpdate.scriptPath.trim();
+    final command = _clientUpdateRecoveryCommand(agent.clientUpdate);
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            icon: const Icon(Icons.terminal_rounded),
+            title: Text('Recover update on ${agent.clientName}'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Run this only on the named Windows client. It resumes the verified download, completes installation, and starts the supervised client. Running it again is safe.',
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Updater script path',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 5),
+                    SelectableText(
+                      scriptPath.isEmpty
+                          ? 'Not reported yet. Update this client once to enable its exact recovery path.'
+                          : scriptPath,
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'PowerShell recovery command',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 5),
+                    SelectableText(
+                      command ??
+                          'Unavailable until this client reports its packaged updater path.',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Close'),
+              ),
+              FilledButton.icon(
+                onPressed:
+                    command == null
+                        ? null
+                        : () async {
+                          await writeBrowserClipboardText(command);
+                          if (!dialogContext.mounted) return;
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            const SnackBar(
+                              content: Text('Recovery command copied.'),
+                            ),
+                          );
+                        },
+                icon: const Icon(Icons.copy_rounded, size: 17),
+                label: const Text('Copy command'),
+              ),
+            ],
+          ),
     );
   }
 

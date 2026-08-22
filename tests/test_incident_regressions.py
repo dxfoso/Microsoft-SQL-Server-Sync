@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 163)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 164)}
         observed_ids = set()
 
         for row in rows:
@@ -893,6 +893,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("PowerShell recovery command", dashboard)
         self.assertIn("writeBrowserClipboardText(command)", dashboard)
         self.assertIn("-File '$quotedScript'", dashboard)
+
+    def test_clients_table_places_recovery_icon_beside_version(self):
+        clients = read_text("frontend/lib/clients_page.dart")
+        version_cell = clients.split("DataRow _buildClientDataRow", 1)[1].split(
+            "DataCell(_buildClientActiveCheckbox", 1
+        )[0]
+
+        self.assertIn("agent.clientVersion.trim()", version_cell)
+        self.assertIn("Icons.terminal_rounded", version_cell)
+        self.assertIn("_showClientUpdateRecoveryDialog(agent)", version_cell)
+        self.assertIn("Show update recovery command", version_cell)
+        self.assertIn("BoxConstraints.tightFor", version_cell)
+        self.assertIn("writeBrowserClipboardText(command)", clients)
+        self.assertIn("Updater script path", clients)
+        self.assertIn("PowerShell recovery command", clients)
 
     def test_production_context_avoids_long_worktree_paths_and_cleans_safely(self):
         builder = read_text("scripts/build_production_images.ps1")
