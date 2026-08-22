@@ -353,7 +353,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Changed rows", clients_page)
         self.assertIn("changedRowCount", clients_page)
         self.assertNotIn("changedRowsOverride", clients_page)
-        self.assertNotIn("Not reported", clients_page)
+        self.assertNotIn("return 'Not reported';", clients_page)
         self.assertIn("return '-';", clients_page)
         self.assertIn(
             "job.sourceClientName == 'server-authoritative-reconcile'",

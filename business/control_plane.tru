@@ -5462,6 +5462,51 @@ function sync_row_logical_winner_refs(ownerUserId: string, table: string, row: m
   return refs;
 }
 
+function sync_row_durable_tombstone_for_reassertion(
+  logicalWinnerRefs: array<json>,
+  pendingWinners: array<json>,
+  currentWinners: array<json>,
+  currentPhysicalWinner: map<json>? = null
+): map<json>? {
+  if (currentPhysicalWinner != null) {
+    if (string.from(currentPhysicalWinner.operation).trim().toUpperCase() == 'D') {
+      return currentPhysicalWinner;
+    }
+    // An exact physical upsert winner must never be overridden by a tombstone
+    // discovered only through a different unique/business-key identity.
+    return null;
+  }
+
+  let resolvedTombstone = null;
+  for (const logicalWinnerRef of logicalWinnerRefs) {
+    let logicalWinner = sync_row_winner_find_by_id(
+      pendingWinners,
+      string.from(logicalWinnerRef.id)
+    );
+    if (logicalWinner == null) {
+      logicalWinner = sync_row_winner_find_by_id(
+        currentWinners,
+        string.from(logicalWinnerRef.id)
+      );
+    }
+    if (logicalWinner == null) {
+      continue;
+    }
+    if (string.from(logicalWinner.operation).trim().toUpperCase() != 'D') {
+      // Mixed logical winners are ambiguous. Leave the candidate rejected
+      // instead of guessing which different primary-key identity to remove.
+      return null;
+    }
+    if (resolvedTombstone != null &&
+        string.from(resolvedTombstone.operationId).trim() !=
+          string.from(logicalWinner.operationId).trim()) {
+      return null;
+    }
+    resolvedTombstone = logicalWinner;
+  }
+  return resolvedTombstone;
+}
+
 function sync_timestamp_compare_ms(left: string, right: string): int {
   const normalizedLeft = left.trim();
   const normalizedRight = right.trim();
@@ -8830,6 +8875,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       let currentWinner = null;
       let matchesDurableWinnerContent = false;
       let reassertsDurableTombstone = false;
+      let durableTombstoneWinner = null;
       if (winnerPolicyApplied) {
         accepted = operationId.length == 64;
         const operation = string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase();
@@ -8844,11 +8890,6 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         if (currentWinner == null) {
           currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
         }
-        reassertsDurableTombstone =
-          multiClientUnionBootstrap &&
-          operation != 'D' &&
-          currentWinner != null &&
-          string.from(currentWinner.operation).trim().toUpperCase() == 'D';
         let logicalWinnerRefs = [];
         if (operation == 'D' && currentWinner != null) {
           for (const logicalWinnerId of currentWinner.logicalWinnerIds ?? []) {
@@ -8877,6 +8918,16 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             resolvedUniqueKeyColumnSets
           );
         }
+        durableTombstoneWinner = sync_row_durable_tombstone_for_reassertion(
+          logicalWinnerRefs,
+          pendingWinners,
+          currentWinners,
+          currentWinner
+        );
+        reassertsDurableTombstone =
+          multiClientUnionBootstrap &&
+          operation != 'D' &&
+          durableTombstoneWinner != null;
         // A full-union retry receives a new Change Tracking version even when
         // the SQL row is byte-for-byte identical to the durable winner. Relay
         // that row so a failed canonical download can be rebuilt completely,
@@ -9029,15 +9080,17 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         let authoritativeOperation = string.from(
           incomingRow.__sync_op ?? 'S'
         ).trim().toUpperCase();
-        if (reassertsDurableTombstone && currentWinner != null) {
+        if (reassertsDurableTombstone && durableTombstoneWinner != null) {
           // A complete snapshot never creates a delete. When it reports a
           // zombie row that is already covered by a durable explicit
           // tombstone, relay that existing tombstone back to every
           // participant. This repairs a client that retained or historically
           // reacquired the row without inferring deletion from absence.
-          durableOperationId = string.from(currentWinner.operationId).trim();
+          durableOperationId = string.from(
+            durableTombstoneWinner.operationId
+          ).trim();
           authoritativeModifiedAtUtc = string.from(
-            currentWinner.modifiedAtUtc ?? authoritativeModifiedAtUtc
+            durableTombstoneWinner.modifiedAtUtc ?? authoritativeModifiedAtUtc
           ).trim();
           authoritativeOperation = 'D';
         }

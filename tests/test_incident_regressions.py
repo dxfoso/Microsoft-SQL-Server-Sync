@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 164)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 166)}
         observed_ids = set()
 
         for row in rows:
@@ -909,6 +909,23 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Updater script path", clients)
         self.assertIn("PowerShell recovery command", clients)
 
+    def test_business_key_tombstone_reasserts_different_primary_key_zombie(self):
+        backend = read_text("business/control_plane.tru")
+        helper = backend.split(
+            "function sync_row_durable_tombstone_for_reassertion(", 1
+        )[1].split("function sync_timestamp_compare_ms(", 1)[0]
+        upload = backend.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+
+        self.assertIn("logicalWinnerRefs", helper)
+        self.assertIn("currentPhysicalWinner.operation", helper)
+        self.assertIn("logicalWinner.operation", helper)
+        self.assertIn("resolvedTombstone.operationId", helper)
+        self.assertIn("durableTombstoneWinner != null", upload)
+        self.assertIn("durableTombstoneWinner.operationId", upload)
+        self.assertIn("authoritativeOperation = 'D'", upload)
+
     def test_production_context_avoids_long_worktree_paths_and_cleans_safely(self):
         builder = read_text("scripts/build_production_images.ps1")
 
@@ -1072,7 +1089,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertIn("reassertsDurableTombstone", backend)
         self.assertIn("authoritativeOperation = 'D'", backend)
-        self.assertIn("durableOperationId = string.from(currentWinner.operationId)", backend)
+        self.assertIn("durableTombstoneWinner.operationId", backend)
         self.assertIn("authoritativeOperationByOperation", client)
         self.assertIn("'__sync_op': authoritativeOperation", client)
 

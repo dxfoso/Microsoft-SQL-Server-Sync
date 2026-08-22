@@ -2297,14 +2297,38 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertIn("let reassertsDurableTombstone = false", upload_body)
         self.assertIn("multiClientUnionBootstrap &&", upload_body)
-        self.assertIn("currentWinner.operation).trim().toUpperCase() == 'D'", upload_body)
+        self.assertIn("sync_row_durable_tombstone_for_reassertion", upload_body)
+        self.assertIn("durableTombstoneWinner != null", upload_body)
         self.assertIn("authoritativeOperation = 'D'", upload_body)
-        self.assertIn("durableOperationId = string.from(currentWinner.operationId)", upload_body)
+        self.assertIn("durableTombstoneWinner.operationId", upload_body)
         self.assertIn("durableTombstoneReassertion: reassertsDurableTombstone", upload_body)
         self.assertIn("authoritativeOperation", download_body)
         self.assertIn("candidateOperation.durableTombstoneReassertion == true", download_body)
         self.assertIn("authoritativeOperation == 'D'", download_body)
         self.assertIn("durableTombstoneReassertion", download_body)
+
+    def test_full_union_reasserts_unambiguous_business_key_tombstone(self):
+        source = read_text("business/control_plane.tru")
+        helper = source.split(
+            "function sync_row_durable_tombstone_for_reassertion(", 1
+        )[1].split("function sync_timestamp_compare_ms(", 1)[0]
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+
+        self.assertIn("logicalWinnerRefs", helper)
+        self.assertIn("currentPhysicalWinner != null", helper)
+        self.assertIn("currentPhysicalWinner.operation", helper)
+        self.assertIn("return null;", helper)
+        self.assertIn("logicalWinner.operation", helper)
+        self.assertIn("resolvedTombstone.operationId", helper)
+        self.assertIn("logicalWinner.operationId", helper)
+        self.assertIn(
+            "durableTombstoneWinner = sync_row_durable_tombstone_for_reassertion(",
+            upload,
+        )
+        self.assertIn("durableTombstoneWinner.operationId", upload)
+        self.assertIn("durableTombstoneReassertion: reassertsDurableTombstone", upload)
 
     def test_table_row_comparison_is_scoped_read_only_and_multi_client(self):
         source = read_text("business/control_plane.tru")
