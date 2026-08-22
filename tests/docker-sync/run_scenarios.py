@@ -1818,9 +1818,16 @@ VALUES
                 )
             ],
         )
-    sqlcmd(
-        f"UPDATE dbo.SyncItems SET FloatValue = CAST(13934600 AS float) WHERE Id = {historical_id};",
-        database=DATABASES[0],
+    apply(
+        DATABASES[0],
+        rows=[
+            row(
+                historical_id,
+                "HISTORICAL-FLOAT-DRIFT",
+                "Same PK, no later CT delta",
+                float_value="13934600",
+            )
+        ],
     )
     settled_versions = {
         database: scalar_int(database, "SELECT CHANGE_TRACKING_CURRENT_VERSION();")
