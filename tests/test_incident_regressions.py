@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 168)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 169)}
         observed_ids = set()
 
         for row in rows:
@@ -1236,6 +1236,26 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("client_update_ack_should_retry(status, message)", ack)
         self.assertIn("nextStatus = 'retrying'", ack)
         self.assertIn("nextLastRequestId = resolvedRequestIdOrNull", ack)
+
+    def test_delta_sync_refreshes_complete_inventory_and_bounds_background_audit(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+        dart_tests = read_text("sync_windows_agent/test/sql_sync_fingerprint_test.dart")
+
+        self.assertIn("_tableFingerprintRefreshBatchSize = 8", agent)
+        self.assertIn("Duration(minutes: 1)", agent)
+        self.assertIn("_tableFingerprintRefreshCursor", agent)
+        self.assertIn("tables: [target.value]", agent)
+        self.assertIn("_refreshSelectedTableFingerprints(bounded: true)", agent)
+        self.assertIn("if (isDelta) {", agent)
+        self.assertIn("deltaInventoryFingerprint = await _computeTableFingerprint", agent)
+        self.assertIn("resolveSqlSyncUploadInventoryMetadata", agent)
+        self.assertIn("class SqlSyncUploadInventoryMetadata", fingerprint)
+        self.assertIn("completeRowCount!", fingerprint)
+        self.assertIn(
+            "empty delta publishes its fresh complete inventory for anti-entropy",
+            dart_tests,
+        )
 
 
 if __name__ == "__main__":

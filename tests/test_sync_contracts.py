@@ -593,9 +593,11 @@ class SyncContractsTests(unittest.TestCase):
         ].split("Future<void> _uploadRequestedDiagnostics(", 1)[0]
 
         self.assertIn(
-            "const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);",
+            "const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 1);",
             agent_page,
         )
+        self.assertIn("_tableFingerprintRefreshBatchSize = 8", agent_page)
+        self.assertIn("_tableFingerprintRefreshCursor", agent_page)
         self.assertIn("bool _refreshingTableFingerprints = false;", agent_page)
         self.assertIn("DateTime? _lastTableFingerprintRefreshStartedAt;", agent_page)
         self.assertIn(

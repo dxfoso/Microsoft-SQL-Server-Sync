@@ -1801,6 +1801,62 @@ VALUES
             assert_float_values(database, id_, expected)
     assert_equal(*DATABASES)
 
+    # Historical same-key float drift can exist after every client has already
+    # advanced its Change Tracking cursor, so the next delta is legitimately
+    # empty. A fresh complete inventory must still detect it and a durable
+    # latest winner must converge all three clients without inferring deletes.
+    historical_id = 41
+    for database in DATABASES:
+        apply(
+            database,
+            rows=[
+                row(
+                    historical_id,
+                    "HISTORICAL-FLOAT-DRIFT",
+                    "Same PK, no later CT delta",
+                    float_value="13934625",
+                )
+            ],
+        )
+    sqlcmd(
+        f"UPDATE dbo.SyncItems SET FloatValue = CAST(13934600 AS float) WHERE Id = {historical_id};",
+        database=DATABASES[0],
+    )
+    settled_versions = {
+        database: scalar_int(database, "SELECT CHANGE_TRACKING_CURRENT_VERSION();")
+        for database in DATABASES
+    }
+    for database, settled_version in settled_versions.items():
+        pending = scalar_int(
+            database,
+            f"SELECT COUNT(*) FROM CHANGETABLE(CHANGES dbo.SyncItems, {settled_version}) AS CT;",
+        )
+        if pending != 0:
+            raise AssertionError(
+                f"Historical-drift setup did not produce an empty delta on {database}."
+            )
+    physical_values = {
+        database: capture_float_transport_values(database, historical_id)[0]
+        for database in DATABASES
+    }
+    if len(set(physical_values.values())) != 2:
+        raise AssertionError(
+            f"Fresh lossless inventory did not expose historical float drift: {physical_values}"
+        )
+    historical_winner = {
+        **row(
+            historical_id,
+            "HISTORICAL-FLOAT-DRIFT",
+            "Same PK, no later CT delta",
+            float_value="13934625",
+        ),
+        "__sync_modified_at_utc": "2026-08-22T22:54:36Z",
+    }
+    for database in DATABASES:
+        apply(database, rows=[historical_winner])
+        assert_float_values(database, historical_id, "13934625")
+    assert_equal(*DATABASES)
+
     multi_writer_rows = coalesce([
         {**row(32, "WRITER-C1", "Written by c1"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
         {**row(33, "WRITER-C2", "Written by c2"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
@@ -1990,6 +2046,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
+            "empty-delta-fresh-inventory-repairs-historical-float-drift",
             "initial-three-client-primary-key-union-bootstrap",
             "selective-range-three-client-convergence",
             "accepted-winner-chunk-pruning-three-client-safety",

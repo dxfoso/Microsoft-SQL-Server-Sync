@@ -14,6 +14,41 @@ const int kSqlSyncRangeBucketCount = 16;
 const String kSqlSyncRangeFingerprintVersion = 'v1';
 const String kSqlSyncRangeUnionSourcePrefix = 'server-range-union-v1:';
 
+class SqlSyncUploadInventoryMetadata {
+  const SqlSyncUploadInventoryMetadata({
+    required this.rowCount,
+    required this.tableChecksum,
+    required this.rangeFingerprint,
+  });
+
+  final int rowCount;
+  final String tableChecksum;
+  final String rangeFingerprint;
+}
+
+/// Keeps changed-row transport counts separate from the complete physical
+/// inventory used by anti-entropy. A delta may contain zero rows while its
+/// freshly scanned complete checksum still proves that clients diverge.
+SqlSyncUploadInventoryMetadata resolveSqlSyncUploadInventoryMetadata({
+  required int payloadRowCount,
+  int? completeRowCount,
+  String completeTableChecksum = '',
+  String completeRangeFingerprint = '',
+}) {
+  final hasCompleteInventory = completeTableChecksum.trim().isNotEmpty;
+  if (hasCompleteInventory &&
+      (completeRowCount == null || completeRowCount < 0)) {
+    throw ArgumentError(
+      'A complete table checksum requires its complete physical row count.',
+    );
+  }
+  return SqlSyncUploadInventoryMetadata(
+    rowCount: hasCompleteInventory ? completeRowCount! : payloadRowCount,
+    tableChecksum: hasCompleteInventory ? completeTableChecksum : '',
+    rangeFingerprint: hasCompleteInventory ? completeRangeFingerprint : '',
+  );
+}
+
 class SqlSyncFingerprintAccumulator {
   int _rowCount = 0;
   int _hash = _fnv64OffsetBasis;

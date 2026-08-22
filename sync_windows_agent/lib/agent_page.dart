@@ -135,7 +135,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     seconds: 30,
   );
   static const Duration _autoUpdateRetryCooldown = Duration(minutes: 10);
-  static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 5);
+  static const Duration _tableFingerprintRefreshCooldown = Duration(minutes: 1);
+  static const int _tableFingerprintRefreshBatchSize = 8;
   static const int _heartbeatTablePayloadLimit = 600;
 
   late final TextEditingController _serverController;
@@ -197,6 +198,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   bool _flushingPendingWindowActionAck = false;
   bool _refreshingTableFingerprints = false;
   DateTime? _lastTableFingerprintRefreshStartedAt;
+  int _tableFingerprintRefreshCursor = 0;
 
   String? _selectedDatabase;
   List<String> _databases = const [];
@@ -3439,8 +3441,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
-  Future<void> _refreshSelectedTableFingerprints() async {
-    final tablesByDatabase = <String, List<String>>{};
+  Future<void> _refreshSelectedTableFingerprints({bool bounded = false}) async {
+    final targets = <MapEntry<String, String>>[];
     for (final entry in _syncState.tables.entries) {
       if (!_isTableSelectedForSync(entry.value)) {
         continue;
@@ -3450,23 +3452,39 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (database.isEmpty || table.isEmpty) {
         continue;
       }
-      tablesByDatabase.putIfAbsent(database, () => <String>[]).add(table);
+      targets.add(MapEntry(database, table));
     }
-    if (tablesByDatabase.isEmpty) {
+    if (targets.isEmpty) {
       return;
     }
+    targets.sort((left, right) {
+      final databaseOrder = left.key.compareTo(right.key);
+      return databaseOrder != 0
+          ? databaseOrder
+          : left.value.compareTo(right.value);
+    });
     final profile = _activeProfile();
-    for (final entry in tablesByDatabase.entries) {
+    final start = _tableFingerprintRefreshCursor % targets.length;
+    final refreshCount =
+        bounded
+            ? math.min(_tableFingerprintRefreshBatchSize, targets.length)
+            : targets.length;
+    for (var offset = 0; offset < refreshCount; offset += 1) {
+      final target = targets[(start + offset) % targets.length];
       final fingerprints = await _queryTableFingerprints(
         profile: profile,
-        database: entry.key,
-        tables: entry.value,
+        database: target.key,
+        tables: [target.value],
       );
       if (!mounted) {
         return;
       }
-      _applyTableFingerprints(database: entry.key, fingerprints: fingerprints);
+      // Publish each bounded result immediately. The former all-table scan
+      // applied nothing until hundreds of tables had completed, so a real
+      // historical divergence could remain hidden behind cached equality.
+      _applyTableFingerprints(database: target.key, fingerprints: fingerprints);
     }
+    _tableFingerprintRefreshCursor = (start + refreshCount) % targets.length;
   }
 
   void _scheduleSelectedTableFingerprintRefresh({bool force = false}) {
@@ -3484,7 +3502,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _refreshingTableFingerprints = true;
     _lastTableFingerprintRefreshStartedAt = DateTime.now();
     unawaited(
-      _refreshSelectedTableFingerprints()
+      _refreshSelectedTableFingerprints(bounded: true)
           .catchError((Object error, StackTrace stackTrace) {
             logStartupEvent(
               'Selected table fingerprint refresh failed: $error',
@@ -6459,8 +6477,31 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       );
     }
 
-    var snapshotChecksum = '';
-    var rangeFingerprint = '';
+    // Change Tracking can correctly return an empty delta while historical
+    // row content still differs (for example, data written before a lossless
+    // float transport fix). Refresh the complete local inventory for the one
+    // table already requested by this job. This is a local SQL read only: it
+    // adds no full-table network transfer. The server can then schedule a
+    // bounded range union when participants genuinely differ.
+    _TableFingerprint? deltaInventoryFingerprint;
+    if (isDelta) {
+      deltaInventoryFingerprint = await _computeTableFingerprint(
+        profile: sourceProfile,
+        database: database,
+        schema: tableParts.schema,
+        table: tableParts.table,
+        writableColumns: syncColumns,
+        keyColumns: primaryKeyColumns,
+        orderColumns: _tableFingerprintOrderColumns(
+          primaryKeyColumns: primaryKeyColumns,
+          uniqueIndexColumnSets: uniqueKeyColumnSets,
+          writableColumns: syncColumns,
+        ),
+      );
+    }
+
+    var snapshotChecksum = deltaInventoryFingerprint?.checksum ?? '';
+    var rangeFingerprint = deltaInventoryFingerprint?.rangeFingerprint ?? '';
     if (completeSnapshot) {
       if (primaryKeyColumns.isNotEmpty) {
         final manifest = buildSqlSyncRangeFingerprintManifest(
@@ -6479,7 +6520,17 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       }
     }
 
-    final sourceRowCount = rows.length;
+    final uploadInventory = resolveSqlSyncUploadInventoryMetadata(
+      payloadRowCount: rows.length,
+      completeRowCount:
+          deltaInventoryFingerprint?.rowCount ??
+          (snapshotChecksum.isNotEmpty ? rows.length : null),
+      completeTableChecksum: snapshotChecksum,
+      completeRangeFingerprint: rangeFingerprint,
+    );
+    final sourceRowCount = uploadInventory.rowCount;
+    snapshotChecksum = uploadInventory.tableChecksum;
+    rangeFingerprint = uploadInventory.rangeFingerprint;
     var payloadRows = rows;
     if (rangeUnionSnapshot) {
       final selectedBuckets = parseSqlSyncRangeUnionBuckets(
