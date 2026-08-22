@@ -108,6 +108,15 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("SQL Server 2019 compatibility", launcher)
         self.assertIn("SQL Server 2022 compatibility", launcher)
 
+    def test_standard_launcher_supports_detached_release_worktrees(self):
+        launcher = (ROOT / "tests/run_sync_verification.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("$gitRefOutput = & git -C $repoRoot branch --show-current", launcher)
+        self.assertIn("$null -eq $gitRefOutput", launcher)
+        self.assertIn('"detached/$commit"', launcher)
+
     def test_action_server_registers_sync_robustness_workflow(self):
         workflow = (
             ROOT / ".action-server/workflows/sync-verification.yaml"

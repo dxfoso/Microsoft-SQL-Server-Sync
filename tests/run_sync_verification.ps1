@@ -68,7 +68,16 @@ $trigger = if ($env:ACTION_SERVER_TRIGGER) {
     'manual'
 }
 $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
-$gitRef = (& git -C $repoRoot branch --show-current).Trim()
+$gitRefOutput = & git -C $repoRoot branch --show-current
+if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to resolve the Git reference for sync verification.'
+}
+$gitRef = if ($null -eq $gitRefOutput -or
+    [string]::IsNullOrWhiteSpace([string]$gitRefOutput)) {
+    "detached/$commit"
+} else {
+    ([string]$gitRefOutput).Trim()
+}
 $steps = [System.Collections.Generic.List[object]]::new()
 $failed = $false
 
