@@ -65,7 +65,7 @@ try {
     if (-not $SkipPrerequisiteTests) {
         Push-Location "$repoRoot\sync_windows_agent"
         try {
-            flutter test test/sql_sync_merge_test.dart test/sql_bulk_stage_test.dart test/sql_cmd_output_test.dart
+            flutter test test/sql_sync_merge_test.dart test/sql_bulk_stage_test.dart test/sql_cmd_output_test.dart test/delta_package_test.dart test/sync_transfer_policy_test.dart
             if ($LASTEXITCODE -ne 0) {
                 throw 'Flutter sync contract tests failed.'
             }

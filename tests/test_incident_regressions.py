@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 155)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 159)}
         observed_ids = set()
 
         for row in rows:
@@ -1095,6 +1095,58 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("snapshot.snapshotBytes = 0", download)
         self.assertIn("if (canonicalFullMerge) {", download)
         self.assertIn("chunkIsDelta = false", download)
+
+    def test_adaptive_parallel_transfer_preserves_atomic_finalization(self):
+        policy = read_text("sync_windows_agent/lib/sync_transfer_policy.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        packages = read_text("sync_windows_agent/lib/delta_package.dart")
+        docker_gate = read_text("tests/docker-sync/run.ps1")
+
+        self.assertIn("kSyncTransferHealthyParallelism = 2", policy)
+        self.assertIn("kSyncTransferConstrainedParallelism = 1", policy)
+        self.assertIn("void recordFailure()", policy)
+        self.assertIn("runBoundedSyncTransfers", policy)
+        self.assertIn("final uploadWave = <RemoteSyncJob>[]", agent)
+        self.assertIn("nextJob.direction == 'upload'", agent)
+        self.assertIn("runBoundedSyncTransfers<bool>", agent)
+        self.assertIn("!await _processPendingJob(nextJob)", agent)
+        self.assertIn("finalChunk: chunkIndex == packages.length - 1", agent)
+        self.assertIn("_transferPolicy.recordFailure()", api)
+        self.assertIn("_transferPolicy.recordSuccess", api)
+        self.assertIn("GZipCodec(level: gzipLevel)", packages)
+        self.assertIn("test/sync_transfer_policy_test.dart", docker_gate)
+
+    def test_same_batch_packages_remain_serial_under_cross_table_parallelism(self):
+        backend = read_text("business/control_plane.tru")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn(
+            "db.updateMany(SyncBatch, { id: batch.id, revision: batch.revision }",
+            backend,
+        )
+        self.assertIn(
+            "A batch has one optimistic revision register, so packages for the same",
+            agent,
+        )
+        self.assertIn(
+            "for (var chunkIndex = 0; chunkIndex < packages.length; chunkIndex += 1)",
+            agent,
+        )
+        self.assertIn(
+            "uploadedJob = await uploadPackage(packages[chunkIndex], chunkIndex)",
+            agent,
+        )
+        upload_body = agent.split("Future<RemoteSyncJob> uploadPackage(", 1)[1].split(
+            "_applyRemoteJobState(", 1
+        )[0]
+        self.assertNotIn("runBoundedSyncTransfers", upload_body)
+
+    def test_generic_bounded_runner_empty_result_is_not_const(self):
+        policy = read_text("sync_windows_agent/lib/sync_transfer_policy.dart")
+
+        self.assertIn("if (pending.isEmpty) return <T>[];", policy)
+        self.assertNotIn("const <T>[]", policy)
 
 
 if __name__ == "__main__":

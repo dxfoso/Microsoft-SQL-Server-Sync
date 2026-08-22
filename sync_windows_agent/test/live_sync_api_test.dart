@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sync_windows_agent/live_sync_api.dart';
 import 'package:sync_windows_agent/sync_transfer_cache.dart';
+import 'package:sync_windows_agent/sync_transfer_policy.dart';
 
 class _DelayedClient extends http.BaseClient {
   _DelayedClient({required this.delay, required this.responseForName});
@@ -3594,6 +3595,11 @@ void main() {
         ),
       );
       expect(requestCount, 3);
+      expect(
+        api.transferTuning.parallelism,
+        kSyncTransferConstrainedParallelism,
+      );
+      expect(api.transferTuning.gzipLevel, 6);
     },
   );
 

@@ -68,4 +68,27 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('adaptive gzip levels preserve the exact payload', () {
+    final rows = List.generate(
+      80,
+      (index) => <String, String?>{
+        'Id': '$index',
+        'Arabic': 'السلام عليكم $index',
+        '__sync_op': 'U',
+        '__sync_operation_id': index.toRadixString(16).padLeft(64, '0'),
+      },
+    );
+
+    for (final level in [1, 6]) {
+      final package =
+          buildCompressedDeltaPackages(rows, gzipLevel: level).single;
+      expect(
+        jsonDecode(
+          utf8.decode(gzip.decode(base64Decode(package.payloadBase64))),
+        ),
+        rows,
+      );
+    }
+  });
 }

@@ -1151,7 +1151,12 @@ class SyncContractsTests(unittest.TestCase):
             "Future<void> _processPendingJobs() async {", 1
         )[1].split("List<RemoteSyncJob> _sortPendingJobsByDependencies(", 1)[0]
 
-        self.assertIn("if (_processingJobIds.contains(job.id)) {", pending_jobs_body)
+        self.assertIn(
+            "if (!_processingJobIds.contains(candidate.id)) {", pending_jobs_body
+        )
+        self.assertIn(
+            "if (!_processingJobIds.contains(nextJob.id) &&", pending_jobs_body
+        )
         self.assertIn("if (_processingPendingJobsBusy) {", pending_jobs_body)
         self.assertIn("_processingPendingJobsBusy = true;", pending_jobs_body)
         self.assertIn("_processingPendingJobsBusy = false;", pending_jobs_body)

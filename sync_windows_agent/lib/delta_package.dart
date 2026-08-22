@@ -30,8 +30,13 @@ Iterable<CompressedDeltaPackage> buildCompressedDeltaPackages(
   int maxRows = kDeltaPackageMaxRows,
   int maxUncompressedBytes = kDeltaPackageMaxUncompressedBytes,
   int maxCompressedBytes = kDeltaPackageMaxCompressedBytes,
+  int gzipLevel = 6,
 }) sync* {
-  if (maxRows <= 0 || maxUncompressedBytes <= 0 || maxCompressedBytes <= 0) {
+  if (maxRows <= 0 ||
+      maxUncompressedBytes <= 0 ||
+      maxCompressedBytes <= 0 ||
+      gzipLevel < 0 ||
+      gzipLevel > 9) {
     throw ArgumentError('Delta package limits must be positive.');
   }
 
@@ -45,7 +50,7 @@ Iterable<CompressedDeltaPackage> buildCompressedDeltaPackages(
     late List<int> compressed;
     while (true) {
       uncompressed = utf8.encode(jsonEncode(rows.sublist(offset, end)));
-      compressed = gzip.encode(uncompressed);
+      compressed = GZipCodec(level: gzipLevel).encode(uncompressed);
       final withinBounds =
           uncompressed.length <= maxUncompressedBytes &&
           compressed.length <= maxCompressedBytes;

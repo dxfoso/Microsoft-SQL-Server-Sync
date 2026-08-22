@@ -25,6 +25,7 @@ import 'sql_cmd_output.dart';
 import 'sync_state.dart';
 import 'sync_rejection_outbox.dart';
 import 'sync_transfer_cache.dart';
+import 'sync_transfer_policy.dart';
 import 'startup_log.dart';
 import 'tray_progress.dart';
 import 'window_settings.dart';
@@ -5346,140 +5347,34 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           },
         );
       }
-      for (final job in orderedPendingJobs) {
-        if (_processingJobIds.contains(job.id)) {
-          continue;
-        }
-        _processingJobIds.add(job.id);
-        _updateTraySyncIndicator();
-        final jobStopwatch = Stopwatch()..start();
-        logAgentDiagnostic(
-          'sync.job.processing.started',
-          context: {
-            'jobId': job.id,
-            'batchId': job.batchId,
-            'table': job.table,
-            'direction': job.direction,
-            'status': job.status,
-            'progress': job.progress,
-            'protocolVersion': job.protocolVersion,
-            'sourceClientName': job.sourceClientName,
-            'subscriberClientName': job.subscriberClientName,
-          },
-        );
-        try {
-          _prepareSyncProtocolJob(job);
-          await _processSnapshotJob(job);
-        } on _SyncJobCancelled catch (error) {
-          logAgentDiagnostic(
-            'sync.job.processing.cancelled',
-            level: AgentLogLevel.warning,
-            context: {
-              'jobId': job.id,
-              'batchId': job.batchId,
-              'table': job.table,
-              'elapsedMs': jobStopwatch.elapsedMilliseconds,
-            },
-            error: error,
+      var pendingIndex = 0;
+      while (pendingIndex < orderedPendingJobs.length) {
+        final nextJob = orderedPendingJobs[pendingIndex];
+        if (nextJob.direction == 'upload') {
+          final tuning = _controlPlaneClient.transferTuning;
+          final uploadWave = <RemoteSyncJob>[];
+          while (pendingIndex < orderedPendingJobs.length &&
+              orderedPendingJobs[pendingIndex].direction == 'upload' &&
+              uploadWave.length < tuning.parallelism) {
+            final candidate = orderedPendingJobs[pendingIndex];
+            pendingIndex += 1;
+            if (!_processingJobIds.contains(candidate.id)) {
+              uploadWave.add(candidate);
+            }
+          }
+          final outcomes = await runBoundedSyncTransfers<bool>(
+            uploadWave.map((job) => () => _processPendingJob(job)),
+            parallelism: tuning.parallelism,
           );
-          // A cancelled job can stop between a local SQL mutation and the
-          // final state update. Re-read physical table fingerprints so the
-          // next heartbeat never advertises a delta/job row count as the
-          // table's real cardinality.
-          _scheduleSelectedTableFingerprintRefresh(force: true);
-        } catch (error, stackTrace) {
-          final errorMessage = error.toString();
-          if (_isRetryableSyncJobError(error)) {
-            logAgentDiagnostic(
-              'sync.job.processing.retryable_failure',
-              level: AgentLogLevel.warning,
-              context: {
-                'jobId': job.id,
-                'batchId': job.batchId,
-                'table': job.table,
-                'direction': job.direction,
-                'elapsedMs': jobStopwatch.elapsedMilliseconds,
-              },
-              error: error,
-              stackTrace: stackTrace,
-            );
-            // Keep the server job active. The next successful heartbeat will
-            // fetch it again and resume the operation without losing progress.
+          if (outcomes.any((completed) => !completed)) {
             break;
           }
-          logAgentDiagnostic(
-            'sync.job.processing.failed',
-            level: AgentLogLevel.error,
-            context: {
-              'jobId': job.id,
-              'batchId': job.batchId,
-              'table': job.table,
-              'direction': job.direction,
-              'elapsedMs': jobStopwatch.elapsedMilliseconds,
-            },
-            message:
-                'Remote job ${job.id} failed during snapshot processing: $errorMessage',
-            error: error,
-            stackTrace: stackTrace,
-          );
-          await _markRemoteJobFailed(job, error);
-          final baselineReplan = error is _SyncBaselineReplanRequired;
-          final failedJob = RemoteSyncJob(
-            id: job.id,
-            clientName: job.clientName,
-            sourceClientName: job.sourceClientName,
-            subscriberClientName: job.subscriberClientName,
-            table: job.table,
-            direction: job.direction,
-            publisherServer: job.publisherServer,
-            publisherDatabase: job.publisherDatabase,
-            publisherUseWindowsAuth: job.publisherUseWindowsAuth,
-            publisherUser: job.publisherUser,
-            publisherPassword: job.publisherPassword,
-            status: baselineReplan ? 'cancelled' : 'failed',
-            progress: 100,
-            rowCount: job.rowCount,
-            snapshotBytes: job.snapshotBytes,
-            snapshotCreatedAt: job.snapshotCreatedAt,
-            snapshotId: job.snapshotId,
-            createdAt: job.createdAt,
-            updatedAt: DateTime.now().toIso8601String(),
-            startedAt: job.startedAt,
-            completedAt: DateTime.now().toIso8601String(),
-            message: errorMessage,
-            error: errorMessage,
-            batchId: job.batchId,
-            protocolVersion: job.protocolVersion,
-            syncEpoch: job.syncEpoch,
-          );
-          _applyRemoteJobState(
-            failedJob,
-            appendHistory: true,
-            success: false,
-            overrideMessage:
-                baselineReplan
-                    ? 'Delta cancelled safely; waiting for automatic all-client baseline replan.'
-                    : errorMessage,
-          );
-          if (job.direction == 'download') {
-            unawaited(_refreshLocalRowCounts());
+        } else {
+          pendingIndex += 1;
+          if (!_processingJobIds.contains(nextJob.id) &&
+              !await _processPendingJob(nextJob)) {
+            break;
           }
-        } finally {
-          jobStopwatch.stop();
-          logAgentDiagnostic(
-            'sync.job.processing.finished',
-            level: AgentLogLevel.debug,
-            context: {
-              'jobId': job.id,
-              'batchId': job.batchId,
-              'table': job.table,
-              'direction': job.direction,
-              'elapsedMs': jobStopwatch.elapsedMilliseconds,
-            },
-          );
-          _processingJobIds.remove(job.id);
-          _cancelledProcessingJobIds.remove(job.id);
-          _updateTraySyncIndicator();
         }
         if (_pendingForcedClientUpdateInfo != null) {
           logStartupEvent(
@@ -5496,6 +5391,137 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       _processingPendingJobsBusy = false;
       _retryAutomaticClientUpdateIfReady();
     }
+  }
+
+  Future<bool> _processPendingJob(RemoteSyncJob job) async {
+    _processingJobIds.add(job.id);
+    _updateTraySyncIndicator();
+    final jobStopwatch = Stopwatch()..start();
+    logAgentDiagnostic(
+      'sync.job.processing.started',
+      context: {
+        'jobId': job.id,
+        'batchId': job.batchId,
+        'table': job.table,
+        'direction': job.direction,
+        'status': job.status,
+        'progress': job.progress,
+        'protocolVersion': job.protocolVersion,
+        'sourceClientName': job.sourceClientName,
+        'subscriberClientName': job.subscriberClientName,
+      },
+    );
+    try {
+      _prepareSyncProtocolJob(job);
+      await _processSnapshotJob(job);
+    } on _SyncJobCancelled catch (error) {
+      logAgentDiagnostic(
+        'sync.job.processing.cancelled',
+        level: AgentLogLevel.warning,
+        context: {
+          'jobId': job.id,
+          'batchId': job.batchId,
+          'table': job.table,
+          'elapsedMs': jobStopwatch.elapsedMilliseconds,
+        },
+        error: error,
+      );
+      _scheduleSelectedTableFingerprintRefresh(force: true);
+    } catch (error, stackTrace) {
+      final errorMessage = error.toString();
+      if (_isRetryableSyncJobError(error)) {
+        logAgentDiagnostic(
+          'sync.job.processing.retryable_failure',
+          level: AgentLogLevel.warning,
+          context: {
+            'jobId': job.id,
+            'batchId': job.batchId,
+            'table': job.table,
+            'direction': job.direction,
+            'elapsedMs': jobStopwatch.elapsedMilliseconds,
+          },
+          error: error,
+          stackTrace: stackTrace,
+        );
+        // Keep the server job active. The next heartbeat resumes the same
+        // immutable transfer and adaptive policy constrains the next wave.
+        return false;
+      }
+      logAgentDiagnostic(
+        'sync.job.processing.failed',
+        level: AgentLogLevel.error,
+        context: {
+          'jobId': job.id,
+          'batchId': job.batchId,
+          'table': job.table,
+          'direction': job.direction,
+          'elapsedMs': jobStopwatch.elapsedMilliseconds,
+        },
+        message:
+            'Remote job ${job.id} failed during snapshot processing: $errorMessage',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      await _markRemoteJobFailed(job, error);
+      final baselineReplan = error is _SyncBaselineReplanRequired;
+      final failedJob = RemoteSyncJob(
+        id: job.id,
+        clientName: job.clientName,
+        sourceClientName: job.sourceClientName,
+        subscriberClientName: job.subscriberClientName,
+        table: job.table,
+        direction: job.direction,
+        publisherServer: job.publisherServer,
+        publisherDatabase: job.publisherDatabase,
+        publisherUseWindowsAuth: job.publisherUseWindowsAuth,
+        publisherUser: job.publisherUser,
+        publisherPassword: job.publisherPassword,
+        status: baselineReplan ? 'cancelled' : 'failed',
+        progress: 100,
+        rowCount: job.rowCount,
+        snapshotBytes: job.snapshotBytes,
+        snapshotCreatedAt: job.snapshotCreatedAt,
+        snapshotId: job.snapshotId,
+        createdAt: job.createdAt,
+        updatedAt: DateTime.now().toIso8601String(),
+        startedAt: job.startedAt,
+        completedAt: DateTime.now().toIso8601String(),
+        message: errorMessage,
+        error: errorMessage,
+        batchId: job.batchId,
+        protocolVersion: job.protocolVersion,
+        syncEpoch: job.syncEpoch,
+      );
+      _applyRemoteJobState(
+        failedJob,
+        appendHistory: true,
+        success: false,
+        overrideMessage:
+            baselineReplan
+                ? 'Delta cancelled safely; waiting for automatic all-client baseline replan.'
+                : errorMessage,
+      );
+      if (job.direction == 'download') {
+        unawaited(_refreshLocalRowCounts());
+      }
+    } finally {
+      jobStopwatch.stop();
+      logAgentDiagnostic(
+        'sync.job.processing.finished',
+        level: AgentLogLevel.debug,
+        context: {
+          'jobId': job.id,
+          'batchId': job.batchId,
+          'table': job.table,
+          'direction': job.direction,
+          'elapsedMs': jobStopwatch.elapsedMilliseconds,
+        },
+      );
+      _processingJobIds.remove(job.id);
+      _cancelledProcessingJobIds.remove(job.id);
+      _updateTraySyncIndicator();
+    }
+    return true;
   }
 
   void _checkSyncJobNotCancelled(String jobId) {
@@ -5740,9 +5766,13 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     );
     final maxPackageRowsByWinnerIdentities =
         100 ~/ (uniqueKeyColumnSets.length + 1);
+    final transferTuning = _controlPlaneClient.transferTuning;
     final maxPackageRows = math.max(
       1,
-      math.min(kDeltaPackageMaxRows, maxPackageRowsByWinnerIdentities),
+      math.min(
+        math.min(kDeltaPackageMaxRows, transferTuning.maxPackageRows),
+        maxPackageRowsByWinnerIdentities,
+      ),
     );
     final latestChange = latestSqlSyncDeltaRow(
       rows.map((row) => Map<String, dynamic>.from(row)).toList(growable: false),
@@ -5751,14 +5781,20 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         latestChange?['__sync_modified_at_utc']?.toString() ?? '';
     final latestOperationId =
         latestChange?['__sync_operation_id']?.toString() ?? '';
-    RemoteSyncJob? uploadedJob;
-    var uploadedChunkCount = 0;
-    for (final package in buildCompressedDeltaPackages(
+    final packages = buildCompressedDeltaPackages(
       rows,
       maxRows: maxPackageRows,
-    )) {
+      maxUncompressedBytes: transferTuning.maxUncompressedBytes,
+      maxCompressedBytes: transferTuning.maxCompressedBytes,
+      gzipLevel: transferTuning.gzipLevel,
+    ).toList(growable: false);
+
+    Future<RemoteSyncJob> uploadPackage(
+      CompressedDeltaPackage package,
+      int chunkIndex,
+    ) async {
       _checkSyncJobNotCancelled(job.id);
-      uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
+      final uploadedJob = await _controlPlaneClient.uploadMultiWriterDelta(
         job.id,
         batchId: job.batchId!,
         clientName: widget.clientName,
@@ -5768,7 +5804,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         uniqueKeyColumnSets: uniqueKeyColumnSets,
         rows: rows.sublist(package.startOffset, package.endOffset),
         chunkId: '${job.id}-${package.startOffset}',
-        finalChunk: package.endOffset == rows.length,
+        finalChunk: chunkIndex == packages.length - 1,
         changeTrackingVersion: snapshot.changeTrackingVersion,
         payloadBase64: package.payloadBase64,
         payloadEncoding: 'gzip-json',
@@ -5781,7 +5817,6 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         latestModifiedAtUtc: latestModifiedAtUtc,
         latestOperationId: latestOperationId,
       );
-      uploadedChunkCount += 1;
       logAgentDiagnostic(
         'sync.upload.chunk.completed',
         level: AgentLogLevel.debug,
@@ -5789,7 +5824,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           'jobId': job.id,
           'batchId': job.batchId,
           'table': job.table,
-          'chunkIndex': uploadedChunkCount - 1,
+          'chunkIndex': chunkIndex,
           'rowOffset': package.startOffset,
           'rowEnd': package.endOffset,
           'rowCount': package.rowCount,
@@ -5797,10 +5832,21 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           'compressedBytes': package.compressedBytes,
           'maxPackageRows': maxPackageRows,
           'payloadBase64Chars': package.payloadBase64.length,
-          'finalChunk': package.endOffset == rows.length,
+          'parallelism': transferTuning.parallelism,
+          'gzipLevel': transferTuning.gzipLevel,
+          'finalChunk': chunkIndex == packages.length - 1,
         },
       );
       _checkSyncJobNotCancelled(job.id);
+      return uploadedJob;
+    }
+
+    // A batch has one optimistic revision register, so packages for the same
+    // table remain ordered. Bounded concurrency is applied only across
+    // independent table upload jobs by _processPendingJobs.
+    RemoteSyncJob? uploadedJob;
+    for (var chunkIndex = 0; chunkIndex < packages.length; chunkIndex += 1) {
+      uploadedJob = await uploadPackage(packages[chunkIndex], chunkIndex);
     }
     _applyRemoteJobState(
       uploadedJob!,
@@ -5818,7 +5864,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'batchId': job.batchId,
         'table': job.table,
         'rowCount': snapshot.rowCount,
-        'chunkCount': uploadedChunkCount,
+        'chunkCount': packages.length,
+        'parallelism': transferTuning.parallelism,
+        'gzipLevel': transferTuning.gzipLevel,
         'isDelta': snapshot.isDelta,
         'checksum': snapshot.checksum,
         'changeTrackingVersion': snapshot.changeTrackingVersion,

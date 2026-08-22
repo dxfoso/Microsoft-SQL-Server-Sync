@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'startup_log.dart';
 import 'sync_state.dart';
 import 'sync_transfer_cache.dart';
+import 'sync_transfer_policy.dart';
 
 const int kSyncProtocolVersion = 4;
 const String _defaultControlPlaneUrl = String.fromEnvironment(
@@ -100,6 +101,7 @@ class AgentControlPlaneClient {
     Duration? snapshotTransferRequestTimeout,
     List<Duration>? snapshotTransferRetryDelays,
     SyncTransferCache? transferCache,
+    AdaptiveSyncTransferPolicy? transferPolicy,
   }) : _client = client ?? http.Client(),
        _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultControlPlaneUrl),
        _controlPlaneRequestTimeout = controlPlaneRequestTimeout,
@@ -123,7 +125,8 @@ class AgentControlPlaneClient {
                  snapshotTransferRetryDelays ??
                      _defaultSnapshotTransferRetryDelays,
                ),
-       _transferCache = transferCache ?? SyncTransferCache();
+       _transferCache = transferCache ?? SyncTransferCache(),
+       _transferPolicy = transferPolicy ?? AdaptiveSyncTransferPolicy();
 
   final http.Client _client;
   final String _baseUrl;
@@ -134,9 +137,11 @@ class AgentControlPlaneClient {
   final Duration _snapshotTransferRequestTimeout;
   final List<Duration> _snapshotTransferRetryDelays;
   final SyncTransferCache _transferCache;
+  final AdaptiveSyncTransferPolicy _transferPolicy;
   String? _authToken;
 
   String get baseUrl => _baseUrl;
+  SyncTransferTuning get transferTuning => _transferPolicy.tuning;
 
   static String _normalizeBaseUrl(String baseUrl) {
     final trimmed = baseUrl.trim();
@@ -387,19 +392,30 @@ class AgentControlPlaneClient {
       attempt < _snapshotTransferMaxAttempts;
       attempt += 1
     ) {
+      final attemptStopwatch = Stopwatch()..start();
       try {
         final response = await request().timeout(
           _snapshotTransferRequestTimeout,
         );
         if (!_isRetryableTransferResponse(response) ||
             attempt == _snapshotTransferMaxAttempts - 1) {
+          attemptStopwatch.stop();
+          if (_isRetryableTransferResponse(response)) {
+            _transferPolicy.recordFailure();
+          } else {
+            _transferPolicy.recordSuccess(attemptStopwatch.elapsed);
+          }
           return response;
         }
+        attemptStopwatch.stop();
+        _transferPolicy.recordFailure();
         lastError = AgentControlPlaneException(
           _errorMessageFromResponse(response),
           statusCode: response.statusCode,
         );
       } catch (error) {
+        attemptStopwatch.stop();
+        _transferPolicy.recordFailure();
         lastError = error;
         if (attempt == _snapshotTransferMaxAttempts - 1) {
           throw AgentControlPlaneException(
@@ -428,14 +444,20 @@ class AgentControlPlaneClient {
       attempt < _snapshotTransferMaxAttempts;
       attempt += 1
     ) {
+      final attemptStopwatch = Stopwatch()..start();
       try {
-        return await _invokeFunction(
+        final result = await _invokeFunction(
           functionName,
           args,
           phase,
           timeout: _snapshotTransferRequestTimeout,
         );
+        attemptStopwatch.stop();
+        _transferPolicy.recordSuccess(attemptStopwatch.elapsed);
+        return result;
       } catch (error) {
+        attemptStopwatch.stop();
+        _transferPolicy.recordFailure();
         lastError = error;
         final statusCode =
             error is AgentControlPlaneException ? error.statusCode : null;
