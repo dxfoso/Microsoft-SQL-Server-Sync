@@ -73,6 +73,7 @@ class Agent {
   field clientUpdateDownloadedBytes: int? min=0
   field clientUpdateTotalBytes: int? min=0
   field clientUpdateProgressPercent: int? min=0 max=100
+  field clientUpdateScriptPath: string? min=0 max=1000
   field windowActionRequestId: string? min=0 max=64
   field windowActionRequestedAt: datetime?
   field windowActionRequestedByUserId: string? min=0 max=64
@@ -551,7 +552,7 @@ function heartbeat_write_due(agent: map<json>): bool {
   return elapsedMs >= heartbeat_persist_interval_ms();
 }
 
-function lightweight_agent_heartbeat_state_changed(agent: map<json>, machineName: string, historyLimit: int, server: string, database: string, replicationUseWindowsAuth: bool, replicationUser: string, replicationPassword: string, serverConnected: bool, sqlConnected: bool, selectedTable: string? = null, clientVersion: string = ''): bool {
+function lightweight_agent_heartbeat_state_changed(agent: map<json>, machineName: string, historyLimit: int, server: string, database: string, replicationUseWindowsAuth: bool, replicationUser: string, replicationPassword: string, serverConnected: bool, sqlConnected: bool, selectedTable: string? = null, clientVersion: string = '', clientUpdateScriptPath: string = ''): bool {
   const nextMachineName = machineName.trim().length == 0 ? string.from(agent.clientName ?? '').trim() : machineName;
   const nextSelectedTable = selectedTable == null ? '' : string.from(selectedTable).trim();
   const currentSelectedTable = agent.selectedTable == null ? '' : string.from(agent.selectedTable).trim();
@@ -593,6 +594,9 @@ function lightweight_agent_heartbeat_state_changed(agent: map<json>, machineName
     return true;
   }
   if (currentClientVersion != clientVersion.trim()) {
+    return true;
+  }
+  if (string.from(agent.clientUpdateScriptPath ?? '').trim() != clientUpdateScriptPath.trim()) {
     return true;
   }
   return false;
@@ -1652,7 +1656,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'clientUpdateScriptPath', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -2190,7 +2194,8 @@ function agent_client_update_payload(agent: map<json>, authenticatedClientPoll: 
     message: messageValue,
     downloadedBytes: agent.clientUpdateDownloadedBytes,
     totalBytes: agent.clientUpdateTotalBytes,
-    progressPercent: agent.clientUpdateProgressPercent
+    progressPercent: agent.clientUpdateProgressPercent,
+    scriptPath: agent.clientUpdateScriptPath ?? ''
   };
 }
 
@@ -2600,7 +2605,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'clientUpdateScriptPath', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -2876,6 +2881,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       clientUpdateDownloadedBytes: null,
       clientUpdateTotalBytes: null,
       clientUpdateProgressPercent: null,
+      clientUpdateScriptPath: '',
       windowActionRequestId: null,
       windowActionRequestedAt: null,
       windowActionRequestedByUserId: null,
@@ -2951,6 +2957,7 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     clientUpdateDownloadedBytes: null,
     clientUpdateTotalBytes: null,
     clientUpdateProgressPercent: null,
+    clientUpdateScriptPath: '',
     windowActionRequestId: null,
     windowActionRequestedAt: null,
     windowActionRequestedByUserId: null,
@@ -6386,7 +6393,7 @@ function live_state(token: string? = null): map<json> {
   };
 }
 
-function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, clientVersion: string = '', token: string? = null): map<json> {
+function agents_heartbeat(clientName: string? = null, machineName: string = '', historyLimit: int? = null, autoSyncIntervalMinutes: int? = null, server: string = '', database: string = '', replicationUseWindowsAuth: bool = true, replicationUser: string = '', replicationPassword: string = '', serverConnected: bool = false, sqlConnected: bool = false, selectedTable: string? = null, tables: array<json>? = null, tableRelationships: array<json>? = null, clientVersion: string = '', clientUpdateScriptPath: string = '', token: string? = null): map<json> {
   let resolvedClientName = '';
   const current = current_user_record(token);
   if (current == null) {
@@ -6424,6 +6431,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   const nextMachineName = machineName.trim().length == 0 ? resolvedClientName : machineName;
   const nextHistoryLimit = clamp_history_limit(historyLimit);
   const nextClientVersion = truncate_text(clientVersion.trim(), 32);
+  const nextClientUpdateScriptPath = truncate_text(clientUpdateScriptPath.trim(), 1000);
   let nextClientUpdateStatus = agent.clientUpdateStatus;
   let nextClientUpdateMessage = agent.clientUpdateMessage;
   const previousClientVersion = string.from(agent.clientVersion ?? '').trim();
@@ -6450,7 +6458,8 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
     serverConnected,
     sqlConnected,
     selectedTable,
-    nextClientVersion
+    nextClientVersion,
+    nextClientUpdateScriptPath
   );
   let updated = null;
   if (tablesChanged || relationshipsChanged) {
@@ -6467,6 +6476,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       serverConnected,
       sqlConnected,
       clientVersion: nextClientVersion,
+      clientUpdateScriptPath: nextClientUpdateScriptPath,
       clientUpdateStatus: nextClientUpdateStatus,
       clientUpdateMessage: nextClientUpdateMessage,
       lastHeartbeat: now_iso(),
@@ -6492,6 +6502,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
       serverConnected,
       sqlConnected,
       clientVersion: nextClientVersion,
+      clientUpdateScriptPath: nextClientUpdateScriptPath,
       clientUpdateStatus: nextClientUpdateStatus,
       clientUpdateMessage: nextClientUpdateMessage,
       lastHeartbeat: now_iso(),

@@ -394,6 +394,51 @@ void main() {
     },
   );
 
+  test(
+    'heartbeat reports exact packaged updater path for web recovery',
+    () async {
+      final scripted = _ScriptedClient(
+        responseForRequest: (name, args, callIndex) {
+          expect(name, 'agents_heartbeat');
+          expect(
+            args['clientUpdateScriptPath'],
+            r"C:\Program Files\Velvet SQL Sync\update.ps1",
+          );
+          return (
+            statusCode: 200,
+            body: const <String, Object?>{
+              'status': 'success',
+              'value': <String, Object?>{},
+            },
+          );
+        },
+      );
+      final client = AgentControlPlaneClient(
+        client: scripted,
+        baseUrl: 'https://example.com/call',
+      );
+
+      await client.heartbeat(
+        clientName: 'c1',
+        machineName: 'machine',
+        historyLimit: 5,
+        autoSyncIntervalMinutes: 15,
+        server: '',
+        database: '',
+        replicationUseWindowsAuth: true,
+        replicationUser: '',
+        replicationPassword: '',
+        serverConnected: true,
+        sqlConnected: true,
+        selectedTable: null,
+        tables: const {},
+        tableRelationships: const [],
+        clientVersion: '1.0.289+293',
+        clientUpdateScriptPath: r"C:\Program Files\Velvet SQL Sync\update.ps1",
+      );
+    },
+  );
+
   test('transient heartbeat failure preserves prior connected state', () {
     const timeout = AgentControlPlaneException(
       'Control plane request timed out.',
@@ -4081,33 +4126,34 @@ void main() {
     'multi-writer download preserves an empty pruned canonical full merge',
     () async {
       final client = _ScriptedClient(
-        responseForRequest: (name, args, callIndex) => (
-          statusCode: 200,
-          body: {
-            'status': 'success',
-            'value': {
-              'done': true,
-              'nextCursor': null,
-              'totalRowCount': 0,
-              'payloadBase64': '',
-              'snapshot': {
-                'id': 'batch-pruned-empty',
-                'clientName': 'server-merge',
-                'table': 'any_database::items',
-                'createdAt': '2026-08-22T00:00:00Z',
-                'rowCount': 0,
-                'checksum': 'empty-relay',
-                'snapshotBytes': 0,
-                'columns': ['Id', 'Name'],
-                'rows': const [],
-                'sourceJobId': 'job-pruned-empty',
-                'isDelta': false,
-                'canonicalFullMerge': true,
-                'mergeParticipantCount': 2,
+        responseForRequest:
+            (name, args, callIndex) => (
+              statusCode: 200,
+              body: {
+                'status': 'success',
+                'value': {
+                  'done': true,
+                  'nextCursor': null,
+                  'totalRowCount': 0,
+                  'payloadBase64': '',
+                  'snapshot': {
+                    'id': 'batch-pruned-empty',
+                    'clientName': 'server-merge',
+                    'table': 'any_database::items',
+                    'createdAt': '2026-08-22T00:00:00Z',
+                    'rowCount': 0,
+                    'checksum': 'empty-relay',
+                    'snapshotBytes': 0,
+                    'columns': ['Id', 'Name'],
+                    'rows': const [],
+                    'sourceJobId': 'job-pruned-empty',
+                    'isDelta': false,
+                    'canonicalFullMerge': true,
+                    'mergeParticipantCount': 2,
+                  },
+                },
               },
-            },
-          },
-        ),
+            ),
       );
       final api = AgentControlPlaneClient(
         client: client,

@@ -1,0 +1,25 @@
+{
+  "name": "mig_20260822_134500",
+  "timestamp": "2026-08-22T13:45:00.000000000+00:00",
+  "objects": [
+    {
+      "object": "Agent",
+      "namespace": null,
+      "action": "modified",
+      "fields": [
+        {
+          "field": "clientUpdateScriptPath",
+          "action": "added",
+          "before": null,
+          "after": {
+            "ty": "string",
+            "optional": true,
+            "min": "0",
+            "max": "1000",
+            "default": null
+          }
+        }
+      ]
+    }
+  ]
+}

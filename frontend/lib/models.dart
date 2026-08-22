@@ -522,6 +522,7 @@ class AdminAgentClientUpdate {
     this.downloadedBytes,
     this.totalBytes,
     this.progressPercent,
+    this.scriptPath = '',
   });
 
   final bool pending;
@@ -536,6 +537,7 @@ class AdminAgentClientUpdate {
   final int? downloadedBytes;
   final int? totalBytes;
   final int? progressPercent;
+  final String scriptPath;
 
   factory AdminAgentClientUpdate.fromJson(Map<String, dynamic> json) {
     return AdminAgentClientUpdate(
@@ -551,6 +553,7 @@ class AdminAgentClientUpdate {
       downloadedBytes: (json['downloadedBytes'] as num?)?.round(),
       totalBytes: (json['totalBytes'] as num?)?.round(),
       progressPercent: (json['progressPercent'] as num?)?.round(),
+      scriptPath: json['scriptPath'] as String? ?? '',
     );
   }
 }

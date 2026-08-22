@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 161)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 162)}
         observed_ids = set()
 
         for row in rows:
@@ -879,6 +879,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Current ${_simpleClientVersion(agent)} • Target", dashboard)
         self.assertIn("clientUpdate.status.trim().toLowerCase() == 'installing'", clients)
         self.assertIn("return 'Update restarting';", clients)
+
+    def test_web_update_recovery_dialog_uses_reported_local_script_path(self):
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        model = read_text("frontend/lib/models.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        self.assertIn("clientUpdateScriptPath: _localClientUpdateScriptPath() ?? ''", agent)
+        self.assertIn("final String scriptPath;", model)
+        self.assertIn("_showClientUpdateRecoveryDialog(agent)", dashboard)
+        self.assertIn("Show update recovery command", dashboard)
+        self.assertIn("Updater script path", dashboard)
+        self.assertIn("PowerShell recovery command", dashboard)
+        self.assertIn("writeBrowserClipboardText(command)", dashboard)
+        self.assertIn("-File '$quotedScript'", dashboard)
 
     def test_large_hash_comparison_resumes_bounded_key_staging(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

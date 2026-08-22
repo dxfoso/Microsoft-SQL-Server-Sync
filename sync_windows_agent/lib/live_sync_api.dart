@@ -585,6 +585,7 @@ class AgentControlPlaneClient {
     required Map<String, SyncTableState> tables,
     required List<Map<String, String>> tableRelationships,
     required String clientVersion,
+    String clientUpdateScriptPath = '',
   }) async {
     final requestStartedAtUtc = DateTime.now().toUtc();
     final response = await _invokeFunction(
@@ -603,6 +604,7 @@ class AgentControlPlaneClient {
         'sqlConnected': sqlConnected,
         'selectedTable': selectedTable,
         'clientVersion': clientVersion,
+        'clientUpdateScriptPath': clientUpdateScriptPath,
         'tables': tables.entries
             .map((entry) => {'table': entry.key, ...entry.value.toJson()})
             .toList(growable: false),

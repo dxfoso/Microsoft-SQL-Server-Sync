@@ -11,6 +11,23 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
+    def test_client_update_recovery_path_is_bounded_and_authorized(self):
+        source = read_text("business/control_plane.tru")
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function auto_sync_tick", 1
+        )[0]
+        payload = source.split("function agent_client_update_payload(", 1)[1].split(
+            "function window_action_request_pending", 1
+        )[0]
+
+        self.assertIn("field clientUpdateScriptPath: string? min=0 max=1000", source)
+        self.assertIn(
+            "truncate_text(clientUpdateScriptPath.trim(), 1000)", heartbeat
+        )
+        self.assertEqual(heartbeat.count("clientUpdateScriptPath: nextClientUpdateScriptPath"), 2)
+        self.assertIn("scriptPath: agent.clientUpdateScriptPath ?? ''", payload)
+        self.assertIn("can_read_agent(current, agent.ownerUserId", source)
+
     def test_diagnostics_progress_contract_is_authenticated_and_bounded(self):
         source = read_text("business/control_plane.tru")
         progress = source.split(

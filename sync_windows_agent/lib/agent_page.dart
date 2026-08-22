@@ -3608,6 +3608,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         tables: _heartbeatTablesPayload(),
         tableRelationships: _tableRelationshipsPayload(),
         clientVersion: _agentAppVersion,
+        clientUpdateScriptPath: _localClientUpdateScriptPath() ?? '',
       );
       logAgentDiagnostic(
         'heartbeat.received',
