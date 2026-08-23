@@ -1239,6 +1239,24 @@ function bounded_fingerprint_audit(audit: array<json>? = null): array<json> {
     return [];
   }
   const summary = audit[0];
+  let currentTables = [];
+  for (const currentTable of summary.currentTables ?? []) {
+    if (currentTables.length >= 8) {
+      break;
+    }
+    currentTables = currentTables.concat([
+      truncate_text(string.from(currentTable), 512)
+    ]);
+  }
+  let lastBatchTables = [];
+  for (const lastBatchTable of summary.lastBatchTables ?? []) {
+    if (lastBatchTables.length >= 8) {
+      break;
+    }
+    lastBatchTables = lastBatchTables.concat([
+      truncate_text(string.from(lastBatchTable), 512)
+    ]);
+  }
   let history = [];
   for (const rawBatch of summary.history ?? []) {
     if (history.length >= 20) {
@@ -1275,8 +1293,8 @@ function bounded_fingerprint_audit(audit: array<json>? = null): array<json> {
     cycleStartedAt: truncate_text(string.from(summary.cycleStartedAt ?? ''), 64),
     lastBatchCompletedAt: truncate_text(string.from(summary.lastBatchCompletedAt ?? ''), 64),
     lastCompletedAt: truncate_text(string.from(summary.lastCompletedAt ?? ''), 64),
-    currentTables: (summary.currentTables ?? []).slice(0, 8),
-    lastBatchTables: (summary.lastBatchTables ?? []).slice(0, 8),
+    currentTables,
+    lastBatchTables,
     history
   }];
 }

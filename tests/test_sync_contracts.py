@@ -634,6 +634,12 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("'fingerprintAudit': [fingerprintAudit]", api)
         self.assertIn("field fingerprintAudit: array<json>?", control_plane)
         self.assertIn("bounded_fingerprint_audit(fingerprintAudit)", control_plane)
+        audit_sanitizer = control_plane.split(
+            "function bounded_fingerprint_audit(", 1
+        )[1].split("function bounded_agent_tables(", 1)[0]
+        self.assertNotIn(".slice(", audit_sanitizer)
+        self.assertIn("if (currentTables.length >= 8)", audit_sanitizer)
+        self.assertIn("if (lastBatchTables.length >= 8)", audit_sanitizer)
         self.assertIn("class AdminFingerprintAudit", models)
         self.assertIn("DataColumn(label: Text('Integrity check'))", clients)
         self.assertIn("_showFingerprintAuditDialog", clients)
