@@ -1269,7 +1269,8 @@ class SyncContractsTests(unittest.TestCase):
             "const Duration _atomicSnapshotApplySqlCmdTimeout = Duration(hours: 4);",
             agent_page,
         )
-        self.assertIn("await process.exitCode.timeout(timeout);", agent_page)
+        self.assertIn("final exitCodeFuture = process.exitCode.timeout(timeout);", agent_page)
+        self.assertIn("await cancellation.race(exitCodeFuture)", agent_page)
         self.assertIn("sqlcmd timed out after ${_formatDurationForLog(timeout)}.", agent_page)
         self.assertIn("timeout: _snapshotSqlCmdTimeout,", agent_page)
         self.assertIn("'-y',", agent_page)
@@ -2694,6 +2695,28 @@ class SyncContractsTests(unittest.TestCase):
         self.assertLess(
             collector.index("if (-not $manifestCopied)"),
             collector.index("$destination = [IO.File]::Open($backupPath"),
+        )
+
+    def test_new_private_export_request_cancels_obsolete_client_work(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        cancellation = read_text(
+            "sync_windows_agent/lib/data_export_cancellation.dart"
+        )
+        dart_test = read_text(
+            "sync_windows_agent/test/data_export_cancellation_test.dart"
+        )
+
+        self.assertIn("_activeDataExportCancellation?.cancel()", agent)
+        self.assertIn("_queuedDataExportRequest = request", agent)
+        self.assertIn("_startRequestedDataExport(queued)", agent)
+        self.assertIn("DataExportSupersededException", agent)
+        self.assertIn("cancellation.race(client.putUrl(uri))", agent)
+        self.assertIn("cancellation.race(exitCodeFuture)", agent)
+        self.assertIn("process.kill()", agent)
+        self.assertIn("class DataExportCancellation", cancellation)
+        self.assertIn("Future<T> race<T>", cancellation)
+        self.assertIn(
+            "new request interrupts an obsolete in-flight operation", dart_test
         )
 
     def test_complete_snapshot_counts_only_content_changes(self):

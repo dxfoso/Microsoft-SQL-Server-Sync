@@ -14,6 +14,7 @@ import 'automatic_change_discovery.dart';
 import 'change_tracking_cursor_policy.dart';
 import 'client_version.dart';
 import 'database_access.dart';
+import 'data_export_cancellation.dart';
 import 'data_export_policy.dart';
 import 'delta_package.dart';
 import 'live_sync_api.dart';
@@ -176,6 +177,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _diagnosticsUploadRequestId;
   bool _dataExportBusy = false;
   String? _dataExportRequestId;
+  DataExportCancellation? _activeDataExportCancellation;
+  RemoteAgentDataExport? _queuedDataExportRequest;
   bool _rowCountsRefreshing = false;
   bool _automaticChangeDiscoveryBusy = false;
   bool _databaseAccessGrantBusy = false;
@@ -4090,13 +4093,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     required Uri uri,
     required String token,
     required List<int> bytes,
+    required DataExportCancellation cancellation,
   }) async {
     final checksum = sha256.convert(bytes).toString();
     Object? lastError;
     for (var attempt = 1; attempt <= 5; attempt += 1) {
+      cancellation.throwIfCancelled();
       final client = createResilientDartHttpClient();
       try {
-        final httpRequest = await client.putUrl(uri);
+        final httpRequest = await cancellation.race(client.putUrl(uri));
         httpRequest.headers.set(
           HttpHeaders.authorizationHeader,
           'Bearer $token',
@@ -4105,10 +4110,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         httpRequest.headers.contentType = ContentType.binary;
         httpRequest.contentLength = bytes.length;
         httpRequest.add(bytes);
-        final response = await httpRequest.close().timeout(
-          privateExportUploadTimeout(bytes.length),
+        final response = await cancellation.race(
+          httpRequest.close().timeout(privateExportUploadTimeout(bytes.length)),
         );
-        final responseText = await utf8.decoder.bind(response).join();
+        final responseText = await cancellation.race(
+          utf8.decoder.bind(response).join(),
+        );
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return;
         }
@@ -4116,12 +4123,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           'Private export upload returned HTTP ${response.statusCode}: $responseText',
         );
       } catch (error) {
+        if (error is DataExportSupersededException) rethrow;
         lastError = error;
       } finally {
         client.close(force: true);
       }
       if (attempt < 5) {
-        await Future<void>.delayed(Duration(seconds: attempt * 2));
+        await cancellation.race(
+          Future<void>.delayed(Duration(seconds: attempt * 2)),
+        );
       }
     }
     throw StateError('Private export upload failed after retries: $lastError');
@@ -4161,7 +4171,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return null;
   }
 
-  Future<void> _runRequestedDataExport(RemoteAgentDataExport request) async {
+  Future<void> _runRequestedDataExport(
+    RemoteAgentDataExport request,
+    DataExportCancellation cancellation,
+  ) async {
     final requestId = request.requestId?.trim() ?? '';
     final database = request.database?.trim() ?? '';
     final uploadBaseUrl = request.uploadUrl?.trim() ?? '';
@@ -4172,6 +4185,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         uploadToken.length < 32) {
       throw StateError('The read-only export request is incomplete.');
     }
+    cancellation.throwIfCancelled();
     if (_selectedDatabase == null ||
         _selectedDatabase!.trim().toLowerCase() != database.toLowerCase()) {
       throw StateError(
@@ -4183,11 +4197,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       status: 'running',
       message: 'Creating a COPY_ONLY SQL Server backup.',
     );
+    cancellation.throwIfCancelled();
 
     final profile = _activeProfile();
     var backupDirectory = await _prepareSharedDataExportDirectory();
     if (backupDirectory == null) {
       final pathResult = await _runSqlCmd(
+        cancellation: cancellation,
         profile: profile,
         database: database,
         query: r"""
@@ -4231,6 +4247,7 @@ WHERE database_id = DB_ID(N'master') AND file_id = 1;
     try {
       final backupPathLiteral = _escapeSqlLiteral(backupFile.path);
       var backupResult = await _runSqlCmd(
+        cancellation: cancellation,
         profile: profile,
         database: 'master',
         query:
@@ -4249,6 +4266,7 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
             stderr: backupResult.stderr.toString(),
           )) {
         backupResult = await _runSqlCmd(
+          cancellation: cancellation,
           profile: profile,
           database: 'master',
           query:
@@ -4268,6 +4286,7 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
               : _sqlCmdFailed('COPY_ONLY backup', backupResult),
         );
       }
+      cancellation.throwIfCancelled();
 
       final clientKey = base64Url
           .encode(utf8.encode(widget.clientName))
@@ -4285,6 +4304,7 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
         final reader = backupFile.openRead();
         final pending = BytesBuilder(copy: false);
         await for (final block in reader) {
+          cancellation.throwIfCancelled();
           pending.add(block);
           while (pending.length >= kPrivateExportArtifactBytes) {
             final combined = pending.takeBytes();
@@ -4297,6 +4317,7 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
               uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
               token: uploadToken,
               bytes: chunk,
+              cancellation: cancellation,
             );
             chunkCount += 1;
           }
@@ -4308,11 +4329,13 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
             uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
             token: uploadToken,
             bytes: finalChunk,
+            cancellation: cancellation,
           );
           chunkCount += 1;
         }
       } else {
         final lengthResult = await _runSqlCmd(
+          cancellation: cancellation,
           profile: profile,
           database: 'master',
           query:
@@ -4337,11 +4360,13 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         );
         var offset = 1;
         while (offset <= fileBytes) {
+          cancellation.throwIfCancelled();
           final expectedBytes = math.min(
             kPrivateExportArtifactBytes,
             fileBytes - offset + 1,
           );
           final chunkResult = await _runSqlCmd(
+            cancellation: cancellation,
             profile: profile,
             database: 'master',
             query:
@@ -4373,6 +4398,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             uri: baseUri.resolve('$requestId/$clientKey/$artifact'),
             token: uploadToken,
             bytes: chunk,
+            cancellation: cancellation,
           );
           chunkCount += 1;
           offset += expectedBytes;
@@ -4400,7 +4426,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         uri: baseUri.resolve('$requestId/$clientKey/manifest.json'),
         token: uploadToken,
         bytes: manifest,
+        cancellation: cancellation,
       );
+      cancellation.throwIfCancelled();
       await _acknowledgeDataExport(
         request,
         status: 'completed',
@@ -4426,36 +4454,79 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
   }
 
   void _scheduleRequestedDataExport(RemoteAgentDataExport request) {
-    if (!request.pending || _dataExportBusy) return;
+    if (!request.pending) return;
     final requestId = request.requestId?.trim() ?? '';
-    if (requestId.isNotEmpty && requestId == _dataExportRequestId) return;
+    if (requestId.isEmpty ||
+        requestId == _dataExportRequestId ||
+        requestId == _queuedDataExportRequest?.requestId?.trim()) {
+      return;
+    }
+    if (_dataExportBusy) {
+      _queuedDataExportRequest = request;
+      _activeDataExportCancellation?.cancel();
+      logAgentDiagnostic(
+        'data_export.superseded',
+        level: AgentLogLevel.warning,
+        context: {
+          'oldRequestId': _dataExportRequestId,
+          'newRequestId': requestId,
+        },
+      );
+      return;
+    }
+    _startRequestedDataExport(request);
+  }
+
+  void _startRequestedDataExport(RemoteAgentDataExport request) {
+    final requestId = request.requestId?.trim() ?? '';
+    if (requestId.isEmpty || _dataExportBusy) return;
+    final cancellation = DataExportCancellation(requestId);
     _dataExportBusy = true;
-    _dataExportRequestId = requestId.isEmpty ? null : requestId;
+    _dataExportRequestId = requestId;
+    _activeDataExportCancellation = cancellation;
     unawaited(
-      _runRequestedDataExport(request)
-          .catchError((Object error, StackTrace stackTrace) async {
-            logAgentDiagnostic(
-              'data_export.failed',
-              level: AgentLogLevel.error,
-              context: {'requestId': requestId},
-              error: error,
-              stackTrace: stackTrace,
+      () async {
+        try {
+          await _runRequestedDataExport(request, cancellation);
+        } on DataExportSupersededException catch (error) {
+          logAgentDiagnostic(
+            'data_export.superseded',
+            level: AgentLogLevel.warning,
+            context: {'requestId': requestId},
+            error: error,
+          );
+        } catch (error, stackTrace) {
+          logAgentDiagnostic(
+            'data_export.failed',
+            level: AgentLogLevel.error,
+            context: {'requestId': requestId},
+            error: error,
+            stackTrace: stackTrace,
+          );
+          try {
+            await _acknowledgeDataExport(
+              request,
+              status: 'failed',
+              message: error.toString(),
             );
-            try {
-              await _acknowledgeDataExport(
-                request,
-                status: 'failed',
-                message: error.toString(),
-              );
-            } catch (ackError) {
-              logStartupEvent(
-                'Failed to acknowledge data export error: $ackError',
-              );
-            }
-          })
-          .whenComplete(() {
-            _dataExportBusy = false;
-          }),
+          } catch (ackError) {
+            logStartupEvent(
+              'Failed to acknowledge data export error: $ackError',
+            );
+          }
+        } finally {
+          if (identical(_activeDataExportCancellation, cancellation)) {
+            _activeDataExportCancellation = null;
+          }
+          _dataExportBusy = false;
+          _dataExportRequestId = null;
+          final queued = _queuedDataExportRequest;
+          _queuedDataExportRequest = null;
+          if (queued != null) {
+            _startRequestedDataExport(queued);
+          }
+        }
+      }(),
     );
   }
 
@@ -9910,6 +9981,7 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     Duration timeout = _defaultSqlCmdTimeout,
     bool captureOutputFile = false,
     bool suppressHeaders = false,
+    DataExportCancellation? cancellation,
   }) async {
     _lastSqlCmdLaunchError = null;
     final rawQuery = query.trim();
@@ -10043,7 +10115,15 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       }
 
       try {
-        exitCode = await process.exitCode.timeout(timeout);
+        final exitCodeFuture = process.exitCode.timeout(timeout);
+        exitCode = cancellation == null
+            ? await exitCodeFuture
+            : await cancellation.race(exitCodeFuture);
+      } on DataExportSupersededException {
+        process.kill();
+        await stdoutFuture;
+        await stderrFuture;
+        rethrow;
       } on TimeoutException {
         process.kill();
         final stdoutBytes = await stdoutFuture;
