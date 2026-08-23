@@ -1,5 +1,26 @@
 import 'dart:convert';
 
+const int kPrivateExportArtifactBytes = 256 * 1024;
+
+Duration privateExportUploadTimeout(int bytes) {
+  if (bytes < 0) {
+    throw ArgumentError.value(bytes, 'bytes', 'must not be negative');
+  }
+  const minimum = Duration(minutes: 5);
+  const maximum = Duration(minutes: 15);
+  const assumedMinimumBytesPerSecond = 512;
+  const responseGraceSeconds = 120;
+  final transferSeconds =
+      ((bytes + assumedMinimumBytesPerSecond - 1) ~/
+          assumedMinimumBytesPerSecond) +
+      responseGraceSeconds;
+  final boundedSeconds = transferSeconds.clamp(
+    minimum.inSeconds,
+    maximum.inSeconds,
+  );
+  return Duration(seconds: boundedSeconds);
+}
+
 bool shouldRetryBackupWithoutCompression({
   required int exitCode,
   required String stdout,

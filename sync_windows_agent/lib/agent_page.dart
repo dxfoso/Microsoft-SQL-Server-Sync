@@ -55,7 +55,6 @@ const Duration _snapshotSqlCmdTimeout = Duration(minutes: 10);
 const Duration _atomicSnapshotApplySqlCmdTimeout = Duration(hours: 4);
 const Duration _diagnosticsChangeTrackingTimeout = Duration(seconds: 20);
 const int _maxDiagnosticsUploadPayloadChars = 60000;
-const int _dataExportChunkBytes = 4 * 1024 * 1024;
 typedef _SqlColumnDefinition = SqlSyncColumnDefinition;
 
 class _PendingWindowActionAck {
@@ -3995,7 +3994,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         httpRequest.contentLength = bytes.length;
         httpRequest.add(bytes);
         final response = await httpRequest.close().timeout(
-          const Duration(minutes: 5),
+          privateExportUploadTimeout(bytes.length),
         );
         final responseText = await utf8.decoder.bind(response).join();
         if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -4173,11 +4172,11 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
         final pending = BytesBuilder(copy: false);
         await for (final block in reader) {
           pending.add(block);
-          while (pending.length >= _dataExportChunkBytes) {
+          while (pending.length >= kPrivateExportArtifactBytes) {
             final combined = pending.takeBytes();
-            final chunk = combined.sublist(0, _dataExportChunkBytes);
-            if (combined.length > _dataExportChunkBytes) {
-              pending.add(combined.sublist(_dataExportChunkBytes));
+            final chunk = combined.sublist(0, kPrivateExportArtifactBytes);
+            if (combined.length > kPrivateExportArtifactBytes) {
+              pending.add(combined.sublist(kPrivateExportArtifactBytes));
             }
             final artifact = '${chunkCount.toString().padLeft(8, '0')}.part';
             await _uploadPrivateExportArtifact(
@@ -4224,7 +4223,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         var offset = 1;
         while (offset <= fileBytes) {
           final expectedBytes = math.min(
-            _dataExportChunkBytes,
+            kPrivateExportArtifactBytes,
             fileBytes - offset + 1,
           );
           final chunkResult = await _runSqlCmd(

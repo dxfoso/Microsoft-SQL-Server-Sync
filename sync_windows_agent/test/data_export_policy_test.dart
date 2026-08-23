@@ -2,6 +2,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sync_windows_agent/data_export_policy.dart';
 
 void main() {
+  test('private export uses small retry units and a slow-link timeout', () {
+    expect(kPrivateExportArtifactBytes, 256 * 1024);
+    expect(
+      privateExportUploadTimeout(kPrivateExportArtifactBytes),
+      greaterThan(const Duration(minutes: 10)),
+    );
+    expect(privateExportUploadTimeout(0), const Duration(minutes: 5));
+    expect(
+      privateExportUploadTimeout(100 * 1024 * 1024),
+      const Duration(minutes: 15),
+    );
+    expect(() => privateExportUploadTimeout(-1), throwsArgumentError);
+  });
+
   test('retries SQL Server Express backup without compression', () {
     expect(
       shouldRetryBackupWithoutCompression(

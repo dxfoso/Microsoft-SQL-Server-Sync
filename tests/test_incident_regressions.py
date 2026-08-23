@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 173)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 174)}
         observed_ids = set()
 
         for row in rows:
@@ -1287,6 +1287,25 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "New-Item -Path $OutputDir -ItemType Directory -Force"
         )
         self.assertLess(preflight, first_output_write)
+
+    def test_private_export_retries_small_units_on_slow_links(self):
+        policy = read_text("sync_windows_agent/lib/data_export_policy.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        dart_tests = read_text(
+            "sync_windows_agent/test/data_export_policy_test.dart"
+        )
+
+        self.assertIn("kPrivateExportArtifactBytes = 256 * 1024", policy)
+        self.assertIn("privateExportUploadTimeout(int bytes)", policy)
+        self.assertIn("assumedMinimumBytesPerSecond = 512", policy)
+        self.assertIn("Duration(minutes: 15)", policy)
+        self.assertIn("kPrivateExportArtifactBytes", agent)
+        self.assertIn("privateExportUploadTimeout(bytes.length)", agent)
+        self.assertNotIn("_dataExportChunkBytes = 4 * 1024 * 1024", agent)
+        self.assertIn(
+            "private export uses small retry units and a slow-link timeout",
+            dart_tests,
+        )
 
 
 if __name__ == "__main__":
