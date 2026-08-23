@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 172)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 173)}
         observed_ids = set()
 
         for row in rows:
@@ -1272,6 +1272,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "fingerprint distinguishes close lossless SQL float values",
             dart_tests,
         )
+
+    def test_client_publish_fails_before_partial_output_when_disk_is_full(self):
+        publish = read_text("scripts/publish_windows_client_update.ps1")
+
+        self.assertIn("function Assert-ClientPublishFreeSpace", publish)
+        self.assertIn("[System.IO.DriveInfo]::new($outputRoot)", publish)
+        self.assertIn("(2 * $zipBytes) + (2 * $expandedBytes) + $safetyBytes", publish)
+        self.assertIn("retry with -SkipBuild", publish)
+        preflight = publish.index(
+            "Assert-ClientPublishFreeSpace -ZipPath $PortableZip -DestinationPath $OutputDir"
+        )
+        first_output_write = publish.index(
+            "New-Item -Path $OutputDir -ItemType Directory -Force"
+        )
+        self.assertLess(preflight, first_output_write)
 
 
 if __name__ == "__main__":

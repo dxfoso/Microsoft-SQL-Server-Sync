@@ -403,7 +403,47 @@ $version = Get-PubspecVersion
 if (-not (Test-Path -LiteralPath $PortableZip -PathType Leaf)) {
     throw "Missing portable ZIP: $PortableZip"
 }
+
+function Assert-ClientPublishFreeSpace {
+    param(
+        [Parameter(Mandatory = $true)][string] $ZipPath,
+        [Parameter(Mandatory = $true)][string] $DestinationPath
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        [long] $expandedBytes = 0
+        foreach ($entry in $archive.Entries) {
+            $expandedBytes += [long] $entry.Length
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+
+    [long] $zipBytes = (Get-Item -LiteralPath $ZipPath).Length
+    [long] $safetyBytes = 64MB
+    # Publication keeps two ZIP names and two differential-package trees.
+    # This conservative preflight fails before creating partial release files.
+    [long] $requiredOutputBytes = (2 * $zipBytes) + (2 * $expandedBytes) + $safetyBytes
+    $outputRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($DestinationPath))
+    $outputDrive = [System.IO.DriveInfo]::new($outputRoot)
+    if ($outputDrive.AvailableFreeSpace -lt $requiredOutputBytes) {
+        throw "Insufficient free space to publish the Windows client to $DestinationPath. Required at least $requiredOutputBytes bytes; available $($outputDrive.AvailableFreeSpace) bytes. Choose an output directory on a drive with more space and retry with -SkipBuild."
+    }
+
+    $tempRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()))
+    if (-not $tempRoot.Equals($outputRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        [long] $requiredTempBytes = $expandedBytes + $safetyBytes
+        $tempDrive = [System.IO.DriveInfo]::new($tempRoot)
+        if ($tempDrive.AvailableFreeSpace -lt $requiredTempBytes) {
+            throw "Insufficient temporary-disk space to expand the Windows client. Required at least $requiredTempBytes bytes; available $($tempDrive.AvailableFreeSpace) bytes on $tempRoot."
+        }
+    }
+}
 Assert-ClientUpdateZipContents -ZipPath $PortableZip -ExpectedVersion $version
+Assert-ClientPublishFreeSpace -ZipPath $PortableZip -DestinationPath $OutputDir
 
 New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
 
