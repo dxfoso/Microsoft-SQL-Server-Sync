@@ -588,6 +588,7 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_heartbeat_does_not_block_on_full_fingerprint_refresh(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
         heartbeat_body = agent_page.split("Future<void> _syncWithControlPlane() async {", 1)[
             1
         ].split("Future<void> _uploadRequestedDiagnostics(", 1)[0]
@@ -598,6 +599,15 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("_tableFingerprintRefreshBatchSize = 8", agent_page)
         self.assertIn("_tableFingerprintRefreshCursor", agent_page)
+        self.assertIn(
+            "_tableFingerprintRefreshCursor = _syncState.fingerprintRefreshCursor",
+            agent_page,
+        )
+        self.assertIn(
+            "_syncState.copyWith(fingerprintRefreshCursor: nextCursor)",
+            agent_page,
+        )
+        self.assertIn("'fingerprintRefreshCursor': fingerprintRefreshCursor", sync_state)
         self.assertIn("bool _refreshingTableFingerprints = false;", agent_page)
         self.assertIn("DateTime? _lastTableFingerprintRefreshStartedAt;", agent_page)
         self.assertIn(

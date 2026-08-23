@@ -211,6 +211,7 @@ class SyncClientState {
     this.autoSyncIntervalMinutes = kDefaultAutoSyncIntervalMinutes,
     this.protocolVersion = 0,
     this.syncEpoch = '',
+    this.fingerprintRefreshCursor = 0,
   });
 
   final Map<String, SyncTableState> tables;
@@ -218,11 +219,14 @@ class SyncClientState {
   final int autoSyncIntervalMinutes;
   final int protocolVersion;
   final String syncEpoch;
+  final int fingerprintRefreshCursor;
 
   factory SyncClientState.fromJson(Map<String, dynamic> json) {
     final tablesJson = Map<String, dynamic>.from(
       json['tables'] as Map? ?? const {},
     );
+    final savedFingerprintRefreshCursor =
+        (json['fingerprintRefreshCursor'] as num? ?? 0).round();
     return SyncClientState(
       historyLimit:
           (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
@@ -237,6 +241,8 @@ class SyncClientState {
               .toInt(),
       protocolVersion: (json['protocolVersion'] as num? ?? 0).round(),
       syncEpoch: json['syncEpoch'] as String? ?? '',
+      fingerprintRefreshCursor:
+          savedFingerprintRefreshCursor < 0 ? 0 : savedFingerprintRefreshCursor,
       tables: tablesJson.map(
         (key, value) => MapEntry(
           key,
@@ -251,6 +257,7 @@ class SyncClientState {
     'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
     'protocolVersion': protocolVersion,
     'syncEpoch': syncEpoch,
+    'fingerprintRefreshCursor': fingerprintRefreshCursor,
     'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
   };
 
@@ -260,6 +267,7 @@ class SyncClientState {
     int? autoSyncIntervalMinutes,
     int? protocolVersion,
     String? syncEpoch,
+    int? fingerprintRefreshCursor,
   }) {
     return SyncClientState(
       historyLimit: historyLimit ?? this.historyLimit,
@@ -267,6 +275,8 @@ class SyncClientState {
           autoSyncIntervalMinutes ?? this.autoSyncIntervalMinutes,
       protocolVersion: protocolVersion ?? this.protocolVersion,
       syncEpoch: syncEpoch ?? this.syncEpoch,
+      fingerprintRefreshCursor:
+          fingerprintRefreshCursor ?? this.fingerprintRefreshCursor,
       tables: tables ?? this.tables,
     );
   }

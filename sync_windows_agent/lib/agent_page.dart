@@ -218,6 +218,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     super.initState();
     logStartupEvent('AgentDashboardPage initState');
     _syncState = widget.initialSyncState;
+    _tableFingerprintRefreshCursor = _syncState.fingerprintRefreshCursor;
     _selectedDatabase =
         widget.initialDatabase?.trim().isNotEmpty == true
             ? widget.initialDatabase!.trim()
@@ -855,6 +856,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     if (oldWidget.clientName != widget.clientName) {
       _syncState = widget.initialSyncState;
+      _tableFingerprintRefreshCursor = _syncState.fingerprintRefreshCursor;
       _databaseAccessIssue = null;
       _databaseAccessGrantError = null;
       unawaited(_syncWithControlPlane());
@@ -3484,7 +3486,16 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       // historical divergence could remain hidden behind cached equality.
       _applyTableFingerprints(database: target.key, fingerprints: fingerprints);
     }
-    _tableFingerprintRefreshCursor = (start + refreshCount) % targets.length;
+    final nextCursor = (start + refreshCount) % targets.length;
+    _tableFingerprintRefreshCursor = nextCursor;
+    if (_syncState.fingerprintRefreshCursor != nextCursor) {
+      // Persist rotation progress even when every scanned fingerprint is
+      // unchanged. Otherwise every restart begins at the first eight tables
+      // and can starve later tables indefinitely.
+      _replaceSyncState(
+        _syncState.copyWith(fingerprintRefreshCursor: nextCursor),
+      );
+    }
   }
 
   void _scheduleSelectedTableFingerprintRefresh({bool force = false}) {

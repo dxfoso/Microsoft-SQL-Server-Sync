@@ -24,6 +24,29 @@ void main() {
 
     expect(restored.protocolVersion, 0);
     expect(restored.syncEpoch, isEmpty);
+    expect(restored.fingerprintRefreshCursor, 0);
+  });
+
+  test('physical fingerprint rotation cursor survives client restarts', () {
+    const state = SyncClientState(
+      tables: <String, SyncTableState>{},
+      fingerprintRefreshCursor: 317,
+    );
+
+    final restored = SyncClientState.fromJson(state.toJson());
+
+    expect(restored.fingerprintRefreshCursor, 317);
+    expect(
+      restored.copyWith(fingerprintRefreshCursor: 325).fingerprintRefreshCursor,
+      325,
+    );
+    expect(
+      SyncClientState.fromJson(const <String, dynamic>{
+        'tables': <String, dynamic>{},
+        'fingerprintRefreshCursor': -8,
+      }).fingerprintRefreshCursor,
+      0,
+    );
   });
 
   test('detected local changes survive state and heartbeat serialization', () {
