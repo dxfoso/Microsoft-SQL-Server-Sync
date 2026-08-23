@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import 'startup_log.dart';
+import 'resilient_http_client.dart';
 import 'sync_state.dart';
 import 'sync_transfer_cache.dart';
 import 'sync_transfer_policy.dart';
@@ -102,7 +103,7 @@ class AgentControlPlaneClient {
     List<Duration>? snapshotTransferRetryDelays,
     SyncTransferCache? transferCache,
     AdaptiveSyncTransferPolicy? transferPolicy,
-  }) : _client = client ?? http.Client(),
+  }) : _client = client ?? createResilientHttpClient(),
        _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultControlPlaneUrl),
        _controlPlaneRequestTimeout = controlPlaneRequestTimeout,
        _heartbeatRequestTimeout = heartbeatRequestTimeout,

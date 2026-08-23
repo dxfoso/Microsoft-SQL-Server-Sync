@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 176)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 178)}
         observed_ids = set()
 
         for row in rows:
@@ -1236,6 +1236,35 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("client_update_ack_should_retry(status, message)", ack)
         self.assertIn("nextStatus = 'retrying'", ack)
         self.assertIn("nextLastRequestId = resolvedRequestIdOrNull", ack)
+
+    def test_client_and_updater_have_tls_preserving_dns_fallback(self):
+        resilient = read_text("sync_windows_agent/lib/resilient_http_client.dart")
+        live_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        updater = read_text("update.ps1")
+        verification = read_text("tests/run_sync_verification.ps1")
+
+        self.assertIn("class ResilientDnsResolver", resilient)
+        self.assertIn("cloudflare-dns.com", resilient)
+        self.assertIn("bootstrapAddress: '1.1.1.1'", resilient)
+        self.assertIn("dns.google", resilient)
+        self.assertIn("bootstrapAddress: '8.8.8.8'", resilient)
+        self.assertIn("SecureSocket.secure(", resilient)
+        self.assertIn("host: tlsHost", resilient)
+        self.assertNotIn("onBadCertificate:", resilient)
+        self.assertIn("where(isSafePublicIpv4Address)", resilient)
+        self.assertIn("client ?? createResilientHttpClient()", live_api)
+        self.assertIn("createResilientDartHttpClient()", agent)
+
+        self.assertIn("$script:TrustedUpdateHost = 'sync.velvet-leaf.com'", updater)
+        self.assertIn("Invoke-UpdateDnsOverHttps", updater)
+        self.assertIn("'--resolve'", updater)
+        self.assertIn("'--retry-all-errors'", updater)
+        self.assertIn("Invoke-UpdateCurlResumableDownload", updater)
+        self.assertIn("Test-InstalledFileMatchesManifest -Path $partialFile", updater)
+        self.assertNotIn("--insecure", updater)
+        self.assertNotIn("ServerCertificateValidationCallback", updater)
+        self.assertIn("test_windows_updater_dns_fallback.ps1", verification)
 
     def test_delta_sync_refreshes_complete_inventory_and_bounds_background_audit(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

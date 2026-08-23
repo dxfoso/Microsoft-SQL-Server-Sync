@@ -203,6 +203,13 @@ try {
                 '-File', (Join-Path $repoRoot 'tests\test_windows_updater_rollback.ps1')
             )
         }
+        Invoke-VerificationStep 'Windows updater secure DNS fallback' {
+            Invoke-NativeChecked -Executable 'powershell.exe' -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', (Join-Path $repoRoot 'tests\test_windows_updater_dns_fallback.ps1')
+            )
+        }
         Invoke-VerificationStep 'Windows supervisor user-stop lifecycle' {
             Invoke-NativeChecked -Executable 'powershell.exe' -Arguments @(
                 '-NoProfile',

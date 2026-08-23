@@ -7,6 +7,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$script:TrustedUpdateHost = 'sync.velvet-leaf.com'
+$script:UpdateDnsCacheLoaded = $false
+$script:UpdateDnsCache = @{}
 
 function Write-UpdateLog {
     param(
@@ -156,6 +159,308 @@ function New-UpdateWebClient {
     return $client
 }
 
+function Test-SafePublicUpdateIpv4Address {
+    param([Parameter(Mandatory = $true)][string] $Value)
+
+    $address = $null
+    if (-not [System.Net.IPAddress]::TryParse($Value, [ref] $address) -or
+        $address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        return $false
+    }
+    $bytes = $address.GetAddressBytes()
+    $first = [int]$bytes[0]
+    $second = [int]$bytes[1]
+    if ($first -eq 0 -or $first -eq 10 -or $first -eq 127 -or $first -ge 224) { return $false }
+    if ($first -eq 100 -and $second -ge 64 -and $second -le 127) { return $false }
+    if ($first -eq 169 -and $second -eq 254) { return $false }
+    if ($first -eq 172 -and $second -ge 16 -and $second -le 31) { return $false }
+    if ($first -eq 192 -and $second -eq 168) { return $false }
+    return $true
+}
+
+function Get-UpdateDnsCachePath {
+    $root = [string]$env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        $root = [System.IO.Path]::GetTempPath()
+    }
+    return Join-Path (Join-Path $root 'VelvetLeafSqlSync') 'dns-fallback-cache.json'
+}
+
+function Initialize-UpdateDnsCache {
+    if ($script:UpdateDnsCacheLoaded) { return }
+    $script:UpdateDnsCacheLoaded = $true
+    $path = Get-UpdateDnsCachePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    try {
+        $decoded = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        foreach ($property in @($decoded.PSObject.Properties)) {
+            $addresses = @($property.Value.addresses | Where-Object { Test-SafePublicUpdateIpv4Address -Value ([string]$_) })
+            $expiresAt = [DateTimeOffset]::MinValue
+            if ($addresses.Count -gt 0 -and
+                [DateTimeOffset]::TryParse([string]$property.Value.expiresAtUtc, [ref]$expiresAt) -and
+                $expiresAt.UtcDateTime -gt [DateTime]::UtcNow) {
+                $script:UpdateDnsCache[$property.Name.ToLowerInvariant()] = [ordered]@{
+                    addresses = @($addresses)
+                    expiresAtUtc = $expiresAt.UtcDateTime.ToString('o')
+                }
+            }
+        }
+    }
+    catch {
+        $script:UpdateDnsCache = @{}
+    }
+}
+
+function Save-UpdateDnsCache {
+    try {
+        $path = Get-UpdateDnsCachePath
+        $parent = Split-Path -Path $path -Parent
+        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+        $temporary = "$path.$PID.tmp"
+        [System.IO.File]::WriteAllText(
+            $temporary,
+            ($script:UpdateDnsCache | ConvertTo-Json -Depth 8 -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Move-Item -LiteralPath $temporary -Destination $path -Force
+    }
+    catch {
+        # The cache is optional; TLS verification remains mandatory either way.
+    }
+}
+
+function Remember-ValidatedUpdateAddress {
+    param(
+        [Parameter(Mandatory = $true)][string] $HostName,
+        [Parameter(Mandatory = $true)][string] $Address,
+        [int] $LifetimeSeconds = 600
+    )
+
+    if (-not (Test-SafePublicUpdateIpv4Address -Value $Address)) { return }
+    Initialize-UpdateDnsCache
+    $hostKey = $HostName.Trim().ToLowerInvariant()
+    $existing = @()
+    if ($script:UpdateDnsCache.ContainsKey($hostKey)) {
+        $existing = @($script:UpdateDnsCache[$hostKey].addresses)
+    }
+    $script:UpdateDnsCache[$hostKey] = [ordered]@{
+        addresses = @($Address) + @($existing | Where-Object { $_ -ne $Address })
+        expiresAtUtc = [DateTime]::UtcNow.AddSeconds([Math]::Min(3600, [Math]::Max(60, $LifetimeSeconds))).ToString('o')
+    }
+    Save-UpdateDnsCache
+}
+
+function Remember-SystemUpdateAddress {
+    param([Parameter(Mandatory = $true)][string] $Uri)
+
+    try {
+        $parsed = [System.Uri]::new($Uri)
+        if ($parsed.Scheme -ne 'https' -or $parsed.DnsSafeHost -ne $script:TrustedUpdateHost) { return }
+        $address = @([System.Net.Dns]::GetHostAddresses($parsed.DnsSafeHost) | Where-Object {
+            Test-SafePublicUpdateIpv4Address -Value $_.IPAddressToString
+        } | Select-Object -First 1)
+        if ($address.Count -gt 0) {
+            Remember-ValidatedUpdateAddress -HostName $parsed.DnsSafeHost -Address $address[0].IPAddressToString
+        }
+    }
+    catch {
+        # A successful HTTPS request does not become a failure because cache refresh failed.
+    }
+}
+
+function Get-CachedUpdateAddress {
+    param([Parameter(Mandatory = $true)][string] $HostName)
+
+    Initialize-UpdateDnsCache
+    $hostKey = $HostName.Trim().ToLowerInvariant()
+    if (-not $script:UpdateDnsCache.ContainsKey($hostKey)) { return '' }
+    $entry = $script:UpdateDnsCache[$hostKey]
+    $expiresAt = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse([string]$entry.expiresAtUtc, [ref]$expiresAt) -or
+        $expiresAt.UtcDateTime -le [DateTime]::UtcNow) {
+        $script:UpdateDnsCache.Remove($hostKey)
+        Save-UpdateDnsCache
+        return ''
+    }
+    return [string](@($entry.addresses | Where-Object {
+        Test-SafePublicUpdateIpv4Address -Value ([string]$_)
+    } | Select-Object -First 1)[0])
+}
+
+function Test-UpdateDnsFailure {
+    param([Parameter(Mandatory = $true)] $ErrorRecord)
+
+    $messages = @()
+    $current = $ErrorRecord.Exception
+    while ($null -ne $current) {
+        $messages += [string]$current.Message
+        $current = $current.InnerException
+    }
+    $combined = ($messages -join ' ').ToLowerInvariant()
+    return $combined.Contains('remote name could not be resolved') -or
+        $combined.Contains('no such host is known') -or
+        $combined.Contains('name resolution') -or
+        $combined.Contains('could not resolve host')
+}
+
+function Get-UpdateCurlPath {
+    $command = Get-Command 'curl.exe' -ErrorAction SilentlyContinue
+    if ($null -eq $command -or [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+        throw 'Secure DNS fallback requires the Windows curl.exe component.'
+    }
+    return [string]$command.Source
+}
+
+function Invoke-UpdateDnsOverHttps {
+    param(
+        [Parameter(Mandatory = $true)][string] $HostName,
+        [Parameter(Mandatory = $true)][string] $ResolverHost,
+        [Parameter(Mandatory = $true)][string] $BootstrapAddress,
+        [Parameter(Mandatory = $true)][string] $QueryUrl
+    )
+
+    $curl = Get-UpdateCurlPath
+    $resolve = '{0}:443:{1}' -f $ResolverHost, $BootstrapAddress
+    $output = @(& $curl '--fail' '--silent' '--show-error' '--connect-timeout' '15' '--max-time' '45' '--resolve' $resolve '--header' 'Accept: application/dns-json' $QueryUrl 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "DNS-over-HTTPS request through $ResolverHost failed: $($output -join ' ')"
+    }
+    $payload = ($output -join "`n") | ConvertFrom-Json
+    if ([int]$payload.Status -ne 0) {
+        throw "DNS-over-HTTPS resolver $ResolverHost returned status $($payload.Status)."
+    }
+    $answer = @($payload.Answer | Where-Object {
+        [int]$_.type -eq 1 -and (Test-SafePublicUpdateIpv4Address -Value ([string]$_.data))
+    } | Select-Object -First 1)
+    if ($answer.Count -eq 0) {
+        throw "DNS-over-HTTPS resolver $ResolverHost returned no safe IPv4 answer for $HostName."
+    }
+    $ttl = if ($null -eq $answer[0].TTL) { 300 } else { [int]$answer[0].TTL }
+    Remember-ValidatedUpdateAddress -HostName $HostName -Address ([string]$answer[0].data) -LifetimeSeconds $ttl
+    return [string]$answer[0].data
+}
+
+function Resolve-UpdateFallbackAddress {
+    param(
+        [Parameter(Mandatory = $true)][string] $HostName,
+        [switch] $ForceRefresh,
+        [string[]] $ExcludedAddresses = @()
+    )
+
+    if ($HostName.Trim().ToLowerInvariant() -ne $script:TrustedUpdateHost) {
+        throw "Secure DNS fallback is restricted to $($script:TrustedUpdateHost)."
+    }
+    if (-not $ForceRefresh) {
+        $cached = Get-CachedUpdateAddress -HostName $HostName
+        if (-not [string]::IsNullOrWhiteSpace($cached) -and $ExcludedAddresses -notcontains $cached) { return $cached }
+    }
+    $escaped = [System.Uri]::EscapeDataString($HostName)
+    $lastError = $null
+    foreach ($resolver in @(
+        @{ host = 'cloudflare-dns.com'; address = '1.1.1.1'; url = "https://cloudflare-dns.com/dns-query?name=$escaped&type=A" },
+        @{ host = 'dns.google'; address = '8.8.8.8'; url = "https://dns.google/resolve?name=$escaped&type=A" }
+    )) {
+        try {
+            $address = Invoke-UpdateDnsOverHttps -HostName $HostName -ResolverHost $resolver.host -BootstrapAddress $resolver.address -QueryUrl $resolver.url
+            if ($ExcludedAddresses -notcontains $address) { return $address }
+        }
+        catch {
+            $lastError = $_
+        }
+    }
+    throw "Independent secure DNS resolvers could not resolve $HostName. $($lastError.Exception.Message)"
+}
+
+function Invoke-UpdateCurlString {
+    param([Parameter(Mandatory = $true)][string] $Uri)
+
+    $parsed = [System.Uri]::new($Uri)
+    if ($parsed.Scheme -ne 'https' -or $parsed.DnsSafeHost -ne $script:TrustedUpdateHost) {
+        throw 'Secure update fallback refused an untrusted URL.'
+    }
+    $curl = Get-UpdateCurlPath
+    $attempted = @{}
+    $lastError = $null
+    foreach ($force in @($false, $true)) {
+        $address = Resolve-UpdateFallbackAddress -HostName $parsed.DnsSafeHost -ForceRefresh:$force -ExcludedAddresses @($attempted.Keys)
+        if ($attempted.ContainsKey($address)) { continue }
+        $attempted[$address] = $true
+        $resolve = '{0}:{1}:{2}' -f $parsed.DnsSafeHost, $parsed.Port, $address
+        $output = @(& $curl '--fail' '--silent' '--show-error' '--location' '--connect-timeout' '30' '--max-time' '120' '--retry' '2' '--retry-all-errors' '--resolve' $resolve $Uri 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            Remember-ValidatedUpdateAddress -HostName $parsed.DnsSafeHost -Address $address
+            return $output -join "`n"
+        }
+        $lastError = $output -join ' '
+    }
+    throw "Verified-IP update metadata download failed: $lastError"
+}
+
+function ConvertTo-CurlConfigValue {
+    param([Parameter(Mandatory = $true)][string] $Value)
+    return $Value.Replace('\', '\\').Replace('"', '\"')
+}
+
+function Invoke-UpdateCurlResumableDownload {
+    param(
+        [Parameter(Mandatory = $true)][string] $Uri,
+        [Parameter(Mandatory = $true)][string] $PartialFile,
+        [Parameter(Mandatory = $true)][int64] $AggregateCompletedBytes,
+        [Parameter(Mandatory = $true)][int64] $TotalDownloadBytes
+    )
+
+    $parsed = [System.Uri]::new($Uri)
+    if ($parsed.Scheme -ne 'https' -or $parsed.DnsSafeHost -ne $script:TrustedUpdateHost) {
+        throw 'Secure update fallback refused an untrusted payload URL.'
+    }
+    $curl = Get-UpdateCurlPath
+    $attempted = @{}
+    $lastError = $null
+    foreach ($force in @($false, $true)) {
+        $address = Resolve-UpdateFallbackAddress -HostName $parsed.DnsSafeHost -ForceRefresh:$force -ExcludedAddresses @($attempted.Keys)
+        if ($attempted.ContainsKey($address)) { continue }
+        $attempted[$address] = $true
+        $resolve = '{0}:{1}:{2}' -f $parsed.DnsSafeHost, $parsed.Port, $address
+        $configPath = Join-Path ([System.IO.Path]::GetTempPath()) "sql-sync-curl-$PID-$([guid]::NewGuid().ToString('N')).cfg"
+        $stdoutPath = "$configPath.out"
+        $stderrPath = "$configPath.err"
+        $config = @(
+            'fail',
+            'location',
+            'silent',
+            'show-error',
+            'retry = 2',
+            'retry-all-errors',
+            'connect-timeout = 30',
+            'max-time = 900',
+            'continue-at = "-"',
+            ('resolve = "{0}"' -f (ConvertTo-CurlConfigValue -Value $resolve)),
+            ('output = "{0}"' -f (ConvertTo-CurlConfigValue -Value $PartialFile)),
+            ('url = "{0}"' -f (ConvertTo-CurlConfigValue -Value $Uri))
+        )
+        [System.IO.File]::WriteAllLines($configPath, $config, [System.Text.UTF8Encoding]::new($false))
+        try {
+            Write-UpdateProgress -Status 'downloading' -DownloadedBytes $AggregateCompletedBytes -TotalBytes $TotalDownloadBytes -Message 'Windows DNS failed. Downloading through the verified secure DNS fallback.'
+            $process = Start-Process -FilePath $curl -ArgumentList @('--config', ('"{0}"' -f $configPath)) -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+            while (-not $process.HasExited) {
+                $bytes = if (Test-Path -LiteralPath $PartialFile -PathType Leaf) { [int64](Get-Item -LiteralPath $PartialFile).Length } else { [int64]0 }
+                Publish-UpdateDownloadProgress -FileBytes $bytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
+                Start-Sleep -Seconds 2
+                $process.Refresh()
+            }
+            if ($process.ExitCode -eq 0) {
+                Remember-ValidatedUpdateAddress -HostName $parsed.DnsSafeHost -Address $address
+                return
+            }
+            $lastError = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { "curl exit $($process.ExitCode)" }
+        }
+        finally {
+            Remove-Item -LiteralPath $configPath, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    throw "Verified-IP resumable update download failed: $lastError"
+}
+
 function Invoke-UpdateRestMethod {
     param([Parameter(Mandatory = $true)][string] $Uri)
 
@@ -164,6 +469,7 @@ function Invoke-UpdateRestMethod {
         $client = New-UpdateWebClient
         try {
             $content = $client.DownloadString($Uri)
+            Remember-SystemUpdateAddress -Uri $Uri
             return $content | ConvertFrom-Json
         }
         catch {
@@ -175,6 +481,9 @@ function Invoke-UpdateRestMethod {
         finally {
             $client.Dispose()
         }
+    }
+    if (Test-UpdateDnsFailure -ErrorRecord $lastError) {
+        return (Invoke-UpdateCurlString -Uri $Uri) | ConvertFrom-Json
     }
     throw "Update metadata download failed after 3 bounded attempts: $Uri. $($lastError.Exception.Message)"
 }
@@ -261,6 +570,7 @@ function Invoke-ResumableUpdateWebRequest {
                 throw 'Downloaded payload failed its size or SHA-256 verification.'
             }
             Move-Item -LiteralPath $partialFile -Destination $OutFile -Force
+            Remember-SystemUpdateAddress -Uri $Uri
             Publish-UpdateDownloadProgress -FileBytes $ExpectedSizeBytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
             return
         }
@@ -275,6 +585,15 @@ function Invoke-ResumableUpdateWebRequest {
             if ($null -ne $responseStream) { $responseStream.Dispose() }
             if ($null -ne $response) { $response.Dispose() }
         }
+    }
+    if (Test-UpdateDnsFailure -ErrorRecord $lastError) {
+        Invoke-UpdateCurlResumableDownload -Uri $Uri -PartialFile $partialFile -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
+        if (Test-InstalledFileMatchesManifest -Path $partialFile -ExpectedSizeBytes $ExpectedSizeBytes -ExpectedSha256 $ExpectedSha256) {
+            Move-Item -LiteralPath $partialFile -Destination $OutFile -Force
+            Publish-UpdateDownloadProgress -FileBytes $ExpectedSizeBytes -AggregateCompletedBytes $AggregateCompletedBytes -TotalDownloadBytes $TotalDownloadBytes
+            return
+        }
+        throw 'Secure DNS fallback completed but the payload failed size or SHA-256 verification.'
     }
     throw "Resumable update payload download failed after 3 bounded attempts: $Uri. Partial bytes were preserved for the next updater run. $($lastError.Exception.Message)"
 }

@@ -17,6 +17,7 @@ import 'database_access.dart';
 import 'data_export_policy.dart';
 import 'delta_package.dart';
 import 'live_sync_api.dart';
+import 'resilient_http_client.dart';
 import 'sql_sync_fingerprint.dart';
 import 'sql_bulk_stage.dart';
 import 'sql_sync_merge.dart';
@@ -3981,8 +3982,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final checksum = sha256.convert(bytes).toString();
     Object? lastError;
     for (var attempt = 1; attempt <= 5; attempt += 1) {
-      final client =
-          HttpClient()..connectionTimeout = const Duration(seconds: 30);
+      final client = createResilientDartHttpClient();
       try {
         final httpRequest = await client.putUrl(uri);
         httpRequest.headers.set(
