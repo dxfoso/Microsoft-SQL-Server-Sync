@@ -200,6 +200,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   DateTime? _lastTableFingerprintRefreshStartedAt;
   int _tableFingerprintRefreshCursor = 0;
 
+  Map<String, dynamic> get _fingerprintAuditPayload =>
+      Map<String, dynamic>.from(_syncState.fingerprintAudit);
+
   String? _selectedDatabase;
   List<String> _databases = const [];
   List<String> _tables = const [];
@@ -219,15 +222,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     logStartupEvent('AgentDashboardPage initState');
     _syncState = widget.initialSyncState;
     _tableFingerprintRefreshCursor = _syncState.fingerprintRefreshCursor;
-    _selectedDatabase =
-        widget.initialDatabase?.trim().isNotEmpty == true
-            ? widget.initialDatabase!.trim()
-            : null;
+    _selectedDatabase = widget.initialDatabase?.trim().isNotEmpty == true
+        ? widget.initialDatabase!.trim()
+        : null;
     _serverController = TextEditingController(
-      text:
-          widget.initialServer.trim().isEmpty
-              ? 'localhost'
-              : widget.initialServer.trim(),
+      text: widget.initialServer.trim().isEmpty
+          ? 'localhost'
+          : widget.initialServer.trim(),
     );
     _controlPlaneClient.setAuthToken(widget.authToken);
     _connectionCheckTimer = Timer.periodic(
@@ -384,11 +385,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final previousSelectedTable = _selectedTable;
     final nextSelectedTable =
         previousSelectedTable != null &&
-                visibleTables.contains(previousSelectedTable)
-            ? previousSelectedTable
-            : visibleTables.isNotEmpty
-            ? visibleTables.first
-            : null;
+            visibleTables.contains(previousSelectedTable)
+        ? previousSelectedTable
+        : visibleTables.isNotEmpty
+        ? visibleTables.first
+        : null;
     _tables = visibleTables;
     _selectedTable = nextSelectedTable;
   }
@@ -409,8 +410,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     List<SyncHistoryEntry> entries, {
     int? limit,
   }) {
-    final normalizedLimit =
-        (limit ?? _syncState.historyLimit).clamp(1, kMaxHistoryLimit).toInt();
+    final normalizedLimit = (limit ?? _syncState.historyLimit)
+        .clamp(1, kMaxHistoryLimit)
+        .toInt();
     if (entries.length <= normalizedLimit) {
       return List<SyncHistoryEntry>.from(entries);
     }
@@ -446,10 +448,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   void _applyAutoSyncInterval(int nextMinutes) {
-    final normalizedMinutes =
-        nextMinutes
-            .clamp(kMinAutoSyncIntervalMinutes, kMaxAutoSyncIntervalMinutes)
-            .toInt();
+    final normalizedMinutes = nextMinutes
+        .clamp(kMinAutoSyncIntervalMinutes, kMaxAutoSyncIntervalMinutes)
+        .toInt();
     if (normalizedMinutes == _syncState.autoSyncIntervalMinutes) {
       return;
     }
@@ -601,10 +602,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         table: syncKey,
         status: nextStatus,
         success: enabled,
-        message:
-            enabled
-                ? 'Sync enabled for ${widget.clientName}.'
-                : 'Remote sync paused for ${widget.clientName}.',
+        message: enabled
+            ? 'Sync enabled for ${widget.clientName}.'
+            : 'Remote sync paused for ${widget.clientName}.',
         rowCount: current.rowCount,
         progress: enabled ? 0 : current.progress,
       ),
@@ -616,8 +616,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         status: nextStatus,
         lastSync: enabled ? current.lastSync : now,
         progress: enabled ? 0 : current.progress,
-        autoRequired:
-            current.autoRequired && enabled ? false : current.autoRequired,
+        autoRequired: current.autoRequired && enabled
+            ? false
+            : current.autoRequired,
         message: enabled ? 'Waiting for the next sync.' : 'Sync disabled.',
         history: nextHistory,
       ),
@@ -894,27 +895,24 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             server: server,
             database: status.database,
             login: login,
-            details:
-                status.accessProblem == 'access_required'
-                    ? 'The database exists, but Windows account $login does not have access.'
-                    : status.accessProblem == 'database_unavailable'
-                    ? 'SQL Server discovered this database but could not open it. Repair its database files or attachment before granting access.'
-                    : 'The database exists in SQL Server state ${status.state}; access cannot be verified until it is online.',
+            details: status.accessProblem == 'access_required'
+                ? 'The database exists, but Windows account $login does not have access.'
+                : status.accessProblem == 'database_unavailable'
+                ? 'SQL Server discovered this database but could not open it. Repair its database files or attachment before granting access.'
+                : 'The database exists in SQL Server state ${status.state}; access cannot be verified until it is online.',
           ),
         )
         .toList(growable: false);
   }
 
   List<DatabaseAccessIssue> _grantableDatabaseAccessIssues() {
-    final grantableDatabases =
-        _databaseAccessStatuses
-            .where(
-              (status) =>
-                  !status.hasAccess &&
-                  status.accessProblem == 'access_required',
-            )
-            .map((status) => status.database.toLowerCase())
-            .toSet();
+    final grantableDatabases = _databaseAccessStatuses
+        .where(
+          (status) =>
+              !status.hasAccess && status.accessProblem == 'access_required',
+        )
+        .map((status) => status.database.toLowerCase())
+        .toSet();
     return _discoveredDatabaseAccessIssues()
         .where(
           (issue) => grantableDatabases.contains(issue.database.toLowerCase()),
@@ -1069,8 +1067,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       var sqlOutput = '';
       if (await outputFile.exists()) {
-        sqlOutput =
-            decodeSqlCmdOutputBytes(await outputFile.readAsBytes()).trim();
+        sqlOutput = decodeSqlCmdOutputBytes(
+          await outputFile.readAsBytes(),
+        ).trim();
       }
       final launcherError = processResult.stderr.toString().trim();
       final cancelled = processResult.exitCode == 1223;
@@ -1103,13 +1102,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
 
       final grantResults = parseDatabaseAccessGrantResults(sqlOutput);
-      final successfulGrantServers =
-          grantResults
-              .where(
-                (result) => result.exitCode == 0 && result.server.isNotEmpty,
-              )
-              .map((result) => result.server)
-              .toSet();
+      final successfulGrantServers = grantResults
+          .where((result) => result.exitCode == 0 && result.server.isNotEmpty)
+          .map((result) => result.server)
+          .toSet();
       String? automaticallyDiscoveredServer;
       if (successfulGrantServers.length == 1) {
         automaticallyDiscoveredServer = successfulGrantServers.single;
@@ -1141,12 +1137,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           .toList(growable: false);
       final granted = grantIssues
           .where(
-            (requested) =>
-                !remaining.any(
-                  (database) =>
-                      database.toLowerCase() ==
-                      requested.database.toLowerCase(),
-                ),
+            (requested) => !remaining.any(
+              (database) =>
+                  database.toLowerCase() == requested.database.toLowerCase(),
+            ),
           )
           .map((requested) => requested.database)
           .toList(growable: false);
@@ -1203,10 +1197,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
       return (
         success: true,
-        message:
-            grantIssues.length == 1
-                ? '${issue.database} is connected and ready.'
-                : 'Access was granted to ${grantIssues.length} databases.',
+        message: grantIssues.length == 1
+            ? '${issue.database} is connected and ready.'
+            : 'Access was granted to ${grantIssues.length} databases.',
       );
     } on ProcessException catch (error) {
       final message =
@@ -1298,10 +1291,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
     final initialIssue = initialIssues.first;
-    final selectedDatabaseKeys =
-        _grantableDatabaseAccessIssues()
-            .map((issue) => issue.database.toLowerCase())
-            .toSet();
+    final selectedDatabaseKeys = _grantableDatabaseAccessIssues()
+        .map((issue) => issue.database.toLowerCase())
+        .toSet();
 
     _databaseAccessDialogVisible = true;
     var retrying = false;
@@ -1323,10 +1315,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                     ),
                   )
                   .toList(growable: false);
-              final issue =
-                  grantableIssues.isNotEmpty
-                      ? grantableIssues.first
-                      : visibleIssues.first;
+              final issue = grantableIssues.isNotEmpty
+                  ? grantableIssues.first
+                  : visibleIssues.first;
               return AlertDialog(
                 title: Text(
                   visibleIssues.length == 1
@@ -1350,13 +1341,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                         Text(
                           grantableIssues.isEmpty
                               ? 'No listed database is currently online and '
-                                  'eligible for an access grant. Bring it online '
-                                  'in SQL Server, then select Refresh.'
+                                    'eligible for an access grant. Bring it online '
+                                    'in SQL Server, then select Refresh.'
                               : 'Choose the databases, select Grant selected, '
-                                  'and approve the '
-                                  'standard Windows administrator prompt once. '
-                                  'The client does not request or store an '
-                                  'administrator password.',
+                                    'and approve the '
+                                    'standard Windows administrator prompt once. '
+                                    'The client does not request or store an '
+                                    'administrator password.',
                         ),
                         if (grantError != null &&
                             grantError!.trim().isNotEmpty) ...[
@@ -1416,23 +1407,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                                                 ),
                                             visualDensity:
                                                 VisualDensity.compact,
-                                            onChanged:
-                                                retrying || granting
-                                                    ? null
-                                                    : (selected) {
-                                                      setDialogState(() {
-                                                        final key =
-                                                            item.database
-                                                                .toLowerCase();
-                                                        if (selected ?? false) {
-                                                          selectedDatabaseKeys
-                                                              .add(key);
-                                                        } else {
-                                                          selectedDatabaseKeys
-                                                              .remove(key);
-                                                        }
-                                                      });
-                                                    },
+                                            onChanged: retrying || granting
+                                                ? null
+                                                : (selected) {
+                                                    setDialogState(() {
+                                                      final key = item.database
+                                                          .toLowerCase();
+                                                      if (selected ?? false) {
+                                                        selectedDatabaseKeys
+                                                            .add(key);
+                                                      } else {
+                                                        selectedDatabaseKeys
+                                                            .remove(key);
+                                                      }
+                                                    });
+                                                  },
                                           )
                                         else
                                           const Padding(
@@ -1479,105 +1468,99 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 ),
                 actions: [
                   TextButton.icon(
-                    onPressed:
-                        retrying || granting || selectedIssues.isEmpty
-                            ? null
-                            : () => unawaited(
-                              _copyDatabaseAccessGrantSql(
-                                issue,
-                                requestedIssues: selectedIssues,
-                              ),
+                    onPressed: retrying || granting || selectedIssues.isEmpty
+                        ? null
+                        : () => unawaited(
+                            _copyDatabaseAccessGrantSql(
+                              issue,
+                              requestedIssues: selectedIssues,
                             ),
+                          ),
                     icon: const Icon(Icons.copy_rounded, size: 17),
                     label: const Text('Copy grant scripts'),
                   ),
                   TextButton(
-                    onPressed:
-                        retrying || granting
-                            ? null
-                            : () => Navigator.of(dialogContext).pop(),
+                    onPressed: retrying || granting
+                        ? null
+                        : () => Navigator.of(dialogContext).pop(),
                     child: const Text('Continue'),
                   ),
                   FilledButton.icon(
-                    onPressed:
-                        retrying || granting
-                            ? null
-                            : () async {
-                              setDialogState(() {
-                                retrying = true;
-                              });
-                              await _loadDatabases(
-                                profile: _activeProfile(),
-                                loadTables: true,
-                                preserveSelection: true,
-                              );
-                              if (!mounted || !dialogContext.mounted) {
-                                return;
-                              }
-                              if (_discoveredDatabaseAccessIssues().isEmpty) {
-                                Navigator.of(dialogContext).pop();
-                                return;
-                              }
-                              setDialogState(() {
-                                retrying = false;
-                              });
-                            },
-                    icon:
-                        retrying
-                            ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                            : const Icon(Icons.refresh_rounded, size: 17),
+                    onPressed: retrying || granting
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              retrying = true;
+                            });
+                            await _loadDatabases(
+                              profile: _activeProfile(),
+                              loadTables: true,
+                              preserveSelection: true,
+                            );
+                            if (!mounted || !dialogContext.mounted) {
+                              return;
+                            }
+                            if (_discoveredDatabaseAccessIssues().isEmpty) {
+                              Navigator.of(dialogContext).pop();
+                              return;
+                            }
+                            setDialogState(() {
+                              retrying = false;
+                            });
+                          },
+                    icon: retrying
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.refresh_rounded, size: 17),
                     label: Text(retrying ? 'Checking…' : 'Refresh'),
                   ),
                   FilledButton.icon(
-                    onPressed:
-                        retrying || granting || selectedIssues.isEmpty
-                            ? null
-                            : () async {
-                              setDialogState(() {
-                                granting = true;
-                                grantError = null;
-                              });
-                              final result =
-                                  await _grantDatabaseAccessWithWindowsUac(
-                                    issue,
-                                    requestedIssues: selectedIssues,
-                                  );
-                              if (!mounted || !dialogContext.mounted) {
-                                return;
-                              }
-                              if (result.success) {
-                                Navigator.of(dialogContext).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(result.message)),
+                    onPressed: retrying || granting || selectedIssues.isEmpty
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              granting = true;
+                              grantError = null;
+                            });
+                            final result =
+                                await _grantDatabaseAccessWithWindowsUac(
+                                  issue,
+                                  requestedIssues: selectedIssues,
                                 );
-                                return;
-                              }
-                              setDialogState(() {
-                                granting = false;
-                                grantError = result.message;
-                              });
-                            },
-                    icon:
-                        granting
-                            ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                            : const Icon(
-                              Icons.admin_panel_settings_rounded,
-                              size: 17,
+                            if (!mounted || !dialogContext.mounted) {
+                              return;
+                            }
+                            if (result.success) {
+                              Navigator.of(dialogContext).pop();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(result.message)),
+                              );
+                              return;
+                            }
+                            setDialogState(() {
+                              granting = false;
+                              grantError = result.message;
+                            });
+                          },
+                    icon: granting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
                             ),
+                          )
+                        : const Icon(
+                            Icons.admin_panel_settings_rounded,
+                            size: 17,
+                          ),
                     label: Text(
                       granting ? 'Waiting for Windows…' : 'Grant selected',
                     ),
@@ -1784,16 +1767,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       return;
     }
     final candidateKeys = candidates?.map((value) => value.trim()).toSet();
-    final eligibleTables = _syncState.tables.entries
-      .where(
-        (entry) =>
-            _syncKeyMatchesDatabase(entry.key, database) &&
-            entry.value.changeTrackingStatus == 'enabled' &&
-            (candidateKeys == null || candidateKeys.contains(entry.key)),
-      )
-      .map((entry) => entry.key)
-      .toSet()
-      .toList(growable: false)..sort();
+    final eligibleTables =
+        _syncState.tables.entries
+            .where(
+              (entry) =>
+                  _syncKeyMatchesDatabase(entry.key, database) &&
+                  entry.value.changeTrackingStatus == 'enabled' &&
+                  (candidateKeys == null || candidateKeys.contains(entry.key)),
+            )
+            .map((entry) => entry.key)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
     if (eligibleTables.isEmpty) {
       return;
     }
@@ -1835,14 +1820,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (!mounted || !discovery.success) {
       return;
     }
-    final knownKeys =
-        _syncState.tables.keys.map((key) => key.trim().toLowerCase()).toSet();
+    final knownKeys = _syncState.tables.keys
+        .map((key) => key.trim().toLowerCase())
+        .toSet();
     final newTables = discovery.values
         .where(
-          (table) =>
-              !knownKeys.contains(
-                _syncTableKey(table, database: database).toLowerCase(),
-              ),
+          (table) => !knownKeys.contains(
+            _syncTableKey(table, database: database).toLowerCase(),
+          ),
         )
         .toList(growable: false);
     if (newTables.isEmpty) {
@@ -1973,20 +1958,19 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           nextTables[syncKey] = current.copyWith(
             changeTrackingVersion: probe.currentVersion,
             changeTrackingOwner: widget.clientName,
-            changeTrackingStatus:
-                baselinePending ? 'baseline_pending' : 'enabled',
-            changeTrackingMessage:
-                baselinePending
-                    ? 'A non-empty table has no synchronized Change Tracking baseline. The next sync will safely union every online client snapshot.'
-                    : probe.status == 'baseline'
-                    ? 'Automatic Change Tracking baseline established.'
-                    : 'Automatic change scan is current.',
+            changeTrackingStatus: baselinePending
+                ? 'baseline_pending'
+                : 'enabled',
+            changeTrackingMessage: baselinePending
+                ? 'A non-empty table has no synchronized Change Tracking baseline. The next sync will safely union every online client snapshot.'
+                : probe.status == 'baseline'
+                ? 'Automatic Change Tracking baseline established.'
+                : 'Automatic change scan is current.',
             localChangesPending: false,
             status: baselinePending ? 'Queued' : current.status,
-            message:
-                baselinePending
-                    ? 'Waiting for a safe all-client baseline.'
-                    : current.message,
+            message: baselinePending
+                ? 'Waiting for a safe all-client baseline.'
+                : current.message,
           );
           stateChanged = true;
           continue;
@@ -2028,14 +2012,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         if (current.changeTrackingStatus != probe.status) {
           nextTables[syncKey] = current.copyWith(
             changeTrackingStatus: probe.status,
-            changeTrackingMessage:
-                probe.status == 'no_primary_key'
-                    ? 'Automatic sync requires a primary key.'
-                    : probe.status == 'not_tracked'
-                    ? 'Change Tracking is not enabled for this table.'
-                    : probe.status == 'unsupported'
-                    ? 'Automatic sync skipped an unsupported table schema.'
-                    : 'Table is unavailable for automatic sync.',
+            changeTrackingMessage: probe.status == 'no_primary_key'
+                ? 'Automatic sync requires a primary key.'
+                : probe.status == 'not_tracked'
+                ? 'Change Tracking is not enabled for this table.'
+                : probe.status == 'unsupported'
+                ? 'Automatic sync skipped an unsupported table schema.'
+                : 'Table is unavailable for automatic sync.',
           );
           stateChanged = true;
         }
@@ -2173,10 +2156,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (_sortColumnIndex == null && result.columns.isNotEmpty) {
         _sortColumnIndex = 0;
       }
-      _tableRows =
-          reset
-              ? List<List<String>>.from(result.rows)
-              : <List<String>>[..._tableRows, ...result.rows];
+      _tableRows = reset
+          ? List<List<String>>.from(result.rows)
+          : <List<String>>[..._tableRows, ...result.rows];
       _rowOffset = nextOffset;
       _hasMoreRows = result.hasMoreRows;
       _totalTableRows = result.totalRows;
@@ -2307,10 +2289,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     // out of the request body so the control-plane payload stays bounded.
     return Map<String, SyncTableState>.fromEntries(
       tableNames.map((table) {
-        final syncKey =
-            table.contains(_syncTableKeySeparator)
-                ? table
-                : _syncTableKey(table);
+        final syncKey = table.contains(_syncTableKeySeparator)
+            ? table
+            : _syncTableKey(table);
         final current = _syncTableState(table, syncKey: syncKey);
         return MapEntry(
           syncKey,
@@ -2337,8 +2318,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       if (selectedDatabase.isEmpty) {
         return true;
       }
-      final tableDatabase =
-          _databaseNameFromSyncKey(table).trim().toLowerCase();
+      final tableDatabase = _databaseNameFromSyncKey(
+        table,
+      ).trim().toLowerCase();
       return tableDatabase.isEmpty || tableDatabase == selectedDatabase;
     }
 
@@ -2485,21 +2467,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       // Job rowCount is the changed-row count, not the physical table total.
       rowCount: current.rowCount,
       message: nextMessage,
-      history:
-          appendHistory
-              ? _appendHistory(
-                current.history,
-                SyncHistoryEntry(
-                  timestamp: timestamp,
-                  table: job.table,
-                  status: nextStatus,
-                  success: success,
-                  message: nextMessage,
-                  rowCount: job.rowCount,
-                  progress: job.progress,
-                ),
-              )
-              : current.history,
+      history: appendHistory
+          ? _appendHistory(
+              current.history,
+              SyncHistoryEntry(
+                timestamp: timestamp,
+                table: job.table,
+                status: nextStatus,
+                success: success,
+                message: nextMessage,
+                rowCount: job.rowCount,
+                progress: job.progress,
+              ),
+            )
+          : current.history,
     );
     _updateSyncTableState(job.table, nextState);
     _updateTraySyncIndicator();
@@ -2547,12 +2528,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       unitIndex += 1;
     }
 
-    final decimals =
-        value >= 100 || unitIndex == 0
-            ? 0
-            : value >= 10
-            ? 1
-            : 2;
+    final decimals = value >= 100 || unitIndex == 0
+        ? 0
+        : value >= 10
+        ? 1
+        : 2;
     return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
   }
 
@@ -2591,20 +2571,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       '0',
     );
     final offsetLabel = 'UTC$offsetSign$offsetHours:$offsetMinutes';
-    final zoneLabel =
-        timeZoneName.isEmpty || timeZoneName == offsetLabel
-            ? offsetLabel
-            : '$timeZoneName ($offsetLabel)';
+    final zoneLabel = timeZoneName.isEmpty || timeZoneName == offsetLabel
+        ? offsetLabel
+        : '$timeZoneName ($offsetLabel)';
     return '$day.$month.$year $hour:$minute:$second $zoneLabel';
   }
 
   String _buildSummaryLabel() {
-    final version =
-        _agentAppVersion.trim().isEmpty ? 'dev' : _agentAppVersion.trim();
+    final version = _agentAppVersion.trim().isEmpty
+        ? 'dev'
+        : _agentAppVersion.trim();
     final releaseDate = _agentBuildReleaseDate.trim();
     final commitHash = _agentBuildCommitHash.trim();
-    final shortHash =
-        commitHash.length > 7 ? commitHash.substring(0, 7) : commitHash;
+    final shortHash = commitHash.length > 7
+        ? commitHash.substring(0, 7)
+        : commitHash;
     final hashSuffix = shortHash.isEmpty ? '' : ' $shortHash';
     if (releaseDate.isEmpty) {
       return 'v$version dev$hashSuffix';
@@ -2648,10 +2629,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                 _clientUpdateBaseUrlOverride)
             .trim();
     if (overrideBaseUrl.isNotEmpty && !_isLocalHttpUrl(overrideBaseUrl)) {
-      final normalizedBaseUrl =
-          overrideBaseUrl.endsWith('/')
-              ? overrideBaseUrl.substring(0, overrideBaseUrl.length - 1)
-              : overrideBaseUrl;
+      final normalizedBaseUrl = overrideBaseUrl.endsWith('/')
+          ? overrideBaseUrl.substring(0, overrideBaseUrl.length - 1)
+          : overrideBaseUrl;
       return '$normalizedBaseUrl/latest.json';
     }
     final manifestUrl = _controlPlaneClient.baseUrl.replaceFirst(
@@ -2716,8 +2696,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     if (!Platform.isWindows) {
       return false;
     }
-    final executablePath =
-        Platform.resolvedExecutable.replaceAll('/', r'\').toLowerCase();
+    final executablePath = Platform.resolvedExecutable
+        .replaceAll('/', r'\')
+        .toLowerCase();
     return !executablePath.contains(r'\build\windows\x64\runner\debug\');
   }
 
@@ -2928,49 +2909,45 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
     await showDialog<void>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text(
-              _hasClientUpdate
-                  ? 'Client update available'
-                  : 'Client is current',
-            ),
-            content: SelectableText(
-              [
-                'Current: ${_buildSummaryLabel()}',
-                'Latest: v${updateInfo.version} ${updateInfo.commit}',
-                if (_supportsAutomaticClientUpdate)
-                  'Automatic installation is enabled when the agent is idle.',
-                if (updateInfo.releaseDate.trim().isNotEmpty)
-                  'Released: ${_formatTimestamp(updateInfo.releaseDate)}',
-                if (updateInfo.sizeBytes > 0)
-                  'Download: ${_formatBytes(updateInfo.sizeBytes)}',
-                '',
-                'Run this command on the client machine:',
-                command,
-              ].join('\n'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Close'),
-              ),
-              TextButton(
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: command));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Update command copied.')),
-                  );
-                },
-                child: const Text('Copy command'),
-              ),
-              FilledButton(
-                onPressed:
-                    () => unawaited(_checkClientUpdate(showErrors: true)),
-                child: const Text('Check again'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: Text(
+          _hasClientUpdate ? 'Client update available' : 'Client is current',
+        ),
+        content: SelectableText(
+          [
+            'Current: ${_buildSummaryLabel()}',
+            'Latest: v${updateInfo.version} ${updateInfo.commit}',
+            if (_supportsAutomaticClientUpdate)
+              'Automatic installation is enabled when the agent is idle.',
+            if (updateInfo.releaseDate.trim().isNotEmpty)
+              'Released: ${_formatTimestamp(updateInfo.releaseDate)}',
+            if (updateInfo.sizeBytes > 0)
+              'Download: ${_formatBytes(updateInfo.sizeBytes)}',
+            '',
+            'Run this command on the client machine:',
+            command,
+          ].join('\n'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
           ),
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: command));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Update command copied.')),
+              );
+            },
+            child: const Text('Copy command'),
+          ),
+          FilledButton(
+            onPressed: () => unawaited(_checkClientUpdate(showErrors: true)),
+            child: const Text('Check again'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -3316,21 +3293,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         continue;
       }
       final current = _syncTableState(syncKey, syncKey: syncKey);
-      final nextStatus =
-          policy.enabled
-              ? (current.status.toLowerCase().contains('ing')
-                  ? current.status
-                  : 'Queued')
-              : 'Paused';
-      final nextMessage =
-          policy.enabled ? 'Waiting for the next sync.' : 'Sync disabled.';
+      final nextStatus = policy.enabled
+          ? (current.status.toLowerCase().contains('ing')
+                ? current.status
+                : 'Queued')
+          : 'Paused';
+      final nextMessage = policy.enabled
+          ? 'Waiting for the next sync.'
+          : 'Sync disabled.';
       final nextState = current.copyWith(
         enabled: policy.enabled,
         status: nextStatus,
-        progress:
-            policy.enabled
-                ? (nextStatus == 'Queued' ? 0 : current.progress)
-                : current.progress,
+        progress: policy.enabled
+            ? (nextStatus == 'Queued' ? 0 : current.progress)
+            : current.progress,
         message: nextMessage,
       );
       if (_syncTableStatesEqual(current, nextState)) {
@@ -3414,15 +3390,13 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       runSpacing: 2,
       children: [
         _buildSyncActionIconButton(
-          tooltip:
-              _rowCountsRefreshing
-                  ? 'Refreshing local row counts'
-                  : 'Refresh local row counts',
+          tooltip: _rowCountsRefreshing
+              ? 'Refreshing local row counts'
+              : 'Refresh local row counts',
           icon: Icons.refresh_rounded,
-          onPressed:
-              _selectedDatabase == null || _rowCountsRefreshing
-                  ? null
-                  : () => unawaited(_refreshLocalRowCounts()),
+          onPressed: _selectedDatabase == null || _rowCountsRefreshing
+              ? null
+              : () => unawaited(_refreshLocalRowCounts()),
         ),
         _buildSyncActionIconButton(
           tooltip: 'Settings',
@@ -3457,6 +3431,20 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       targets.add(MapEntry(database, table));
     }
     if (targets.isEmpty) {
+      _replaceSyncState(
+        _syncState.copyWith(
+          fingerprintAudit: <String, dynamic>{
+            'status': 'unavailable',
+            'progressPercent': 0,
+            'checkedTables': 0,
+            'totalTables': 0,
+            'message':
+                'No enabled tables are available for integrity checking.',
+            'updatedAt': DateTime.now().toUtc().toIso8601String(),
+            'history': const <dynamic>[],
+          },
+        ),
+      );
       return;
     }
     targets.sort((left, right) {
@@ -3467,33 +3455,145 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     });
     final profile = _activeProfile();
     final start = _tableFingerprintRefreshCursor % targets.length;
-    final refreshCount =
-        bounded
-            ? math.min(_tableFingerprintRefreshBatchSize, targets.length)
-            : targets.length;
+    final refreshCount = bounded
+        ? math.min(_tableFingerprintRefreshBatchSize, targets.length)
+        : targets.length;
+    final previousAudit = Map<String, dynamic>.from(
+      _syncState.fingerprintAudit,
+    );
+    final previousStatus = previousAudit['status']?.toString() ?? '';
+    var checkedTables = previousStatus == 'complete'
+        ? 0
+        : (previousAudit['checkedTables'] as num? ?? 0).round();
+    if (checkedTables < 0 || checkedTables >= targets.length) {
+      checkedTables = 0;
+    }
+    final batchStartedAt = DateTime.now().toUtc();
+    final cycleStartedAt =
+        checkedTables == 0 ||
+            (previousAudit['cycleStartedAt']?.toString() ?? '').isEmpty
+        ? batchStartedAt.toIso8601String()
+        : previousAudit['cycleStartedAt'].toString();
+    final batchTables = <String>[
+      for (var offset = 0; offset < refreshCount; offset += 1)
+        '${targets[(start + offset) % targets.length].key}::${targets[(start + offset) % targets.length].value}',
+    ];
+    _replaceSyncState(
+      _syncState.copyWith(
+        fingerprintAudit: <String, dynamic>{
+          ...previousAudit,
+          'status': 'running',
+          'progressPercent': targets.isEmpty
+              ? 0
+              : ((checkedTables * 100) ~/ targets.length),
+          'checkedTables': checkedTables,
+          'totalTables': targets.length,
+          'cycleStartedAt': cycleStartedAt,
+          'batchStartedAt': batchStartedAt.toIso8601String(),
+          'currentTables': batchTables,
+          'message': 'Checking ${batchTables.length} tables.',
+          'updatedAt': batchStartedAt.toIso8601String(),
+        },
+      ),
+    );
+    final tableResults = <Map<String, dynamic>>[];
     for (var offset = 0; offset < refreshCount; offset += 1) {
       final target = targets[(start + offset) % targets.length];
-      final fingerprints = await _queryTableFingerprints(
-        profile: profile,
-        database: target.key,
-        tables: [target.value],
-      );
-      if (!mounted) {
-        return;
+      final tableName = '${target.key}::${target.value}';
+      try {
+        final fingerprints = await _queryTableFingerprints(
+          profile: profile,
+          database: target.key,
+          tables: [target.value],
+        );
+        if (!mounted) {
+          return;
+        }
+        _applyTableFingerprints(
+          database: target.key,
+          fingerprints: fingerprints,
+        );
+        final fingerprint = fingerprints[target.value];
+        tableResults.add(<String, dynamic>{
+          'table': tableName,
+          'status': fingerprint == null ? 'unsupported' : 'checked',
+          'rowCount': fingerprint?.rowCount,
+          'message': fingerprint == null
+              ? 'No safe physical fingerprint is available.'
+              : 'Physical fingerprint checked.',
+        });
+      } catch (error) {
+        tableResults.add(<String, dynamic>{
+          'table': tableName,
+          'status': 'failed',
+          'message': error.toString(),
+        });
       }
-      // Publish each bounded result immediately. The former all-table scan
-      // applied nothing until hundreds of tables had completed, so a real
-      // historical divergence could remain hidden behind cached equality.
-      _applyTableFingerprints(database: target.key, fingerprints: fingerprints);
     }
     final nextCursor = (start + refreshCount) % targets.length;
     _tableFingerprintRefreshCursor = nextCursor;
-    if (_syncState.fingerprintRefreshCursor != nextCursor) {
+    final batchCompletedAt = DateTime.now().toUtc();
+    checkedTables = math.min(targets.length, checkedTables + refreshCount);
+    final cycleComplete = checkedTables >= targets.length;
+    final failedCount = tableResults
+        .where((row) => row['status'] == 'failed')
+        .length;
+    final unsupportedCount = tableResults
+        .where((row) => row['status'] == 'unsupported')
+        .length;
+    final priorHistory = List<dynamic>.from(
+      previousAudit['history'] as List? ?? const <dynamic>[],
+    );
+    final batchRecord = <String, dynamic>{
+      'startedAt': batchStartedAt.toIso8601String(),
+      'completedAt': batchCompletedAt.toIso8601String(),
+      'durationMs': batchCompletedAt.difference(batchStartedAt).inMilliseconds,
+      'checkedCount': tableResults.length - failedCount - unsupportedCount,
+      'failedCount': failedCount,
+      'unsupportedCount': unsupportedCount,
+      'tables': tableResults,
+    };
+    final nextHistory = <dynamic>[
+      batchRecord,
+      ...priorHistory,
+    ].take(20).toList();
+    final nextAudit = <String, dynamic>{
+      ...previousAudit,
+      'status': failedCount > 0
+          ? 'failed'
+          : cycleComplete
+          ? 'complete'
+          : 'checking',
+      'progressPercent': cycleComplete
+          ? 100
+          : ((checkedTables * 100) ~/ targets.length),
+      'checkedTables': checkedTables,
+      'totalTables': targets.length,
+      'cycleStartedAt': cycleStartedAt,
+      'currentTables': const <String>[],
+      'lastBatchTables': batchTables,
+      'lastBatchCompletedAt': batchCompletedAt.toIso8601String(),
+      'lastCompletedAt': cycleComplete
+          ? batchCompletedAt.toIso8601String()
+          : previousAudit['lastCompletedAt'],
+      'message': failedCount > 0
+          ? '$failedCount table checks failed; the next cycle will retry them.'
+          : cycleComplete
+          ? 'Complete physical integrity cycle finished.'
+          : 'Checked ${tableResults.length} tables in this batch.',
+      'updatedAt': batchCompletedAt.toIso8601String(),
+      'history': nextHistory,
+    };
+    if (_syncState.fingerprintRefreshCursor != nextCursor ||
+        _syncState.fingerprintAudit.toString() != nextAudit.toString()) {
       // Persist rotation progress even when every scanned fingerprint is
       // unchanged. Otherwise every restart begins at the first eight tables
       // and can starve later tables indefinitely.
       _replaceSyncState(
-        _syncState.copyWith(fingerprintRefreshCursor: nextCursor),
+        _syncState.copyWith(
+          fingerprintRefreshCursor: nextCursor,
+          fingerprintAudit: nextAudit,
+        ),
       );
     }
   }
@@ -3632,12 +3732,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         replicationPassword: _passwordController.text,
         serverConnected: _serverConnected,
         sqlConnected: _selectedDatabase != null,
-        selectedTable:
-            _selectedTable == null ? null : _syncTableKey(_selectedTable!),
+        selectedTable: _selectedTable == null
+            ? null
+            : _syncTableKey(_selectedTable!),
         tables: _heartbeatTablesPayload(),
         tableRelationships: _tableRelationshipsPayload(),
         clientVersion: _agentAppVersion,
         clientUpdateScriptPath: _localClientUpdateScriptPath() ?? '',
+        fingerprintAudit: _fingerprintAuditPayload,
       );
       logAgentDiagnostic(
         'heartbeat.received',
@@ -3680,11 +3782,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         return;
       }
 
-      final remoteActiveJobIds =
-          heartbeat.jobs
-              .where((job) => job.isActive)
-              .map((job) => job.id)
-              .toSet();
+      final remoteActiveJobIds = heartbeat.jobs
+          .where((job) => job.isActive)
+          .map((job) => job.id)
+          .toSet();
       final cancelledJobIds = _processingJobIds
           .where((jobId) => !remoteActiveJobIds.contains(jobId))
           .toList(growable: false);
@@ -3759,8 +3860,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _serverConnected = nextServerConnected;
         _checkingServerConnection = false;
         _lastServerCheck = DateTime.now();
-        _errorMessage =
-            temporaryControlPlaneUnavailable ? null : error.toString();
+        _errorMessage = temporaryControlPlaneUnavailable
+            ? null
+            : error.toString();
       });
     } finally {
       try {
@@ -3801,10 +3903,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       summary:
           'Collecting sanitized client, SQL Server, sync, update, and retained-log state.',
     );
-    final failedTableCount =
-        _syncState.tables.values
-            .where((table) => table.status.toLowerCase() == 'failed')
-            .length;
+    final failedTableCount = _syncState.tables.values
+        .where((table) => table.status.toLowerCase() == 'failed')
+        .length;
     final summary =
         'Machine ${Platform.localHostname}, database ${_selectedDatabase ?? 'not selected'}, '
         'failed tables $failedTableCount, active jobs ${_activeJobs.length}, '
@@ -4132,7 +4233,8 @@ WHERE database_id = DB_ID(N'master') AND file_id = 1;
       var backupResult = await _runSqlCmd(
         profile: profile,
         database: 'master',
-        query: '''
+        query:
+            '''
 BACKUP DATABASE ${_quoteIdentifier(database)}
 TO DISK = N'$backupPathLiteral'
 WITH COPY_ONLY, INIT, COMPRESSION, CHECKSUM, STATS = 10;
@@ -4149,7 +4251,8 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
         backupResult = await _runSqlCmd(
           profile: profile,
           database: 'master',
-          query: '''
+          query:
+              '''
 BACKUP DATABASE ${_quoteIdentifier(database)}
 TO DISK = N'$backupPathLiteral'
 WITH COPY_ONLY, INIT, CHECKSUM, STATS = 10;
@@ -4177,8 +4280,8 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
       var chunkCount = 0;
       if (await backupFile.exists()) {
         fileBytes = await backupFile.length();
-        fileSha256 =
-            (await sha256.bind(backupFile.openRead()).first).toString();
+        fileSha256 = (await sha256.bind(backupFile.openRead()).first)
+            .toString();
         final reader = backupFile.openRead();
         final pending = BytesBuilder(copy: false);
         await for (final block in reader) {
@@ -4212,7 +4315,8 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
         final lengthResult = await _runSqlCmd(
           profile: profile,
           database: 'master',
-          query: '''
+          query:
+              '''
 SET NOCOUNT ON;
 SELECT DATALENGTH(BulkColumn)
 FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
@@ -4240,7 +4344,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           final chunkResult = await _runSqlCmd(
             profile: profile,
             database: 'master',
-            query: '''
+            query:
+                '''
 SET NOCOUNT ON;
 SELECT CONVERT(varchar(max), SUBSTRING(BulkColumn, $offset, $expectedBytes), 2)
 FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
@@ -4480,8 +4585,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'Server requested client update $requestId for ${widget.clientName}; live version=$manifestVersion current=${currentVersion.isEmpty ? 'unknown' : currentVersion}.',
       );
       final localProgress = _readClientUpdateProgress(manifestVersion);
-      final progressStatus =
-          localProgress?['status']?.toString().trim().toLowerCase();
+      final progressStatus = localProgress?['status']
+          ?.toString()
+          .trim()
+          .toLowerCase();
       final reportedStatus = switch (progressStatus) {
         'failed' => 'failed',
         'installing' => 'installing',
@@ -4495,10 +4602,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           requestId: requestId,
           status: reportedStatus,
           installedVersion: _agentAppVersion,
-          message:
-              progressMessage.isNotEmpty
-                  ? progressMessage
-                  : 'The durable updater accepted this request. Verified files and partial downloads will be reused after reconnect or restart.',
+          message: progressMessage.isNotEmpty
+              ? progressMessage
+              : 'The durable updater accepted this request. Verified files and partial downloads will be reused after reconnect or restart.',
           downloadedBytes: localProgress?['downloadedBytes'] as int?,
           totalBytes: localProgress?['totalBytes'] as int?,
           progressPercent: localProgress?['percent'] as int?,
@@ -4643,12 +4749,15 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       failedTableCount: failedTables.length,
       changeTracking: changeTracking,
     );
-    final passedSelfTests =
-        selfTests.where((test) => test['status'] == 'passed').length;
-    final failedSelfTests =
-        selfTests.where((test) => test['status'] == 'failed').length;
-    final warningSelfTests =
-        selfTests.where((test) => test['status'] == 'warning').length;
+    final passedSelfTests = selfTests
+        .where((test) => test['status'] == 'passed')
+        .length;
+    final failedSelfTests = selfTests
+        .where((test) => test['status'] == 'failed')
+        .length;
+    final warningSelfTests = selfTests
+        .where((test) => test['status'] == 'warning')
+        .length;
 
     final payload = <String, dynamic>{
       'capturedAt': DateTime.now().toIso8601String(),
@@ -4669,12 +4778,11 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         'correlationId': _diagnosticsUploadRequestId,
         'automated': true,
         'requestedByServer': true,
-        'overallStatus':
-            failedSelfTests > 0
-                ? 'failed'
-                : warningSelfTests > 0
-                ? 'warning'
-                : 'passed',
+        'overallStatus': failedSelfTests > 0
+            ? 'failed'
+            : warningSelfTests > 0
+            ? 'warning'
+            : 'passed',
         'passedCheckCount': passedSelfTests,
         'warningCheckCount': warningSelfTests,
         'failedCheckCount': failedSelfTests,
@@ -4689,13 +4797,15 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       'sql': {
         'server': _serverController.text.trim(),
         'database': _selectedDatabase,
-        'selectedTable':
-            _selectedTable == null ? null : _syncTableKey(_selectedTable!),
+        'selectedTable': _selectedTable == null
+            ? null
+            : _syncTableKey(_selectedTable!),
         'databaseCount': _databases.length,
         'tableCount': _tables.length,
         'databaseAccessGrantBusy': _databaseAccessGrantBusy,
-        'databaseAccessRequiredCount':
-            _databaseAccessStatuses.where((status) => !status.hasAccess).length,
+        'databaseAccessRequiredCount': _databaseAccessStatuses
+            .where((status) => !status.hasAccess)
+            .length,
         'databaseAccessDiscovery': _databaseAccessStatuses
             .map(
               (status) => {
@@ -4776,10 +4886,12 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         break;
       }
     }
-    final selectedTableCount =
-        _syncState.tables.values.where(_isTableSelectedForSync).length;
-    final accessProblemCount =
-        _databaseAccessStatuses.where((status) => !status.hasAccess).length;
+    final selectedTableCount = _syncState.tables.values
+        .where(_isTableSelectedForSync)
+        .length;
+    final accessProblemCount = _databaseAccessStatuses
+        .where((status) => !status.hasAccess)
+        .length;
     final changeTrackingStatus =
         changeTracking['captureStatus']?.toString() ?? 'unknown';
 
@@ -4845,7 +4957,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         changeTrackingStatus == 'completed'
             ? 'Change Tracking diagnostics completed.'
             : changeTracking['message']?.toString() ??
-                'Change Tracking diagnostics did not complete.',
+                  'Change Tracking diagnostics did not complete.',
       ),
       check(
         'other-database-access',
@@ -5179,15 +5291,14 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
     final sql = Map<String, dynamic>.from(value);
     final discovery = sql['databaseAccessDiscovery'];
-    final accessProblems =
-        discovery is List
-            ? discovery
-                .whereType<Map>()
-                .where((item) => item['hasAccess'] != true)
-                .take(25)
-                .map((item) => Map<String, dynamic>.from(item))
-                .toList(growable: false)
-            : const <Map<String, dynamic>>[];
+    final accessProblems = discovery is List
+        ? discovery
+              .whereType<Map>()
+              .where((item) => item['hasAccess'] != true)
+              .take(25)
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+        : const <Map<String, dynamic>>[];
     return <String, dynamic>{
       'server': sql['server'],
       'database': sql['database'],
@@ -5200,10 +5311,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       'databaseAccessDiscoveryCount': discovery is List ? discovery.length : 0,
       'databaseAccessProblems': accessProblems,
       'databaseAccessIssue': sql['databaseAccessIssue'],
-      'changeTracking':
-          sql['changeTracking'] is Map
-              ? _minimalChangeTrackingForUpload(sql['changeTracking'])
-              : null,
+      'changeTracking': sql['changeTracking'] is Map
+          ? _minimalChangeTrackingForUpload(sql['changeTracking'])
+          : null,
     };
   }
 
@@ -5392,7 +5502,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             }
           }
           final outcomes = await runBoundedSyncTransfers<bool>(
-            uploadWave.map((job) => () => _processPendingJob(job)),
+            uploadWave.map(
+              (job) =>
+                  () => _processPendingJob(job),
+            ),
             parallelism: tuning.parallelism,
           );
           if (outcomes.any((completed) => !completed)) {
@@ -5525,10 +5638,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         failedJob,
         appendHistory: true,
         success: false,
-        overrideMessage:
-            baselineReplan
-                ? 'Delta cancelled safely; waiting for automatic all-client baseline replan.'
-                : errorMessage,
+        overrideMessage: baselineReplan
+            ? 'Delta cancelled safely; waiting for automatic all-client baseline replan.'
+            : errorMessage,
       );
       if (job.direction == 'download') {
         unawaited(_refreshLocalRowCounts());
@@ -5687,17 +5799,17 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             table,
             epochChanged
                 ? state.copyWith(
-                  status: 'Ready',
-                  lastSync: '--',
-                  progress: 0,
-                  savedRowCount: null,
-                  tableChecksum: '',
-                  changeTrackingVersion: null,
-                  changeTrackingOwner: null,
-                  message:
-                      'Sync epoch changed; Change Tracking cursor reset. Bootstrap non-empty databases from one deliberate source.',
-                  history: const <SyncHistoryEntry>[],
-                )
+                    status: 'Ready',
+                    lastSync: '--',
+                    progress: 0,
+                    savedRowCount: null,
+                    tableChecksum: '',
+                    changeTrackingVersion: null,
+                    changeTrackingOwner: null,
+                    message:
+                        'Sync epoch changed; Change Tracking cursor reset. Bootstrap non-empty databases from one deliberate source.',
+                    history: const <SyncHistoryEntry>[],
+                  )
                 : state,
           ),
         ),
@@ -5746,10 +5858,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final cachedSnapshot = await _transferCache.loadUploadSnapshot(
       uploadCacheKey,
     );
-    final snapshot =
-        cachedSnapshot == null
-            ? await _createRelaySnapshotForJob(job)
-            : _RelaySnapshotDocument.fromJson(cachedSnapshot);
+    final snapshot = cachedSnapshot == null
+        ? await _createRelaySnapshotForJob(job)
+        : _RelaySnapshotDocument.fromJson(cachedSnapshot);
     if (cachedSnapshot == null) {
       await _transferCache.saveUploadSnapshot(
         uploadCacheKey,
@@ -5913,18 +6024,15 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       _updateSyncTableState(
         job.table,
         current.copyWith(
-          rowCount:
-              snapshot.checksum.isNotEmpty
-                  ? snapshot.sourceRowCount
-                  : current.rowCount,
-          tableChecksum:
-              snapshot.checksum.isNotEmpty
-                  ? snapshot.checksum
-                  : current.tableChecksum,
-          rangeFingerprint:
-              snapshot.rangeFingerprint.isNotEmpty
-                  ? snapshot.rangeFingerprint
-                  : current.rangeFingerprint,
+          rowCount: snapshot.checksum.isNotEmpty
+              ? snapshot.sourceRowCount
+              : current.rowCount,
+          tableChecksum: snapshot.checksum.isNotEmpty
+              ? snapshot.checksum
+              : current.tableChecksum,
+          rangeFingerprint: snapshot.rangeFingerprint.isNotEmpty
+              ? snapshot.rangeFingerprint
+              : current.rangeFingerprint,
           changeTrackingVersion: uploadedVersion,
           changeTrackingOwner: widget.clientName,
           changeTrackingStatus: 'enabled',
@@ -6001,31 +6109,32 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       // Buffer the complete table delta before SQL apply. Committing streamed
       // pages independently can leave a partial table when a later page fails.
       onChunk: null,
-      onProgress: ({
-        required pages,
-        required rows,
-        required totalRows,
-        required compressedBytes,
-        required resumed,
-      }) async {
-        final fraction = totalRows <= 0 ? 0.0 : rows / totalRows;
-        final progress = 20 + (fraction.clamp(0.0, 1.0) * 35).round();
-        try {
-          final progressJob = await _controlPlaneClient.updateJobProgress(
-            job.id,
-            status: 'downloading',
-            progress: progress,
-            message:
-                '${resumed ? 'Resumed' : 'Downloaded'} $rows of $totalRows rows in $pages verified page${pages == 1 ? '' : 's'} for ${_localTableName(job.table)}.',
-            rowCount: rows,
-          );
-          _applyRemoteJobState(progressJob);
-        } catch (error) {
-          logStartupEvent(
-            'Non-fatal transfer progress update failed for ${job.id}: $error',
-          );
-        }
-      },
+      onProgress:
+          ({
+            required pages,
+            required rows,
+            required totalRows,
+            required compressedBytes,
+            required resumed,
+          }) async {
+            final fraction = totalRows <= 0 ? 0.0 : rows / totalRows;
+            final progress = 20 + (fraction.clamp(0.0, 1.0) * 35).round();
+            try {
+              final progressJob = await _controlPlaneClient.updateJobProgress(
+                job.id,
+                status: 'downloading',
+                progress: progress,
+                message:
+                    '${resumed ? 'Resumed' : 'Downloaded'} $rows of $totalRows rows in $pages verified page${pages == 1 ? '' : 's'} for ${_localTableName(job.table)}.',
+                rowCount: rows,
+              );
+              _applyRemoteJobState(progressJob);
+            } catch (error) {
+              logStartupEvent(
+                'Non-fatal transfer progress update failed for ${job.id}: $error',
+              );
+            }
+          },
     );
     final canonicalFullMerge =
         downloadedSnapshot.canonicalFullMerge && !downloadedSnapshot.isDelta;
@@ -6067,27 +6176,25 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
 
     _checkSyncJobNotCancelled(job.id);
-    final retryRows =
-        authoritativeReconcile || canonicalFullMerge
-            ? const <Map<String, String?>>[]
-            : pendingRejectedChanges
-                .where(shouldRetrySyncRejectedChange)
-                .map(
-                  (change) => Map<String, String?>.fromEntries(
-                    change.row.entries.map(
-                      (entry) => MapEntry(entry.key, entry.value?.toString()),
-                    ),
+    final retryRows = authoritativeReconcile || canonicalFullMerge
+        ? const <Map<String, String?>>[]
+        : pendingRejectedChanges
+              .where(shouldRetrySyncRejectedChange)
+              .map(
+                (change) => Map<String, String?>.fromEntries(
+                  change.row.entries.map(
+                    (entry) => MapEntry(entry.key, entry.value?.toString()),
                   ),
-                )
-                .toList(growable: false);
-    final snapshotToApply =
-        retryRows.isEmpty
-            ? downloadedSnapshot
-            : downloadedSnapshot.copyWith(
-              rowCount: downloadedSnapshot.rows.length + retryRows.length,
-              rows: [...downloadedSnapshot.rows, ...retryRows],
-              isDelta: true,
-            );
+                ),
+              )
+              .toList(growable: false);
+    final snapshotToApply = retryRows.isEmpty
+        ? downloadedSnapshot
+        : downloadedSnapshot.copyWith(
+            rowCount: downloadedSnapshot.rows.length + retryRows.length,
+            rows: [...downloadedSnapshot.rows, ...retryRows],
+            isDelta: true,
+          );
 
     if (streamedTargetRowCount < 0) {
       logAgentDiagnostic(
@@ -6172,23 +6279,21 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       job.id,
       status: converged ? 'completed' : 'failed',
       progress: 100,
-      message:
-          converged
-              ? 'Sync applied successfully to ${_localTableName(job.table)}.'
-              : 'Sync did not converge: ${pendingAfterApply.length} rejected change(s) retained for targeted retry.',
+      message: converged
+          ? 'Sync applied successfully to ${_localTableName(job.table)}.'
+          : 'Sync did not converge: ${pendingAfterApply.length} rejected change(s) retained for targeted retry.',
       rowCount: applyStats.appliedRows,
       rejectedRowCount: pendingAfterApply.length,
-      rejectionSummary:
-          pendingAfterApply.isEmpty
-              ? null
-              : _syncRejectionSummary(pendingAfterApply),
+      rejectionSummary: pendingAfterApply.isEmpty
+          ? null
+          : _syncRejectionSummary(pendingAfterApply),
       conflictKind:
           pendingAfterApply.isNotEmpty &&
-                  pendingAfterApply.every(
-                    (change) => isSyncIdentityCollision(change.error),
-                  )
-              ? 'unique_business_key'
-              : null,
+              pendingAfterApply.every(
+                (change) => isSyncIdentityCollision(change.error),
+              )
+          ? 'unique_business_key'
+          : null,
       snapshotId: downloadedSnapshot.id,
       snapshotCreatedAt: downloadedSnapshot.createdAt,
       snapshotBytes: downloadedSnapshot.snapshotBytes,
@@ -6228,11 +6333,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     );
     final preserveChangeTrackingBaseline =
         downloadPreservesChangeTrackingBaseline(job.sourceClientName);
-    final appliedVersion =
-        preserveChangeTrackingBaseline
-            ? null
-            : authoritativeAppliedVersion ??
-                snapshotToApply.changeTrackingVersions[widget.clientName];
+    final appliedVersion = preserveChangeTrackingBaseline
+        ? null
+        : authoritativeAppliedVersion ??
+              snapshotToApply.changeTrackingVersions[widget.clientName];
     if (appliedVersion != null && appliedVersion >= 0) {
       final current =
           _syncState.tables[job.table] ?? _defaultSyncTableState(job.table);
@@ -6250,17 +6354,14 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
   }
 
   String _syncRejectionSummary(List<SyncRejectedChange> changes) {
-    final permanent =
-        changes
-            .where(
-              (change) =>
-                  change.kind == SyncRejectionKind.permanentBusinessRule,
-            )
-            .length;
-    final dependency =
-        changes
-            .where((change) => change.kind == SyncRejectionKind.dependency)
-            .length;
+    final permanent = changes
+        .where(
+          (change) => change.kind == SyncRejectionKind.permanentBusinessRule,
+        )
+        .length;
+    final dependency = changes
+        .where((change) => change.kind == SyncRejectionKind.dependency)
+        .length;
     final transient = changes.length - permanent - dependency;
     return 'quarantined=${changes.length}; permanent=$permanent; dependency=$dependency; transient=$transient';
   }
@@ -6269,8 +6370,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     RemoteSyncJob job,
   ) async {
     final tableDatabase = _databaseNameFromSyncKey(job.table).trim();
-    final database =
-        tableDatabase.isNotEmpty ? tableDatabase : job.publisherDatabase.trim();
+    final database = tableDatabase.isNotEmpty
+        ? tableDatabase
+        : job.publisherDatabase.trim();
     if (database.isEmpty) {
       throw Exception(
         'Snapshot upload for ${job.table} is missing a database.',
@@ -6464,10 +6566,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           row['__sync_modified_at_utc']?.trim().isNotEmpty != true) {
         row['__sync_modified_at_utc'] = '1970-01-01T00:00:00.000Z';
       }
-      final operation =
-          row['__sync_op']?.trim().isNotEmpty == true
-              ? row['__sync_op']!.trim().toUpperCase()
-              : 'S';
+      final operation = row['__sync_op']?.trim().isNotEmpty == true
+          ? row['__sync_op']!.trim().toUpperCase()
+          : 'S';
       final changeVersion =
           row['__sync_change_version'] ??
           snapshotChangeTrackingVersion?.toString();
@@ -6720,8 +6821,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       schema: targetTable.schema,
       table: targetTable.table,
     );
-    final writableColumnNames =
-        syncColumns.map((column) => column.name.toLowerCase()).toSet();
+    final writableColumnNames = syncColumns
+        .map((column) => column.name.toLowerCase())
+        .toSet();
     final uniqueIndexColumnSets = <List<String>>[];
     final seenUniqueColumnSets = <String>{};
     for (final columnSet in <List<String>>[
@@ -6745,8 +6847,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         job.batchId?.trim().isNotEmpty == true && snapshot.isDelta;
     final postUploadChangeTrackingVersion =
         job.batchId?.trim().isNotEmpty == true
-            ? snapshot.changeTrackingVersions[widget.clientName]
-            : null;
+        ? snapshot.changeTrackingVersions[widget.clientName]
+        : null;
     if (fullSnapshotApply && snapshot.isDelta) {
       throw StateError(
         'Authoritative reconciliation requires a complete source snapshot.',
@@ -7222,7 +7324,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     required String schema,
     required String table,
   }) async {
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
@@ -7278,7 +7381,8 @@ ORDER BY c.column_id;
     required String schema,
     required String table,
   }) async {
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT c.name
@@ -7313,7 +7417,8 @@ ORDER BY ic.key_ordinal;
     required String schema,
     required String table,
   }) async {
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT i.name, c.name
@@ -7389,7 +7494,8 @@ ORDER BY i.index_id, ic.key_ordinal;
         .join(' + NCHAR($fieldSeparator) + ');
     final firstRow = offset + 1;
     final lastRow = offset + batchSize;
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 WITH page_source AS (
   SELECT
@@ -7443,7 +7549,8 @@ ORDER BY [__sync_agent_row_number];
     final payloadExpression = columns
         .map(_sourceBatchEncodedColumnExpression)
         .join(' + NCHAR($fieldSeparatorCode) + ');
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
@@ -7549,7 +7656,8 @@ COMMIT TRANSACTION;
   }) async {
     final objectName =
         "${_escapeSqlLiteral(_quoteIdentifier(schema))}.${_escapeSqlLiteral(_quoteIdentifier(table))}";
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
@@ -7609,12 +7717,12 @@ SELECT
               'ct.${_quoteIdentifier(column)} = existing_row.${_quoteIdentifier(column)}',
         )
         .join(' AND ');
-    final primaryKeySet =
-        primaryKeyColumns.map((column) => column.toLowerCase()).toSet();
+    final primaryKeySet = primaryKeyColumns
+        .map((column) => column.toLowerCase())
+        .toSet();
     String buildQuery({required bool includeCommitTime}) {
-      final commitExpression =
-          includeCommitTime
-              ? """COALESCE(
+      final commitExpression = includeCommitTime
+          ? """COALESCE(
   CONVERT(
     nvarchar(33),
     DATEADD(
@@ -7626,14 +7734,14 @@ SELECT
   ) + N'Z',
   N''
 )"""
-              : "N''";
-      final commitJoin =
-          includeCommitTime
-              ? '''
+          : "N''";
+      final commitJoin = includeCommitTime
+          ? '''
 LEFT JOIN sys.dm_tran_commit_table AS commit_table
   ON commit_table.commit_ts = ct.SYS_CHANGE_VERSION'''
-              : '';
-      String encodeField(String expression) => '''CASE
+          : '';
+      String encodeField(String expression) =>
+          '''CASE
   WHEN ($expression) IS NULL THEN CAST('N' AS varchar(max))
   ELSE CAST('H' AS varchar(max)) + CONVERT(
     varchar(max),
@@ -7649,21 +7757,19 @@ END''';
       for (var index = 0; index < columns.length; index++) {
         final column = columns[index];
         final isKey = primaryKeySet.contains(column.name.toLowerCase());
-        final columnReference =
-            isKey
-                ? 'ct.${_quoteIdentifier(column.name)}'
-                : 'existing_row.${_quoteIdentifier(column.name)}';
+        final columnReference = isKey
+            ? 'ct.${_quoteIdentifier(column.name)}'
+            : 'existing_row.${_quoteIdentifier(column.name)}';
         final valueExpression = _sourceBatchColumnValueExpression(
           column,
           columnReference: columnReference,
         );
-        final expression =
-            !isKey
-                ? '''CASE
+        final expression = !isKey
+            ? '''CASE
   WHEN ct.SYS_CHANGE_OPERATION = N'D' THEN NULL
   ELSE $valueExpression
 END'''
-                : valueExpression;
+            : valueExpression;
         encodedFields.add(encodeField(expression));
       }
       final encodedProjection = encodedFields.join(" + '|' +\n  ");
@@ -7743,8 +7849,8 @@ COMMIT TRANSACTION;
       }
       final databaseModifiedAtUtc =
           includesCommitTime && (encodedRow[2]?.trim().isNotEmpty ?? false)
-              ? encodedRow[2]
-              : null;
+          ? encodedRow[2]
+          : null;
       final serverModifiedAtUtc = _normalizeDatabaseCommitToServerUtc(
         databaseModifiedAtUtc,
       );
@@ -7753,10 +7859,9 @@ COMMIT TRANSACTION;
         '__sync_change_version': encodedRow[1],
         '__sync_database_modified_at_utc': databaseModifiedAtUtc,
         '__sync_modified_at_utc': serverModifiedAtUtc,
-        '__sync_clock_offset_ms':
-            _serverClockSynchronized
-                ? _serverClockOffset.inMilliseconds.toString()
-                : null,
+        '__sync_clock_offset_ms': _serverClockSynchronized
+            ? _serverClockOffset.inMilliseconds.toString()
+            : null,
         for (var i = 0; i < columns.length; i++)
           columns[i].name: _decodeHexTransportField(
             encodedRow[i + 3],
@@ -7791,8 +7896,9 @@ COMMIT TRANSACTION;
     if (parsed == null) {
       return null;
     }
-    final normalized =
-        _serverClockSynchronized ? parsed.add(_serverClockOffset) : parsed;
+    final normalized = _serverClockSynchronized
+        ? parsed.add(_serverClockOffset)
+        : parsed;
     return normalized.toIso8601String();
   }
 
@@ -7826,10 +7932,8 @@ COMMIT TRANSACTION;
     );
     final targetHashByIdentity = <String, String>{
       for (final row in targetRows)
-        syncRejectedRowIdentity(
-          row,
-          primaryKeyColumns,
-        ): canonicalSqlSyncRowSha256(columns, row),
+        syncRejectedRowIdentity(row, primaryKeyColumns):
+            canonicalSqlSyncRowSha256(columns, row),
     };
     return rows
         .where((row) {
@@ -8487,10 +8591,12 @@ END
         '-RequestPath',
         requestFile.path,
       ], runInShell: false);
-      final stdoutFuture =
-          process.stdout.transform(systemEncoding.decoder).join();
-      final stderrFuture =
-          process.stderr.transform(systemEncoding.decoder).join();
+      final stdoutFuture = process.stdout
+          .transform(systemEncoding.decoder)
+          .join();
+      final stderrFuture = process.stderr
+          .transform(systemEncoding.decoder)
+          .join();
       final exitCode = await process.exitCode.timeout(_snapshotSqlCmdTimeout);
       final stdoutText = await stdoutFuture;
       final stderrText = await stderrFuture;
@@ -8513,10 +8619,9 @@ END
       return (
         success: exitCode == 0 && copiedRows != null,
         copiedRows: copiedRows,
-        error:
-            stderrText.trim().isEmpty
-                ? 'SqlBulkCopy helper exited with code $exitCode.'
-                : stderrText.trim(),
+        error: stderrText.trim().isEmpty
+            ? 'SqlBulkCopy helper exited with code $exitCode.'
+            : stderrText.trim(),
       );
     } on TimeoutException {
       process?.kill();
@@ -8690,14 +8795,13 @@ END
     }
 
     final catalog = mergeDatabaseAccessDiscovery(
-      catalog:
-          processResult.exitCode == 0
-              ? parseDatabaseAccessDiscoveryRows(
-                _dataOutputLines(
-                  processResult.stdout.toString(),
-                ).map(_splitRowValues),
-              )
-              : const <DatabaseAccessStatus>[],
+      catalog: processResult.exitCode == 0
+          ? parseDatabaseAccessDiscoveryRows(
+              _dataOutputLines(
+                processResult.stdout.toString(),
+              ).map(_splitRowValues),
+            )
+          : const <DatabaseAccessStatus>[],
       referencedDatabases: referencedDatabases,
     );
     if (catalog.isEmpty) {
@@ -8712,10 +8816,9 @@ END
     final statuses = <DatabaseAccessStatus>[];
     const probeBatchSize = 4;
     for (var offset = 0; offset < catalog.length; offset += probeBatchSize) {
-      final end =
-          (offset + probeBatchSize < catalog.length)
-              ? offset + probeBatchSize
-              : catalog.length;
+      final end = (offset + probeBatchSize < catalog.length)
+          ? offset + probeBatchSize
+          : catalog.length;
       final batch = catalog.sublist(offset, end);
       final batchStatuses = await Future.wait(
         batch.map((status) async {
@@ -8742,10 +8845,9 @@ END
               accessProblem: '',
             );
           }
-          final errorText =
-              probe == null
-                  ? _sqlCmdUnavailableMessage(profile)
-                  : _sqlCmdFailed('opening database ${status.database}', probe);
+          final errorText = probe == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('opening database ${status.database}', probe);
           return DatabaseAccessStatus(
             database: status.database,
             hasAccess: false,
@@ -8777,7 +8879,8 @@ END
       );
     }
 
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
@@ -8835,7 +8938,8 @@ ORDER BY table_name;
           })
           .join(',\n');
 
-      final query = '''
+      final query =
+          '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 WITH requested(schema_name, table_name, display_name) AS (
@@ -8983,13 +9087,12 @@ ORDER BY r.display_name;
 
     const batchSize = 200;
     final accumulator = SqlSyncFingerprintAccumulator();
-    final rangeAccumulator =
-        keyColumns.isEmpty
-            ? null
-            : SqlSyncRangeFingerprintAccumulator(
-              columns: writableColumns,
-              keyColumns: keyColumns,
-            );
+    final rangeAccumulator = keyColumns.isEmpty
+        ? null
+        : SqlSyncRangeFingerprintAccumulator(
+            columns: writableColumns,
+            keyColumns: keyColumns,
+          );
     for (var offset = 0; true; offset += batchSize) {
       final rows = await _fetchSourceTableBatch(
         profile: profile,
@@ -9050,10 +9153,9 @@ ORDER BY r.display_name;
     }
     _applyChangeTrackingDiagnosticsToState(databaseResults);
 
-    final selectedDatabase =
-        (_selectedDatabase?.trim() ?? '').isEmpty
-            ? databasesToCheck.first
-            : _selectedDatabase!.trim();
+    final selectedDatabase = (_selectedDatabase?.trim() ?? '').isEmpty
+        ? databasesToCheck.first
+        : _selectedDatabase!.trim();
     final selectedResult = databaseResults.firstWhere(
       (item) =>
           (item['database'] as String? ?? '').toLowerCase() ==
@@ -9110,7 +9212,8 @@ ORDER BY r.display_name;
       };
     }
 
-    final databaseQuery = '''
+    final databaseQuery =
+        '''
 SET NOCOUNT ON;
 IF DB_ID(N'${_escapeSqlLiteral(trimmedDatabase)}') IS NULL
 BEGIN
@@ -9145,10 +9248,9 @@ END
       if (databaseResult.exitCode != 0) {
         if (_isAlreadyEnabledChangeTrackingFailure(databaseResult)) {
           databaseStatus = 'already_enabled';
-          databaseMessage =
-              parsedStatus?.message.isNotEmpty == true
-                  ? parsedStatus!.message
-                  : 'Change Tracking was already enabled.';
+          databaseMessage = parsedStatus?.message.isNotEmpty == true
+              ? parsedStatus!.message
+              : 'Change Tracking was already enabled.';
         } else {
           databaseStatus = 'failed';
           databaseMessage = _sqlCmdFailed(
@@ -9187,7 +9289,8 @@ END
       final schema = parts.schema;
       final tableName = parts.table;
       final objectName = '$schema.$tableName';
-      final tableQuery = '''
+      final tableQuery =
+          '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(trimmedDatabase)};
 IF OBJECT_ID(N'${_escapeSqlLiteral(objectName)}', N'U') IS NULL
@@ -9343,7 +9446,8 @@ END
       };
     }
 
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
@@ -9477,10 +9581,9 @@ ORDER BY
       'trackedTableCount': trackedTables.length,
       'trackedTables': trackedTables.take(100).toList(growable: false),
       'offlineChangesCanBeDetected': databaseEnabled,
-      'offlineChangeDetectionNote':
-          databaseEnabled
-              ? 'Changes made while the client is closed can be detected after restart if the saved sync version is still >= each table minValidVersion.'
-              : 'Change Tracking is not enabled on this database. Offline changes require full snapshot/hash fallback.',
+      'offlineChangeDetectionNote': databaseEnabled
+          ? 'Changes made while the client is closed can be detected after restart if the saved sync version is still >= each table minValidVersion.'
+          : 'Change Tracking is not enabled on this database. Offline changes require full snapshot/hash fallback.',
     };
   }
 
@@ -9495,7 +9598,8 @@ ORDER BY
 
     final knownTables = tables.toSet();
     final relationships = <String, Set<String>>{};
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 USE ${_quoteIdentifier(database)};
 SELECT
@@ -9575,8 +9679,9 @@ ORDER BY child_table, parent_table;
 
     final fetchSize = pageSize + 1;
     final tableParts = _splitQualifiedName(table);
-    final resolvedDatabase =
-        tableParts.database.isEmpty ? database : tableParts.database;
+    final resolvedDatabase = tableParts.database.isEmpty
+        ? database
+        : tableParts.database;
     final columnsResult = await _queryTableColumns(
       profile: profile,
       database: resolvedDatabase,
@@ -9611,20 +9716,18 @@ ORDER BY child_table, parent_table;
       );
     }
 
-    final orderClause =
-        orderByColumn == null || orderByColumn.isEmpty
-            ? _quoteIdentifier(
-              columnsResult.values.isNotEmpty
-                  ? columnsResult.values.first
-                  : '1',
-            )
-            : _quoteIdentifier(orderByColumn);
+    final orderClause = orderByColumn == null || orderByColumn.isEmpty
+        ? _quoteIdentifier(
+            columnsResult.values.isNotEmpty ? columnsResult.values.first : '1',
+          )
+        : _quoteIdentifier(orderByColumn);
     final direction = orderAscending ? 'ASC' : 'DESC';
     final columnList = columnsResult.values.map(_quoteIdentifier).join(', ');
     final firstRowNumber = offset + 1;
     final lastRowNumber = offset + fetchSize;
 
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 WITH page_source AS (
   SELECT
@@ -9678,7 +9781,8 @@ ORDER BY [__sync_agent_row_number];
     required String schema,
     required String table,
   }) async {
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 SELECT COLUMN_NAME
 FROM ${_quoteIdentifier(database)}.INFORMATION_SCHEMA.COLUMNS
@@ -9717,7 +9821,8 @@ ORDER BY ORDINAL_POSITION;
     required String schema,
     required String table,
   }) async {
-    final query = '''
+    final query =
+        '''
 SET NOCOUNT ON;
 SELECT COUNT_BIG(1) AS row_count
 FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifier(table)};
@@ -9793,8 +9898,8 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   bool _isAlreadyEnabledChangeTrackingFailure(ProcessResult processResult) {
-    final details =
-        '${processResult.stdout}\n${processResult.stderr}'.toLowerCase();
+    final details = '${processResult.stdout}\n${processResult.stderr}'
+        .toLowerCase();
     return details.contains('change tracking is already enabled for database');
   }
 
@@ -9822,8 +9927,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       context: {
         'server': profile.server,
         'database': database ?? '',
-        'authentication':
-            profile.useWindowsAuth ? 'windows' : 'sql-authentication',
+        'authentication': profile.useWindowsAuth
+            ? 'windows'
+            : 'sql-authentication',
         'queryOperation': queryOperation,
         'queryChars': rawQuery.length,
         'queryFingerprint': rawQuery.hashCode.toUnsigned(32).toRadixString(16),
@@ -9926,8 +10032,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           outputs.add(pipedOutput);
         }
         if (outputFile != null && await outputFile.exists()) {
-          final fileOutput =
-              decodeSqlCmdOutputBytes(await outputFile.readAsBytes()).trim();
+          final fileOutput = decodeSqlCmdOutputBytes(
+            await outputFile.readAsBytes(),
+          ).trim();
           if (fileOutput.isNotEmpty && !outputs.contains(fileOutput)) {
             outputs.add(fileOutput);
           }
@@ -10428,10 +10535,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                           ),
                           _InfoLine(
                             label: 'Server',
-                            value:
-                                serverController.text.trim().isEmpty
-                                    ? 'Not set'
-                                    : serverController.text.trim(),
+                            value: serverController.text.trim().isEmpty
+                                ? 'Not set'
+                                : serverController.text.trim(),
                           ),
                         ],
                       ),
@@ -10447,75 +10553,73 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed:
-                      saving
-                          ? null
-                          : () async {
-                            final dialogProfile = readDialogProfile();
-                            final navigator = Navigator.of(context);
-                            final clientName =
-                                widget.clientNameLocked
-                                    ? widget.clientName
-                                    : (clientNameController.text.trim().isEmpty
-                                        ? 'Local Agent'
-                                        : clientNameController.text.trim());
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          final dialogProfile = readDialogProfile();
+                          final navigator = Navigator.of(context);
+                          final clientName = widget.clientNameLocked
+                              ? widget.clientName
+                              : (clientNameController.text.trim().isEmpty
+                                    ? 'Local Agent'
+                                    : clientNameController.text.trim());
 
+                          setDialogState(() {
+                            saving = true;
+                            startupError = null;
+                          });
+
+                          try {
+                            if (startOnStartup != widget.startOnStartup) {
+                              await widget.onStartOnStartupChanged(
+                                startOnStartup,
+                              );
+                            }
+                            widget.onStartMinimizedChanged(startMinimized);
+                          } catch (error) {
                             setDialogState(() {
-                              saving = true;
-                              startupError = null;
+                              saving = false;
+                              startupError = error.toString();
                             });
+                            return;
+                          }
 
-                            try {
-                              if (startOnStartup != widget.startOnStartup) {
-                                await widget.onStartOnStartupChanged(
-                                  startOnStartup,
-                                );
-                              }
-                              widget.onStartMinimizedChanged(startMinimized);
-                            } catch (error) {
-                              setDialogState(() {
-                                saving = false;
-                                startupError = error.toString();
-                              });
-                              return;
-                            }
+                          if (!mounted) {
+                            return;
+                          }
 
-                            if (!mounted) {
-                              return;
-                            }
+                          navigator.pop();
 
-                            navigator.pop();
+                          if (!mounted) {
+                            return;
+                          }
 
-                            if (!mounted) {
-                              return;
-                            }
+                          setState(() {
+                            _serverController.text = dialogProfile.server;
+                            _selectedDatabase = null;
+                            _databases = const [];
+                            _tables = const [];
+                            _selectedTable = null;
+                            _tableColumns = const [];
+                            _tableRows = const [];
+                            _hasMoreRows = false;
+                            _rowOffset = 0;
+                            _errorMessage = null;
+                            _databaseAccessIssue = null;
+                            _databaseAccessGrantError = null;
+                          });
 
-                            setState(() {
-                              _serverController.text = dialogProfile.server;
-                              _selectedDatabase = null;
-                              _databases = const [];
-                              _tables = const [];
-                              _selectedTable = null;
-                              _tableColumns = const [];
-                              _tableRows = const [];
-                              _hasMoreRows = false;
-                              _rowOffset = 0;
-                              _errorMessage = null;
-                              _databaseAccessIssue = null;
-                              _databaseAccessGrantError = null;
-                            });
+                          widget.onServerChanged(dialogProfile.server);
+                          widget.onClientNameChanged(clientName);
 
-                            widget.onServerChanged(dialogProfile.server);
-                            widget.onClientNameChanged(clientName);
-
-                            unawaited(
-                              _loadDatabases(
-                                profile: dialogProfile,
-                                loadTables: true,
-                                preserveSelection: false,
-                              ),
-                            );
-                          },
+                          unawaited(
+                            _loadDatabases(
+                              profile: dialogProfile,
+                              loadTables: true,
+                              preserveSelection: false,
+                            ),
+                          );
+                        },
                   child: Text(saving ? 'Saving...' : 'Save'),
                 ),
               ],
@@ -10553,31 +10657,28 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       runSpacing: 8,
       children: [
         TextButton.icon(
-          onPressed:
-              grantableIssues.isEmpty
-                  ? null
-                  : () => unawaited(
-                    _copyDatabaseAccessGrantSql(
-                      grantableIssues.first,
-                      requestedIssues: grantableIssues,
-                    ),
+          onPressed: grantableIssues.isEmpty
+              ? null
+              : () => unawaited(
+                  _copyDatabaseAccessGrantSql(
+                    grantableIssues.first,
+                    requestedIssues: grantableIssues,
                   ),
+                ),
           icon: const Icon(Icons.copy_rounded, size: 16),
           label: const Text('Copy SQL'),
         ),
         TextButton.icon(
-          onPressed:
-              _databaseAccessGrantBusy
-                  ? null
-                  : () => unawaited(_showDatabaseAccessDialog()),
+          onPressed: _databaseAccessGrantBusy
+              ? null
+              : () => unawaited(_showDatabaseAccessDialog()),
           icon: const Icon(Icons.list_alt_rounded, size: 17),
           label: const Text('Review list'),
         ),
         FilledButton.tonalIcon(
-          onPressed:
-              _databaseAccessGrantBusy || grantableIssues.isEmpty
-                  ? null
-                  : () => unawaited(_grantDatabaseAccessFromNotice(issue)),
+          onPressed: _databaseAccessGrantBusy || grantableIssues.isEmpty
+              ? null
+              : () => unawaited(_grantDatabaseAccessFromNotice(issue)),
           icon: const Icon(Icons.admin_panel_settings_outlined, size: 17),
           label: Text(
             _databaseAccessGrantBusy
@@ -10640,8 +10741,8 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   Widget _buildDatabaseDropdown() {
     final selectedValue =
         _selectedDatabase != null && _databases.contains(_selectedDatabase)
-            ? _selectedDatabase
-            : null;
+        ? _selectedDatabase
+        : null;
 
     return DropdownButtonFormField<String>(
       initialValue: selectedValue,
@@ -10661,15 +10762,14 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             ),
           )
           .toList(growable: false),
-      onChanged:
-          _databases.isEmpty
-              ? null
-              : (database) {
-                if (database == null) {
-                  return;
-                }
-                unawaited(_selectDatabase(database));
-              },
+      onChanged: _databases.isEmpty
+          ? null
+          : (database) {
+              if (database == null) {
+                return;
+              }
+              unawaited(_selectDatabase(database));
+            },
     );
   }
 
@@ -10824,11 +10924,10 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             child: ListView.separated(
               itemCount: syncRows.length,
               separatorBuilder: (_, _) => const SizedBox(height: 6),
-              itemBuilder:
-                  (context, index) => _buildSyncTableTile(
-                    row: syncRows[index],
-                    selected: syncRows[index].syncKey == selectedRow?.syncKey,
-                  ),
+              itemBuilder: (context, index) => _buildSyncTableTile(
+                row: syncRows[index],
+                selected: syncRows[index].syncKey == selectedRow?.syncKey,
+              ),
             ),
           ),
         ],
@@ -10868,8 +10967,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             message:
                 'Reset the saved row-count baseline for all visible tables',
             child: TextButton.icon(
-              onPressed:
-                  tableCount == 0 ? null : _saveVisibleTableRowCountBaselines,
+              onPressed: tableCount == 0
+                  ? null
+                  : _saveVisibleTableRowCountBaselines,
               icon: const Icon(Icons.bookmark_add_outlined, size: 16),
               label: const Text('Reset counters'),
               style: TextButton.styleFrom(
@@ -10886,18 +10986,16 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             message:
                 'Scan SQL Server Change Tracking now; changed tables are selected automatically',
             child: TextButton.icon(
-              onPressed:
-                  tableCount == 0 || _automaticChangeDiscoveryBusy
-                      ? null
-                      : () => unawaited(_discoverAndEnableChangedTables()),
-              icon:
-                  _automaticChangeDiscoveryBusy
-                      ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                      : const Icon(Icons.manage_search_rounded, size: 16),
+              onPressed: tableCount == 0 || _automaticChangeDiscoveryBusy
+                  ? null
+                  : () => unawaited(_discoverAndEnableChangedTables()),
+              icon: _automaticChangeDiscoveryBusy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.manage_search_rounded, size: 16),
               label: const Text('Scan changes'),
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFF0F766E),
@@ -10910,15 +11008,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           ),
           const SizedBox(width: 6),
           Tooltip(
-            message:
-                selectedTable == null
-                    ? 'Select a table first'
-                    : 'Queue sync for $selectedTable and related tables',
+            message: selectedTable == null
+                ? 'Select a table first'
+                : 'Queue sync for $selectedTable and related tables',
             child: TextButton.icon(
-              onPressed:
-                  selectedTable == null
-                      ? null
-                      : () => unawaited(_triggerSyncNow(selectedTable)),
+              onPressed: selectedTable == null
+                  ? null
+                  : () => unawaited(_triggerSyncNow(selectedTable)),
               icon: const Icon(Icons.play_arrow_rounded, size: 17),
               label: const Text('Sync selected'),
               style: TextButton.styleFrom(
@@ -10955,28 +11051,26 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             }
           });
         },
-        itemBuilder:
-            (context) => _SyncTableSortField.values
-                .map(
-                  (field) => PopupMenuItem<_SyncTableSortField>(
-                    value: field,
-                    child: Row(
-                      children: [
-                        Icon(
-                          _syncTableSortIcon(field),
-                          size: 18,
-                          color:
-                              field == _syncTableSortField
-                                  ? const Color(0xFF2563EB)
-                                  : const Color(0xFF667085),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(_syncTableSortLabel(field)),
-                      ],
+        itemBuilder: (context) => _SyncTableSortField.values
+            .map(
+              (field) => PopupMenuItem<_SyncTableSortField>(
+                value: field,
+                child: Row(
+                  children: [
+                    Icon(
+                      _syncTableSortIcon(field),
+                      size: 18,
+                      color: field == _syncTableSortField
+                          ? const Color(0xFF2563EB)
+                          : const Color(0xFF667085),
                     ),
-                  ),
-                )
-                .toList(growable: false),
+                    const SizedBox(width: 10),
+                    Text(_syncTableSortLabel(field)),
+                  ],
+                ),
+              ),
+            )
+            .toList(growable: false),
         child: _buildSortToolbarBox(
           icon: _syncTableSortIcon(_syncTableSortField),
         ),
@@ -11051,18 +11145,16 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     final lastSync = _formatTimestamp(row.state.lastSync);
     final progress = row.state.progress.clamp(0, 100);
     final autoRequired = row.state.autoRequired && !row.state.enabled;
-    final cardColor =
-        selected
-            ? const Color(0xFFE6F4F1)
-            : autoRequired
-            ? const Color(0xFFEFF6FF)
-            : Colors.white;
-    final borderColor =
-        selected
-            ? const Color(0xFF85C7BC)
-            : autoRequired
-            ? const Color(0xFF93C5FD)
-            : const Color(0xFFDDE3EA);
+    final cardColor = selected
+        ? const Color(0xFFE6F4F1)
+        : autoRequired
+        ? const Color(0xFFEFF6FF)
+        : Colors.white;
+    final borderColor = selected
+        ? const Color(0xFF85C7BC)
+        : autoRequired
+        ? const Color(0xFF93C5FD)
+        : const Color(0xFFDDE3EA);
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
@@ -11104,40 +11196,39 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                 _buildSyncTableCheckbox(row),
                 const SizedBox(width: 8),
                 Expanded(
-                  child:
-                      stack
-                          ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildSyncTableTitle(
-                                row.table,
-                                autoRequired: autoRequired,
+                  child: stack
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildSyncTableTitle(
+                              row.table,
+                              autoRequired: autoRequired,
+                            ),
+                            const SizedBox(height: 4),
+                            _buildSyncTableSubline(lastSync),
+                            const SizedBox(height: 8),
+                            metrics,
+                          ],
+                        )
+                      : Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildSyncTableTitle(
+                                    row.table,
+                                    autoRequired: autoRequired,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  _buildSyncTableSubline(lastSync),
+                                ],
                               ),
-                              const SizedBox(height: 4),
-                              _buildSyncTableSubline(lastSync),
-                              const SizedBox(height: 8),
-                              metrics,
-                            ],
-                          )
-                          : Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildSyncTableTitle(
-                                      row.table,
-                                      autoRequired: autoRequired,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    _buildSyncTableSubline(lastSync),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              metrics,
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: 10),
+                            metrics,
+                          ],
+                        ),
                 ),
               ],
             );
@@ -11180,20 +11271,18 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       height: 34,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color:
-            row.state.enabled
-                ? const Color(0xFFE6F4F1)
-                : autoRequired
-                ? const Color(0xFFEFF6FF)
-                : Colors.white,
+        color: row.state.enabled
+            ? const Color(0xFFE6F4F1)
+            : autoRequired
+            ? const Color(0xFFEFF6FF)
+            : Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color:
-              row.state.enabled
-                  ? const Color(0xFF85C7BC)
-                  : autoRequired
-                  ? const Color(0xFF93C5FD)
-                  : const Color(0xFFDDE3EA),
+          color: row.state.enabled
+              ? const Color(0xFF85C7BC)
+              : autoRequired
+              ? const Color(0xFF93C5FD)
+              : const Color(0xFFDDE3EA),
         ),
       ),
       child: Transform.scale(
@@ -11202,15 +11291,14 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           value: checkboxValue,
           visualDensity: VisualDensity.compact,
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          onChanged:
-              autoRequired
-                  ? null
-                  : (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    unawaited(_handleSyncEnabledChange(row.table, value));
-                  },
+          onChanged: autoRequired
+              ? null
+              : (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  unawaited(_handleSyncEnabledChange(row.table, value));
+                },
         ),
       ),
     );
@@ -11386,15 +11474,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   Widget _buildSyncTableRowCountMetric(SyncTableState state) {
     final color = _savedRowCountColor(state);
     return _buildSyncTableMetric(
-      tooltip:
-          state.savedRowCount == null
-              ? 'Current rows'
-              : 'Current rows / saved rows',
+      tooltip: state.savedRowCount == null
+          ? 'Current rows'
+          : 'Current rows / saved rows',
       icon: Icons.format_list_numbered_rounded,
-      value:
-          state.savedRowCount == null
-              ? '${state.rowCount}'
-              : '${state.rowCount} / ${state.savedRowCount}',
+      value: state.savedRowCount == null
+          ? '${state.rowCount}'
+          : '${state.rowCount} / ${state.savedRowCount}',
       color: color,
       borderColor: color.withValues(alpha: 0.28),
     );
@@ -11517,15 +11603,13 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         color: _changeTrackingColor(row.state.changeTrackingStatus),
       ),
       _buildToolbarStat(
-        tooltip:
-            row.state.savedRowCount == null
-                ? 'Current rows'
-                : 'Current rows / saved rows',
+        tooltip: row.state.savedRowCount == null
+            ? 'Current rows'
+            : 'Current rows / saved rows',
         icon: Icons.format_list_numbered_rounded,
-        value:
-            row.state.savedRowCount == null
-                ? '${row.state.rowCount}'
-                : '${row.state.rowCount} / ${row.state.savedRowCount}',
+        value: row.state.savedRowCount == null
+            ? '${row.state.rowCount}'
+            : '${row.state.rowCount} / ${row.state.savedRowCount}',
         color: _savedRowCountColor(row.state),
       ),
       _buildToolbarIconControl(
@@ -11606,31 +11690,28 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     final autoRequired = row.state.autoRequired && !row.state.enabled;
     final checkboxValue = row.state.enabled || row.state.autoRequired;
     return Tooltip(
-      message:
-          row.state.enabled
-              ? 'Disable sync'
-              : autoRequired
-              ? 'Required automatically by dependency discovery'
-              : 'Enable sync',
+      message: row.state.enabled
+          ? 'Disable sync'
+          : autoRequired
+          ? 'Required automatically by dependency discovery'
+          : 'Enable sync',
       child: Container(
         width: 42,
         height: 42,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color:
-              row.state.enabled
-                  ? const Color(0xFFE6F4F1)
-                  : autoRequired
-                  ? const Color(0xFFEFF6FF)
-                  : const Color(0xFFF8FAFC),
+          color: row.state.enabled
+              ? const Color(0xFFE6F4F1)
+              : autoRequired
+              ? const Color(0xFFEFF6FF)
+              : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color:
-                row.state.enabled
-                    ? const Color(0xFF85C7BC)
-                    : autoRequired
-                    ? const Color(0xFF93C5FD)
-                    : const Color(0xFFDDE3EA),
+            color: row.state.enabled
+                ? const Color(0xFF85C7BC)
+                : autoRequired
+                ? const Color(0xFF93C5FD)
+                : const Color(0xFFDDE3EA),
           ),
         ),
         child: Transform.scale(
@@ -11639,15 +11720,14 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             value: checkboxValue,
             visualDensity: VisualDensity.compact,
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            onChanged:
-                autoRequired
-                    ? null
-                    : (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      unawaited(_handleSyncEnabledChange(row.table, value));
-                    },
+            onChanged: autoRequired
+                ? null
+                : (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    unawaited(_handleSyncEnabledChange(row.table, value));
+                  },
           ),
         ),
       ),
@@ -11731,8 +11811,9 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             child: Icon(
               icon,
               size: 17,
-              color:
-                  enabled ? const Color(0xFF1D4ED8) : const Color(0xFF98A2B3),
+              color: enabled
+                  ? const Color(0xFF1D4ED8)
+                  : const Color(0xFF98A2B3),
             ),
           ),
         ),
@@ -11970,19 +12051,18 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                             labelText: 'Search rows',
                             hintText: 'Type any part of a cell value...',
                             prefixIcon: const Icon(Icons.search),
-                            suffixIcon:
-                                _tableSearchQuery.trim().isEmpty
-                                    ? null
-                                    : IconButton(
-                                      tooltip: 'Clear search',
-                                      onPressed: () {
-                                        setState(() {
-                                          _tableSearchQuery = '';
-                                        });
-                                        _refreshTableDataDialog();
-                                      },
-                                      icon: const Icon(Icons.close),
-                                    ),
+                            suffixIcon: _tableSearchQuery.trim().isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: 'Clear search',
+                                    onPressed: () {
+                                      setState(() {
+                                        _tableSearchQuery = '';
+                                      });
+                                      _refreshTableDataDialog();
+                                    },
+                                    icon: const Icon(Icons.close),
+                                  ),
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -12077,139 +12157,140 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
                   return stack
                       ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              AgentStatusPill(
-                                label: entry.success ? 'Success' : 'Failed',
-                                color:
-                                    entry.success
-                                        ? const Color(0xFF0F766E)
-                                        : const Color(0xFFB42318),
-                              ),
-                              Text(
-                                entry.status,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              Text(
-                                _formatTimestamp(entry.timestamp),
-                                style: const TextStyle(
-                                  color: Color(0xFF5F6B76),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            entry.message,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(height: 1.2, fontSize: 12.5),
-                          ),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 4,
-                            children: [
-                              Text(
-                                '${entry.rowCount} rows',
-                                style: const TextStyle(
-                                  color: Color(0xFF5F6B76),
-                                  fontSize: 12,
-                                ),
-                              ),
-                              Text(
-                                '${entry.progress}%',
-                                style: const TextStyle(
-                                  color: Color(0xFF5F6B76),
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      )
-                      : Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          AgentStatusPill(
-                            label: entry.success ? 'Success' : 'Failed',
-                            color:
-                                entry.success
-                                    ? const Color(0xFF0F766E)
-                                    : const Color(0xFFB42318),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        entry.status,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ),
-                                    Text(
-                                      _formatTimestamp(entry.timestamp),
-                                      style: const TextStyle(
-                                        color: Color(0xFF5F6B76),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
+                                AgentStatusPill(
+                                  label: entry.success ? 'Success' : 'Failed',
+                                  color: entry.success
+                                      ? const Color(0xFF0F766E)
+                                      : const Color(0xFFB42318),
                                 ),
-                                const SizedBox(height: 2),
                                 Text(
-                                  entry.message,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                  entry.status,
                                   style: const TextStyle(
-                                    height: 1.2,
-                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 4,
-                                  children: [
-                                    Text(
-                                      '${entry.rowCount} rows',
-                                      style: const TextStyle(
-                                        color: Color(0xFF5F6B76),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${entry.progress}%',
-                                      style: const TextStyle(
-                                        color: Color(0xFF5F6B76),
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
+                                Text(
+                                  _formatTimestamp(entry.timestamp),
+                                  style: const TextStyle(
+                                    color: Color(0xFF5F6B76),
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
-                      );
+                            const SizedBox(height: 6),
+                            Text(
+                              entry.message,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                height: 1.2,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                Text(
+                                  '${entry.rowCount} rows',
+                                  style: const TextStyle(
+                                    color: Color(0xFF5F6B76),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  '${entry.progress}%',
+                                  style: const TextStyle(
+                                    color: Color(0xFF5F6B76),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        )
+                      : Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            AgentStatusPill(
+                              label: entry.success ? 'Success' : 'Failed',
+                              color: entry.success
+                                  ? const Color(0xFF0F766E)
+                                  : const Color(0xFFB42318),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          entry.status,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
+                                      Text(
+                                        _formatTimestamp(entry.timestamp),
+                                        style: const TextStyle(
+                                          color: Color(0xFF5F6B76),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    entry.message,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      height: 1.2,
+                                      fontSize: 12.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    children: [
+                                      Text(
+                                        '${entry.rowCount} rows',
+                                        style: const TextStyle(
+                                          color: Color(0xFF5F6B76),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      Text(
+                                        '${entry.progress}%',
+                                        style: const TextStyle(
+                                          color: Color(0xFF5F6B76),
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
                 },
               ),
             ),
@@ -12323,21 +12404,20 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     final selectedSyncTableName = _selectedSyncTableName(
       syncRows.map((row) => row.syncKey).toList(growable: false),
     );
-    final selectedSyncRow =
-        syncRows.isEmpty
-            ? null
-            : syncRows.firstWhere(
-              (row) => row.syncKey == selectedSyncTableName,
-              orElse: () => syncRows.first,
-            );
-    final activeSyncCount =
-        syncRows.where((row) => _isSyncBusyStatus(row.state.status)).length;
-    final agentStatus =
-        _checkingServerConnection
-            ? 'Checking'
-            : _serverConnected
-            ? 'Online'
-            : 'Offline';
+    final selectedSyncRow = syncRows.isEmpty
+        ? null
+        : syncRows.firstWhere(
+            (row) => row.syncKey == selectedSyncTableName,
+            orElse: () => syncRows.first,
+          );
+    final activeSyncCount = syncRows
+        .where((row) => _isSyncBusyStatus(row.state.status))
+        .length;
+    final agentStatus = _checkingServerConnection
+        ? 'Checking'
+        : _serverConnected
+        ? 'Online'
+        : 'Offline';
     final sqlStatus = _selectedDatabase == null ? 'SQL pending' : 'SQL ready';
 
     final footerItems = <Widget>[
@@ -12374,35 +12454,34 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             top: false,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child:
-                  stack
-                      ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
+              child: stack
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 14,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: footerItems,
+                        ),
+                        const SizedBox(height: 10),
+                        _buildServerStatusIndicator(),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: Wrap(
                             spacing: 14,
                             runSpacing: 8,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: footerItems,
                           ),
-                          const SizedBox(height: 10),
-                          _buildServerStatusIndicator(),
-                        ],
-                      )
-                      : Row(
-                        children: [
-                          Expanded(
-                            child: Wrap(
-                              spacing: 14,
-                              runSpacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: footerItems,
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          _buildServerStatusIndicator(),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: 16),
+                        _buildServerStatusIndicator(),
+                      ],
+                    ),
             ),
           ),
         );
@@ -12411,22 +12490,19 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   }
 
   Widget _buildServerStatusIndicator() {
-    final color =
-        _checkingServerConnection
-            ? const Color(0xFFB7791F)
-            : _serverConnected
-            ? const Color(0xFF0F766E)
-            : const Color(0xFFB42318);
-    final label =
-        _checkingServerConnection
-            ? 'Checking'
-            : _serverConnected
-            ? 'Online'
-            : 'Offline';
-    final tooltip =
-        _lastServerCheck == null
-            ? 'Checks the control plane health every minute.\nLive server: ${_controlPlaneClient.baseUrl}'
-            : 'Last checked at ${_formatTimestamp(_lastServerCheck!.toIso8601String())}\nLive server: ${_controlPlaneClient.baseUrl}';
+    final color = _checkingServerConnection
+        ? const Color(0xFFB7791F)
+        : _serverConnected
+        ? const Color(0xFF0F766E)
+        : const Color(0xFFB42318);
+    final label = _checkingServerConnection
+        ? 'Checking'
+        : _serverConnected
+        ? 'Online'
+        : 'Offline';
+    final tooltip = _lastServerCheck == null
+        ? 'Checks the control plane health every minute.\nLive server: ${_controlPlaneClient.baseUrl}'
+        : 'Last checked at ${_formatTimestamp(_lastServerCheck!.toIso8601String())}\nLive server: ${_controlPlaneClient.baseUrl}';
 
     return Tooltip(
       message: tooltip,
@@ -12443,18 +12519,16 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
 
   Widget _buildClientUpdateIndicator() {
     final hasUpdate = _hasClientUpdate;
-    final color =
-        hasUpdate
-            ? const Color(0xFFB45309)
-            : _clientUpdateError != null
-            ? const Color(0xFFB42318)
-            : const Color(0xFF0F766E);
-    final tooltip =
-        hasUpdate
-            ? 'A newer Windows client is available. Click for the update command.'
-            : _clientUpdateError != null
-            ? 'Could not check for a client update: $_clientUpdateError'
-            : 'Windows client update status.';
+    final color = hasUpdate
+        ? const Color(0xFFB45309)
+        : _clientUpdateError != null
+        ? const Color(0xFFB42318)
+        : const Color(0xFF0F766E);
+    final tooltip = hasUpdate
+        ? 'A newer Windows client is available. Click for the update command.'
+        : _clientUpdateError != null
+        ? 'Could not check for a client update: $_clientUpdateError'
+        : 'Windows client update status.';
 
     return Tooltip(
       message: tooltip,
@@ -12499,31 +12573,29 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   Widget _buildSpreadsheetTable({ScrollController? verticalScrollController}) {
     if (_tableColumns.isEmpty) {
       return Center(
-        child:
-            _rowsLoading
-                ? const CircularProgressIndicator()
-                : Text(
-                  'No columns returned for $_selectedTable.',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+        child: _rowsLoading
+            ? const CircularProgressIndicator()
+            : Text(
+                'No columns returned for $_selectedTable.',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
       );
     }
 
     final cellWidth = 180.0;
     final tableSearch = _tableSearchQuery.trim().toLowerCase();
-    final filteredRows =
-        tableSearch.isEmpty
-            ? _tableRows
-            : _tableRows
-                .where((row) {
-                  for (final cell in row) {
-                    if (cell.toLowerCase().contains(tableSearch)) {
-                      return true;
-                    }
+    final filteredRows = tableSearch.isEmpty
+        ? _tableRows
+        : _tableRows
+              .where((row) {
+                for (final cell in row) {
+                  if (cell.toLowerCase().contains(tableSearch)) {
+                    return true;
                   }
-                  return false;
-                })
-                .toList(growable: false);
+                }
+                return false;
+              })
+              .toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -12538,27 +12610,24 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final panelWidth =
-                    constraints.maxWidth.isFinite
-                        ? constraints.maxWidth
-                        : MediaQuery.sizeOf(context).width;
+                final panelWidth = constraints.maxWidth.isFinite
+                    ? constraints.maxWidth
+                    : MediaQuery.sizeOf(context).width;
                 final columnWidth = math.max(
                   panelWidth,
                   64 + (_tableColumns.length * cellWidth),
                 );
-                final panelHeight =
-                    constraints.maxHeight.isFinite
-                        ? constraints.maxHeight
-                        : MediaQuery.sizeOf(context).height * 0.7;
+                final panelHeight = constraints.maxHeight.isFinite
+                    ? constraints.maxHeight
+                    : MediaQuery.sizeOf(context).height * 0.7;
 
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Scrollbar(
                     controller: _tableHorizontalScrollController,
                     thumbVisibility: true,
-                    notificationPredicate:
-                        (notification) =>
-                            notification.metrics.axis == Axis.horizontal,
+                    notificationPredicate: (notification) =>
+                        notification.metrics.axis == Axis.horizontal,
                     child: SingleChildScrollView(
                       controller: _tableHorizontalScrollController,
                       scrollDirection: Axis.horizontal,
@@ -12595,20 +12664,18 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                                 ..._tableColumns.asMap().entries.map((entry) {
                                   final isSortedColumn =
                                       _sortColumnIndex == entry.key;
-                                  final icon =
-                                      isSortedColumn
-                                          ? (_sortAscending
-                                              ? Icons.arrow_upward
-                                              : Icons.arrow_downward)
-                                          : Icons.unfold_more;
+                                  final icon = isSortedColumn
+                                      ? (_sortAscending
+                                            ? Icons.arrow_upward
+                                            : Icons.arrow_downward)
+                                      : Icons.unfold_more;
 
                                   return InkWell(
                                     borderRadius: BorderRadius.circular(10),
                                     onTap: () {
-                                      final ascending =
-                                          isSortedColumn
-                                              ? !_sortAscending
-                                              : true;
+                                      final ascending = isSortedColumn
+                                          ? !_sortAscending
+                                          : true;
                                       setState(() {
                                         _sortColumnIndex = entry.key;
                                         _sortAscending = ascending;
@@ -12656,35 +12723,33 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                               ],
                             ),
                             Expanded(
-                              child:
-                                  filteredRows.isEmpty && !_rowsLoading
-                                      ? Center(
-                                        child: Text(
-                                          _tableSearchQuery.trim().isEmpty
-                                              ? '0 rows found in $_selectedTable.'
-                                              : 'No rows matched your search.',
-                                          style:
-                                              Theme.of(
-                                                context,
-                                              ).textTheme.titleMedium,
-                                        ),
-                                      )
-                                      : Scrollbar(
-                                        controller: verticalScrollController,
-                                        thumbVisibility:
-                                            verticalScrollController != null,
-                                        child: ListView.builder(
-                                          controller: verticalScrollController,
-                                          itemCount: filteredRows.length,
-                                          itemBuilder: (context, index) {
-                                            return _buildTableRow(
-                                              filteredRows[index],
-                                              cellWidth,
-                                              index,
-                                            );
-                                          },
-                                        ),
+                              child: filteredRows.isEmpty && !_rowsLoading
+                                  ? Center(
+                                      child: Text(
+                                        _tableSearchQuery.trim().isEmpty
+                                            ? '0 rows found in $_selectedTable.'
+                                            : 'No rows matched your search.',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
                                       ),
+                                    )
+                                  : Scrollbar(
+                                      controller: verticalScrollController,
+                                      thumbVisibility:
+                                          verticalScrollController != null,
+                                      child: ListView.builder(
+                                        controller: verticalScrollController,
+                                        itemCount: filteredRows.length,
+                                        itemBuilder: (context, index) {
+                                          return _buildTableRow(
+                                            filteredRows[index],
+                                            cellWidth,
+                                            index,
+                                          );
+                                        },
+                                      ),
+                                    ),
                             ),
                           ],
                         ),
@@ -12703,12 +12768,11 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final pagePadding =
-        screenWidth < 480
-            ? const EdgeInsets.fromLTRB(12, 0, 12, 12)
-            : (screenWidth < 760
-                ? const EdgeInsets.fromLTRB(14, 0, 14, 14)
-                : const EdgeInsets.fromLTRB(16, 0, 16, 16));
+    final pagePadding = screenWidth < 480
+        ? const EdgeInsets.fromLTRB(12, 0, 12, 12)
+        : (screenWidth < 760
+              ? const EdgeInsets.fromLTRB(14, 0, 14, 14)
+              : const EdgeInsets.fromLTRB(16, 0, 16, 16));
     return Scaffold(
       body: Padding(padding: pagePadding, child: _buildSyncTab()),
       bottomNavigationBar: _buildPinnedSummaryBar(),
@@ -12801,14 +12865,15 @@ class _RelaySnapshotDocument {
       keyColumns: (json['keyColumns'] as List<dynamic>? ?? const [])
           .map((value) => value.toString())
           .toList(growable: false),
-      uniqueKeyColumnSets: (json['uniqueKeyColumnSets'] as List<dynamic>? ??
-              const [])
-          .whereType<List>()
-          .map(
-            (values) =>
-                values.map((value) => value.toString()).toList(growable: false),
-          )
-          .toList(growable: false),
+      uniqueKeyColumnSets:
+          (json['uniqueKeyColumnSets'] as List<dynamic>? ?? const [])
+              .whereType<List>()
+              .map(
+                (values) => values
+                    .map((value) => value.toString())
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
       isDelta: json['isDelta'] == true,
     );
   }

@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 181)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 188)}
         observed_ids = set()
 
         for row in rows:
@@ -46,12 +46,25 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "_tableFingerprintRefreshCursor = _syncState.fingerprintRefreshCursor",
             agent_page,
         )
-        self.assertIn(
-            "_syncState.copyWith(fingerprintRefreshCursor: nextCursor)",
-            agent_page,
-        )
+        self.assertIn("fingerprintRefreshCursor: nextCursor", agent_page)
+        self.assertIn("fingerprintAudit: nextAudit", agent_page)
         self.assertIn("final int fingerprintRefreshCursor", sync_state)
         self.assertIn("'fingerprintRefreshCursor': fingerprintRefreshCursor", sync_state)
+
+    def test_integrity_rotation_exposes_progress_and_bounded_table_logs(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        control_plane = read_text("business/control_plane.tru")
+        clients = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("'checkedTables': checkedTables", agent)
+        self.assertIn("'totalTables': targets.length", agent)
+        self.assertIn("'lastBatchTables': batchTables", agent)
+        self.assertIn(".take(20).toList()", agent)
+        self.assertIn("if (history.length >= 20)", control_plane)
+        self.assertIn("if (tables.length >= 8)", control_plane)
+        self.assertIn("fingerprintAudit: nextFingerprintAudit", control_plane)
+        self.assertIn("ValueKey('fingerprint-audit-log-${agent.clientName}')", clients)
+        self.assertIn("Recent check batches", clients)
 
     def test_unbounded_history_disk_incident_has_bounded_regression_fix(self):
         document = ISSUES.read_text(encoding="utf-8")

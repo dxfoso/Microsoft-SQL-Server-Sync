@@ -603,10 +603,8 @@ class SyncContractsTests(unittest.TestCase):
             "_tableFingerprintRefreshCursor = _syncState.fingerprintRefreshCursor",
             agent_page,
         )
-        self.assertIn(
-            "_syncState.copyWith(fingerprintRefreshCursor: nextCursor)",
-            agent_page,
-        )
+        self.assertIn("fingerprintRefreshCursor: nextCursor", agent_page)
+        self.assertIn("fingerprintAudit: nextAudit", agent_page)
         self.assertIn("'fingerprintRefreshCursor': fingerprintRefreshCursor", sync_state)
         self.assertIn("bool _refreshingTableFingerprints = false;", agent_page)
         self.assertIn("DateTime? _lastTableFingerprintRefreshStartedAt;", agent_page)
@@ -620,6 +618,26 @@ class SyncContractsTests(unittest.TestCase):
             "Selected table fingerprint refresh failed: $error",
             agent_page,
         )
+
+    def test_integrity_audit_is_durable_visible_and_bounded(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        state = read_text("sync_windows_agent/lib/sync_state.dart")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        control_plane = read_text("business/control_plane.tru")
+        models = read_text("frontend/lib/models.dart")
+        clients = read_text("frontend/lib/clients_page.dart")
+
+        self.assertIn("final Map<String, dynamic> fingerprintAudit", state)
+        self.assertIn("'fingerprintAudit': fingerprintAudit", state)
+        self.assertIn("'history': nextHistory", agent)
+        self.assertIn(".take(20).toList()", agent)
+        self.assertIn("'fingerprintAudit': [fingerprintAudit]", api)
+        self.assertIn("field fingerprintAudit: array<json>?", control_plane)
+        self.assertIn("bounded_fingerprint_audit(fingerprintAudit)", control_plane)
+        self.assertIn("class AdminFingerprintAudit", models)
+        self.assertIn("DataColumn(label: Text('Integrity check'))", clients)
+        self.assertIn("_showFingerprintAuditDialog", clients)
+        self.assertIn("'Last minute: ${audit.lastBatchTables.join(', ')}'", clients)
 
     def test_diagnostics_force_fresh_complete_selected_table_fingerprints(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -723,10 +741,8 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("_checkingServerConnection = false;", heartbeat_body)
         self.assertIn("_lastServerCheck = DateTime.now();", heartbeat_body)
-        self.assertIn(
-            "_errorMessage =\n            temporaryControlPlaneUnavailable ? null : error.toString();",
-            heartbeat_body,
-        )
+        self.assertIn("_errorMessage = temporaryControlPlaneUnavailable", heartbeat_body)
+        self.assertIn("? null\n            : error.toString();", heartbeat_body)
 
     def test_sync_loop_always_clears_busy_flag_and_retries_deferred_client_updates(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -2466,7 +2482,10 @@ class SyncContractsTests(unittest.TestCase):
         )[1].split("function enabled_sync_policy_tables_for_agent(", 1)[0]
         self.assertIn("scheduler_table_change_tracking_ready(", baseline_planner)
         self.assertIn("function json_payload_changed", control_plane)
-        self.assertIn("if (tablesChanged || relationshipsChanged)", heartbeat_body)
+        self.assertIn(
+            "if (tablesChanged || relationshipsChanged || fingerprintAuditChanged)",
+            heartbeat_body,
+        )
         self.assertEqual(heartbeat_body.count("syncEnabled: true,"), 0)
         self.assertIn("_scheduleSelectedTableFingerprintRefresh();", agent_page)
         self.assertNotIn("await _refreshSelectedTableFingerprints();", heartbeat_body)

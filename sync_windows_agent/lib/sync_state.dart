@@ -180,20 +180,18 @@ class SyncTableState {
       lastSync: lastSync ?? this.lastSync,
       progress: progress ?? this.progress,
       rowCount: rowCount ?? this.rowCount,
-      savedRowCount:
-          identical(savedRowCount, _syncTableStateUnset)
-              ? this.savedRowCount
-              : savedRowCount as int?,
+      savedRowCount: identical(savedRowCount, _syncTableStateUnset)
+          ? this.savedRowCount
+          : savedRowCount as int?,
       tableChecksum: tableChecksum ?? this.tableChecksum,
       rangeFingerprint: rangeFingerprint ?? this.rangeFingerprint,
       changeTrackingVersion:
           identical(changeTrackingVersion, _syncTableStateUnset)
-              ? this.changeTrackingVersion
-              : changeTrackingVersion as int?,
-      changeTrackingOwner:
-          identical(changeTrackingOwner, _syncTableStateUnset)
-              ? this.changeTrackingOwner
-              : changeTrackingOwner as String?,
+          ? this.changeTrackingVersion
+          : changeTrackingVersion as int?,
+      changeTrackingOwner: identical(changeTrackingOwner, _syncTableStateUnset)
+          ? this.changeTrackingOwner
+          : changeTrackingOwner as String?,
       changeTrackingStatus: changeTrackingStatus ?? this.changeTrackingStatus,
       changeTrackingMessage:
           changeTrackingMessage ?? this.changeTrackingMessage,
@@ -212,6 +210,7 @@ class SyncClientState {
     this.protocolVersion = 0,
     this.syncEpoch = '',
     this.fingerprintRefreshCursor = 0,
+    this.fingerprintAudit = const <String, dynamic>{},
   });
 
   final Map<String, SyncTableState> tables;
@@ -220,6 +219,7 @@ class SyncClientState {
   final int protocolVersion;
   final String syncEpoch;
   final int fingerprintRefreshCursor;
+  final Map<String, dynamic> fingerprintAudit;
 
   factory SyncClientState.fromJson(Map<String, dynamic> json) {
     final tablesJson = Map<String, dynamic>.from(
@@ -228,11 +228,10 @@ class SyncClientState {
     final savedFingerprintRefreshCursor =
         (json['fingerprintRefreshCursor'] as num? ?? 0).round();
     return SyncClientState(
-      historyLimit:
-          (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
-              .round()
-              .clamp(1, kMaxHistoryLimit)
-              .toInt(),
+      historyLimit: (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
+          .round()
+          .clamp(1, kMaxHistoryLimit)
+          .toInt(),
       autoSyncIntervalMinutes:
           (json['autoSyncIntervalMinutes'] as num? ??
                   kDefaultAutoSyncIntervalMinutes)
@@ -241,8 +240,12 @@ class SyncClientState {
               .toInt(),
       protocolVersion: (json['protocolVersion'] as num? ?? 0).round(),
       syncEpoch: json['syncEpoch'] as String? ?? '',
-      fingerprintRefreshCursor:
-          savedFingerprintRefreshCursor < 0 ? 0 : savedFingerprintRefreshCursor,
+      fingerprintRefreshCursor: savedFingerprintRefreshCursor < 0
+          ? 0
+          : savedFingerprintRefreshCursor,
+      fingerprintAudit: Map<String, dynamic>.from(
+        json['fingerprintAudit'] as Map? ?? const <String, dynamic>{},
+      ),
       tables: tablesJson.map(
         (key, value) => MapEntry(
           key,
@@ -258,6 +261,7 @@ class SyncClientState {
     'protocolVersion': protocolVersion,
     'syncEpoch': syncEpoch,
     'fingerprintRefreshCursor': fingerprintRefreshCursor,
+    'fingerprintAudit': fingerprintAudit,
     'tables': tables.map((key, value) => MapEntry(key, value.toJson())),
   };
 
@@ -268,6 +272,7 @@ class SyncClientState {
     int? protocolVersion,
     String? syncEpoch,
     int? fingerprintRefreshCursor,
+    Map<String, dynamic>? fingerprintAudit,
   }) {
     return SyncClientState(
       historyLimit: historyLimit ?? this.historyLimit,
@@ -277,6 +282,7 @@ class SyncClientState {
       syncEpoch: syncEpoch ?? this.syncEpoch,
       fingerprintRefreshCursor:
           fingerprintRefreshCursor ?? this.fingerprintRefreshCursor,
+      fingerprintAudit: fingerprintAudit ?? this.fingerprintAudit,
       tables: tables ?? this.tables,
     );
   }

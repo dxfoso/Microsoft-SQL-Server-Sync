@@ -94,14 +94,14 @@ class AdminLiveState {
       syncGate: AdminSyncGate.fromJson(
         Map<String, dynamic>.from(json['syncGate'] as Map? ?? const {}),
       ),
-      syncAllOperations: (json['syncAllOperations'] as List<dynamic>? ??
-              const [])
-          .map(
-            (item) => AdminSyncAllOperation.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          )
-          .toList(growable: false),
+      syncAllOperations:
+          (json['syncAllOperations'] as List<dynamic>? ?? const [])
+              .map(
+                (item) => AdminSyncAllOperation.fromJson(
+                  Map<String, dynamic>.from(item as Map),
+                ),
+              )
+              .toList(growable: false),
       agents: (json['agents'] as List<dynamic>? ?? const [])
           .map(
             (item) =>
@@ -163,10 +163,9 @@ class AdminSyncAllOperation {
     }
     final start = DateTime.tryParse(startedAt);
     if (start == null) return null;
-    final end =
-        isRunning
-            ? (now ?? DateTime.now().toUtc())
-            : DateTime.tryParse(completedAt);
+    final end = isRunning
+        ? (now ?? DateTime.now().toUtc())
+        : DateTime.tryParse(completedAt);
     if (end == null || end.isBefore(start)) return null;
     return end.difference(start);
   }
@@ -292,10 +291,10 @@ class AdminTableSyncIssue {
       clientName: json['clientName'] as String? ?? '',
       action: json['action'] as String? ?? '',
       sourceClientName: json['sourceClientName'] as String? ?? '',
-      targetClientNames: (json['targetClientNames'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
+      targetClientNames:
+          (json['targetClientNames'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(growable: false),
       detectedAt: json['detectedAt']?.toString() ?? '',
       updatedAt: json['updatedAt']?.toString() ?? '',
       resolvedAt: json['resolvedAt']?.toString() ?? '',
@@ -378,6 +377,121 @@ class AdminTableComparisonStatus {
   }
 }
 
+class AdminFingerprintAuditTable {
+  const AdminFingerprintAuditTable({
+    this.table = '',
+    this.status = '',
+    this.message = '',
+    this.rowCount,
+  });
+
+  final String table;
+  final String status;
+  final String message;
+  final int? rowCount;
+
+  factory AdminFingerprintAuditTable.fromJson(Map<String, dynamic> json) =>
+      AdminFingerprintAuditTable(
+        table: json['table']?.toString() ?? '',
+        status: json['status']?.toString() ?? '',
+        message: json['message']?.toString() ?? '',
+        rowCount: (json['rowCount'] as num?)?.round(),
+      );
+}
+
+class AdminFingerprintAuditBatch {
+  const AdminFingerprintAuditBatch({
+    this.startedAt = '',
+    this.completedAt = '',
+    this.durationMs = 0,
+    this.checkedCount = 0,
+    this.failedCount = 0,
+    this.unsupportedCount = 0,
+    this.tables = const <AdminFingerprintAuditTable>[],
+  });
+
+  final String startedAt;
+  final String completedAt;
+  final int durationMs;
+  final int checkedCount;
+  final int failedCount;
+  final int unsupportedCount;
+  final List<AdminFingerprintAuditTable> tables;
+
+  factory AdminFingerprintAuditBatch.fromJson(Map<String, dynamic> json) =>
+      AdminFingerprintAuditBatch(
+        startedAt: json['startedAt']?.toString() ?? '',
+        completedAt: json['completedAt']?.toString() ?? '',
+        durationMs: (json['durationMs'] as num? ?? 0).round(),
+        checkedCount: (json['checkedCount'] as num? ?? 0).round(),
+        failedCount: (json['failedCount'] as num? ?? 0).round(),
+        unsupportedCount: (json['unsupportedCount'] as num? ?? 0).round(),
+        tables: (json['tables'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()
+            .map(
+              (item) => AdminFingerprintAuditTable.fromJson(
+                Map<String, dynamic>.from(item),
+              ),
+            )
+            .toList(growable: false),
+      );
+}
+
+class AdminFingerprintAudit {
+  const AdminFingerprintAudit({
+    this.status = 'waiting',
+    this.progressPercent = 0,
+    this.checkedTables = 0,
+    this.totalTables = 0,
+    this.message = '',
+    this.cycleStartedAt = '',
+    this.lastBatchCompletedAt = '',
+    this.lastCompletedAt = '',
+    this.currentTables = const <String>[],
+    this.lastBatchTables = const <String>[],
+    this.history = const <AdminFingerprintAuditBatch>[],
+  });
+
+  final String status;
+  final int progressPercent;
+  final int checkedTables;
+  final int totalTables;
+  final String message;
+  final String cycleStartedAt;
+  final String lastBatchCompletedAt;
+  final String lastCompletedAt;
+  final List<String> currentTables;
+  final List<String> lastBatchTables;
+  final List<AdminFingerprintAuditBatch> history;
+
+  factory AdminFingerprintAudit.fromJson(Map<String, dynamic> json) {
+    List<String> strings(String key) =>
+        (json[key] as List<dynamic>? ?? const <dynamic>[])
+            .map((value) => value.toString())
+            .toList(growable: false);
+    return AdminFingerprintAudit(
+      status: json['status']?.toString() ?? 'waiting',
+      progressPercent: (json['progressPercent'] as num? ?? 0).round(),
+      checkedTables: (json['checkedTables'] as num? ?? 0).round(),
+      totalTables: (json['totalTables'] as num? ?? 0).round(),
+      message: json['message']?.toString() ?? '',
+      cycleStartedAt: json['cycleStartedAt']?.toString() ?? '',
+      lastBatchCompletedAt: json['lastBatchCompletedAt']?.toString() ?? '',
+      lastCompletedAt: json['lastCompletedAt']?.toString() ?? '',
+      currentTables: strings('currentTables'),
+      lastBatchTables: strings('lastBatchTables'),
+      history: (json['history'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map>()
+          .map(
+            (item) => AdminFingerprintAuditBatch.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
 class AdminAgent {
   const AdminAgent({
     required this.clientName,
@@ -407,6 +521,7 @@ class AdminAgent {
     required this.diagnostics,
     required this.clientUpdate,
     required this.tables,
+    this.fingerprintAudit = const AdminFingerprintAudit(),
     this.runtimeStatusCode = '',
     this.runtimeStatusLabel = '',
     this.runtimeReady = false,
@@ -444,12 +559,12 @@ class AdminAgent {
   final AdminAgentDiagnostics diagnostics;
   final AdminAgentClientUpdate clientUpdate;
   final List<AdminTableState> tables;
+  final AdminFingerprintAudit fingerprintAudit;
 
   factory AdminAgent.fromJson(Map<String, dynamic> json) {
-    final status =
-        json['status'] is Map
-            ? Map<String, dynamic>.from(json['status'] as Map)
-            : const <String, dynamic>{};
+    final status = json['status'] is Map
+        ? Map<String, dynamic>.from(json['status'] as Map)
+        : const <String, dynamic>{};
     return AdminAgent(
       clientName: json['clientName'] as String? ?? '',
       clientUserId: json['clientUserId'] as String?,
@@ -460,8 +575,8 @@ class AdminAgent {
       syncEnabled: json['syncEnabled'] as bool? ?? true,
       isOnline: json['isOnline'] as bool? ?? false,
       historyLimit: (json['historyLimit'] as num? ?? 5).round(),
-      autoSyncIntervalMinutes:
-          (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),
+      autoSyncIntervalMinutes: (json['autoSyncIntervalMinutes'] as num? ?? 15)
+          .round(),
       syncDataLimitMb: (json['syncDataLimitMb'] as num? ?? 256).round(),
       conflictPolicy: json['conflictPolicy'] as String? ?? 'latest_change_wins',
       serverConnected: json['serverConnected'] as bool? ?? false,
@@ -480,18 +595,16 @@ class AdminAgent {
       runtimeReady: status['ready'] as bool? ?? false,
       heartbeatAgeSeconds: (status['heartbeatAgeSeconds'] as num?)?.round(),
       selectedTable: json['selectedTable'] as String?,
-      diagnostics:
-          json['diagnostics'] is Map
-              ? AdminAgentDiagnostics.fromJson(
-                Map<String, dynamic>.from(json['diagnostics'] as Map),
-              )
-              : const AdminAgentDiagnostics(),
-      clientUpdate:
-          json['clientUpdate'] is Map
-              ? AdminAgentClientUpdate.fromJson(
-                Map<String, dynamic>.from(json['clientUpdate'] as Map),
-              )
-              : const AdminAgentClientUpdate(),
+      diagnostics: json['diagnostics'] is Map
+          ? AdminAgentDiagnostics.fromJson(
+              Map<String, dynamic>.from(json['diagnostics'] as Map),
+            )
+          : const AdminAgentDiagnostics(),
+      clientUpdate: json['clientUpdate'] is Map
+          ? AdminAgentClientUpdate.fromJson(
+              Map<String, dynamic>.from(json['clientUpdate'] as Map),
+            )
+          : const AdminAgentClientUpdate(),
       tables: (json['tables'] as List<dynamic>? ?? const [])
           .map(
             (item) => AdminTableState.fromJson(
@@ -499,13 +612,22 @@ class AdminAgent {
             ),
           )
           .toList(growable: false),
+      fingerprintAudit:
+          json['fingerprintAudit'] is List &&
+              (json['fingerprintAudit'] as List).isNotEmpty &&
+              (json['fingerprintAudit'] as List).first is Map
+          ? AdminFingerprintAudit.fromJson(
+              Map<String, dynamic>.from(
+                (json['fingerprintAudit'] as List).first as Map,
+              ),
+            )
+          : const AdminFingerprintAudit(),
     );
   }
 
-  Duration? get lastSyncDuration =>
-      lastSyncDurationMs == null
-          ? null
-          : Duration(milliseconds: lastSyncDurationMs!);
+  Duration? get lastSyncDuration => lastSyncDurationMs == null
+      ? null
+      : Duration(milliseconds: lastSyncDurationMs!);
 }
 
 class AdminAgentClientUpdate {
@@ -637,14 +759,14 @@ class AdminBulkSyncResult {
                   (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
                       .length)
               .round(),
-      skippedOfflineClients: (json['skippedOfflineClients'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
-      skippedBusyTables: (json['skippedBusyTables'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
+      skippedOfflineClients:
+          (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(growable: false),
+      skippedBusyTables:
+          (json['skippedBusyTables'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(growable: false),
     );
   }
 }
@@ -672,10 +794,10 @@ class AdminBulkDiagnosticsRequestResult {
       requestedAt: json['requestedAt'] as String? ?? '',
       requestedByUserId: json['requestedByUserId'] as String?,
       requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
-      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
+      requestedClientNames:
+          (json['requestedClientNames'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(growable: false),
     );
   }
 }
@@ -703,10 +825,10 @@ class AdminBulkClientUpdateRequestResult {
       requestedAt: json['requestedAt'] as String? ?? '',
       requestedByUserId: json['requestedByUserId'] as String?,
       requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
-      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
+      requestedClientNames:
+          (json['requestedClientNames'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(growable: false),
     );
   }
 }
@@ -737,10 +859,10 @@ class AdminBulkWindowActionRequestResult {
       requestedAt: json['requestedAt'] as String? ?? '',
       requestedByUserId: json['requestedByUserId'] as String?,
       requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
-      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
+      requestedClientNames:
+          (json['requestedClientNames'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(growable: false),
     );
   }
 }

@@ -49,6 +49,32 @@ void main() {
     );
   });
 
+  test('physical integrity audit progress and history survive restarts', () {
+    const state = SyncClientState(
+      tables: <String, SyncTableState>{},
+      fingerprintAudit: <String, dynamic>{
+        'status': 'checking',
+        'progressPercent': 25,
+        'checkedTables': 8,
+        'totalTables': 32,
+        'lastBatchTables': <String>['db::a', 'db::b'],
+        'history': <dynamic>[
+          <String, dynamic>{'checkedCount': 2, 'failedCount': 0},
+        ],
+      },
+    );
+
+    final restored = SyncClientState.fromJson(state.toJson());
+
+    expect(restored.fingerprintAudit['status'], 'checking');
+    expect(restored.fingerprintAudit['checkedTables'], 8);
+    expect(restored.fingerprintAudit['lastBatchTables'], <String>[
+      'db::a',
+      'db::b',
+    ]);
+    expect((restored.fingerprintAudit['history'] as List).length, 1);
+  });
+
   test('detected local changes survive state and heartbeat serialization', () {
     final state = SyncTableState.fromJson(const <String, dynamic>{
       'enabled': true,

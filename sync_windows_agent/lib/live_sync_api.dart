@@ -110,22 +110,22 @@ class AgentControlPlaneClient {
        _diagnosticsUploadRequestTimeout = diagnosticsUploadRequestTimeout,
        _snapshotTransferMaxAttempts =
            (snapshotTransferMaxAttempts ??
-                       _defaultSnapshotTransferMaxAttempts) <
-                   1
-               ? 1
-               : (snapshotTransferMaxAttempts ??
-                   _defaultSnapshotTransferMaxAttempts),
+                   _defaultSnapshotTransferMaxAttempts) <
+               1
+           ? 1
+           : (snapshotTransferMaxAttempts ??
+                 _defaultSnapshotTransferMaxAttempts),
        _snapshotTransferRequestTimeout =
            snapshotTransferRequestTimeout ??
            _defaultSnapshotTransferRequestTimeout,
        _snapshotTransferRetryDelays =
            (snapshotTransferRetryDelays ?? _defaultSnapshotTransferRetryDelays)
-                   .isEmpty
-               ? const <Duration>[Duration.zero]
-               : List<Duration>.unmodifiable(
-                 snapshotTransferRetryDelays ??
-                     _defaultSnapshotTransferRetryDelays,
-               ),
+               .isEmpty
+           ? const <Duration>[Duration.zero]
+           : List<Duration>.unmodifiable(
+               snapshotTransferRetryDelays ??
+                   _defaultSnapshotTransferRetryDelays,
+             ),
        _transferCache = transferCache ?? SyncTransferCache(),
        _transferPolicy = transferPolicy ?? AdaptiveSyncTransferPolicy();
 
@@ -273,10 +273,9 @@ class AgentControlPlaneClient {
       stopwatch.stop();
       logAgentDiagnostic(
         'control_plane.request.completed',
-        level:
-            response.statusCode >= 200 && response.statusCode < 300
-                ? AgentLogLevel.debug
-                : AgentLogLevel.warning,
+        level: response.statusCode >= 200 && response.statusCode < 300
+            ? AgentLogLevel.debug
+            : AgentLogLevel.warning,
         context: {
           'function': functionName,
           'phase': phase,
@@ -378,8 +377,9 @@ class AgentControlPlaneClient {
   }
 
   Duration _transferRetryDelay(int attempt) {
-    final index =
-        attempt.clamp(0, _snapshotTransferRetryDelays.length - 1).toInt();
+    final index = attempt
+        .clamp(0, _snapshotTransferRetryDelays.length - 1)
+        .toInt();
     return _snapshotTransferRetryDelays[index];
   }
 
@@ -460,17 +460,18 @@ class AgentControlPlaneClient {
         attemptStopwatch.stop();
         _transferPolicy.recordFailure();
         lastError = error;
-        final statusCode =
-            error is AgentControlPlaneException ? error.statusCode : null;
+        final statusCode = error is AgentControlPlaneException
+            ? error.statusCode
+            : null;
         final canRetry =
             statusCode != null && _isRetryableTransferStatus(statusCode);
         if (!canRetry || attempt == _snapshotTransferMaxAttempts - 1) {
           throw error is AgentControlPlaneException
               ? error
               : AgentControlPlaneException(
-                'Control plane connection dropped during $phase. Retrying automatically.',
-                statusCode: 503,
-              );
+                  'Control plane connection dropped during $phase. Retrying automatically.',
+                  statusCode: 503,
+                );
         }
         await Future<void>.delayed(_transferRetryDelay(attempt));
       }
@@ -541,10 +542,9 @@ class AgentControlPlaneClient {
 
   Future<ClientUpdateInfo?> fetchClientUpdateInfo({String? manifestUrl}) async {
     final overrideUrl = manifestUrl?.trim() ?? '';
-    final targetUri =
-        overrideUrl.isEmpty
-            ? _originUri('/client/latest.json')
-            : Uri.parse(overrideUrl);
+    final targetUri = overrideUrl.isEmpty
+        ? _originUri('/client/latest.json')
+        : Uri.parse(overrideUrl);
     final response = await _sendRequest(
       _client.get(targetUri),
       'checking client update manifest',
@@ -587,6 +587,7 @@ class AgentControlPlaneClient {
     required List<Map<String, String>> tableRelationships,
     required String clientVersion,
     String clientUpdateScriptPath = '',
+    Map<String, dynamic> fingerprintAudit = const <String, dynamic>{},
   }) async {
     final requestStartedAtUtc = DateTime.now().toUtc();
     final response = await _invokeFunction(
@@ -606,6 +607,7 @@ class AgentControlPlaneClient {
         'selectedTable': selectedTable,
         'clientVersion': clientVersion,
         'clientUpdateScriptPath': clientUpdateScriptPath,
+        'fingerprintAudit': [fingerprintAudit],
         'tables': tables.entries
             .map((entry) => {'table': entry.key, ...entry.value.toJson()})
             .toList(growable: false),
@@ -620,27 +622,26 @@ class AgentControlPlaneClient {
       throw const AgentControlPlaneException('Unexpected heartbeat payload.');
     }
     final decoded = response;
-    final serverTimeUtc =
-        DateTime.tryParse(decoded['serverTimeUtc']?.toString() ?? '')?.toUtc();
+    final serverTimeUtc = DateTime.tryParse(
+      decoded['serverTimeUtc']?.toString() ?? '',
+    )?.toUtc();
     final roundTrip = responseReceivedAtUtc.difference(requestStartedAtUtc);
     final localMidpointUtc = requestStartedAtUtc.add(
       Duration(microseconds: roundTrip.inMicroseconds ~/ 2),
     );
-    final serverClockOffset =
-        serverTimeUtc == null
-            ? Duration.zero
-            : serverTimeUtc.difference(localMidpointUtc);
+    final serverClockOffset = serverTimeUtc == null
+        ? Duration.zero
+        : serverTimeUtc.difference(localMidpointUtc);
 
-    final syncSettings =
-        decoded['syncSettings'] is Map
-            ? _parseRemoteAgentSyncSettingsPayload(
-              decoded['syncSettings'],
-              'Unexpected heartbeat payload.',
-            )
-            : RemoteAgentSyncSettings(
-              historyLimit: historyLimit,
-              autoSyncIntervalMinutes: autoSyncIntervalMinutes,
-            );
+    final syncSettings = decoded['syncSettings'] is Map
+        ? _parseRemoteAgentSyncSettingsPayload(
+            decoded['syncSettings'],
+            'Unexpected heartbeat payload.',
+          )
+        : RemoteAgentSyncSettings(
+            historyLimit: historyLimit,
+            autoSyncIntervalMinutes: autoSyncIntervalMinutes,
+          );
     final tablePolicies = _mapListOrThrow(
       decoded['tablePolicies'],
       (item) => _parseRemoteTableSyncPolicyPayload(
@@ -668,34 +669,30 @@ class AgentControlPlaneClient {
       tablePolicies: tablePolicies,
       tableDependencies: tableDependencies,
       jobs: jobs,
-      diagnostics:
-          decoded['diagnostics'] is Map
-              ? _parseRemoteAgentDiagnosticsPayload(
-                decoded['diagnostics'],
-                'Unexpected heartbeat payload.',
-              )
-              : const RemoteAgentDiagnostics(),
-      clientUpdate:
-          decoded['clientUpdate'] is Map
-              ? _parseRemoteAgentClientUpdatePayload(
-                decoded['clientUpdate'],
-                'Unexpected heartbeat payload.',
-              )
-              : const RemoteAgentClientUpdate(),
-      windowAction:
-          decoded['windowAction'] is Map
-              ? _parseRemoteAgentWindowActionPayload(
-                decoded['windowAction'],
-                'Unexpected heartbeat payload.',
-              )
-              : const RemoteAgentWindowAction(),
-      dataExport:
-          decoded['dataExport'] is Map
-              ? _parseRemoteAgentDataExportPayload(
-                decoded['dataExport'],
-                'Unexpected heartbeat payload.',
-              )
-              : const RemoteAgentDataExport(),
+      diagnostics: decoded['diagnostics'] is Map
+          ? _parseRemoteAgentDiagnosticsPayload(
+              decoded['diagnostics'],
+              'Unexpected heartbeat payload.',
+            )
+          : const RemoteAgentDiagnostics(),
+      clientUpdate: decoded['clientUpdate'] is Map
+          ? _parseRemoteAgentClientUpdatePayload(
+              decoded['clientUpdate'],
+              'Unexpected heartbeat payload.',
+            )
+          : const RemoteAgentClientUpdate(),
+      windowAction: decoded['windowAction'] is Map
+          ? _parseRemoteAgentWindowActionPayload(
+              decoded['windowAction'],
+              'Unexpected heartbeat payload.',
+            )
+          : const RemoteAgentWindowAction(),
+      dataExport: decoded['dataExport'] is Map
+          ? _parseRemoteAgentDataExportPayload(
+              decoded['dataExport'],
+              'Unexpected heartbeat payload.',
+            )
+          : const RemoteAgentDataExport(),
       serverClockSynchronized: serverTimeUtc != null,
       serverClockOffset: serverClockOffset,
       heartbeatRoundTrip: roundTrip,
@@ -1185,13 +1182,12 @@ class AgentControlPlaneClient {
         decoded['job'],
         'Unexpected snapshot upload completion payload.',
       ),
-      targetJob:
-          decoded['targetJob'] is Map
-              ? _parseRemoteSyncJobPayload(
-                decoded['targetJob'],
-                'Unexpected target job in snapshot upload completion payload.',
-              )
-              : null,
+      targetJob: decoded['targetJob'] is Map
+          ? _parseRemoteSyncJobPayload(
+              decoded['targetJob'],
+              'Unexpected target job in snapshot upload completion payload.',
+            )
+          : null,
       snapshot: _parseSnapshotPayload(
         decoded['snapshot'],
         'Unexpected snapshot upload completion payload.',
@@ -1222,8 +1218,8 @@ class AgentControlPlaneClient {
     final transferId = manifestDecoded['id'] as String? ?? '';
     final chunkCount = (manifestDecoded['chunkCount'] as num? ?? 0).round();
     final encoding = manifestDecoded['encoding'] as String? ?? 'gzip';
-    final compressedBytes =
-        (manifestDecoded['compressedBytes'] as num? ?? 0).round();
+    final compressedBytes = (manifestDecoded['compressedBytes'] as num? ?? 0)
+        .round();
 
     if (encoding != 'gzip') {
       throw AgentControlPlaneException(
@@ -1393,16 +1389,15 @@ class AgentControlPlaneClient {
     while (true) {
       checkCancelled?.call();
       final resumed = pageIndex < cachedPages.length;
-      final dynamic decoded =
-          resumed
-              ? cachedPages[pageIndex]
-              : await _invokeFunctionWithRetry('jobs_multi_writer_download', {
-                'jobId': jobId,
-                'batchId': batchId,
-                'protocolVersion': protocolVersion,
-                'syncEpoch': syncEpoch,
-                if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
-              }, 'downloading merged multi-writer delta');
+      final dynamic decoded = resumed
+          ? cachedPages[pageIndex]
+          : await _invokeFunctionWithRetry('jobs_multi_writer_download', {
+              'jobId': jobId,
+              'batchId': batchId,
+              'protocolVersion': protocolVersion,
+              'syncEpoch': syncEpoch,
+              if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+            }, 'downloading merged multi-writer delta');
       checkCancelled?.call();
       if (decoded is! Map || decoded['snapshot'] is! Map) {
         throw const AgentControlPlaneException(
@@ -1456,10 +1451,9 @@ class AgentControlPlaneClient {
         final decodedBytes = switch (payloadEncoding) {
           'gzip-json' => gzip.decode(encodedBytes),
           'json' => encodedBytes,
-          _ =>
-            throw AgentControlPlaneException(
-              'Unsupported multi-writer payload encoding: $payloadEncoding.',
-            ),
+          _ => throw AgentControlPlaneException(
+            'Unsupported multi-writer payload encoding: $payloadEncoding.',
+          ),
         };
         if (decodedBytes.length > maxDecompressedPackageBytes) {
           throw const AgentControlPlaneException(
@@ -1592,20 +1586,18 @@ class AgentControlPlaneClient {
       final done = decoded['done'] == true;
       if (done) {
         final mergedIsDelta = firstSnapshot.isDelta && snapshot.isDelta;
-        final canonicalRows =
-            firstSnapshot.canonicalFullMerge && !mergedIsDelta
-                ? _deduplicateCanonicalFullMergeRows(mergedRows)
-                : mergedRows;
+        final canonicalRows = firstSnapshot.canonicalFullMerge && !mergedIsDelta
+            ? _deduplicateCanonicalFullMergeRows(mergedRows)
+            : mergedRows;
         return firstSnapshot.copyWith(
           rowCount: onChunk == null ? canonicalRows.length : mergedRowCount,
           rows: onChunk == null ? canonicalRows : const [],
           snapshotBytes: totalSnapshotBytes,
           // A participant checksum describes that participant's source, not
           // the canonical union assembled from all clients.
-          checksum:
-              firstSnapshot.canonicalFullMerge && !mergedIsDelta
-                  ? ''
-                  : firstSnapshot.checksum,
+          checksum: firstSnapshot.canonicalFullMerge && !mergedIsDelta
+              ? ''
+              : firstSnapshot.checksum,
           isDelta: mergedIsDelta,
         );
       }
@@ -2046,11 +2038,10 @@ class RemoteAgentSyncSettings {
 
   factory RemoteAgentSyncSettings.fromJson(Map<String, dynamic> json) {
     return RemoteAgentSyncSettings(
-      historyLimit:
-          (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
-              .round()
-              .clamp(1, kMaxHistoryLimit)
-              .toInt(),
+      historyLimit: (json['historyLimit'] as num? ?? kDefaultHistoryLimit)
+          .round()
+          .clamp(1, kMaxHistoryLimit)
+          .toInt(),
       autoSyncIntervalMinutes:
           (json['autoSyncIntervalMinutes'] as num? ??
                   kDefaultAutoSyncIntervalMinutes)
@@ -2431,16 +2422,16 @@ class RemoteSnapshot {
       columns: (json['columns'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
           .toList(growable: false),
-      uniqueKeyColumnSets: (json['uniqueKeyColumnSets'] as List<dynamic>? ??
-              const [])
-          .whereType<List>()
-          .map(
-            (columnSet) => columnSet
-                .map((column) => column.toString())
-                .toList(growable: false),
-          )
-          .where((columnSet) => columnSet.isNotEmpty)
-          .toList(growable: false),
+      uniqueKeyColumnSets:
+          (json['uniqueKeyColumnSets'] as List<dynamic>? ?? const [])
+              .whereType<List>()
+              .map(
+                (columnSet) => columnSet
+                    .map((column) => column.toString())
+                    .toList(growable: false),
+              )
+              .where((columnSet) => columnSet.isNotEmpty)
+              .toList(growable: false),
       rows: rawRows
           .map(
             (row) => Map<String, String?>.fromEntries(
@@ -2457,8 +2448,8 @@ class RemoteSnapshot {
       ),
       isDelta: json['isDelta'] == true,
       canonicalFullMerge: json['canonicalFullMerge'] == true,
-      mergeParticipantCount:
-          (json['mergeParticipantCount'] as num? ?? 0).round(),
+      mergeParticipantCount: (json['mergeParticipantCount'] as num? ?? 0)
+          .round(),
     );
   }
 
