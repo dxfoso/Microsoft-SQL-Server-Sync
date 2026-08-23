@@ -191,7 +191,13 @@ foreach ($client in $clients) {
             while ([DateTime]::UtcNow -lt $deadline -and -not $manifestCopied) {
                 Assert-FrontendPodStable $pod
                 $available = Invoke-SshText "kubectl exec -n $Namespace '$pod' -- sh -c 'if [ -d `"$podDirectory`" ]; then ls -1 `"$podDirectory`" | sort; fi'"
-                foreach ($artifact in @($available | Where-Object { $_ -match '^\d{8}\.part$' })) {
+                $availableParts = @($available | Where-Object { $_ -match '^\d{8}\.part$' })
+                if ($copied.Count -eq 0 -and
+                    $availableParts.Count -gt 0 -and
+                    $availableParts[0] -ne '00000000.part') {
+                    throw "FRONTEND_EXPORT_MISSING: export $requestId starts at $($availableParts[0]) on $pod instead of part zero"
+                }
+                foreach ($artifact in $availableParts) {
                     if ($copied.Add($artifact)) {
                         Assert-FrontendPodStable $pod
                         Copy-PrivateArtifact -Pod $pod -PodDirectory $podDirectory -Artifact $artifact -LocalDirectory $clientDirectory -RequestId $requestId
@@ -220,7 +226,9 @@ foreach ($client in $clients) {
             $manifestPath = Join-Path $clientDirectory 'manifest.json'
             $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
             $parts = @(Get-ChildItem -LiteralPath $clientDirectory -Filter '*.part' | Sort-Object Name)
-            if ($parts.Count -ne [int]$manifest.chunkCount) { throw "$clientName chunk count mismatch." }
+            if ($parts.Count -ne [int]$manifest.chunkCount) {
+                throw "FRONTEND_EXPORT_MISSING: $clientName export has $($parts.Count) of $($manifest.chunkCount) required chunks on $pod"
+            }
             $backupPath = Join-Path $OutputDirectory "$clientKey-$Database.bak"
             $destination = [IO.File]::Open($backupPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
             try {

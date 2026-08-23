@@ -2683,6 +2683,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("function Assert-FrontendPodStable", collector)
         self.assertIn("FRONTEND_POD_REPLACED:", collector)
         self.assertIn("FRONTEND_EXPORT_MISSING:", collector)
+        self.assertIn("$availableParts[0] -ne '00000000.part'", collector)
+        self.assertIn("of $($manifest.chunkCount) required chunks", collector)
         self.assertIn("for ($attempt = 1; $attempt -le $MaxExportAttempts", collector)
         self.assertIn("agent_data_export_request", collector)
         self.assertIn("Reset-LocalAttemptDirectory $clientDirectory", collector)

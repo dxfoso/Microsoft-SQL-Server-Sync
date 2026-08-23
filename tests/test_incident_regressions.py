@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 194)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 195)}
         observed_ids = set()
 
         for row in rows:
@@ -75,6 +75,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("FRONTEND_EXPORT_MISSING:", collector)
         self.assertIn("$MaxExportAttempts", collector)
         self.assertIn("Reset-LocalAttemptDirectory $clientDirectory", collector)
+        self.assertIn("$availableParts[0] -ne '00000000.part'", collector)
 
     def test_unbounded_history_disk_incident_has_bounded_regression_fix(self):
         document = ISSUES.read_text(encoding="utf-8")
