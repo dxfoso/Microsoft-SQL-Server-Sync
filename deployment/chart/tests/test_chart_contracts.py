@@ -188,7 +188,7 @@ class ChartContractsTests(unittest.TestCase):
         self.assertIn('CREATE INDEX IF NOT EXISTS tru_history_timestamp_idx', maintenance)
         self.assertIn("history.timestamp < bounds.oldest_timestamp", maintenance)
         self.assertIn("bounds.max_seq - {{ .Values.historyMaintenance.maxEntries }}", maintenance)
-        self.assertIn("VACUUM (ANALYZE) tru_history", maintenance)
+        self.assertIn("VACUUM (ANALYZE, PARALLEL 0) tru_history", maintenance)
         self.assertNotIn("TRUNCATE", maintenance)
 
     def test_chart_removes_legacy_postgres_compat_job(self):

@@ -77,7 +77,10 @@ spec:
                    USING bounds
                    WHERE history.timestamp < bounds.oldest_timestamp
                       OR history.seq <= GREATEST(bounds.max_seq - {{ .Values.historyMaintenance.maxEntries }}, 0);
-                  VACUUM (ANALYZE) tru_history;
+                  -- Keep index vacuuming serial. PostgreSQL's parallel VACUUM uses
+                  -- dynamic shared memory, while the database pod intentionally has
+                  -- only the container-default /dev/shm allocation.
+                  VACUUM (ANALYZE, PARALLEL 0) tru_history;
                   SELECT count(*) AS history_rows_after,
                          pg_size_pretty(pg_total_relation_size('tru_history')) AS history_size_after
                     FROM tru_history;

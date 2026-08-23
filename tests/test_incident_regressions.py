@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 178)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 179)}
         observed_ids = set()
 
         for row in rows:
@@ -73,7 +73,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("retentionDays: 7", values)
         self.assertIn("maxEntries: 100000", values)
         self.assertIn("DELETE FROM tru_history", maintenance)
-        self.assertIn("VACUUM (ANALYZE) tru_history", maintenance)
+        self.assertIn("VACUUM (ANALYZE, PARALLEL 0) tru_history", maintenance)
 
     def test_history_maintenance_is_bounded_secret_backed_and_scheduled(self):
         values = read_text("deployment/chart/values.yaml")
@@ -88,7 +88,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("activeDeadlineSeconds:", template)
         self.assertIn("secretKeyRef:", template)
         self.assertIn("DELETE FROM tru_history", template)
-        self.assertIn("VACUUM (ANALYZE) tru_history", template)
+        self.assertIn("VACUUM (ANALYZE, PARALLEL 0) tru_history", template)
+
+    def test_history_maintenance_avoids_parallel_vacuum_shared_memory(self):
+        template = read_text(
+            "deployment/chart/templates/history-maintenance-cronjob.yaml"
+        )
+
+        self.assertIn("VACUUM (ANALYZE, PARALLEL 0) tru_history", template)
+        self.assertNotIn("VACUUM (ANALYZE) tru_history", template)
 
     def test_backend_memory_limit_survives_helm_reuse_values(self):
         deployment = read_text("deployment/chart/templates/backend-deployment.yaml")
