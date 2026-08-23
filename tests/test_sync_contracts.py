@@ -2673,6 +2673,27 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertEqual(heartbeat_body.count("db.updateMany(Agent"), 2)
 
+    def test_live_copy_collector_restarts_after_frontend_pod_replacement(self):
+        collector = read_text("scripts/collect_live_client_database_copies.ps1")
+
+        self.assertIn("[ValidateRange(1, 5)][int] $MaxExportAttempts = 3", collector)
+        self.assertIn("function Get-ReadyFrontendPod", collector)
+        self.assertIn("$_.status.phase -eq 'Running'", collector)
+        self.assertIn("$_.type -eq 'Ready' -and $_.status -eq 'True'", collector)
+        self.assertIn("function Assert-FrontendPodStable", collector)
+        self.assertIn("FRONTEND_POD_REPLACED:", collector)
+        self.assertIn("FRONTEND_EXPORT_MISSING:", collector)
+        self.assertIn("for ($attempt = 1; $attempt -le $MaxExportAttempts", collector)
+        self.assertIn("agent_data_export_request", collector)
+        self.assertIn("Reset-LocalAttemptDirectory $clientDirectory", collector)
+        self.assertIn("Refusing to clear export attempt outside", collector)
+        self.assertIn("[IO.FileAttributes]::ReparsePoint", collector)
+        self.assertIn("if (-not $manifestCopied)", collector)
+        self.assertLess(
+            collector.index("if (-not $manifestCopied)"),
+            collector.index("$destination = [IO.File]::Open($backupPath"),
+        )
+
     def test_complete_snapshot_counts_only_content_changes(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
         apply_body = agent.split(
