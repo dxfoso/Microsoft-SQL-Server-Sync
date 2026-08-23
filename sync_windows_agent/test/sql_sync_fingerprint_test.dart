@@ -44,7 +44,46 @@ void main() {
     }
 
     expect(single.build(), split.build());
-    expect(single.build(), '3:32a21c9a0122811d');
+    expect(single.build(), startsWith('v2:3:'));
+    expect(single.build().split(':').last, hasLength(64));
+  });
+
+  test('fingerprint distinguishes close lossless SQL float values', () {
+    final columns = [
+      const SqlSyncColumnDefinition(
+        name: 'GUID',
+        sqlType: 'uniqueidentifier',
+        maxLength: 16,
+        precision: 0,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+      const SqlSyncColumnDefinition(
+        name: 'Debit',
+        sqlType: 'float',
+        maxLength: 8,
+        precision: 53,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    const guid = '4C8ED76B-87E7-4294-A849-4DF83419FFF7';
+    final rounded =
+        SqlSyncFingerprintAccumulator()..addRow(columns, const {
+          'GUID': guid,
+          'Debit': '3.2240900000000000e+007',
+        });
+    final lossless =
+        SqlSyncFingerprintAccumulator()..addRow(columns, const {
+          'GUID': guid,
+          'Debit': '3.2240868000000000e+007',
+        });
+
+    expect(rounded.build(), startsWith('v2:1:'));
+    expect(lossless.build(), startsWith('v2:1:'));
+    expect(rounded.build(), isNot(lossless.build()));
   });
 
   test('fingerprint encoding escapes separators and nulls', () {
@@ -228,7 +267,7 @@ void main() {
         throwsFormatException,
       );
       expect(
-        SqlSyncRangeFingerprintManifest.tryParse('v1|16|1|checksum|too-short'),
+        SqlSyncRangeFingerprintManifest.tryParse('v2|16|1|checksum|too-short'),
         isNull,
       );
     },
@@ -241,12 +280,12 @@ void main() {
         payloadRowCount: 0,
         completeRowCount: 731,
         completeTableChecksum: '731:fresh-lossless-float-checksum',
-        completeRangeFingerprint: 'v1|16|731|fresh|buckets',
+        completeRangeFingerprint: 'v2|16|731|fresh|buckets',
       );
 
       expect(metadata.rowCount, 731);
       expect(metadata.tableChecksum, '731:fresh-lossless-float-checksum');
-      expect(metadata.rangeFingerprint, 'v1|16|731|fresh|buckets');
+      expect(metadata.rangeFingerprint, 'v2|16|731|fresh|buckets');
     },
   );
 

@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 171)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 172)}
         observed_ids = set()
 
         for row in rows:
@@ -1254,6 +1254,22 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("completeRowCount!", fingerprint)
         self.assertIn(
             "empty delta publishes its fresh complete inventory for anti-entropy",
+            dart_tests,
+        )
+
+    def test_complete_inventory_uses_versioned_sha256_for_close_float_drift(self):
+        backend = read_text("business/control_plane.tru")
+        fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+        dart_tests = read_text("sync_windows_agent/test/sql_sync_fingerprint_test.dart")
+
+        self.assertIn("kSqlSyncTableFingerprintVersion = 'v2'", fingerprint)
+        self.assertIn("sha256.startChunkedConversion", fingerprint)
+        self.assertIn("utf8.encode(value)", fingerprint)
+        self.assertNotIn("_fnv64OffsetBasis", fingerprint)
+        self.assertIn("kSqlSyncRangeFingerprintVersion = 'v2'", fingerprint)
+        self.assertIn("string.from(parts[0]) != 'v2'", backend)
+        self.assertIn(
+            "fingerprint distinguishes close lossless SQL float values",
             dart_tests,
         )
 

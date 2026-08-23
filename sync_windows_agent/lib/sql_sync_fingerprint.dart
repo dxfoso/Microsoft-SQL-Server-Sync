@@ -7,11 +7,9 @@ import 'sql_sync_schema.dart';
 const int _sqlSyncFingerprintFieldSeparator = 31;
 const int _sqlSyncFingerprintRowSeparator = 29;
 const int _sqlSyncFingerprintEscapeSeparator = 30;
-const int _fnv64OffsetBasis = 0xcbf29ce484222325;
-const int _fnv64Prime = 0x100000001b3;
-const int _fnv64Mask = 0xffffffffffffffff;
 const int kSqlSyncRangeBucketCount = 16;
-const String kSqlSyncRangeFingerprintVersion = 'v1';
+const String kSqlSyncTableFingerprintVersion = 'v2';
+const String kSqlSyncRangeFingerprintVersion = 'v2';
 const String kSqlSyncRangeUnionSourcePrefix = 'server-range-union-v1:';
 
 class SqlSyncUploadInventoryMetadata {
@@ -51,11 +49,18 @@ SqlSyncUploadInventoryMetadata resolveSqlSyncUploadInventoryMetadata({
 
 class SqlSyncFingerprintAccumulator {
   int _rowCount = 0;
-  int _hash = _fnv64OffsetBasis;
+  final _digestSink = _SingleDigestSink();
+  late final ByteConversionSink _hashSink = sha256.startChunkedConversion(
+    _digestSink,
+  );
+  bool _closed = false;
 
   int get rowCount => _rowCount;
 
   void addRow(List<SqlSyncColumnDefinition> columns, Map<String, dynamic> row) {
+    if (_closed) {
+      throw StateError('A completed SQL sync fingerprint cannot accept rows.');
+    }
     for (final column in columns) {
       _addEncodedString(encodeSqlSyncFingerprintField(row[column.name]));
       _addByte(_sqlSyncFingerprintFieldSeparator);
@@ -65,20 +70,39 @@ class SqlSyncFingerprintAccumulator {
   }
 
   String build() {
-    final hex = _hash.toRadixString(16).padLeft(16, '0');
-    return '$_rowCount:$hex';
+    if (!_closed) {
+      _hashSink.close();
+      _closed = true;
+    }
+    final digest = _digestSink.value;
+    if (digest == null) {
+      throw StateError('SQL sync fingerprint digest was not finalized.');
+    }
+    return '$kSqlSyncTableFingerprintVersion:$_rowCount:$digest';
   }
 
   void _addEncodedString(String value) {
-    for (final codeUnit in value.codeUnits) {
-      _addByte(codeUnit);
-    }
+    _hashSink.add(utf8.encode(value));
   }
 
   void _addByte(int byte) {
-    _hash ^= byte;
-    _hash = (_hash * _fnv64Prime) & _fnv64Mask;
+    _hashSink.add([byte]);
   }
+}
+
+class _SingleDigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) {
+    if (value != null) {
+      throw StateError('SQL sync fingerprint produced more than one digest.');
+    }
+    value = data;
+  }
+
+  @override
+  void close() {}
 }
 
 class SqlSyncRangeFingerprintManifest {
