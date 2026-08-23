@@ -4,13 +4,14 @@ param(
     [string] $ClientUpdateBaseUrl = '',
     [string] $OutputDir = "$PSScriptRoot\..\artifacts\client-updates",
     [string] $DeploymentEnvPath = "$PSScriptRoot\..\deployment\chart\.env",
-    [string] $Namespace = '',
-    [string] $SshTarget = '',
+    [string] $Namespace = 'velvet-sql-server-sync',
+    [string] $SshTarget = 'velvet-leaf-1',
     [string] $RemoteUpdatesDir = '/app/data/client-updates',
     [string] $FlutterVersion = '',
     [string] $FlutterCacheRoot = '',
     [switch] $RequireFlutterVersion,
-    [switch] $SkipBuild
+    [switch] $SkipBuild,
+    [switch] $ArtifactOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -522,9 +523,13 @@ Write-Host "Manifest: $latestManifest"
 Write-Host "ZIP:      $versionedZip"
 Write-Host "Files:    $packageOutputDir"
 
-if ([string]::IsNullOrWhiteSpace($SshTarget)) {
-    Write-Host 'No -SshTarget supplied; skipping live upload.'
+if ($ArtifactOnly) {
+    Write-Host 'Artifact-only mode requested; skipping live upload.'
     return
+}
+
+if ([string]::IsNullOrWhiteSpace($SshTarget)) {
+    throw 'SshTarget is required unless -ArtifactOnly is explicitly supplied.'
 }
 
 if ([string]::IsNullOrWhiteSpace($Namespace)) {

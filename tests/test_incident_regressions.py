@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 197)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 198)}
         observed_ids = set()
 
         for row in rows:
@@ -88,6 +88,13 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("_startRequestedDataExport(queued)", agent)
         self.assertIn("cancellation.race(exitCodeFuture)", agent)
         self.assertIn("DataExportSupersededException", cancellation)
+
+    def test_client_publication_cannot_silently_remain_local(self):
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+
+        self.assertIn("[string] $SshTarget = 'velvet-leaf-1'", publisher)
+        self.assertIn("[switch] $ArtifactOnly", publisher)
+        self.assertNotIn("No -SshTarget supplied; skipping live upload.", publisher)
 
     def test_unbounded_history_disk_incident_has_bounded_regression_fix(self):
         document = ISSUES.read_text(encoding="utf-8")

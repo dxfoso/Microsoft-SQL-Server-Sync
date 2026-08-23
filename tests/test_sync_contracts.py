@@ -2719,6 +2719,18 @@ class SyncContractsTests(unittest.TestCase):
             "new request interrupts an obsolete in-flight operation", dart_test
         )
 
+    def test_client_publisher_defaults_to_live_and_requires_explicit_artifact_only(self):
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+
+        self.assertIn("[string] $Namespace = 'velvet-sql-server-sync'", publisher)
+        self.assertIn("[string] $SshTarget = 'velvet-leaf-1'", publisher)
+        self.assertIn("[switch] $ArtifactOnly", publisher)
+        self.assertIn("if ($ArtifactOnly)", publisher)
+        self.assertIn(
+            "SshTarget is required unless -ArtifactOnly is explicitly supplied.",
+            publisher,
+        )
+
     def test_complete_snapshot_counts_only_content_changes(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
         apply_body = agent.split(
