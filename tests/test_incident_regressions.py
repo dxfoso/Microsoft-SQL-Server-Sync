@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 188)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 189)}
         observed_ids = set()
 
         for row in rows:
@@ -434,6 +434,23 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )[1].split("Invoke-RemoteKubectl", 1)[0]
         self.assertIn('"backend=$backendImage"', backend_rollout)
         self.assertIn('"backend-data-permissions=$backendImage"', backend_rollout)
+
+    def test_backend_contract_rolls_out_before_frontend_release_is_exposed(self):
+        deployer = read_text("scripts/deploy_production_images.ps1")
+
+        backend_set = deployer.index("'set', 'image', 'deployment/sql-sync-back'")
+        backend_ready = deployer.index(
+            "'rollout', 'status', 'deployment/sql-sync-back'"
+        )
+        frontend_set = deployer.index(
+            "'set', 'image', 'deployment/sql-sync-front'"
+        )
+        frontend_ready = deployer.index(
+            "'rollout', 'status', 'deployment/sql-sync-front'"
+        )
+        self.assertLess(backend_set, backend_ready)
+        self.assertLess(backend_ready, frontend_set)
+        self.assertLess(frontend_set, frontend_ready)
 
     def test_production_rollout_retries_transient_ssh_disconnects(self):
         deployer = read_text("scripts/deploy_production_images.ps1")

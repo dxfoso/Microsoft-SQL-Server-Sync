@@ -69,8 +69,8 @@ Invoke-RemoteKubectl @(
     "backend=$backendImage",
     "backend-data-permissions=$backendImage"
 )
-Invoke-RemoteKubectl @('set', 'image', 'deployment/sql-sync-front', "frontend=$frontendImage")
 Invoke-RemoteKubectl @('rollout', 'status', 'deployment/sql-sync-back', '--timeout=300s')
+Invoke-RemoteKubectl @('set', 'image', 'deployment/sql-sync-front', "frontend=$frontendImage")
 Invoke-RemoteKubectl @('rollout', 'status', 'deployment/sql-sync-front', '--timeout=300s')
 
 $stableObservations = 0
