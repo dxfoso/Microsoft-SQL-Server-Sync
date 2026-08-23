@@ -1658,6 +1658,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("rows: []", source)
         self.assertIn("rows: [],", source)
 
+    def test_multi_writer_upload_reports_retry_safe_cumulative_rows(self):
+        source = read_text("business/control_plane.tru")
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+
+        duplicate_guard = upload.index("sync_batch_chunk_seen(")
+        archive_insert = upload.index("db.insert(SyncJobDataChunk")
+        cumulative_stats = upload.index("sync_job_data_stats(job)")
+        self.assertLess(duplicate_guard, archive_insert)
+        self.assertLess(archive_insert, cumulative_stats)
+        self.assertIn("cumulativeAcceptedRowCount", upload)
+        self.assertIn("committedBatch.receivedChunks", upload)
+        self.assertIn("cumulativeStaleRowCount", upload)
+        self.assertIn(
+            "), cumulativeAcceptedRowCount, null, null, null, null, null, token)",
+            upload,
+        )
+        self.assertNotIn(
+            "), acceptedRowCount, null, null, null, null, null, token)", upload
+        )
+
     def test_sync_all_queues_one_batch_for_online_peers(self):
         source = read_text("business/control_plane.tru")
         sync_all = source.split("function jobs_create_all_enabled_for_identity(", 1)[1].split(

@@ -9181,17 +9181,44 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   }
   const acceptedRowCount = int.from(acceptance.acceptedRowCount ?? 0);
   const staleRowCount = incomingRowCount - acceptedRowCount;
+  // Report durable job totals, not only the final transport page. The archive
+  // row is inserted once per chunk and duplicate chunk ids return above, so
+  // aggregating it is retry-idempotent and remains correct if chunks overlap.
+  const cumulativeUploadStats = sync_job_data_stats(job);
+  const cumulativeAcceptedRowCount = int.from(
+    cumulativeUploadStats.retainedRowCount ?? 0
+  );
+  const committedBatch = find_sync_batch(batchId);
+  let cumulativeIncomingRowCount = cumulativeAcceptedRowCount;
+  if (committedBatch != null) {
+    cumulativeIncomingRowCount = 0;
+    for (const receivedChunk of committedBatch.receivedChunks ?? []) {
+      if (string.from(receivedChunk.clientName).trim() == normalizedClientName) {
+        cumulativeIncomingRowCount += int.from(receivedChunk.rowCount ?? 0);
+      }
+    }
+  }
+  let cumulativeStaleRowCount = cumulativeIncomingRowCount - cumulativeAcceptedRowCount;
+  if (cumulativeStaleRowCount < 0) {
+    cumulativeStaleRowCount = 0;
+  }
   const updatedResult = finalChunk
     ? jobs_complete(job.id, 'completed', 100, string.concat(
         'Uploaded ',
-        string.from(acceptedRowCount),
+        string.from(cumulativeAcceptedRowCount),
         ' accepted changed rows for ',
         table,
-        staleRowCount > 0
-          ? string.concat('; ignored ', string.from(staleRowCount), ' stale operation(s).')
+        cumulativeStaleRowCount > 0
+          ? string.concat('; ignored ', string.from(cumulativeStaleRowCount), ' stale operation(s).')
           : '.'
-      ), acceptedRowCount, null, null, null, null, null, token)
-    : jobs_progress(job.id, 'uploading', 70, string.concat('Uploaded multi-writer chunk for ', table, '.'), acceptedRowCount, token);
+      ), cumulativeAcceptedRowCount, null, null, null, null, null, token)
+    : jobs_progress(job.id, 'uploading', 70, string.concat(
+        'Uploaded ',
+        string.from(cumulativeAcceptedRowCount),
+        ' accepted changed rows for ',
+        table,
+        '.'
+      ), cumulativeAcceptedRowCount, token);
   const updatedJob = updatedResult.job ?? job;
   // Clients poll their waiting batch download until the barrier is ready.
   let nextJob = job;
