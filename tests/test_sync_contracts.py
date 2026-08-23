@@ -13,7 +13,6 @@ def read_text(relative_path: str) -> str:
 class SyncContractsTests(unittest.TestCase):
     def test_remote_support_self_test_is_server_driven_sanitized_and_staged(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
-        export_policy = read_text("sync_windows_agent/lib/data_export_policy.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         frontend = read_text("frontend/lib/dashboard_page.dart")
 
@@ -2589,6 +2588,7 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_live_copy_export_is_read_only_private_chunked_and_checksum_verified(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        export_policy = read_text("sync_windows_agent/lib/data_export_policy.dart")
         api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         frontend_server = read_text("frontend/server.js")
         collector = read_text("scripts/collect_live_client_database_copies.ps1")
