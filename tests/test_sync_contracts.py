@@ -13,6 +13,7 @@ def read_text(relative_path: str) -> str:
 class SyncContractsTests(unittest.TestCase):
     def test_remote_support_self_test_is_server_driven_sanitized_and_staged(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        export_policy = read_text("sync_windows_agent/lib/data_export_policy.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         frontend = read_text("frontend/lib/dashboard_page.dart")
 
@@ -2596,7 +2597,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("RESTORE VERIFYONLY", agent_page)
         self.assertIn("SERVERPROPERTY('InstanceDefaultBackupPath')", agent_page)
         self.assertIn("FROM master.sys.master_files", agent_page)
-        self.assertIn("_dataExportChunkBytes = 4 * 1024 * 1024", agent_page)
+        self.assertIn("kPrivateExportArtifactBytes = 256 * 1024", export_policy)
+        self.assertIn("privateExportUploadTimeout(int bytes)", export_policy)
+        self.assertIn("kPrivateExportArtifactBytes", agent_page)
+        self.assertIn("privateExportUploadTimeout(bytes.length)", agent_page)
         self.assertIn("sha256.bind(backupFile.openRead())", agent_page)
         self.assertIn("await backupFile.delete()", agent_page)
         self.assertNotIn("DROP DATABASE", agent_page)
