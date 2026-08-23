@@ -117,8 +117,20 @@ function Copy-PrivateArtifact {
     $remoteHash = ([string]$remoteHashLines[0]).Split(' ')[0].Trim().ToLowerInvariant()
     $localHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $localPath).Hash.ToLowerInvariant()
     if ($remoteHash -ne $localHash) { throw "Checksum mismatch while copying $Artifact" }
-    Invoke-SshText "kubectl exec -n $Namespace '$Pod' -- rm -f '$PodDirectory/$Artifact'" | Out-Null
     Invoke-SshText "rm -f '$remoteTemp'" | Out-Null
+}
+
+function Remove-VerifiedRemoteExport {
+    param([string] $Pod, [string] $RequestId, [string] $ClientKey)
+    if ($RequestId -notmatch '^[A-Za-z0-9._-]{1,64}$') {
+        throw "Refusing to clean an invalid remote export request id: $RequestId"
+    }
+    if ($ClientKey -notmatch '^[A-Za-z0-9_-]{1,256}$') {
+        throw "Refusing to clean an invalid remote export client key: $ClientKey"
+    }
+    Assert-FrontendPodStable $Pod
+    $verifiedDirectory = "/app/data/client-updates/.private-exports/$RequestId/$ClientKey"
+    Invoke-SshText "kubectl exec -n $Namespace '$Pod' -- rm -rf -- '$verifiedDirectory'" | Out-Null
 }
 
 $login = Invoke-ControlPlaneFunction 'auth_login' @{
@@ -241,6 +253,7 @@ foreach ($client in $clients) {
             if ($backupHash -ne ([string]$manifest.sha256).ToLowerInvariant()) { throw "$clientName backup checksum mismatch." }
             if ((Get-Item -LiteralPath $backupPath).Length -ne [long]$manifest.bytes) { throw "$clientName backup length mismatch." }
             $summary += [pscustomobject]@{ clientName = $clientName; clientKey = $clientKey; database = $Database; backup = $backupPath; bytes = [long]$manifest.bytes; sha256 = $backupHash }
+            Remove-VerifiedRemoteExport -Pod $pod -RequestId $requestId -ClientKey $clientKey
             $completedClient = $true
         } catch {
             $failure = $_.Exception.Message

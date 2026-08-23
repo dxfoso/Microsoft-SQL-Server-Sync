@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 198)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 199)}
         observed_ids = set()
 
         for row in rows:
@@ -95,6 +95,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("[string] $SshTarget = 'velvet-leaf-1'", publisher)
         self.assertIn("[switch] $ArtifactOnly", publisher)
         self.assertNotIn("No -SshTarget supplied; skipping live upload.", publisher)
+
+    def test_live_copy_chunks_survive_until_whole_backup_is_verified(self):
+        collector = read_text("scripts/collect_live_client_database_copies.ps1")
+
+        self.assertNotIn("rm -f '$PodDirectory/$Artifact'", collector)
+        self.assertIn("function Remove-VerifiedRemoteExport", collector)
+        self.assertIn("Refusing to clean an invalid remote export request id", collector)
+        self.assertLess(
+            collector.index("backup length mismatch"),
+            collector.index("Remove-VerifiedRemoteExport -Pod $pod"),
+        )
 
     def test_unbounded_history_disk_incident_has_bounded_regression_fix(self):
         document = ISSUES.read_text(encoding="utf-8")
