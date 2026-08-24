@@ -8,6 +8,8 @@ param(
     [string] $SshTarget = 'velvet-leaf-1',
     [string] $Namespace = 'velvet-sql-server-sync',
     [string] $OutputDirectory = '',
+    [string[]] $OnlyClient = @(),
+    [switch] $ForceFresh,
     [int] $TimeoutMinutes = 240,
     [ValidateRange(1, 5)][int] $MaxExportAttempts = 3
 )
@@ -148,6 +150,23 @@ $clients = @($initialState.agents | Where-Object {
     $_.sqlConnected -eq $true -and
     ([string]$_.database).Trim().Equals($Database, [StringComparison]::OrdinalIgnoreCase)
 })
+if ($OnlyClient.Count -gt 0) {
+    $requestedClients = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($requestedClient in $OnlyClient) {
+        if (-not [string]::IsNullOrWhiteSpace($requestedClient)) {
+            [void]$requestedClients.Add($requestedClient.Trim())
+        }
+    }
+    $clients = @($clients | Where-Object { $requestedClients.Contains([string]$_.clientName) })
+    $foundClients = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($selectedClient in $clients) {
+        [void]$foundClients.Add([string]$selectedClient.clientName)
+    }
+    $missingClients = @($requestedClients | Where-Object { -not $foundClients.Contains($_) })
+    if ($missingClients.Count -gt 0) {
+        throw "Requested client is not online and SQL-connected for ${Database}: $($missingClients -join ', ')"
+    }
+}
 if ($clients.Count -eq 0) { throw "No online SQL-connected clients selected $Database." }
 
 $summary = @()
@@ -170,7 +189,7 @@ foreach ($client in $clients) {
             $existingRequestId = if ($null -eq $existingExport) { '' } else { [string]$existingExport.requestId }
             $existingStatus = if ($null -eq $existingExport) { '' } else { ([string]$existingExport.status).Trim().ToLowerInvariant() }
             $validExistingRequest = $existingRequestId -match '^[A-Za-z0-9._-]{1,64}$'
-            $canResume = $validExistingRequest -and (
+            $canResume = -not $ForceFresh -and $validExistingRequest -and (
                 ($existingExport.pending -eq $true -and @('requested', 'running') -contains $existingStatus) -or
                 $existingStatus -eq 'completed'
             )

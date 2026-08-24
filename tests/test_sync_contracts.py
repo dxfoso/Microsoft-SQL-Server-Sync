@@ -2730,6 +2730,34 @@ class SyncContractsTests(unittest.TestCase):
             collector.index("$destination = [IO.File]::Open($backupPath"),
         )
 
+    def test_live_copy_collector_can_select_one_named_client(self):
+        collector = read_text("scripts/collect_live_client_database_copies.ps1")
+
+        self.assertIn("[string[]] $OnlyClient = @()", collector)
+        self.assertIn("[switch] $ForceFresh", collector)
+        self.assertIn("$requestedClients.Contains([string]$_.clientName)", collector)
+        self.assertIn("Requested client is not online and SQL-connected", collector)
+        self.assertIn("$canResume = -not $ForceFresh", collector)
+        self.assertLess(
+            collector.index("if ($OnlyClient.Count -gt 0)"),
+            collector.index("foreach ($client in $clients)"),
+        )
+
+    def test_voucher_2307_repair_preserves_both_identities_and_children(self):
+        repair = read_text("scripts/repair_voucher_2307_velvet.ps1")
+
+        self.assertIn("1123818D-A5AE-46D9-8A23-0220534CB2D5", repair)
+        self.assertIn("840E3295-ECBF-426B-828A-F4780D88C6F8", repair)
+        self.assertIn("$temporaryNumber = -2147482307", repair)
+        self.assertIn("WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)", repair)
+        self.assertIn("UPDATE dbo.ce000 SET Number=@temporary", repair)
+        self.assertIn("UPDATE dbo.ce000 SET Number=2307", repair)
+        self.assertNotIn("DELETE dbo.ce000", repair)
+        self.assertIn("COUNT(*) FROM dbo.en000 WHERE ParentGUID=@pos)<>4", repair)
+        self.assertIn("COUNT(*) FROM dbo.en000 WHERE ParentGUID=@purchase)<>37", repair)
+        self.assertIn("SQLSYNC_V2307_COMPLETE", repair)
+        self.assertNotIn("'-f', '65001'", repair)
+
     def test_new_private_export_request_cancels_obsolete_client_work(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
         cancellation = read_text(
