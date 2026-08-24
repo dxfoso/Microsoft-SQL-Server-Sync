@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 211)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 213)}
         observed_ids = set()
 
         for row in rows:
@@ -90,6 +90,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("ConvertFrom-Json", builder)
         self.assertNotIn("-o jsonpath", builder)
         self.assertIn("$tags.backend -ne $tags.frontend", builder)
+        self.assertIn("PSObject.Properties['initContainers']", builder)
         self.assertIn("Using current live immutable registry probe tag", builder)
 
     def test_live_copy_collection_survives_frontend_pod_replacement(self):
@@ -471,7 +472,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("$ErrorActionPreference = 'Continue'", preflight)
         self.assertIn("$probeExitCode = $LASTEXITCODE", preflight)
         self.assertIn("[string] $RegistryAccessProbeTag = ''", builder)
-        self.assertIn("RegistryAccessProbeTag must name a known existing immutable tag", builder)
+        self.assertIn("Resolve-LiveRegistryAccessProbeTag", builder)
+        self.assertIn("Production registry probe failed for $probeImage", builder)
         self.assertNotIn("[string] $RegistryAccessProbeTag = 'dev'", builder)
         self.assertLess(call_index, context_index)
         self.assertLess(call_index, backend_build_index)

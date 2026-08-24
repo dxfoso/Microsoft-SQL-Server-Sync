@@ -104,7 +104,12 @@ function Resolve-LiveRegistryAccessProbeTag {
     $tags = @{}
     $escapedRoot = [regex]::Escape($RepositoryRoot)
     foreach ($deployment in @($deployments.items)) {
-        foreach ($container in @($deployment.spec.template.spec.initContainers) + @($deployment.spec.template.spec.containers)) {
+        $podSpec = $deployment.spec.template.spec
+        $containers = @($podSpec.containers)
+        if ($null -ne $podSpec.PSObject.Properties['initContainers']) {
+            $containers = @($podSpec.initContainers) + $containers
+        }
+        foreach ($container in $containers) {
             $match = [regex]::Match([string]$container.image, "^$escapedRoot/(backend|frontend):([0-9a-f]{40})$")
             if ($match.Success) {
                 $tags[$match.Groups[1].Value] = $match.Groups[2].Value
