@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 209)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 211)}
         observed_ids = set()
 
         for row in rows:
@@ -80,6 +80,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("label: 'Sync All'", clients)
         self.assertIn("label: 'Integrity'", clients)
         self.assertIn("assert(items.length == 3)", summary)
+
+    def test_production_builder_discovers_the_live_immutable_probe_safely(self):
+        builder = read_text("scripts/build_production_images.ps1")
+
+        self.assertIn("function Resolve-LiveRegistryAccessProbeTag", builder)
+        self.assertIn("kubectl get deployment sql-sync-back sql-sync-front", builder)
+        self.assertIn("-n $KubernetesNamespace -o json", builder)
+        self.assertIn("ConvertFrom-Json", builder)
+        self.assertNotIn("-o jsonpath", builder)
+        self.assertIn("$tags.backend -ne $tags.frontend", builder)
+        self.assertIn("Using current live immutable registry probe tag", builder)
 
     def test_live_copy_collection_survives_frontend_pod_replacement(self):
         collector = read_text("scripts/collect_live_client_database_copies.ps1")

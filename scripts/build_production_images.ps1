@@ -3,6 +3,8 @@ param(
     [string] $RegistryAccessProbeTag = '',
     [string] $BackendBaseUrl = 'https://sync.velvet-leaf.com/call',
     [string] $ClientArtifactsDir = "$PSScriptRoot\..\artifacts\client-updates",
+    [string] $SshAlias = 'velvet-leaf-1',
+    [string] $Namespace = 'velvet-sql-server-sync',
     [switch] $SkipPush
 )
 
@@ -87,6 +89,34 @@ function Assert-RegistryAccessBeforeBuild {
     }
 }
 
+function Resolve-LiveRegistryAccessProbeTag {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepositoryRoot,
+        [Parameter(Mandatory = $true)][string] $RemoteAlias,
+        [Parameter(Mandatory = $true)][string] $KubernetesNamespace
+    )
+
+    $raw = & ssh $RemoteAlias kubectl get deployment sql-sync-back sql-sync-front -n $KubernetesNamespace -o json
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read the current production image references from namespace $KubernetesNamespace."
+    }
+    $deployments = ($raw -join "`n") | ConvertFrom-Json
+    $tags = @{}
+    $escapedRoot = [regex]::Escape($RepositoryRoot)
+    foreach ($deployment in @($deployments.items)) {
+        foreach ($container in @($deployment.spec.template.spec.initContainers) + @($deployment.spec.template.spec.containers)) {
+            $match = [regex]::Match([string]$container.image, "^$escapedRoot/(backend|frontend):([0-9a-f]{40})$")
+            if ($match.Success) {
+                $tags[$match.Groups[1].Value] = $match.Groups[2].Value
+            }
+        }
+    }
+    if (-not $tags.ContainsKey('backend') -or -not $tags.ContainsKey('frontend') -or $tags.backend -ne $tags.frontend) {
+        throw 'Current production backend and frontend do not expose one matching immutable 40-character image tag.'
+    }
+    return [string]$tags.backend
+}
+
 function Assert-CommitAvailableOnRemote {
     param(
         [Parameter(Mandatory = $true)][string] $RepositoryPath,
@@ -109,7 +139,11 @@ try {
     Assert-CommitAvailableOnRemote -RepositoryPath $repoRoot -Commit $commit -Label 'root repository'
     if (-not $SkipPush) {
         if ([string]::IsNullOrWhiteSpace($RegistryAccessProbeTag)) {
-            throw 'RegistryAccessProbeTag must name a known existing immutable tag when push is enabled; do not assume a mutable dev/latest tag exists.'
+            $RegistryAccessProbeTag = Resolve-LiveRegistryAccessProbeTag `
+                -RepositoryRoot $RegistryRoot `
+                -RemoteAlias $SshAlias `
+                -KubernetesNamespace $Namespace
+            Write-Host "Using current live immutable registry probe tag: $RegistryAccessProbeTag"
         }
         Assert-RegistryAccessBeforeBuild -RepositoryRoot $RegistryRoot -ProbeTag $RegistryAccessProbeTag
     }
