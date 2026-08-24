@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 213)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 222)}
         observed_ids = set()
 
         for row in rows:
@@ -1439,6 +1439,43 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "New-Item -Path $OutputDir -ItemType Directory -Force"
         )
         self.assertLess(preflight, first_output_write)
+
+    def test_automatic_numbering_incident_is_visible_and_idempotent(self):
+        backend = read_text("business/control_plane.tru")
+        client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        web = read_text("frontend/lib/clients_page.dart")
+        web_model = read_text("frontend/lib/models.dart")
+
+        self.assertIn("operationId: string min=64 max=64", backend)
+        self.assertIn("class AutoNumberReservation", backend)
+        self.assertIn("db.insertMany(AutoNumberReservation", backend)
+        self.assertIn("db.upsertMany(AutoNumberIncident", backend)
+        self.assertIn("automatic_number_incident_find_by_operation", backend)
+        self.assertIn("automaticNumberIncidentCount", backend)
+        self.assertIn("function automatic_number_incidents_list(", backend)
+        self.assertIn("automaticNumberByOperation", client_api)
+        self.assertIn("__sync_auto_number_before", fingerprint)
+        self.assertGreaterEqual(
+            agent.count("resolveUniqueConflictsLatestWins: false"), 2
+        )
+        self.assertIn("DataColumn(label: Text('Auto numbering'))", web)
+        self.assertIn("_showAutomaticNumberIncidentsDialog", web)
+        self.assertIn("Tooltip(", web)
+        self.assertNotIn("tooltip: 'Show automatic-number incident history'", web)
+        self.assertIn("Before", web)
+        self.assertIn("After", web)
+        self.assertIn("class AdminAutomaticNumberIncident", web_model)
+
+    def test_collision_rollback_helper_preserves_unique_index_metadata(self):
+        scenario = read_text("tests/docker-sync/run_scenarios.py")
+
+        helper_start = scenario.index("def expect_apply_failure(")
+        helper_end = scenario.index("\n\ndef assert_business_trigger_enabled", helper_start)
+        helper = scenario[helper_start:helper_end]
+        self.assertIn("unique_index_column_sets=None", helper)
+        self.assertIn("unique_index_column_sets=unique_index_column_sets", helper)
 
     def test_private_export_retries_small_units_on_slow_links(self):
         policy = read_text("sync_windows_agent/lib/data_export_policy.dart")

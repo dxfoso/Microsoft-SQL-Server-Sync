@@ -42,18 +42,18 @@ class AuthenticatedUser {
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'username': username,
-    'email': email,
-    'name': name,
-    'role': role,
-    'ownerUserId': ownerUserId,
-    'ownerUsername': ownerUsername,
-    'ownerEmail': ownerEmail,
-    'ownerName': ownerName,
-    'createdByUserId': createdByUserId,
-    'createdAt': createdAt,
-  };
+        'id': id,
+        'username': username,
+        'email': email,
+        'name': name,
+        'role': role,
+        'ownerUserId': ownerUserId,
+        'ownerUsername': ownerUsername,
+        'ownerEmail': ownerEmail,
+        'ownerName': ownerName,
+        'createdByUserId': createdByUserId,
+        'createdAt': createdAt,
+      };
 
   bool get isAdmin => role == 'admin';
   bool get isOwner => role == 'owner';
@@ -234,14 +234,11 @@ class AdminSyncGate {
       blocked: json['blocked'] as bool? ?? false,
       status: json['status'] as String? ?? 'ready',
       issueCount: (json['issueCount'] as num? ?? 0).round(),
-      decisionCount:
-          (json['decisionCount'] as num?)?.round() ??
+      decisionCount: (json['decisionCount'] as num?)?.round() ??
           issues.where((issue) => issue.needsInput).length,
-      resolvingCount:
-          (json['resolvingCount'] as num?)?.round() ??
+      resolvingCount: (json['resolvingCount'] as num?)?.round() ??
           issues.where((issue) => issue.resolving).length,
-      message:
-          json['message'] as String? ??
+      message: json['message'] as String? ??
           'Every table is ready for synchronization.',
       issues: issues,
     );
@@ -532,6 +529,7 @@ class AdminAgent {
     this.lastDownloadedRows = 0,
     this.uploadedRowTotal = 0,
     this.downloadedRowTotal = 0,
+    this.automaticNumberIncidentCount = 0,
     required this.selectedTable,
     required this.diagnostics,
     required this.clientUpdate,
@@ -566,6 +564,7 @@ class AdminAgent {
   final int lastDownloadedRows;
   final int uploadedRowTotal;
   final int downloadedRowTotal;
+  final int automaticNumberIncidentCount;
   final String runtimeStatusCode;
   final String runtimeStatusLabel;
   final bool runtimeReady;
@@ -590,8 +589,8 @@ class AdminAgent {
       syncEnabled: json['syncEnabled'] as bool? ?? true,
       isOnline: json['isOnline'] as bool? ?? false,
       historyLimit: (json['historyLimit'] as num? ?? 5).round(),
-      autoSyncIntervalMinutes: (json['autoSyncIntervalMinutes'] as num? ?? 15)
-          .round(),
+      autoSyncIntervalMinutes:
+          (json['autoSyncIntervalMinutes'] as num? ?? 15).round(),
       syncDataLimitMb: (json['syncDataLimitMb'] as num? ?? 256).round(),
       conflictPolicy: json['conflictPolicy'] as String? ?? 'latest_change_wins',
       serverConnected: json['serverConnected'] as bool? ?? false,
@@ -605,6 +604,8 @@ class AdminAgent {
       lastDownloadedRows: (json['lastDownloadedRows'] as num? ?? 0).round(),
       uploadedRowTotal: (json['uploadedRowTotal'] as num? ?? 0).round(),
       downloadedRowTotal: (json['downloadedRowTotal'] as num? ?? 0).round(),
+      automaticNumberIncidentCount:
+          (json['automaticNumberIncidentCount'] as num? ?? 0).round(),
       runtimeStatusCode: status['code'] as String? ?? '',
       runtimeStatusLabel: status['label'] as String? ?? '',
       runtimeReady: status['ready'] as bool? ?? false,
@@ -627,8 +628,7 @@ class AdminAgent {
             ),
           )
           .toList(growable: false),
-      fingerprintAudit:
-          json['fingerprintAudit'] is List &&
+      fingerprintAudit: json['fingerprintAudit'] is List &&
               (json['fingerprintAudit'] as List).isNotEmpty &&
               (json['fingerprintAudit'] as List).first is Map
           ? AdminFingerprintAudit.fromJson(
@@ -643,6 +643,71 @@ class AdminAgent {
   Duration? get lastSyncDuration => lastSyncDurationMs == null
       ? null
       : Duration(milliseconds: lastSyncDurationMs!);
+}
+
+class AdminAutomaticNumberIncident {
+  const AdminAutomaticNumberIncident({
+    required this.id,
+    required this.clientName,
+    required this.conflictingClientName,
+    required this.table,
+    required this.status,
+    required this.reason,
+    required this.numberColumn,
+    required this.beforeNumber,
+    required this.afterNumber,
+    required this.scope,
+    required this.primaryKey,
+    required this.beforeRow,
+    required this.afterRow,
+    required this.operationId,
+    required this.detectedAt,
+    required this.resolvedAt,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String clientName;
+  final String conflictingClientName;
+  final String table;
+  final String status;
+  final String reason;
+  final String numberColumn;
+  final String beforeNumber;
+  final String afterNumber;
+  final Map<String, dynamic> scope;
+  final Map<String, dynamic> primaryKey;
+  final Map<String, dynamic> beforeRow;
+  final Map<String, dynamic> afterRow;
+  final String operationId;
+  final String detectedAt;
+  final String resolvedAt;
+  final String updatedAt;
+
+  factory AdminAutomaticNumberIncident.fromJson(Map<String, dynamic> json) {
+    Map<String, dynamic> object(String key) => json[key] is Map
+        ? Map<String, dynamic>.from(json[key] as Map)
+        : const <String, dynamic>{};
+    return AdminAutomaticNumberIncident(
+      id: json['id']?.toString() ?? '',
+      clientName: json['clientName']?.toString() ?? '',
+      conflictingClientName: json['conflictingClientName']?.toString() ?? '',
+      table: json['table']?.toString() ?? '',
+      status: json['status']?.toString() ?? '',
+      reason: json['reason']?.toString() ?? '',
+      numberColumn: json['numberColumn']?.toString() ?? '',
+      beforeNumber: json['beforeNumber']?.toString() ?? '',
+      afterNumber: json['afterNumber']?.toString() ?? '',
+      scope: object('scope'),
+      primaryKey: object('primaryKey'),
+      beforeRow: object('beforeRow'),
+      afterRow: object('afterRow'),
+      operationId: json['operationId']?.toString() ?? '',
+      detectedAt: json['detectedAt']?.toString() ?? '',
+      resolvedAt: json['resolvedAt']?.toString() ?? '',
+      updatedAt: json['updatedAt']?.toString() ?? '',
+    );
+  }
 }
 
 class AdminAgentClientUpdate {
@@ -769,11 +834,10 @@ class AdminBulkSyncResult {
     return AdminBulkSyncResult(
       queuedJobCount: (json['queuedJobCount'] as num? ?? 0).round(),
       queuedClientCount: (json['queuedClientCount'] as num? ?? 0).round(),
-      skippedOfflineClientCount:
-          (json['skippedOfflineClientCount'] as num? ??
-                  (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
-                      .length)
-              .round(),
+      skippedOfflineClientCount: (json['skippedOfflineClientCount'] as num? ??
+              (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
+                  .length)
+          .round(),
       skippedOfflineClients:
           (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
               .map((item) => item.toString())

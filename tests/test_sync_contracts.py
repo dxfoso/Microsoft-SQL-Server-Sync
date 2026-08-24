@@ -1027,7 +1027,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("DELETE FROM $targetTable", merge)
         self.assertIn("resolveUniqueConflictsLatestWins", merge)
         self.assertGreaterEqual(
-            apply_body.count("resolveUniqueConflictsLatestWins: true"), 2
+            apply_body.count("resolveUniqueConflictsLatestWins: false"), 2
         )
         self.assertGreaterEqual(
             apply_body.count("protectLocalChangesAfterVersion: postUploadChangeTrackingVersion"),

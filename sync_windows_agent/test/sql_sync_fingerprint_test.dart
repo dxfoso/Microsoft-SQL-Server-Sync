@@ -180,6 +180,53 @@ void main() {
     );
   });
 
+  test('server-reserved automatic number verifies exact before row only', () {
+    const columns = [
+      SqlSyncColumnDefinition(
+        name: 'GUID',
+        sqlType: 'uniqueidentifier',
+        maxLength: 16,
+        precision: 0,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+      SqlSyncColumnDefinition(
+        name: 'Number',
+        sqlType: 'int',
+        maxLength: 4,
+        precision: 10,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    const before = {'GUID': 'purchase-guid', 'Number': '2307'};
+    final sourceHash = canonicalSqlSyncRowSha256(columns, before);
+    final reserved = <String, dynamic>{
+      'GUID': 'purchase-guid',
+      'Number': '2308',
+      '__sync_row_hash': sourceHash,
+      '__sync_auto_number_column': 'Number',
+      '__sync_auto_number_before': '2307',
+      '__sync_auto_number_after': '2308',
+      '__sync_auto_number_incident_id': List.filled(64, 'a').join(),
+    };
+
+    expect(hasValidCanonicalSqlSyncRowHash(columns, reserved), isTrue);
+    expect(
+      hasValidCanonicalSqlSyncRowHash(columns, {...reserved, 'Number': '2309'}),
+      isFalse,
+    );
+    expect(
+      hasValidCanonicalSqlSyncRowHash(columns, {
+        ...reserved,
+        '__sync_auto_number_before': '2306',
+      }),
+      isFalse,
+    );
+  });
+
   test('operation identity is deterministic and origin-specific', () {
     final row = {'GUID': 'a-guid', 'Value': 'same'};
     final first = canonicalSqlSyncOperationId(

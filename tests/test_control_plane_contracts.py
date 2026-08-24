@@ -11,6 +11,28 @@ def read_text(relative_path: str) -> str:
 
 
 class ControlPlaneContractsTests(unittest.TestCase):
+    def test_business_key_collision_uses_audited_fail_closed_automatic_numbering(self):
+        source = read_text("business/control_plane.tru")
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+
+        self.assertIn("class AutoNumberIncident", source)
+        self.assertIn("class AutoNumberSequence", source)
+        self.assertIn("class AutoNumberReservation", source)
+        self.assertIn("function automatic_number_rule(", source)
+        self.assertIn("localTable != 'ce000'", source)
+        self.assertIn("columnSet.length == 3", source)
+        self.assertIn("columnSet[1]).trim().toLowerCase() == numberColumn", source)
+        self.assertIn("multiClientUnionBootstrap && ready", upload)
+        self.assertIn("payloadIsDelta && sequence.initialized == true", upload)
+        self.assertIn("incidentStatus = 'reserved'", upload)
+        self.assertIn("accepted = false", upload)
+        self.assertIn("This table has no scientifically validated automatic-number rule", upload)
+        self.assertIn("automaticNumber: automaticNumberDirective", upload)
+        self.assertIn("db.upsertMany(AutoNumberIncident", upload)
+        self.assertIn("db.insertMany(AutoNumberReservation", upload)
+
     def test_client_update_recovery_path_is_bounded_and_authorized(self):
         source = read_text("business/control_plane.tru")
         heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
@@ -206,7 +228,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
     def test_public_agent_payload_does_not_refetch_agent_rows(self):
         source = read_text("business/control_plane.tru")
         match = re.search(
-            r"function public_agent_payload\(agent: map<json>, activeJobs: array<json>\? = null, completedJobs: array<json>\? = null, periodicStates: array<json>\? = null, completedRowTotals: array<json>\? = null\): map<json> \{(?P<body>.*?)\n\}",
+            r"function public_agent_payload\(agent: map<json>, activeJobs: array<json>\? = null, completedJobs: array<json>\? = null, periodicStates: array<json>\? = null, completedRowTotals: array<json>\? = null, automaticNumberIncidentCounts: array<json>\? = null\): map<json> \{(?P<body>.*?)\n\}",
             source,
             flags=re.S,
         )
@@ -236,8 +258,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertEqual(live_state.count("live_state_manual_sync_rows_for_owner_ids"), 1)
         self.assertIn("lastChangeCheckAt: periodic_sync_last_checked_at_for_owner", source)
         self.assertIn("lastChangeCheckAt", models)
-        self.assertIn("DataColumn(label: Text('Last change check'))", frontend)
-        self.assertIn("DataCell(Text(_formatTimestamp(agent.lastChangeCheckAt)))", frontend)
+        self.assertIn("DataColumn(label: Text('Last activity'))", frontend)
+        self.assertIn("Widget _buildLastActivityCell(AdminAgent agent)", frontend)
+        self.assertIn("Last change check: ${_formatTimestamp(agent.lastChangeCheckAt)}", frontend)
 
     def test_command_delivery_uses_recent_heartbeat_not_database_readiness(self):
         source = read_text("business/control_plane.tru")
@@ -2071,7 +2094,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("authoritativeReplace", agent)
         self.assertNotIn("authoritativeReplace", merge)
         self.assertNotIn("DELETE FROM $targetTable", merge)
-        self.assertIn("resolveUniqueConflictsLatestWins: true", agent)
+        self.assertGreaterEqual(
+            agent.count("resolveUniqueConflictsLatestWins: false"), 2
+        )
         self.assertIn("_buildLatestUniqueConflictReplacementStatements", merge)
         self.assertIn("DELETE target", merge)
         self.assertIn("WHERE NOT ($samePrimaryKey)", merge)

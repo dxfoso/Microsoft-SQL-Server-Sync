@@ -25,7 +25,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
 
         self.assertIn("const activeJobRows = live_state_active_job_rows_for(current);", live_state_body)
         self.assertIn("activeJobRows", live_state_body)
-        self.assertIn("public_agent_payload(row, activeJobs, completedJobs, periodicStates, completedRowTotals)", bounded_agents_body)
+        self.assertIn("public_agent_payload(row, activeJobs, completedJobs, periodicStates, completedRowTotals, automaticNumberIncidentCounts)", bounded_agents_body)
         self.assertIn("normalize_agent_table_payload_state(agent, tableState, activeJobs)", normalize_tables_body)
         self.assertNotIn("active_job_for_client_table(", normalize_tables_body)
 
@@ -59,7 +59,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         control_plane = read_text("business/control_plane.tru")
         totals_body = control_plane.split(
             "function live_state_completed_row_totals_for(", 1
-        )[1].split("function live_state_manual_sync_rows_for_owner_ids", 1)[0]
+        )[1].split("function live_state_automatic_number_incident_counts", 1)[0]
         live_state_body = control_plane.split(
             "function live_state(token: string? = null): map<json> {", 1
         )[1].split("function agents_heartbeat", 1)[0]
@@ -72,6 +72,25 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         self.assertIn("ownerUserId: current.id", totals_body)
         self.assertIn("clientUserId: current.id", totals_body)
         self.assertIn("const completedRowTotals = live_state_completed_row_totals_for(current);", live_state_body)
+
+    def test_live_state_preloads_automatic_number_incident_counts_once(self):
+        control_plane = read_text("business/control_plane.tru")
+        counts_body = control_plane.split(
+            "function live_state_automatic_number_incident_counts(", 1
+        )[1].split("function live_state_manual_sync_rows_for_owner_ids", 1)[0]
+        summary_body = control_plane.split(
+            "function automatic_number_incident_count_for_client(", 1
+        )[1].split("function public_agent_payload", 1)[0]
+        live_state_body = control_plane.split(
+            "function live_state(token: string? = null): map<json> {", 1
+        )[1].split("function agents_heartbeat", 1)[0]
+
+        self.assertEqual(counts_body.count("db.aggregate("), 1)
+        self.assertIn("groupBy: ['ownerUserId', 'clientName']", counts_body)
+        self.assertIn("ownerUserId: { in: ownerUserIds }", counts_body)
+        self.assertIn("clientName: { in: clientNames }", counts_body)
+        self.assertNotIn("db.", summary_body)
+        self.assertIn("automaticNumberIncidentCounts", live_state_body)
 
     def test_live_state_preloads_sync_all_operations_in_one_bounded_read(self):
         control_plane = read_text("business/control_plane.tru")

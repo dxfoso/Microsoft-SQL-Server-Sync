@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 // Compact-layout helpers remain available for detail navigation.
 // ignore_for_file: unused_element
@@ -35,9 +36,9 @@ const int _maxAgentHistoryLimit = 100;
 const int _maxSyncDataLimitMb = 1024;
 
 bool _messageContainsReportedRowCount(String message) => RegExp(
-  r'\b\d[\d,]*\s+(?:(?:changed|missing|new)\s+)?rows?\b',
-  caseSensitive: false,
-).hasMatch(message);
+      r'\b\d[\d,]*\s+(?:(?:changed|missing|new)\s+)?rows?\b',
+      caseSensitive: false,
+    ).hasMatch(message);
 
 class _SyncLogOperation {
   _SyncLogOperation({
@@ -66,8 +67,8 @@ class _SyncLogOperation {
   int? get downloadedRows => _localRows(download);
   int? get changedRows => downloadedRows ?? uploadedRows;
   bool get isReconciliation => jobs.any(
-    (job) => job.sourceClientName == 'server-authoritative-reconcile',
-  );
+        (job) => job.sourceClientName == 'server-authoritative-reconcile',
+      );
 
   String get status {
     final failed = jobs.any(
@@ -169,10 +170,8 @@ class _SyncLogBatch {
   _SyncLogOperation get representative => operations.first;
 
   int? _sum(int? Function(_SyncLogOperation operation) valueFor) {
-    final values = operations
-        .map(valueFor)
-        .whereType<int>()
-        .toList(growable: false);
+    final values =
+        operations.map(valueFor).whereType<int>().toList(growable: false);
     if (values.isEmpty) return null;
     return values.fold<int>(0, (sum, value) => sum + value);
   }
@@ -350,8 +349,7 @@ class _ClientsPageState extends State<ClientsPage> {
       _ClientScreen.jobData =>
         '/clients/${Uri.encodeComponent(client ?? '')}/jobs/${Uri.encodeComponent(job ?? '')}',
     };
-    final query =
-        _screen == _ClientScreen.detail &&
+    final query = _screen == _ClientScreen.detail &&
             _detailView == _ClientDetailView.syncLog
         ? 'view=sync-log'
         : '';
@@ -395,17 +393,16 @@ class _ClientsPageState extends State<ClientsPage> {
       if (!mounted) {
         return;
       }
-      final availableNames = nextState.agents
-          .map((agent) => agent.clientName)
-          .toSet();
+      final availableNames =
+          nextState.agents.map((agent) => agent.clientName).toSet();
       final selected = _selectedClientName;
       _recordJobProgress(nextState.jobs);
       setState(() {
         _state = nextState;
         _selectedClientName =
             selected != null && availableNames.contains(selected)
-            ? selected
-            : null;
+                ? selected
+                : null;
         if (_selectedClientName == null) {
           _screen = _ClientScreen.list;
           _selectedTable = null;
@@ -551,8 +548,7 @@ class _ClientsPageState extends State<ClientsPage> {
         children: [
           IconButton(
             visualDensity: VisualDensity.compact,
-            tooltip:
-                _screen == _ClientScreen.table ||
+            tooltip: _screen == _ClientScreen.table ||
                     _screen == _ClientScreen.sync ||
                     _screen == _ClientScreen.jobData
                 ? 'Back to client'
@@ -581,10 +577,10 @@ class _ClientsPageState extends State<ClientsPage> {
               _screen == _ClientScreen.table
                   ? _displayTable(table?.table ?? _selectedTable ?? '')
                   : _screen == _ClientScreen.sync
-                  ? 'Sync details'
-                  : _screen == _ClientScreen.jobData
-                  ? 'Sync job data'
-                  : agent.clientName,
+                      ? 'Sync details'
+                      : _screen == _ClientScreen.jobData
+                          ? 'Sync job data'
+                          : agent.clientName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(
@@ -607,15 +603,15 @@ class _ClientsPageState extends State<ClientsPage> {
               Text(
                 'Clients',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+                      fontWeight: FontWeight.w800,
+                    ),
               ),
               const SizedBox(height: 4),
               Text(
                 '$online online of ${clients.length} registered clients. Select a client to inspect its sync log.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: const Color(0xFF667085),
-                ),
+                      color: const Color(0xFF667085),
+                    ),
               ),
             ],
           ),
@@ -822,9 +818,8 @@ class _ClientsPageState extends State<ClientsPage> {
       text: (storageStatus?.limitMb ?? firstAgent?.syncDataLimitMb ?? 256)
           .toString(),
     );
-    final intervalValues = agents
-        .map((agent) => agent.autoSyncIntervalMinutes)
-        .toSet();
+    final intervalValues =
+        agents.map((agent) => agent.autoSyncIntervalMinutes).toSet();
     var saving = false;
     String? intervalError;
     String? historyError;
@@ -847,7 +842,10 @@ class _ClientsPageState extends State<ClientsPage> {
                   agents.isEmpty
                       ? 'No clients are currently available.'
                       : 'Applies to all ${agents.length} visible clients. The server scheduler uses the new interval on its next one-minute tick.',
-                  style: const TextStyle(color: Color(0xFF475467), height: 1.4),
+                  style: const TextStyle(
+                    color: Color(0xFF475467),
+                    height: 1.4,
+                  ),
                 ),
                 if (intervalValues.length > 1) ...[
                   const SizedBox(height: 8),
@@ -928,16 +926,13 @@ class _ClientsPageState extends State<ClientsPage> {
                       final syncDataLimitMb = int.tryParse(
                         syncDataLimitController.text.trim(),
                       );
-                      final validInterval =
-                          interval != null &&
+                      final validInterval = interval != null &&
                           interval >= _minAutoSyncIntervalMinutes &&
                           interval <= _maxAutoSyncIntervalMinutes;
-                      final validHistory =
-                          history != null &&
+                      final validHistory = history != null &&
                           history >= 1 &&
                           history <= _maxAgentHistoryLimit;
-                      final validSyncDataLimit =
-                          syncDataLimitMb != null &&
+                      final validSyncDataLimit = syncDataLimitMb != null &&
                           syncDataLimitMb >= 1 &&
                           syncDataLimitMb <= _maxSyncDataLimitMb;
                       if (!validInterval ||
@@ -965,17 +960,19 @@ class _ClientsPageState extends State<ClientsPage> {
                         saveError = null;
                       });
                       try {
-                        final updatedCount = await _api
-                            .updateAllAgentSyncSettings(
-                              historyLimit: history,
-                              autoSyncIntervalMinutes: interval,
-                              syncDataLimitMb: syncDataLimitMb,
-                            );
+                        final updatedCount =
+                            await _api.updateAllAgentSyncSettings(
+                          historyLimit: history,
+                          autoSyncIntervalMinutes: interval,
+                          syncDataLimitMb: syncDataLimitMb,
+                        );
                         if (!mounted || !context.mounted) return;
                         Navigator.of(context).pop();
                         await _refresh(silent: true);
                         if (!mounted) return;
-                        ScaffoldMessenger.of(this.context).showSnackBar(
+                        ScaffoldMessenger.of(
+                          this.context,
+                        ).showSnackBar(
                           SnackBar(
                             content: Text(
                               'Saved sync settings for $updatedCount clients.',
@@ -994,7 +991,9 @@ class _ClientsPageState extends State<ClientsPage> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
                     )
                   : const Text('Save for all clients'),
             ),
@@ -1011,9 +1010,8 @@ class _ClientsPageState extends State<ClientsPage> {
   Widget _buildClientDetailToolbar(AdminAgent agent) {
     final jobs = _jobsFor(agent);
     final activeSyncs = _activeSyncCount(agent, jobs);
-    final statusColor = agent.isOnline
-        ? const Color(0xFF0F766E)
-        : const Color(0xFFB42318);
+    final statusColor =
+        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
     final machine = agent.machineName.isEmpty ? '-' : agent.machineName;
     final database = agent.database.isEmpty ? '-' : agent.database;
     return SizedBox(
@@ -1069,22 +1067,22 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _toolbarMetric(IconData icon, String label, {Color? color}) => Padding(
-    padding: const EdgeInsets.only(right: 10),
-    child: Row(
-      children: [
-        Icon(icon, size: 14, color: color ?? const Color(0xFF667085)),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(
-            color: color ?? const Color(0xFF475467),
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
+        padding: const EdgeInsets.only(right: 10),
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: color ?? const Color(0xFF667085)),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color ?? const Color(0xFF475467),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ),
-      ],
-    ),
-  );
+      );
 
   Widget _buildClientList() {
     final clients = _filteredClients();
@@ -1174,6 +1172,7 @@ class _ClientsPageState extends State<ClientsPage> {
                   DataColumn(label: Text('Client version')),
                   DataColumn(label: Text('Active')),
                   DataColumn(label: Text('Conflict source')),
+                  DataColumn(label: Text('Auto numbering')),
                   DataColumn(label: Text('Status')),
                   DataColumn(label: Text('Database')),
                   DataColumn(label: Text('Tables')),
@@ -1194,8 +1193,7 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildCompactClientFilterButton() {
-    final active =
-        _filter.isNotEmpty ||
+    final active = _filter.isNotEmpty ||
         _sortField != _ClientSortField.name ||
         !_sortAscending;
     return IconButton(
@@ -1205,12 +1203,10 @@ class _ClientsPageState extends State<ClientsPage> {
       constraints: const BoxConstraints.tightFor(width: 34, height: 34),
       padding: EdgeInsets.zero,
       style: IconButton.styleFrom(
-        foregroundColor: active
-            ? const Color(0xFF0F766E)
-            : const Color(0xFF475467),
-        backgroundColor: active
-            ? const Color(0xFFCCFBEF)
-            : const Color(0xFFF2F4F7),
+        foregroundColor:
+            active ? const Color(0xFF0F766E) : const Color(0xFF475467),
+        backgroundColor:
+            active ? const Color(0xFFCCFBEF) : const Color(0xFFF2F4F7),
       ),
       onPressed: () => unawaited(_showCompactClientFilters()),
       icon: Stack(
@@ -1336,10 +1332,7 @@ class _ClientsPageState extends State<ClientsPage> {
               search,
               const SizedBox(height: 8),
               Row(
-                children: [
-                  Expanded(child: sort),
-                  _buildSortDirectionButton(),
-                ],
+                children: [Expanded(child: sort), _buildSortDirectionButton()],
               ),
             ],
           );
@@ -1382,8 +1375,8 @@ class _ClientsPageState extends State<ClientsPage> {
               operation.isRunning
                   ? 'Sync All total: ${formatSyncDuration(operation.duration())} elapsed'
                   : operation.hasErrors
-                  ? 'Last Sync All total: ${formatSyncDuration(operation.duration())} · Completed with errors'
-                  : 'Last Sync All total: ${formatSyncDuration(operation.duration())} · Completed',
+                      ? 'Last Sync All total: ${formatSyncDuration(operation.duration())} · Completed with errors'
+                      : 'Last Sync All total: ${formatSyncDuration(operation.duration())} · Completed',
             ),
           ),
         FilledButton.tonalIcon(
@@ -1420,8 +1413,9 @@ class _ClientsPageState extends State<ClientsPage> {
           OutlinedButton.icon(
             onPressed: _automaticSyncBusy
                 ? null
-                : () =>
-                      unawaited(_setAutomaticSyncPaused(!automaticSyncPaused)),
+                : () => unawaited(
+                      _setAutomaticSyncPaused(!automaticSyncPaused),
+                    ),
             icon: _actionIcon(
               busy: _automaticSyncBusy,
               icon: automaticSyncPaused
@@ -1471,8 +1465,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 _serverResetBusy
                     ? 'Cleaning…'
                     : _lastServerResetResult!.automaticSyncPaused
-                    ? 'Cleaned · Automatic sync paused'
-                    : 'Cleaned',
+                        ? 'Cleaned · Automatic sync paused'
+                        : 'Cleaned',
               ),
               labelStyle: TextStyle(
                 color: _serverResetBusy
@@ -1575,16 +1569,16 @@ class _ClientsPageState extends State<ClientsPage> {
       switch (_sortField) {
         case _ClientSortField.name:
           comparison = left.clientName.toLowerCase().compareTo(
-            right.clientName.toLowerCase(),
-          );
+                right.clientName.toLowerCase(),
+              );
         case _ClientSortField.status:
           comparison = (left.isOnline ? 0 : 1).compareTo(
             right.isOnline ? 0 : 1,
           );
         case _ClientSortField.database:
           comparison = left.database.toLowerCase().compareTo(
-            right.database.toLowerCase(),
-          );
+                right.database.toLowerCase(),
+              );
         case _ClientSortField.tables:
           comparison = left.tables.length.compareTo(right.tables.length);
         case _ClientSortField.lastSync:
@@ -1608,9 +1602,8 @@ class _ClientsPageState extends State<ClientsPage> {
       agent,
       jobs,
       serverActivities:
-          (_state?.clientActivities ?? const <AdminClientActivity>[]).where(
-            (activity) => activity.clientName == agent.clientName,
-          ),
+          (_state?.clientActivities ?? const <AdminClientActivity>[])
+              .where((activity) => activity.clientName == agent.clientName),
     );
     return DataRow(
       selected: selected,
@@ -1643,6 +1636,18 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         DataCell(_buildClientActiveCheckbox(agent)),
         DataCell(_buildConflictSourceCheckbox(agent)),
+        DataCell(
+          Tooltip(
+            message: 'Show automatic-number incident history',
+            child: TextButton.icon(
+              key: ValueKey('automatic-number-incidents-${agent.clientName}'),
+              onPressed: () =>
+                  unawaited(_showAutomaticNumberIncidentsDialog(agent)),
+              icon: const Icon(Icons.pin_outlined, size: 17),
+              label: Text('${agent.automaticNumberIncidentCount}'),
+            ),
+          ),
+        ),
         DataCell(
           _statusChip(activityStatus, _clientActivityColor(activityStatus)),
         ),
@@ -1689,23 +1694,18 @@ class _ClientsPageState extends State<ClientsPage> {
     String? changesTooltip,
     String? syncAllTooltip,
     String? integrityTooltip,
-  }) => [
-    SyncSummaryItem(
-      label: 'Changes',
-      value: changes,
-      tooltip: changesTooltip,
-    ),
-    SyncSummaryItem(
-      label: 'Sync All',
-      value: syncAll,
-      tooltip: syncAllTooltip,
-    ),
-    SyncSummaryItem(
-      label: 'Integrity',
-      value: integrity,
-      tooltip: integrityTooltip,
-    ),
-  ];
+  }) =>
+      [
+        SyncSummaryItem(
+            label: 'Changes', value: changes, tooltip: changesTooltip),
+        SyncSummaryItem(
+            label: 'Sync All', value: syncAll, tooltip: syncAllTooltip),
+        SyncSummaryItem(
+          label: 'Integrity',
+          value: integrity,
+          tooltip: integrityTooltip,
+        ),
+      ];
 
   Widget _buildLastResultCell(AdminAgent agent) {
     final operation = _syncAllOperationForAgent(agent);
@@ -1757,9 +1757,8 @@ class _ClientsPageState extends State<ClientsPage> {
         changes:
             'Up ${_number(agent.uploadedRowTotal)} · Down ${_number(agent.downloadedRowTotal)}',
         syncAll: operation == null ? '-' : '${operation.tableCount} tables',
-        integrity: audit.totalTables == 0
-            ? '-'
-            : '${audit.totalTables} tables/cycle',
+        integrity:
+            audit.totalTables == 0 ? '-' : '${audit.totalTables} tables/cycle',
         changesTooltip:
             'Lifetime change sync totals: ${_number(agent.uploadedRowTotal)} uploaded, ${_number(agent.downloadedRowTotal)} downloaded.',
         syncAllTooltip: operation == null
@@ -1781,13 +1780,13 @@ class _ClientsPageState extends State<ClientsPage> {
     final syncAllAt = operation == null
         ? ''
         : operation.isRunning
-        ? operation.startedAt
-        : operation.completedAt;
+            ? operation.startedAt
+            : operation.completedAt;
     final integrityAt = audit.lastCompletedAt.trim().isNotEmpty
         ? audit.lastCompletedAt
         : audit.lastBatchCompletedAt.trim().isNotEmpty
-        ? audit.lastBatchCompletedAt
-        : audit.cycleStartedAt;
+            ? audit.lastBatchCompletedAt
+            : audit.cycleStartedAt;
     return SyncSummaryCell(
       key: ValueKey('sync-last-activity-${agent.clientName}'),
       width: 224,
@@ -1829,9 +1828,8 @@ class _ClientsPageState extends State<ClientsPage> {
   Widget _buildFingerprintAuditCell(AdminAgent agent) {
     final audit = agent.fingerprintAudit;
     final progress = audit.progressPercent.clamp(0, 100);
-    final status = audit.status.trim().isEmpty
-        ? 'waiting'
-        : audit.status.trim();
+    final status =
+        audit.status.trim().isEmpty ? 'waiting' : audit.status.trim();
     final active = status == 'running' || status == 'checking';
     final failed = status == 'failed';
     return SizedBox(
@@ -1847,10 +1845,10 @@ class _ClientsPageState extends State<ClientsPage> {
                   active
                       ? 'Checking $progress%'
                       : failed
-                      ? 'Check failed'
-                      : status == 'complete'
-                      ? 'Checked 100%'
-                      : 'Waiting for client',
+                          ? 'Check failed'
+                          : status == 'complete'
+                              ? 'Checked 100%'
+                              : 'Waiting for client',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1858,8 +1856,8 @@ class _ClientsPageState extends State<ClientsPage> {
                     color: failed
                         ? const Color(0xFFB42318)
                         : active
-                        ? const Color(0xFF175CD3)
-                        : const Color(0xFF067647),
+                            ? const Color(0xFF175CD3)
+                            : const Color(0xFF067647),
                   ),
                 ),
                 const SizedBox(height: 5),
@@ -1991,6 +1989,150 @@ class _ClientsPageState extends State<ClientsPage> {
   String _powershellSingleQuotedValue(String value) =>
       value.replaceAll("'", "''");
 
+  String _prettyIncidentJson(Map<String, dynamic> value) =>
+      const JsonEncoder.withIndent('  ').convert(value);
+
+  Future<void> _showAutomaticNumberIncidentsDialog(AdminAgent agent) async {
+    final incidents = _api.listAutomaticNumberIncidents(
+      clientName: agent.clientName,
+      limit: 200,
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.pin_outlined),
+        title: Text('Automatic numbering · ${agent.clientName}'),
+        content: SizedBox(
+          width: 880,
+          height: 600,
+          child: FutureBuilder<List<AdminAutomaticNumberIncident>>(
+            future: incidents,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text(
+                    'Unable to load automatic-number history: ${snapshot.error}',
+                  ),
+                );
+              }
+              final rows = snapshot.data ?? const [];
+              if (rows.isEmpty) {
+                return const Center(
+                  child: Text(
+                    'No automatic-number incidents were recorded.',
+                  ),
+                );
+              }
+              return ListView.separated(
+                itemCount: rows.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final incident = rows[index];
+                  final replacement = incident.afterNumber.isEmpty
+                      ? 'blocked'
+                      : incident.afterNumber;
+                  return ExpansionTile(
+                    key: ValueKey(
+                      'automatic-number-incident-${incident.id}',
+                    ),
+                    leading: Icon(
+                      incident.status == 'resolved'
+                          ? Icons.check_circle_outline_rounded
+                          : Icons.warning_amber_rounded,
+                      color: incident.status == 'resolved'
+                          ? const Color(0xFF067647)
+                          : const Color(0xFFB54708),
+                    ),
+                    title: Text(
+                      '${incident.table} · ${incident.beforeNumber} → $replacement',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      '${incident.clientName} conflicted with ${incident.conflictingClientName} · ${_formatTimestamp(incident.detectedAt)} · ${incident.status}',
+                    ),
+                    childrenPadding: const EdgeInsets.fromLTRB(
+                      16,
+                      0,
+                      16,
+                      16,
+                    ),
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(incident.reason),
+                      ),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: SelectableText(
+                          'Number column: ${incident.numberColumn}\n'
+                          'Primary key: ${_prettyIncidentJson(incident.primaryKey)}\n'
+                          'Scope: ${_prettyIncidentJson(incident.scope)}\n'
+                          'Detected: ${incident.detectedAt}\n'
+                          'Resolved: ${incident.resolvedAt.isEmpty ? '-' : incident.resolvedAt}\n'
+                          'Operation: ${incident.operationId}',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: _automaticNumberRowCard(
+                              label: 'Before',
+                              row: incident.beforeRow,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _automaticNumberRowCard(
+                              label: 'After',
+                              row: incident.afterRow,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _automaticNumberRowCard({
+    required String label,
+    required Map<String, dynamic> row,
+  }) =>
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF9FAFB),
+          border: Border.all(color: const Color(0xFFEAECF0)),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 6),
+            SelectableText(_prettyIncidentJson(row)),
+          ],
+        ),
+      );
+
   String? _clientUpdateInstallDirectory(String scriptPath) {
     final normalized = scriptPath.trim().replaceAll('/', r'\');
     final separator = normalized.lastIndexOf(r'\');
@@ -2062,7 +2204,9 @@ class _ClientsPageState extends State<ClientsPage> {
                     await writeBrowserClipboardText(command);
                     if (!dialogContext.mounted) return;
                     ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(content: Text('Recovery command copied.')),
+                      const SnackBar(
+                        content: Text('Recovery command copied.'),
+                      ),
                     );
                   },
             icon: const Icon(Icons.copy_rounded, size: 17),
@@ -2115,8 +2259,9 @@ class _ClientsPageState extends State<ClientsPage> {
         key: ValueKey('client-conflict-source-${agent.clientName}'),
         value: selected,
         onChanged: widget.authenticatedUser.canManageUsers
-            ? (value) =>
-                  unawaited(_setConflictSource(agent, selected: value == true))
+            ? (value) => unawaited(
+                  _setConflictSource(agent, selected: value == true),
+                )
             : null,
       ),
     );
@@ -2247,10 +2392,9 @@ class _ClientsPageState extends State<ClientsPage> {
     }
     final ownerIssues =
         (_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).where(
-          (issue) =>
-              issue.ownerUserId == (agent.ownerUserId ?? '') &&
-              issue.blocksSync,
-        );
+      (issue) =>
+          issue.ownerUserId == (agent.ownerUserId ?? '') && issue.blocksSync,
+    );
     if (ownerIssues.any((issue) => issue.needsInput)) {
       return 'Needs input';
     }
@@ -2345,8 +2489,8 @@ class _ClientsPageState extends State<ClientsPage> {
       final sample = _jobProgressSamples[job.id];
       if (sample != null) {
         final unchangedFor = DateTime.now().toUtc().difference(
-          sample.observedAt,
-        );
+              sample.observedAt,
+            );
         if (unchangedFor >= _refreshInterval * 2) {
           parts.add('no movement ${formatSyncDuration(unchangedFor)}');
         }
@@ -2450,12 +2594,10 @@ class _ClientsPageState extends State<ClientsPage> {
 
   Widget _buildClientListItem(AdminAgent agent) {
     final selected = agent.clientName == _selectedClientName;
-    final color = agent.isOnline
-        ? const Color(0xFF0F766E)
-        : const Color(0xFFB42318);
-    final database = agent.database.trim().isEmpty
-        ? '-'
-        : agent.database.trim();
+    final color =
+        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+    final database =
+        agent.database.trim().isEmpty ? '-' : agent.database.trim();
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -2468,9 +2610,8 @@ class _ClientsPageState extends State<ClientsPage> {
             color: selected ? const Color(0xFFE6F4F1) : const Color(0xFFF8FAFC),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: selected
-                  ? const Color(0xFF85C7BC)
-                  : const Color(0xFFDDE3EA),
+              color:
+                  selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
             ),
           ),
           child: Row(
@@ -2563,7 +2704,10 @@ class _ClientsPageState extends State<ClientsPage> {
               _buildCompactDetailViewSelector(
                 tableCount: agent.tables.length,
                 syncCount: _groupSyncLogBatches(
-                  _groupSyncLogOperations(jobs, clientName: agent.clientName),
+                  _groupSyncLogOperations(
+                    jobs,
+                    clientName: agent.clientName,
+                  ),
                   clientName: agent.clientName,
                 ).length,
               ),
@@ -2581,7 +2725,10 @@ class _ClientsPageState extends State<ClientsPage> {
                 tableCount: agent.tables.length,
                 issueCount: issueCount,
                 syncCount: _groupSyncLogBatches(
-                  _groupSyncLogOperations(jobs, clientName: agent.clientName),
+                  _groupSyncLogOperations(
+                    jobs,
+                    clientName: agent.clientName,
+                  ),
                   clientName: agent.clientName,
                 ).length,
               ),
@@ -2800,8 +2947,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 _buildMessage(
                   issue!.message.isEmpty
                       ? issue.needsInput
-                            ? 'This table needs a user decision. All synchronization remains stopped.'
-                            : 'Automatic repair is being verified. No user decision is required.'
+                          ? 'This table needs a user decision. All synchronization remains stopped.'
+                          : 'Automatic repair is being verified. No user decision is required.'
                       : issue.message,
                   error: issue.needsInput,
                 ),
@@ -2834,13 +2981,11 @@ class _ClientsPageState extends State<ClientsPage> {
 
   int? _changedRows(List<AdminJob> jobs, {String? direction}) {
     final normalizedDirection = (direction ?? '').toLowerCase();
-    final reported = jobs
-        .where((job) {
-          if (job.changedRowCount == null) return false;
-          return direction == null ||
-              job.direction.toLowerCase() == normalizedDirection;
-        })
-        .toList(growable: false);
+    final reported = jobs.where((job) {
+      if (job.changedRowCount == null) return false;
+      return direction == null ||
+          job.direction.toLowerCase() == normalizedDirection;
+    }).toList(growable: false);
     if (reported.isEmpty) return null;
     return reported.fold<int>(0, (sum, job) => sum + job.changedRowCount!);
   }
@@ -2860,19 +3005,17 @@ class _ClientsPageState extends State<ClientsPage> {
       jobsByTable.putIfAbsent(job.table, () => <AdminJob>[]).add(job);
     }
     final query = _tableFilter.toLowerCase();
-    final tables =
-        agent.tables
-            .where(
-              (table) =>
-                  query.isEmpty ||
-                  table.table.toLowerCase().contains(query) ||
-                  _displayTable(table.table).toLowerCase().contains(query),
-            )
-            .toList(growable: false)
-          ..sort(
-            (left, right) =>
-                _compareTableStates(agent, left, right, jobsByTable),
-          );
+    final tables = agent.tables
+        .where(
+          (table) =>
+              query.isEmpty ||
+              table.table.toLowerCase().contains(query) ||
+              _displayTable(table.table).toLowerCase().contains(query),
+        )
+        .toList(growable: false)
+      ..sort(
+        (left, right) => _compareTableStates(agent, left, right, jobsByTable),
+      );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2987,8 +3130,10 @@ class _ClientsPageState extends State<ClientsPage> {
                     DataColumn(
                       numeric: true,
                       label: const Text('Changed rows'),
-                      onSort: (_, ascending) =>
-                          _sortTables(_TableSortField.changedRows, ascending),
+                      onSort: (_, ascending) => _sortTables(
+                        _TableSortField.changedRows,
+                        ascending,
+                      ),
                     ),
                     DataColumn(
                       numeric: true,
@@ -2999,8 +3144,10 @@ class _ClientsPageState extends State<ClientsPage> {
                     DataColumn(
                       numeric: true,
                       label: const Text('Downloaded'),
-                      onSort: (_, ascending) =>
-                          _sortTables(_TableSortField.downloaded, ascending),
+                      onSort: (_, ascending) => _sortTables(
+                        _TableSortField.downloaded,
+                        ascending,
+                      ),
                     ),
                     DataColumn(
                       label: const Text('Readiness'),
@@ -3009,8 +3156,10 @@ class _ClientsPageState extends State<ClientsPage> {
                     ),
                     DataColumn(
                       label: const Text('Client status'),
-                      onSort: (_, ascending) =>
-                          _sortTables(_TableSortField.clientStatus, ascending),
+                      onSort: (_, ascending) => _sortTables(
+                        _TableSortField.clientStatus,
+                        ascending,
+                      ),
                     ),
                     DataColumn(
                       label: const Text('Last sync'),
@@ -3018,51 +3167,51 @@ class _ClientsPageState extends State<ClientsPage> {
                           _sortTables(_TableSortField.lastSync, ascending),
                     ),
                   ],
-                  rows: tables
-                      .map((table) {
-                        final issue = _tableSyncIssue(agent, table.table);
-                        final tableJobs =
-                            jobsByTable[table.table] ?? const <AdminJob>[];
-                        return DataRow(
-                          color: issue?.blocksSync == true
-                              ? WidgetStateProperty.all(const Color(0xFFFFF6ED))
-                              : null,
-                          cells: [
-                            DataCell(Text(_displayTable(table.table))),
-                            DataCell(Text(_changedRowsLabel(tableJobs))),
-                            DataCell(
-                              Text(
-                                _changedRowsLabel(
-                                  tableJobs,
-                                  direction: 'upload',
-                                ),
-                              ),
+                  rows: tables.map((table) {
+                    final issue = _tableSyncIssue(agent, table.table);
+                    final tableJobs =
+                        jobsByTable[table.table] ?? const <AdminJob>[];
+                    return DataRow(
+                      color: issue?.blocksSync == true
+                          ? WidgetStateProperty.all(
+                              const Color(0xFFFFF6ED),
+                            )
+                          : null,
+                      cells: [
+                        DataCell(Text(_displayTable(table.table))),
+                        DataCell(Text(_changedRowsLabel(tableJobs))),
+                        DataCell(
+                          Text(
+                            _changedRowsLabel(
+                              tableJobs,
+                              direction: 'upload',
                             ),
-                            DataCell(
-                              Text(
-                                _changedRowsLabel(
-                                  tableJobs,
-                                  direction: 'download',
-                                ),
-                              ),
+                          ),
+                        ),
+                        DataCell(
+                          Text(
+                            _changedRowsLabel(
+                              tableJobs,
+                              direction: 'download',
                             ),
-                            DataCell(
-                              _statusChip(
-                                _tableReadinessLabel(issue),
-                                _tableReadinessColor(issue),
-                              ),
-                            ),
-                            DataCell(
-                              _statusChip(
-                                table.status,
-                                _statusColor(table.status),
-                              ),
-                            ),
-                            DataCell(Text(_formatTimestamp(table.lastSync))),
-                          ],
-                        );
-                      })
-                      .toList(growable: false),
+                          ),
+                        ),
+                        DataCell(
+                          _statusChip(
+                            _tableReadinessLabel(issue),
+                            _tableReadinessColor(issue),
+                          ),
+                        ),
+                        DataCell(
+                          _statusChip(
+                            table.status,
+                            _statusColor(table.status),
+                          ),
+                        ),
+                        DataCell(Text(_formatTimestamp(table.lastSync))),
+                      ],
+                    );
+                  }).toList(growable: false),
                 ),
               ),
             ),
@@ -3082,40 +3231,38 @@ class _ClientsPageState extends State<ClientsPage> {
             columns: const [
               DataColumn(label: SizedBox(width: 176, child: Text('Actions'))),
             ],
-            rows: tables
-                .map((table) {
-                  final issue = _tableSyncIssue(agent, table.table);
-                  return DataRow(
-                    color: issue?.blocksSync == true
-                        ? WidgetStateProperty.all(const Color(0xFFFFF6ED))
-                        : null,
-                    cells: [
-                      DataCell(
-                        SizedBox(
-                          width: 176,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              TextButton.icon(
-                                onPressed: () => setState(() {
-                                  _selectedTable = table.table;
-                                  _selectedJobId = null;
-                                  _screen = _ClientScreen.table;
-                                  _replaceRoute();
-                                }),
-                                icon: const Icon(Icons.open_in_new, size: 15),
-                                label: const Text('Open'),
-                              ),
-                              if (issue?.blocksSync == true)
-                                _buildTableResolutionMenu(agent, table, issue!),
-                            ],
+            rows: tables.map((table) {
+              final issue = _tableSyncIssue(agent, table.table);
+              return DataRow(
+                color: issue?.blocksSync == true
+                    ? WidgetStateProperty.all(const Color(0xFFFFF6ED))
+                    : null,
+                cells: [
+                  DataCell(
+                    SizedBox(
+                      width: 176,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () => setState(() {
+                              _selectedTable = table.table;
+                              _selectedJobId = null;
+                              _screen = _ClientScreen.table;
+                              _replaceRoute();
+                            }),
+                            icon: const Icon(Icons.open_in_new, size: 15),
+                            label: const Text('Open'),
                           ),
-                        ),
+                          if (issue?.blocksSync == true)
+                            _buildTableResolutionMenu(agent, table, issue!),
+                        ],
                       ),
-                    ],
-                  );
-                })
-                .toList(growable: false),
+                    ),
+                  ),
+                ],
+              );
+            }).toList(growable: false),
           ),
         ),
       ],
@@ -3159,8 +3306,8 @@ class _ClientsPageState extends State<ClientsPage> {
         ).compareTo(_tableReadinessRank(_tableSyncIssue(agent, right.table)));
       case _TableSortField.clientStatus:
         comparison = left.status.toLowerCase().compareTo(
-          right.status.toLowerCase(),
-        );
+              right.status.toLowerCase(),
+            );
       case _TableSortField.lastSync:
         comparison = _timestamp(
           left.lastSync,
@@ -3168,8 +3315,8 @@ class _ClientsPageState extends State<ClientsPage> {
     }
     if (comparison == 0) {
       comparison = left.table.toLowerCase().compareTo(
-        right.table.toLowerCase(),
-      );
+            right.table.toLowerCase(),
+          );
     }
     return _tableSortAscending ? comparison : -comparison;
   }
@@ -3254,8 +3401,9 @@ class _ClientsPageState extends State<ClientsPage> {
         PopupMenuButton<String>(
           tooltip: 'Resolve table issue',
           position: PopupMenuPosition.under,
-          onSelected: (action) =>
-              unawaited(_confirmAndResolveTable(agent, table, issue, action)),
+          onSelected: (action) => unawaited(
+            _confirmAndResolveTable(agent, table, issue, action),
+          ),
           itemBuilder: (context) => const [
             PopupMenuItem(
               value: 'retry_sync',
@@ -3286,7 +3434,9 @@ class _ClientsPageState extends State<ClientsPage> {
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.fast_forward_rounded),
                 title: Text('Accept current differences'),
-                subtitle: Text('Keep both copies and sync only future changes'),
+                subtitle: Text(
+                  'Keep both copies and sync only future changes',
+                ),
               ),
             ),
           ],
@@ -3522,29 +3672,25 @@ class _ClientsPageState extends State<ClientsPage> {
       operations,
       clientName: _selectedClientName ?? '',
     );
-    final visibleBatches = batches
-        .where((batch) {
-          final query = _logFilter.toLowerCase();
-          final matchesQuery =
-              query.isEmpty ||
-              '${batch.operations.map((operation) => operation.representative.table).join(' ')} upload download ${batch.status} ${batch.message}'
-                  .toLowerCase()
-                  .contains(query);
-          final matchesDirection =
-              _logDirection == 'all' ||
-              (_logDirection == 'upload' &&
-                  batch.operations.any(
-                    (operation) => operation.upload != null,
-                  )) ||
-              (_logDirection == 'download' &&
-                  batch.operations.any(
-                    (operation) => operation.download != null,
-                  ));
-          final matchesStatus =
-              _logStatus == 'all' || batch.status.toLowerCase() == _logStatus;
-          return matchesQuery && matchesDirection && matchesStatus;
-        })
-        .toList(growable: false);
+    final visibleBatches = batches.where((batch) {
+      final query = _logFilter.toLowerCase();
+      final matchesQuery = query.isEmpty ||
+          '${batch.operations.map((operation) => operation.representative.table).join(' ')} upload download ${batch.status} ${batch.message}'
+              .toLowerCase()
+              .contains(query);
+      final matchesDirection = _logDirection == 'all' ||
+          (_logDirection == 'upload' &&
+              batch.operations.any(
+                (operation) => operation.upload != null,
+              )) ||
+          (_logDirection == 'download' &&
+              batch.operations.any(
+                (operation) => operation.download != null,
+              ));
+      final matchesStatus =
+          _logStatus == 'all' || batch.status.toLowerCase() == _logStatus;
+      return matchesQuery && matchesDirection && matchesStatus;
+    }).toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3641,9 +3787,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 DataColumn(label: Text('Progress')),
                 DataColumn(label: Text('Message')),
               ],
-              rows: visibleBatches
-                  .map(_buildSyncDataRow)
-                  .toList(growable: false),
+              rows:
+                  visibleBatches.map(_buildSyncDataRow).toList(growable: false),
             ),
           ),
       ],
@@ -3686,8 +3831,8 @@ class _ClientsPageState extends State<ClientsPage> {
             batch.isReconciliation
                 ? 'Reconciliation'
                 : batch.changedRows == null
-                ? '-'
-                : '+${_number(batch.changedRows!)}',
+                    ? '-'
+                    : '+${_number(batch.changedRows!)}',
             style: const TextStyle(
               color: Color(0xFFB54708),
               fontWeight: FontWeight.w800,
@@ -3699,8 +3844,8 @@ class _ClientsPageState extends State<ClientsPage> {
             batch.isReconciliation
                 ? 'Snapshot'
                 : batch.uploadedRows == null
-                ? '-'
-                : '+${_number(batch.uploadedRows!)}',
+                    ? '-'
+                    : '+${_number(batch.uploadedRows!)}',
             style: TextStyle(color: uploadColor, fontWeight: FontWeight.w800),
           ),
         ),
@@ -3709,8 +3854,8 @@ class _ClientsPageState extends State<ClientsPage> {
             batch.isReconciliation
                 ? 'Snapshot'
                 : batch.downloadedRows == null
-                ? '-'
-                : '+${_number(batch.downloadedRows!)}',
+                    ? '-'
+                    : '+${_number(batch.downloadedRows!)}',
             style: TextStyle(color: downloadColor, fontWeight: FontWeight.w800),
           ),
         ),
@@ -3844,8 +3989,8 @@ class _ClientsPageState extends State<ClientsPage> {
       final key = batch.isNotEmpty
           ? 'batch:$batch|${job.table}'
           : snapshot.isNotEmpty
-          ? 'snapshot:$snapshot'
-          : '${job.table}|${job.sourceClientName}|${job.subscriberClientName}|$timestamp';
+              ? 'snapshot:$snapshot'
+              : '${job.table}|${job.sourceClientName}|${job.subscriberClientName}|$timestamp';
       grouped.putIfAbsent(key, () => <AdminJob>[]).add(job);
     }
     final operations = grouped.entries
@@ -3875,8 +4020,7 @@ class _ClientsPageState extends State<ClientsPage> {
       final timestamp = representative.createdAt.length >= 16
           ? representative.createdAt.substring(0, 16)
           : representative.createdAt;
-      final key =
-          '${representative.sourceClientName}|'
+      final key = '${representative.sourceClientName}|'
           '${representative.subscriberClientName}|$timestamp';
       grouped.putIfAbsent(key, () => <_SyncLogOperation>[]).add(operation);
     }
@@ -3933,8 +4077,8 @@ class _ClientsPageState extends State<ClientsPage> {
             operation.isReconciliation
                 ? 'Reconciliation'
                 : changed == null
-                ? '-'
-                : '+${_number(changed)}',
+                    ? '-'
+                    : '+${_number(changed)}',
             style: const TextStyle(
               color: Color(0xFFB54708),
               fontWeight: FontWeight.w800,
@@ -3946,8 +4090,8 @@ class _ClientsPageState extends State<ClientsPage> {
             operation.isReconciliation
                 ? 'Snapshot'
                 : operation.uploadedRows == null
-                ? '-'
-                : '+${_number(operation.uploadedRows!)}',
+                    ? '-'
+                    : '+${_number(operation.uploadedRows!)}',
             style: const TextStyle(
               color: Color(0xFF2563EB),
               fontWeight: FontWeight.w800,
@@ -3959,8 +4103,8 @@ class _ClientsPageState extends State<ClientsPage> {
             operation.isReconciliation
                 ? 'Snapshot'
                 : operation.downloadedRows == null
-                ? '-'
-                : '+${_number(operation.downloadedRows!)}',
+                    ? '-'
+                    : '+${_number(operation.downloadedRows!)}',
             style: const TextStyle(
               color: Color(0xFFB54708),
               fontWeight: FontWeight.w800,
@@ -4006,13 +4150,11 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildJobRow(AdminJob job) {
-    final failed =
-        job.error?.trim().isNotEmpty == true ||
+    final failed = job.error?.trim().isNotEmpty == true ||
         job.status.toLowerCase() == 'failed';
     final isUpload = job.direction.toLowerCase() == 'upload';
-    final deltaColor = isUpload
-        ? const Color(0xFF2563EB)
-        : const Color(0xFFB54708);
+    final deltaColor =
+        isUpload ? const Color(0xFF2563EB) : const Color(0xFFB54708);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4037,8 +4179,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 job.error?.trim().isNotEmpty == true
                     ? job.error!
                     : (job.message.isEmpty
-                          ? 'No message reported.'
-                          : job.message),
+                        ? 'No message reported.'
+                        : job.message),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -4109,67 +4251,68 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _panel({required Widget child}) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: const Color(0xFFDDE3EA)),
-    ),
-    child: child,
-  );
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFDDE3EA)),
+        ),
+        child: child,
+      );
 
   Widget _buildMessage(String message, {required bool error}) => _panel(
-    child: Text(
-      message,
-      style: TextStyle(
-        color: error ? const Color(0xFFB42318) : const Color(0xFF667085),
-      ),
-    ),
-  );
+        child: Text(
+          message,
+          style: TextStyle(
+            color: error ? const Color(0xFFB42318) : const Color(0xFF667085),
+          ),
+        ),
+      );
 
   Widget _buildEmpty(String message) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(26),
-      child: Text(
-        message,
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: Color(0xFF667085)),
-      ),
-    ),
-  );
+        child: Padding(
+          padding: const EdgeInsets.all(26),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFF667085)),
+          ),
+        ),
+      );
 
   Widget _statusChip(String label, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.10),
-      borderRadius: BorderRadius.circular(999),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800),
-    ),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+              color: color, fontSize: 11, fontWeight: FontWeight.w800),
+        ),
+      );
 
   Widget _metric(String label, String value) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-    decoration: BoxDecoration(
-      color: const Color(0xFFF8FAFC),
-      borderRadius: BorderRadius.circular(7),
-      border: Border.all(color: const Color(0xFFDDE3EA)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(color: Color(0xFF667085), fontSize: 11),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: const Color(0xFFDDE3EA)),
         ),
-        const SizedBox(height: 2),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-      ],
-    ),
-  );
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(color: Color(0xFF667085), fontSize: 11),
+            ),
+            const SizedBox(height: 2),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+          ],
+        ),
+      );
 
   Color _statusColor(String status) {
     final value = status.toLowerCase();
@@ -4269,17 +4412,16 @@ class _ClientsPageState extends State<ClientsPage> {
     String? initialSourceName,
   }) async {
     if (_reconcileBusy || !widget.authenticatedUser.canManageUsers) return;
-    final onlineAgents =
-        (_state?.agents ?? const <AdminAgent>[])
-            .where(
-              (agent) =>
-                  agent.isOnline &&
-                  agent.serverConnected &&
-                  agent.sqlConnected &&
-                  agent.clientName.trim().isNotEmpty,
-            )
-            .toList()
-          ..sort((left, right) => left.clientName.compareTo(right.clientName));
+    final onlineAgents = (_state?.agents ?? const <AdminAgent>[])
+        .where(
+          (agent) =>
+              agent.isOnline &&
+              agent.serverConnected &&
+              agent.sqlConnected &&
+              agent.clientName.trim().isNotEmpty,
+        )
+        .toList()
+      ..sort((left, right) => left.clientName.compareTo(right.clientName));
     if (onlineAgents.length < 2) {
       _showActionError(
         'At least two online, SQL-connected clients are required.',
@@ -4290,8 +4432,8 @@ class _ClientsPageState extends State<ClientsPage> {
     final requestedSourceName = initialSourceName?.trim() ?? '';
     var sourceName =
         onlineAgents.any((agent) => agent.clientName == requestedSourceName)
-        ? requestedSourceName
-        : onlineAgents.first.clientName;
+            ? requestedSourceName
+            : onlineAgents.first.clientName;
     final selectedTargets = <String>{
       for (final agent in onlineAgents)
         if (agent.clientName != sourceName) agent.clientName,
@@ -4331,195 +4473,196 @@ class _ClientsPageState extends State<ClientsPage> {
       return result;
     }
 
-    final selection =
-        await showDialog<
-          ({String source, List<String> targets, List<String> tables})
-        >(
-          context: context,
-          builder: (context) => StatefulBuilder(
-            builder: (context, setDialogState) {
-              final targets = scopedAgents();
-              selectedTargets.removeWhere(
-                (name) =>
-                    name == sourceName ||
-                    !targets.any((agent) => agent.clientName == name),
-              );
-              final tables = availableTables();
-              selectedTables.removeWhere((table) => !tables.contains(table));
-              final automaticPaused = _state?.automaticSyncPaused ?? false;
-              final canContinue =
-                  automaticPaused &&
-                  selectedTargets.isNotEmpty &&
-                  selectedTables.isNotEmpty &&
-                  acknowledged;
-              return AlertDialog(
-                title: const Text('Authoritative reconciliation'),
-                content: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: 620,
-                    maxHeight: 620,
-                  ),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Choose the trusted source. Each selected target table will be replaced exactly with that source table, including removal of target-only rows.',
-                        ),
-                        const SizedBox(height: 14),
-                        DropdownButtonFormField<String>(
-                          initialValue: sourceName,
-                          decoration: const InputDecoration(
-                            labelText: 'Authoritative source',
-                          ),
-                          items: onlineAgents
-                              .map(
-                                (agent) => DropdownMenuItem(
-                                  value: agent.clientName,
-                                  child: Text(agent.clientName),
-                                ),
-                              )
-                              .toList(growable: false),
-                          onChanged: (value) {
-                            if (value == null) return;
-                            setDialogState(() {
-                              sourceName = value;
-                              selectedTargets.clear();
-                              selectedTargets.addAll(
-                                scopedAgents().map((agent) => agent.clientName),
-                              );
-                              selectedTables.clear();
-                              acknowledged = false;
-                            });
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          'Targets',
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                        for (final agent in targets)
-                          CheckboxListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(agent.clientName),
-                            subtitle: Text(
-                              agent.syncEnabled
-                                  ? 'Sync enabled'
-                                  : 'Sync disabled (repair is still allowed)',
+    final selection = await showDialog<
+        ({String source, List<String> targets, List<String> tables})>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final targets = scopedAgents();
+          selectedTargets.removeWhere(
+            (name) =>
+                name == sourceName ||
+                !targets.any((agent) => agent.clientName == name),
+          );
+          final tables = availableTables();
+          selectedTables.removeWhere((table) => !tables.contains(table));
+          final automaticPaused = _state?.automaticSyncPaused ?? false;
+          final canContinue = automaticPaused &&
+              selectedTargets.isNotEmpty &&
+              selectedTables.isNotEmpty &&
+              acknowledged;
+          return AlertDialog(
+            title: const Text('Authoritative reconciliation'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 620,
+                maxHeight: 620,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Choose the trusted source. Each selected target table will be replaced exactly with that source table, including removal of target-only rows.',
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<String>(
+                      initialValue: sourceName,
+                      decoration: const InputDecoration(
+                        labelText: 'Authoritative source',
+                      ),
+                      items: onlineAgents
+                          .map(
+                            (agent) => DropdownMenuItem(
+                              value: agent.clientName,
+                              child: Text(agent.clientName),
                             ),
-                            value: selectedTargets.contains(agent.clientName),
-                            onChanged: (selected) => setDialogState(() {
-                              if (selected == true) {
-                                selectedTargets.add(agent.clientName);
-                              } else {
-                                selectedTargets.remove(agent.clientName);
-                              }
-                              selectedTables.clear();
-                              acknowledged = false;
-                            }),
-                          ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Tables',
-                                style: Theme.of(context).textTheme.titleSmall
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: tables.isEmpty
-                                  ? null
-                                  : () => setDialogState(() {
-                                      if (selectedTables.length ==
-                                          tables.length) {
-                                        selectedTables.clear();
-                                      } else {
-                                        selectedTables
-                                          ..clear()
-                                          ..addAll(tables);
-                                      }
-                                      acknowledged = false;
-                                    }),
-                              child: Text(
-                                selectedTables.length == tables.length &&
-                                        tables.isNotEmpty
-                                    ? 'Clear all'
-                                    : 'Select all',
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (tables.isEmpty)
-                          const Text(
-                            'No enabled tables are shared by the selected clients.',
                           )
-                        else
-                          ...tables.map(
-                            (table) => CheckboxListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(_displayTable(table)),
-                              subtitle: Text(table),
-                              value: selectedTables.contains(table),
-                              onChanged: (selected) => setDialogState(() {
-                                if (selected == true) {
-                                  selectedTables.add(table);
-                                } else {
-                                  selectedTables.remove(table);
-                                }
-                                acknowledged = false;
-                              }),
-                            ),
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() {
+                          sourceName = value;
+                          selectedTargets.clear();
+                          selectedTargets.addAll(
+                            scopedAgents().map((agent) => agent.clientName),
+                          );
+                          selectedTables.clear();
+                          acknowledged = false;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Targets',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    for (final agent in targets)
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(agent.clientName),
+                        subtitle: Text(
+                          agent.syncEnabled
+                              ? 'Sync enabled'
+                              : 'Sync disabled (repair is still allowed)',
+                        ),
+                        value: selectedTargets.contains(agent.clientName),
+                        onChanged: (selected) => setDialogState(() {
+                          if (selected == true) {
+                            selectedTargets.add(agent.clientName);
+                          } else {
+                            selectedTargets.remove(agent.clientName);
+                          }
+                          selectedTables.clear();
+                          acknowledged = false;
+                        }),
+                      ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Tables',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w800),
                           ),
-                        const SizedBox(height: 8),
-                        if (!automaticPaused)
-                          const Text(
-                            'Pause automatic sync before starting this repair.',
-                            style: TextStyle(
-                              color: Color(0xFFB42318),
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          controlAffinity: ListTileControlAffinity.leading,
-                          title: const Text(
-                            'I understand that selected target tables will be replaced.',
-                          ),
-                          value: acknowledged,
-                          onChanged: (value) => setDialogState(
-                            () => acknowledged = value == true,
+                        ),
+                        TextButton(
+                          onPressed: tables.isEmpty
+                              ? null
+                              : () => setDialogState(() {
+                                    if (selectedTables.length ==
+                                        tables.length) {
+                                      selectedTables.clear();
+                                    } else {
+                                      selectedTables
+                                        ..clear()
+                                        ..addAll(tables);
+                                    }
+                                    acknowledged = false;
+                                  }),
+                          child: Text(
+                            selectedTables.length == tables.length &&
+                                    tables.isNotEmpty
+                                ? 'Clear all'
+                                : 'Select all',
                           ),
                         ),
                       ],
                     ),
-                  ),
+                    if (tables.isEmpty)
+                      const Text(
+                        'No enabled tables are shared by the selected clients.',
+                      )
+                    else
+                      ...tables.map(
+                        (table) => CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(_displayTable(table)),
+                          subtitle: Text(table),
+                          value: selectedTables.contains(table),
+                          onChanged: (selected) => setDialogState(() {
+                            if (selected == true) {
+                              selectedTables.add(table);
+                            } else {
+                              selectedTables.remove(table);
+                            }
+                            acknowledged = false;
+                          }),
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    if (!automaticPaused)
+                      const Text(
+                        'Pause automatic sync before starting this repair.',
+                        style: TextStyle(
+                          color: Color(0xFFB42318),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text(
+                        'I understand that selected target tables will be replaced.',
+                      ),
+                      value: acknowledged,
+                      onChanged: (value) => setDialogState(
+                        () => acknowledged = value == true,
+                      ),
+                    ),
+                  ],
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  FilledButton(
-                    onPressed: canContinue
-                        ? () => Navigator.of(context).pop((
-                            source: sourceName,
-                            targets: selectedTargets.toList(growable: false),
-                            tables: selectedTables.toList(growable: false),
-                          ))
-                        : null,
-                    child: const Text('Replace Target Data'),
-                  ),
-                ],
-              );
-            },
-          ),
-        );
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: canContinue
+                    ? () => Navigator.of(context).pop((
+                          source: sourceName,
+                          targets: selectedTargets.toList(growable: false),
+                          tables: selectedTables.toList(growable: false),
+                        ))
+                    : null,
+                child: const Text('Replace Target Data'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
     if (selection == null || !mounted) return;
 
     setState(() => _reconcileBusy = true);
@@ -4674,9 +4817,9 @@ class _ClientsPageState extends State<ClientsPage> {
       agent.tables.fold<int>(0, (sum, table) => sum + table.rowCount);
 
   String _number(int value) => value.toString().replaceAllMapped(
-    RegExp(r'(?<!^)(?=(\d{3})+$)'),
-    (_) => ',',
-  );
+        RegExp(r'(?<!^)(?=(\d{3})+$)'),
+        (_) => ',',
+      );
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';

@@ -200,6 +200,29 @@ class LiveSyncApiClient {
     return AdminLiveState.fromJson(Map<String, dynamic>.from(decoded));
   }
 
+  Future<List<AdminAutomaticNumberIncident>> listAutomaticNumberIncidents({
+    required String clientName,
+    int limit = 100,
+  }) async {
+    final decoded = await _invokeFunction('automatic_number_incidents_list', {
+      'clientName': clientName.trim(),
+      'limit': limit,
+    });
+    if (decoded is! Map) {
+      throw const LiveSyncApiException(
+        'Unexpected automatic-number incident payload.',
+      );
+    }
+    return (decoded['incidents'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map(
+          (item) => AdminAutomaticNumberIncident.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .toList(growable: false);
+  }
+
   Future<void> triggerJob({
     required String clientName,
     required String table,

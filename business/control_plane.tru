@@ -253,6 +253,59 @@ class SyncRowWinner {
   field updatedAt: datetime
 }
 
+// Durable operator-visible record for one server-coordinated automatic
+// business-number repair. Retrying the same operation reuses the same id, so
+// the counter and the allocated number remain idempotent.
+class AutoNumberIncident {
+  field id: string min=64 max=64
+  field ownerUserId: string min=0 max=64
+  field clientName: string min=1 max=128
+  field conflictingClientName: string min=1 max=128
+  field table: string min=1 max=256
+  field status: string min=1 max=32
+  field reason: string min=1 max=256
+  field numberColumn: string min=1 max=128
+  field beforeNumber: string min=1 max=64
+  field afterNumber: string min=0 max=64
+  field scope: json?
+  field primaryKey: json?
+  field beforeRow: json?
+  field afterRow: json?
+  field operationId: string min=64 max=64
+  field physicalKey: string min=64 max=64
+  field detectedAt: datetime
+  field resolvedAt: datetime?
+  field updatedAt: datetime
+}
+
+// Owner-wide allocator for one validated table/key scope. It becomes usable
+// only after a complete multi-client inventory observed the table.
+class AutoNumberSequence {
+  field id: string min=64 max=64
+  field ownerUserId: string min=0 max=64
+  field table: string min=1 max=256
+  field scopeKey: string min=64 max=64
+  field numberColumn: string min=1 max=128
+  field scope: json?
+  field maximumObserved: int min=0 max=2147483647
+  field initialized: bool
+  field revision: int min=1 max=2147483647
+  field updatedAt: datetime
+}
+
+// Unique reservation fence. Concurrent backend workers may observe the same
+// maximum, but only one can insert a given scoped number; the losing upload
+// transaction rolls back and retries against the advanced sequence.
+class AutoNumberReservation {
+  field id: string min=64 max=64
+  field ownerUserId: string min=0 max=64
+  field table: string min=1 max=256
+  field scopeKey: string min=64 max=64
+  field number: int min=1 max=2147483647
+  field incidentId: string min=64 max=64
+  field createdAt: datetime
+}
+
 class UploadSession {
   history minimal
   field id: string min=1 max=64
@@ -327,6 +380,12 @@ index SyncJobDataChunk_ownerUserId_createdAt on SyncJobDataChunk(ownerUserId, cr
 index SyncRowWinner_ownerUserId_table on SyncRowWinner(ownerUserId, table)
 index SyncRowWinner_ownerUserId_table_physicalKey on SyncRowWinner(ownerUserId, table, physicalKey)
 index SyncRowWinner_ownerUserId_table_operationId on SyncRowWinner(ownerUserId, table, operationId)
+index AutoNumberIncident_ownerUserId_clientName on AutoNumberIncident(ownerUserId, clientName)
+index AutoNumberIncident_ownerUserId_table on AutoNumberIncident(ownerUserId, table)
+index AutoNumberIncident_operationId on AutoNumberIncident(operationId)
+index AutoNumberIncident_ownerUserId_table_physicalKey on AutoNumberIncident(ownerUserId, table, physicalKey)
+index AutoNumberSequence_ownerUserId_table on AutoNumberSequence(ownerUserId, table)
+index AutoNumberReservation_ownerUserId_table_scopeKey on AutoNumberReservation(ownerUserId, table, scopeKey)
 index UploadSession_jobId on UploadSession(jobId)
 index UploadSession_uploadId on UploadSession(uploadId)
 index DownloadSession_jobId on DownloadSession(jobId)
@@ -2002,7 +2061,17 @@ function completed_row_totals_for_client(clientName: string, completedRowTotals:
   return { uploaded: 0, downloaded: 0 };
 }
 
-function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null, completedRowTotals: array<json>? = null): map<json> {
+function automatic_number_incident_count_for_client(ownerUserId: string, clientName: string, incidentCounts: array<json>? = null): int {
+  for (const totals of incidentCounts ?? []) {
+    if (string.from(totals.ownerUserId ?? '').trim() == ownerUserId.trim() &&
+        string.from(totals.clientName ?? '').trim() == clientName.trim()) {
+      return int.from(totals.incidentCount ?? 0);
+    }
+  }
+  return 0;
+}
+
+function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null, completedRowTotals: array<json>? = null, automaticNumberIncidentCounts: array<json>? = null): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
     const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
@@ -2048,6 +2117,11 @@ function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null,
     lastDownloadedRows: lastCompletedSync.downloadedRows,
     uploadedRowTotal: rowTotals.uploaded,
     downloadedRowTotal: rowTotals.downloaded,
+    automaticNumberIncidentCount: automatic_number_incident_count_for_client(
+      string.from(agent.ownerUserId ?? ''),
+      string.from(agent.clientName),
+      automaticNumberIncidentCounts
+    ),
     status: runtimeStatus,
     selectedTable: agent.selectedTable,
     diagnostics: agent_diagnostics_payload(agent),
@@ -2828,6 +2902,30 @@ function live_state_completed_row_totals_for(current: map<json>): array<json> {
   return rows;
 }
 
+function live_state_automatic_number_incident_counts(ownerUserIds: array<string>, clientNames: array<string>): array<json> {
+  if (ownerUserIds.length == 0 || clientNames.length == 0) {
+    return [];
+  }
+  const rows = db.aggregate(AutoNumberIncident, {
+    where: {
+      ownerUserId: { in: ownerUserIds },
+      clientName: { in: clientNames }
+    },
+    select: [
+      { field: 'ownerUserId' },
+      { field: 'clientName' },
+      { fn: 'count', as: 'incidentCount' }
+    ],
+    groupBy: ['ownerUserId', 'clientName'],
+    orderBy: [{ field: 'clientName', dir: 'asc' }],
+    limit: 1000
+  });
+  if (rows == null) {
+    return [];
+  }
+  return rows;
+}
+
 function live_state_manual_sync_rows_for_owner_ids(ownerUserIds: array<string>): array<json> {
   if (ownerUserIds.length == 0) {
     return [];
@@ -2859,13 +2957,13 @@ function public_client_activity_payloads(rows: array<json>): array<json> {
   });
 }
 
-function bounded_public_agent_payloads(rows: array<json>, limit: int, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null, completedRowTotals: array<json>? = null): map<json> {
+function bounded_public_agent_payloads(rows: array<json>, limit: int, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null, completedRowTotals: array<json>? = null, automaticNumberIncidentCounts: array<json>? = null): map<json> {
   let items = [];
   let seen = 0;
   for (const row of rows) {
     seen += 1;
     if (items.length < limit) {
-      items = items.concat([public_agent_payload(row, activeJobs, completedJobs, periodicStates, completedRowTotals)]);
+      items = items.concat([public_agent_payload(row, activeJobs, completedJobs, periodicStates, completedRowTotals, automaticNumberIncidentCounts)]);
     }
   }
   return {
@@ -5504,6 +5602,143 @@ function normalize_unique_key_column_sets(values: array<json>? = null, columns: 
   return normalizedSets;
 }
 
+function resolve_sync_column(columns: array<string>, requested: string): string {
+  for (const column of columns) {
+    const candidate = string.from(column).trim();
+    if (candidate.toLowerCase() == requested.trim().toLowerCase()) {
+      return candidate;
+    }
+  }
+  return '';
+}
+
+function automatic_number_rule(table: string, columns: array<string>, keyColumns: array<string>, uniqueKeyColumnSets: array<json>): map<json>? {
+  const reference = sync_table_reference(table);
+  const localTable = string.from(reference.table).trim().toLowerCase();
+  if (localTable != 'ce000' && localTable != 'dbo.ce000') {
+    return null;
+  }
+  const guidColumn = resolve_sync_column(columns, 'GUID');
+  const typeColumn = resolve_sync_column(columns, 'Type');
+  const numberColumn = resolve_sync_column(columns, 'Number');
+  const branchColumn = resolve_sync_column(columns, 'Branch');
+  if (guidColumn.length == 0 || typeColumn.length == 0 ||
+      numberColumn.length == 0 || branchColumn.length == 0 ||
+      keyColumns.length != 1 ||
+      string.from(keyColumns[0]).trim().toLowerCase() != guidColumn.toLowerCase()) {
+    return null;
+  }
+  let verifiedUniqueKey = false;
+  for (const rawSet of uniqueKeyColumnSets) {
+    const columnSet = rawSet ?? [];
+    if (columnSet.length == 3 &&
+        string.from(columnSet[0]).trim().toLowerCase() == typeColumn.toLowerCase() &&
+        string.from(columnSet[1]).trim().toLowerCase() == numberColumn.toLowerCase() &&
+        string.from(columnSet[2]).trim().toLowerCase() == branchColumn.toLowerCase()) {
+      verifiedUniqueKey = true;
+    }
+  }
+  if (!verifiedUniqueKey) {
+    return null;
+  }
+  return {
+    table: localTable,
+    guidColumn,
+    numberColumn,
+    scopeColumns: [typeColumn, branchColumn]
+  };
+}
+
+function automatic_number_scope(ownerUserId: string, table: string, rule: map<json>, row: map<json>): map<json> {
+  const typeColumn = string.from(rule.scopeColumns[0]);
+  const branchColumn = string.from(rule.scopeColumns[1]);
+  const values = [row[typeColumn], row[branchColumn]];
+  const scopeKey = crypto.hash(json.stringify(values), 'sha256');
+  return {
+    id: crypto.hash(json.stringify([
+      ownerUserId.trim(),
+      table.trim().toLowerCase(),
+      scopeKey
+    ]), 'sha256'),
+    scopeKey,
+    scope: {
+      Type: row[typeColumn],
+      Branch: row[branchColumn]
+    }
+  };
+}
+
+function automatic_number_primary_key(rule: map<json>, row: map<json>): map<json> {
+  const column = string.from(rule.guidColumn);
+  return { GUID: row[column] };
+}
+
+function sync_row_primary_key_payload(keyColumns: array<string>, row: map<json>): map<json> {
+  let values = [];
+  for (const column of keyColumns) {
+    values = values.concat([row[column]]);
+  }
+  return { columns: keyColumns, values };
+}
+
+function sync_row_logical_winner_refs_with_number_override(ownerUserId: string, table: string, row: map<json>, uniqueKeyColumnSets: array<json>, numberColumn: string, replacementNumber: int): array<json> {
+  let refs = [];
+  for (const rawColumnSet of uniqueKeyColumnSets) {
+    let columnSet = [];
+    let values = [];
+    for (const rawColumn of rawColumnSet ?? []) {
+      const column = string.from(rawColumn);
+      columnSet = columnSet.concat([column]);
+      if (column.trim().toLowerCase() == numberColumn.trim().toLowerCase()) {
+        values = values.concat([replacementNumber]);
+      } else {
+        values = values.concat([row[column]]);
+      }
+    }
+    if (columnSet.length == 0) {
+      continue;
+    }
+    const identityKey = crypto.hash(json.stringify({
+      table: table.trim().toLowerCase(),
+      columns: columnSet.map((column) => string.from(column).toLowerCase()),
+      values
+    }), 'sha256');
+    refs = refs.concat([{
+      id: sync_row_winner_id(ownerUserId, table, identityKey),
+      identityKey
+    }]);
+  }
+  return refs;
+}
+
+function automatic_number_sequence_find(rows: array<json>, id: string): map<json>? {
+  for (const row of rows) {
+    if (string.from(row.id) == id) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function automatic_number_sequence_replace(rows: array<json>, replacement: map<json>): array<json> {
+  let result = [];
+  for (const row of rows) {
+    if (string.from(row.id) != string.from(replacement.id)) {
+      result = result.concat([row]);
+    }
+  }
+  return result.concat([replacement]);
+}
+
+function automatic_number_incident_find_by_operation(rows: array<json>, operationId: string): map<json>? {
+  for (const row of rows) {
+    if (string.from(row.operationId) == operationId) {
+      return row;
+    }
+  }
+  return null;
+}
+
 function sync_row_logical_winner_refs(ownerUserId: string, table: string, row: map<json>, uniqueKeyColumnSets: array<json>): array<json> {
   let refs = [];
   for (const rawColumnSet of uniqueKeyColumnSets) {
@@ -6440,6 +6675,60 @@ function user_delete(userId: string, token: string? = null): map<json> {
   return { ok: true, user: public_user_payload(target) };
 }
 
+function public_automatic_number_incident_payload(incident: map<json>): map<json> {
+  return {
+    id: incident.id,
+    clientName: incident.clientName,
+    conflictingClientName: incident.conflictingClientName,
+    table: incident.table,
+    status: incident.status,
+    reason: incident.reason,
+    numberColumn: incident.numberColumn,
+    beforeNumber: incident.beforeNumber,
+    afterNumber: incident.afterNumber,
+    scope: incident.scope,
+    primaryKey: incident.primaryKey,
+    beforeRow: incident.beforeRow,
+    afterRow: incident.afterRow,
+    operationId: incident.operationId,
+    detectedAt: incident.detectedAt,
+    resolvedAt: incident.resolvedAt,
+    updatedAt: incident.updatedAt
+  };
+}
+
+function automatic_number_incidents_list(clientName: string, limit: int = 100, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const agent = find_agent_row_by_name(visible_agent_rows_for(current), normalizedClientName);
+  if (agent == null) {
+    return raw_json_error(403, 'client is unavailable or outside your scope');
+  }
+  let boundedLimit = limit;
+  if (boundedLimit < 1) {
+    boundedLimit = 1;
+  }
+  if (boundedLimit > 500) {
+    boundedLimit = 500;
+  }
+  const rows = db.selectMany(AutoNumberIncident, {
+    where: {
+      ownerUserId: string.from(agent.ownerUserId ?? '').trim(),
+      clientName: normalizedClientName
+    },
+    orderBy: { field: 'detectedAt', dir: 'desc' },
+    fields: ['id', 'clientName', 'conflictingClientName', 'table', 'status', 'reason', 'numberColumn', 'beforeNumber', 'afterNumber', 'scope', 'primaryKey', 'beforeRow', 'afterRow', 'operationId', 'detectedAt', 'resolvedAt', 'updatedAt'],
+    limit: boundedLimit
+  });
+  return {
+    clientName: normalizedClientName,
+    incidents: rows.map((row) => public_automatic_number_incident_payload(row))
+  };
+}
+
 function live_state(token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -6454,6 +6743,13 @@ function live_state(token: string? = null): map<json> {
   const visibleOwnerUserIds = unique_string_values(
     agentRows.map((agent) => string.from(agent.ownerUserId))
   );
+  const visibleClientNames = unique_string_values(
+    agentRows.map((agent) => string.from(agent.clientName))
+  );
+  const automaticNumberIncidentCounts = live_state_automatic_number_incident_counts(
+    visibleOwnerUserIds,
+    visibleClientNames
+  );
   const periodicSyncRows = live_state_manual_sync_rows_for_owner_ids(visibleOwnerUserIds);
   const agentPage = bounded_public_agent_payloads(
     agentRows,
@@ -6461,7 +6757,8 @@ function live_state(token: string? = null): map<json> {
     activeJobRows,
     completedJobRows,
     periodicSyncRows,
-    completedRowTotals
+    completedRowTotals,
+    automaticNumberIncidentCounts
   );
   const recentJobRows = live_state_job_rows_for(current, jobLimit);
   const jobPage = bounded_public_job_payloads(
@@ -8855,6 +9152,60 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       }
     }
   }
+  const autoNumberRule = automatic_number_rule(
+    winnerTable,
+    resolvedColumns,
+    resolvedKeyColumns,
+    resolvedUniqueKeyColumnSets
+  );
+  let currentAutoNumberSequences = [];
+  let currentAutoNumberIncidents = [];
+  if (autoNumberRule != null) {
+    currentAutoNumberSequences = db.selectMany(AutoNumberSequence, {
+      where: {
+        ownerUserId: winnerOwnerUserId,
+        table: winnerTable
+      },
+      orderBy: { field: 'id', dir: 'asc' },
+      fields: ['id', 'ownerUserId', 'table', 'scopeKey', 'numberColumn', 'scope', 'maximumObserved', 'initialized', 'revision', 'updatedAt'],
+      limit: 1000
+    });
+    const autoNumberOperationIds = unique_string_values(
+      effectiveIncomingRows.map((row) => string.from(row.__sync_operation_id ?? '').trim())
+    );
+    if (autoNumberOperationIds.length > 0) {
+      currentAutoNumberIncidents = db.selectMany(AutoNumberIncident, {
+        where: {
+          ownerUserId: winnerOwnerUserId,
+          table: winnerTable,
+          operationId: { in: autoNumberOperationIds }
+        },
+        orderBy: { field: 'detectedAt', dir: 'asc' },
+        fields: ['id', 'ownerUserId', 'clientName', 'conflictingClientName', 'table', 'status', 'reason', 'numberColumn', 'beforeNumber', 'afterNumber', 'scope', 'primaryKey', 'beforeRow', 'afterRow', 'operationId', 'physicalKey', 'detectedAt', 'resolvedAt', 'updatedAt'],
+        limit: 100
+      });
+    }
+    if (candidatePhysicalKeys.length > 0) {
+      const physicalIncidents = db.selectMany(AutoNumberIncident, {
+        where: {
+          ownerUserId: winnerOwnerUserId,
+          table: winnerTable,
+          physicalKey: { in: candidatePhysicalKeys }
+        },
+        orderBy: { field: 'detectedAt', dir: 'asc' },
+        fields: ['id', 'ownerUserId', 'clientName', 'conflictingClientName', 'table', 'status', 'reason', 'numberColumn', 'beforeNumber', 'afterNumber', 'scope', 'primaryKey', 'beforeRow', 'afterRow', 'operationId', 'physicalKey', 'detectedAt', 'resolvedAt', 'updatedAt'],
+        limit: 100
+      });
+      for (const physicalIncident of physicalIncidents) {
+        if (automatic_number_incident_find_by_operation(
+              currentAutoNumberIncidents,
+              string.from(physicalIncident.operationId)
+            ) == null) {
+          currentAutoNumberIncidents = currentAutoNumberIncidents.concat([physicalIncident]);
+        }
+      }
+    }
+  }
   const chunkRecord = db.insert(SnapshotRecord, {
     id: uuid.v4(),
     clientName: 'server-merge',
@@ -8937,6 +9288,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     let acceptedOperationIds = [];
     let acceptedRows = [];
     let pendingWinners = [];
+    let pendingAutoNumberSequences = [];
+    let pendingAutoNumberIncidents = [];
+    let pendingAutoNumberReservations = [];
     for (const incomingRow of effectiveIncomingRows) {
       const operationId = string.from(incomingRow.__sync_operation_id ?? '').trim();
       let accepted = true;
@@ -8944,6 +9298,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       let matchesDurableWinnerContent = false;
       let reassertsDurableTombstone = false;
       let durableTombstoneWinner = null;
+      let automaticNumberDirective = null;
       if (winnerPolicyApplied) {
         accepted = operationId.length == 64;
         const operation = string.from(incomingRow.__sync_op ?? 'S').trim().toUpperCase();
@@ -8985,6 +9340,261 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             incomingRow,
             resolvedUniqueKeyColumnSets
           );
+        }
+        if (operation != 'D' && autoNumberRule != null) {
+          const numberColumn = string.from(autoNumberRule.numberColumn);
+          const sequenceScope = automatic_number_scope(
+            winnerOwnerUserId,
+            winnerTable,
+            autoNumberRule,
+            incomingRow
+          );
+          let sequence = automatic_number_sequence_find(
+            pendingAutoNumberSequences,
+            string.from(sequenceScope.id)
+          );
+          if (sequence == null) {
+            sequence = automatic_number_sequence_find(
+              currentAutoNumberSequences,
+              string.from(sequenceScope.id)
+            );
+          }
+          const observedNumber = int.from(incomingRow[numberColumn] ?? 0);
+          for (const priorIncident of currentAutoNumberIncidents) {
+            if (string.from(priorIncident.physicalKey) == physicalKey &&
+                string.from(priorIncident.status).trim().toLowerCase() == 'reserved' &&
+                string.from(priorIncident.afterNumber).trim() == string.from(observedNumber)) {
+              pendingAutoNumberIncidents = pendingAutoNumberIncidents.concat([{
+                id: priorIncident.id,
+                ownerUserId: priorIncident.ownerUserId,
+                clientName: priorIncident.clientName,
+                conflictingClientName: priorIncident.conflictingClientName,
+                table: priorIncident.table,
+                status: 'resolved',
+                reason: priorIncident.reason,
+                numberColumn: priorIncident.numberColumn,
+                beforeNumber: priorIncident.beforeNumber,
+                afterNumber: priorIncident.afterNumber,
+                scope: priorIncident.scope,
+                primaryKey: priorIncident.primaryKey,
+                beforeRow: priorIncident.beforeRow,
+                afterRow: priorIncident.afterRow,
+                operationId: priorIncident.operationId,
+                physicalKey: priorIncident.physicalKey,
+                detectedAt: priorIncident.detectedAt,
+                resolvedAt: serverReceivedAt,
+                updatedAt: serverReceivedAt
+              }]);
+            }
+          }
+          let maximumObserved = observedNumber;
+          let sequenceRevision = 1;
+          let sequenceInitialized = false;
+          if (sequence != null) {
+            maximumObserved = int.from(sequence.maximumObserved ?? 0);
+            if (observedNumber > maximumObserved) {
+              maximumObserved = observedNumber;
+            }
+            sequenceRevision = int.from(sequence.revision ?? 0) + 1;
+            sequenceInitialized = sequence.initialized == true;
+          }
+          if (multiClientUnionBootstrap && ready) {
+            sequenceInitialized = true;
+          }
+          sequence = {
+            id: sequenceScope.id,
+            ownerUserId: winnerOwnerUserId,
+            table: winnerTable,
+            scopeKey: sequenceScope.scopeKey,
+            numberColumn,
+            scope: sequenceScope.scope,
+            maximumObserved,
+            initialized: sequenceInitialized,
+            revision: sequenceRevision,
+            updatedAt: serverReceivedAt
+          };
+          pendingAutoNumberSequences = automatic_number_sequence_replace(
+            pendingAutoNumberSequences,
+            sequence
+          );
+
+          let conflictingWinner = null;
+          for (const logicalWinnerRef of logicalWinnerRefs) {
+            let logicalWinner = sync_row_winner_find_by_id(
+              pendingWinners,
+              string.from(logicalWinnerRef.id)
+            );
+            if (logicalWinner == null) {
+              logicalWinner = sync_row_winner_find_by_id(
+                currentWinners,
+                string.from(logicalWinnerRef.id)
+              );
+            }
+            if (logicalWinner != null &&
+                string.from(logicalWinner.physicalKey) != physicalKey) {
+              conflictingWinner = logicalWinner;
+            }
+          }
+          if (conflictingWinner != null) {
+            const beforeRow = json.parse(json.stringify(incomingRow));
+            let incidentId = crypto.hash(json.stringify([
+              winnerOwnerUserId,
+              winnerTable.trim().toLowerCase(),
+              operationId
+            ]), 'sha256');
+            let afterNumber = '';
+            let incidentStatus = 'blocked';
+            let incidentReason = 'A different primary identity already owns the same SQL unique business key. Automatic numbering is waiting for a complete multi-client number inventory.';
+            const existingIncident = automatic_number_incident_find_by_operation(
+              currentAutoNumberIncidents,
+              operationId
+            );
+            let allocatedNumber = 0;
+            if (existingIncident != null &&
+                string.from(existingIncident.afterNumber ?? '').trim().length != 0) {
+              incidentId = string.from(existingIncident.id);
+              allocatedNumber = int.from(existingIncident.afterNumber);
+              incidentStatus = string.from(existingIncident.status);
+              incidentReason = string.from(existingIncident.reason);
+            } else if (payloadIsDelta && sequence.initialized == true) {
+              allocatedNumber = int.from(sequence.maximumObserved) + 1;
+              pendingAutoNumberReservations = pendingAutoNumberReservations.concat([{
+                id: crypto.hash(json.stringify([
+                  winnerOwnerUserId,
+                  winnerTable.trim().toLowerCase(),
+                  sequenceScope.scopeKey,
+                  allocatedNumber
+                ]), 'sha256'),
+                ownerUserId: winnerOwnerUserId,
+                table: winnerTable,
+                scopeKey: sequenceScope.scopeKey,
+                number: allocatedNumber,
+                incidentId,
+                createdAt: serverReceivedAt
+              }]);
+            }
+            if (allocatedNumber > 0) {
+              afterNumber = string.from(allocatedNumber);
+              sequence = {
+                id: sequence.id,
+                ownerUserId: sequence.ownerUserId,
+                table: sequence.table,
+                scopeKey: sequence.scopeKey,
+                numberColumn: sequence.numberColumn,
+                scope: sequence.scope,
+                maximumObserved: allocatedNumber > int.from(sequence.maximumObserved)
+                  ? allocatedNumber
+                  : int.from(sequence.maximumObserved),
+                initialized: sequence.initialized,
+                revision: sequence.revision,
+                updatedAt: serverReceivedAt
+              };
+              pendingAutoNumberSequences = automatic_number_sequence_replace(
+                pendingAutoNumberSequences,
+                sequence
+              );
+              if (existingIncident == null) {
+                incidentStatus = 'reserved';
+                incidentReason = 'A different primary identity already owned this voucher number. The server reserved the next owner-wide free number while preserving the GUID and child links.';
+              }
+              automaticNumberDirective = {
+                incidentId,
+                column: numberColumn,
+                before: string.from(observedNumber),
+                after: afterNumber
+              };
+              logicalWinnerRefs = sync_row_logical_winner_refs_with_number_override(
+                winnerOwnerUserId,
+                winnerTable,
+                incomingRow,
+                resolvedUniqueKeyColumnSets,
+                numberColumn,
+                allocatedNumber
+              );
+            } else {
+              accepted = false;
+            }
+            let afterRow = json.parse(json.stringify(incomingRow));
+            if (afterNumber.length != 0) {
+              afterRow = {
+                sourceRow: afterRow,
+                changedColumn: numberColumn,
+                changedValue: afterNumber
+              };
+            }
+            if (existingIncident == null) {
+              pendingAutoNumberIncidents = pendingAutoNumberIncidents.concat([{
+              id: incidentId,
+              ownerUserId: winnerOwnerUserId,
+              clientName: normalizedClientName,
+              conflictingClientName: string.from(conflictingWinner.originClient),
+              table: winnerTable,
+              status: incidentStatus,
+              reason: incidentReason,
+              numberColumn,
+              beforeNumber: string.from(observedNumber),
+              afterNumber,
+              scope: sequenceScope.scope,
+              primaryKey: automatic_number_primary_key(autoNumberRule, incomingRow),
+              beforeRow,
+              afterRow,
+              operationId,
+              physicalKey,
+              detectedAt: serverReceivedAt,
+              resolvedAt: null,
+                updatedAt: serverReceivedAt
+              }]);
+            }
+          }
+        }
+        if (operation != 'D' && autoNumberRule == null) {
+          let unconfiguredConflict = null;
+          for (const logicalWinnerRef of logicalWinnerRefs) {
+            let logicalWinner = sync_row_winner_find_by_id(
+              pendingWinners,
+              string.from(logicalWinnerRef.id)
+            );
+            if (logicalWinner == null) {
+              logicalWinner = sync_row_winner_find_by_id(
+                currentWinners,
+                string.from(logicalWinnerRef.id)
+              );
+            }
+            if (logicalWinner != null &&
+                string.from(logicalWinner.physicalKey) != physicalKey) {
+              unconfiguredConflict = logicalWinner;
+            }
+          }
+          if (unconfiguredConflict != null) {
+            accepted = false;
+            const incidentId = crypto.hash(json.stringify([
+              winnerOwnerUserId,
+              winnerTable.trim().toLowerCase(),
+              operationId
+            ]), 'sha256');
+            const rowCopy = json.parse(json.stringify(incomingRow));
+            pendingAutoNumberIncidents = pendingAutoNumberIncidents.concat([{
+              id: incidentId,
+              ownerUserId: winnerOwnerUserId,
+              clientName: normalizedClientName,
+              conflictingClientName: string.from(unconfiguredConflict.originClient),
+              table: winnerTable,
+              status: 'blocked',
+              reason: 'A different primary identity already owns this SQL unique business key. This table has no scientifically validated automatic-number rule, so synchronization stopped instead of deleting either row.',
+              numberColumn: 'unconfigured',
+              beforeNumber: 'unknown',
+              afterNumber: '',
+              scope: {},
+              primaryKey: sync_row_primary_key_payload(resolvedKeyColumns, incomingRow),
+              beforeRow: rowCopy,
+              afterRow: rowCopy,
+              operationId,
+              physicalKey,
+              detectedAt: serverReceivedAt,
+              resolvedAt: null,
+              updatedAt: serverReceivedAt
+            }]);
+          }
         }
         durableTombstoneWinner = sync_row_durable_tombstone_for_reassertion(
           logicalWinnerRefs,
@@ -9167,13 +9777,32 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           durableOperationId,
           authoritativeModifiedAtUtc,
           authoritativeOperation,
-          durableTombstoneReassertion: reassertsDurableTombstone
+          durableTombstoneReassertion: reassertsDurableTombstone,
+          automaticNumber: automaticNumberDirective
         }]);
         acceptedRows = acceptedRows.concat([incomingRow]);
       }
     }
     if (pendingWinners.length > 0) {
       db.upsertMany(SyncRowWinner, pendingWinners, ['id']);
+    }
+    if (pendingAutoNumberSequences.length > 0) {
+      if (pendingAutoNumberReservations.length > 0) {
+        db.insertMany(AutoNumberReservation, pendingAutoNumberReservations);
+      }
+      db.upsertMany(AutoNumberSequence, pendingAutoNumberSequences, ['id']);
+    }
+    if (multiClientUnionBootstrap && ready && autoNumberRule != null) {
+      db.updateMany(AutoNumberSequence, {
+        ownerUserId: winnerOwnerUserId,
+        table: winnerTable
+      }, {
+        initialized: true,
+        updatedAt: serverReceivedAt
+      });
+    }
+    if (pendingAutoNumberIncidents.length > 0) {
+      db.upsertMany(AutoNumberIncident, pendingAutoNumberIncidents, ['id']);
     }
     const relayRows = hasStoredPayload ? acceptedOperationIds : acceptedRows;
     db.update(SnapshotRecord, { id: chunkRecord.id }, {
@@ -9368,7 +9997,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
                 acceptedRow.authoritativeOperation ?? ''
               ).trim().toUpperCase(),
               durableTombstoneReassertion:
-                acceptedRow.durableTombstoneReassertion == true
+                acceptedRow.durableTombstoneReassertion == true,
+              automaticNumber: acceptedRow.automaticNumber
             }]);
           }
         }
@@ -9432,7 +10062,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
           operationId,
           authoritativeModifiedAtUtc,
           authoritativeOperation,
-          durableTombstoneReassertion
+          durableTombstoneReassertion,
+          automaticNumber: candidateOperation.automaticNumber
         }]);
       }
     }

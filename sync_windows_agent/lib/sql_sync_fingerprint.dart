@@ -346,7 +346,30 @@ bool hasValidCanonicalSqlSyncRowHash(
   Map<String, dynamic> row,
 ) {
   final supplied = row['__sync_row_hash']?.toString().trim().toLowerCase();
-  return supplied != null &&
-      supplied.length == 64 &&
-      supplied == canonicalSqlSyncRowSha256(columns, row);
+  if (supplied == null || supplied.length != 64) return false;
+  if (supplied == canonicalSqlSyncRowSha256(columns, row)) return true;
+
+  // The trusted control plane may reserve a replacement business number after
+  // validating an uploaded row. Verify the immutable source hash against the
+  // exact before-value, while the returned row keeps the server-reserved
+  // after-value for comparison and atomic apply.
+  final directiveColumn =
+      row['__sync_auto_number_column']?.toString().trim() ?? '';
+  final before = row['__sync_auto_number_before']?.toString() ?? '';
+  final after = row['__sync_auto_number_after']?.toString() ?? '';
+  final incidentId =
+      row['__sync_auto_number_incident_id']?.toString().trim() ?? '';
+  final knownColumn = columns.any(
+    (column) => column.name.toLowerCase() == directiveColumn.toLowerCase(),
+  );
+  if (!knownColumn ||
+      before.isEmpty ||
+      after.isEmpty ||
+      incidentId.length != 64 ||
+      row[directiveColumn]?.toString() != after) {
+    return false;
+  }
+  final sourceRow = Map<String, dynamic>.from(row);
+  sourceRow[directiveColumn] = before;
+  return supplied == canonicalSqlSyncRowSha256(columns, sourceRow);
 }

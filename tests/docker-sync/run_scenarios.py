@@ -772,9 +772,20 @@ WHERE Id = {id_}
         )
 
 
-def expect_apply_failure(database, *, rows=None, deletes=None):
+def expect_apply_failure(
+    database,
+    *,
+    rows=None,
+    deletes=None,
+    unique_index_column_sets=None,
+):
     try:
-        apply(database, rows=rows, deletes=deletes)
+        apply(
+            database,
+            rows=rows,
+            deletes=deletes,
+            unique_index_column_sets=unique_index_column_sets,
+        )
     except RuntimeError:
         return
     raise AssertionError("Expected SQL delta application to fail.")
@@ -1941,33 +1952,49 @@ VALUES
         apply(database, rows=multi_writer_rows)
     assert_equal(*DATABASES)
 
-    # Different permanent IDs that collide on a SQL unique/business key use
-    # the same deterministic latest-change winner as ordinary row conflicts.
-    # Only the older conflicting identity is replaced; valid siblings commit
-    # in the same atomic transaction.
+    # Different permanent IDs that collide on a SQL unique/business key are
+    # different documents, not versions of one row. The client must roll the
+    # whole batch back until the server supplies a reserved replacement key.
     identity_collision = coalesce([
         {**row(34, "SAME-BUSINESS-KEY", "Created by c1"), "__sync_modified_at_utc": "2026-07-16T10:00:00Z"},
         {**row(35, "SAME-BUSINESS-KEY", "Created by c2"), "__sync_modified_at_utc": "2026-07-16T10:00:01Z"},
-    ], unique_key_column_sets=[["Code"]])
-    if len(identity_collision) != 1 or identity_collision[0]["Id"] != 35:
-        raise AssertionError(f"Latest unique-key winner was not selected: {identity_collision}")
+    ])
+    if len(identity_collision) != 2:
+        raise AssertionError(f"Different permanent identities were coalesced: {identity_collision}")
     for database in DATABASES:
         apply(database, rows=[row(34, "SAME-BUSINESS-KEY", "Created by c1")])
-        apply(
+        expect_apply_failure(
             database,
             rows=[
-                identity_collision[0],
+                identity_collision[1],
                 row(39, "VALID-SIBLING", "Commits with latest winner"),
             ],
             unique_index_column_sets=[["Code"]],
-            resolve_unique_conflicts_latest_wins=True,
         )
         current = table_rows(database)
-        if any("34|SAME-BUSINESS-KEY" in value for value in current):
-            raise AssertionError(f"Older unique-key identity survived in {database}: {current}")
-        if not any("35|SAME-BUSINESS-KEY|Created by c2" in value for value in current):
-            raise AssertionError(f"Latest unique-key identity is missing in {database}: {current}")
-        if not any("39|VALID-SIBLING|Commits with latest winner" in value for value in current):
+        if not any("34|SAME-BUSINESS-KEY" in value for value in current):
+            raise AssertionError(f"Existing business-key identity was deleted in {database}: {current}")
+        if any("35|SAME-BUSINESS-KEY" in value for value in current):
+            raise AssertionError(f"Conflicting identity escaped rollback in {database}: {current}")
+        if any("39|VALID-SIBLING" in value for value in current):
+            raise AssertionError(f"Sibling escaped atomic rollback in {database}: {current}")
+
+        # Simulate the server-reserved replacement number/key. The permanent
+        # Id remains unchanged, so child relationships remain valid.
+        apply(
+            database,
+            rows=[
+                row(35, "SAME-BUSINESS-KEY-RESERVED", "Created by c2"),
+                row(39, "VALID-SIBLING", "Commits with reserved identity"),
+            ],
+            unique_index_column_sets=[["Code"]],
+        )
+        current = table_rows(database)
+        if not any("34|SAME-BUSINESS-KEY|Created by c1" in value for value in current):
+            raise AssertionError(f"Original identity was not preserved in {database}: {current}")
+        if not any("35|SAME-BUSINESS-KEY-RESERVED|Created by c2" in value for value in current):
+            raise AssertionError(f"Reserved identity is missing in {database}: {current}")
+        if not any("39|VALID-SIBLING|Commits with reserved identity" in value for value in current):
             raise AssertionError(f"Atomic sibling row is missing in {database}: {current}")
     assert_equal(*DATABASES)
 
@@ -2128,7 +2155,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "durable-delete-reasserts-against-zombie-full-row",
             "independent-multi-writer",
             "offline-peer-online-continuity-and-reconnect-catch-up",
-            "latest-unique-business-key-winner-atomic-replacement",
+            "business-key-collision-fails-closed-then-reserved-key-applies",
             "invoice-line-primary-key-union-explicit-delete-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",
             "complete-reconcile-preserves-target-only-unicode-retry",

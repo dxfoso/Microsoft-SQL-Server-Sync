@@ -6953,7 +6953,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           .map((row) => Map<String, dynamic>.from(row))
           .toList(growable: false),
       primaryKeyColumns: primaryKeyColumns,
-      uniqueKeyColumnSets: uniqueIndexColumnSets,
+      // The server must either assign a validated replacement business number
+      // or block the collision. Never collapse different permanent identities
+      // on the client, because doing so would silently discard one document.
+      uniqueKeyColumnSets: const [],
     );
     stats.seenRowIdentities.addAll(
       rowsForApply.map(
@@ -7100,7 +7103,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         protectLocalChangesAfterVersion: postUploadChangeTrackingVersion,
         manageTriggers: true,
         insertOnly: false,
-        resolveUniqueConflictsLatestWins: true,
+        resolveUniqueConflictsLatestWins: false,
         onStageProgress: reportStageProgress,
         onMergeStarted: reportMergeStarted,
       );
@@ -7188,7 +7191,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         protectLocalChangesAfterVersion: postUploadChangeTrackingVersion,
         manageTriggers: true,
         insertOnly: false,
-        resolveUniqueConflictsLatestWins: true,
+        resolveUniqueConflictsLatestWins: false,
         onStageProgress: reportStageProgress,
         onMergeStarted: reportMergeStarted,
       );
