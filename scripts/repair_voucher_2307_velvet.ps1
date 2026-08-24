@@ -30,7 +30,7 @@ function Invoke-RepairSql {
     $tempPath = Join-Path ([IO.Path]::GetTempPath()) ("sql-sync-voucher-2307-{0}.sql" -f ([Guid]::NewGuid().ToString('N')))
     try {
         [IO.File]::WriteAllText($tempPath, $Sql, [Text.UTF8Encoding]::new($true))
-        $arguments = @('-S', $ServerInstance, '-d', $Database, '-C', '-b', '-V', '16', '-W', '-h', '-1', '-u', '-i', $tempPath)
+        $arguments = @('-S', $ServerInstance, '-d', $Database, '-C', '-b', '-V', '11', '-W', '-h', '-1', '-u', '-i', $tempPath)
         if ($UseSqlAuthentication) {
             $plainPassword = $credential.GetNetworkCredential().Password
             $arguments = @('-U', $credential.UserName, '-P', $plainPassword) + $arguments
@@ -79,26 +79,26 @@ END;
 
 BEGIN TRY
     BEGIN TRAN;
-    IF dbo.fnFlag_IsSet(1000)<>0 THROW 52301, 'Maintenance flag 1000 is already set.', 1;
+    IF dbo.fnFlag_IsSet(1000)<>0 RAISERROR('Maintenance flag 1000 is already set.',16,1);
     IF NOT EXISTS (
         SELECT 1 FROM dbo.ce000
         WHERE GUID=@pos AND Type=1 AND Number=2307 AND Debit=932000 AND Credit=932000
           AND ISNULL(Branch,@zero)=@zero
-    ) THROW 52302, 'POS voucher 2307 does not match the verified source row.', 1;
+    ) RAISERROR('POS voucher 2307 does not match the verified source row.',16,1);
     IF EXISTS (SELECT 1 FROM dbo.ce000 WHERE GUID=@purchase)
-        THROW 52303, 'Purchase voucher is present in an unexpected state.', 1;
+        RAISERROR('Purchase voucher is present in an unexpected state.',16,1);
     IF EXISTS (
         SELECT 1 FROM dbo.ce000
         WHERE Type=1 AND Number=@temporary AND ISNULL(Branch,@zero)=@zero
-    ) THROW 52304, 'The reserved temporary number is already occupied.', 1;
+    ) RAISERROR('The reserved temporary number is already occupied.',16,1);
     IF (SELECT COUNT(*) FROM dbo.en000 WHERE ParentGUID=@pos)<>4
        OR (SELECT SUM(Debit) FROM dbo.en000 WHERE ParentGUID=@pos)<>932000
        OR (SELECT SUM(Credit) FROM dbo.en000 WHERE ParentGUID=@pos)<>932000
-        THROW 52305, 'POS accounting lines do not match the verified voucher.', 1;
+        RAISERROR('POS accounting lines do not match the verified voucher.',16,1);
     IF (SELECT COUNT(*) FROM dbo.en000 WHERE ParentGUID=@purchase)<>37
        OR (SELECT SUM(Debit) FROM dbo.en000 WHERE ParentGUID=@purchase)<>9531000
        OR (SELECT SUM(Credit) FROM dbo.en000 WHERE ParentGUID=@purchase)<>9531000
-        THROW 52306, 'Purchase accounting lines do not match the verified invoice.', 1;
+        RAISERROR('Purchase accounting lines do not match the verified invoice.',16,1);
 
     SELECT @priorErrorCount=COUNT(*) FROM dbo.ErrorLog
     WHERE level=1 AND type=0 AND c1=N'AmnE0001: Can''t insert posted entries' AND g1=@purchase;
@@ -107,26 +107,29 @@ BEGIN TRY
     INSERT dbo.mc000(type,number,item) VALUES(24,1000,0);
     WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)
     UPDATE dbo.ce000 SET Number=@temporary WHERE GUID=@pos AND Number=2307;
-    IF @@ROWCOUNT<>1 THROW 52307, 'POS voucher was not moved atomically.', 1;
+    IF @@ROWCOUNT<>1 RAISERROR('POS voucher was not moved atomically.',16,1);
 
     INSERT dbo.ce000(Type,Number,Date,Debit,Credit,Notes,CurrencyVal,IsPosted,State,Security,Num1,Num2,Branch,GUID,CurrencyGUID,TypeGUID,IsPrinted,PostDate)
     VALUES(1,2307,'20260823',9531000,9531000,N'',1,1,0,1,0,0,@zero,@purchase,'BCBCD2F1-24DD-4F86-9746-2537D7351DFE','591AB4E6-E395-4CFF-8294-9034F68D1CBD',0,'20260824 00:56:56.803');
 
     IF (SELECT COUNT(*) FROM dbo.ErrorLog
         WHERE level=1 AND type=0 AND c1=N'AmnE0001: Can''t insert posted entries' AND g1=@purchase)<>@priorErrorCount+1
-        THROW 52308, 'Unexpected Al-Ameen validation-log result.', 1;
+        RAISERROR('Unexpected Al-Ameen validation-log result.',16,1);
     DELETE TOP (1) FROM dbo.ErrorLog
     WHERE level=1 AND type=0 AND c1=N'AmnE0001: Can''t insert posted entries' AND g1=@purchase;
 
     WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)
     DELETE dbo.mc000 WHERE type=24 AND number=1000;
-    IF dbo.fnFlag_IsSet(1000)<>0 THROW 52309, 'Maintenance flag cleanup failed.', 1;
+    IF dbo.fnFlag_IsSet(1000)<>0 RAISERROR('Maintenance flag cleanup failed.',16,1);
     COMMIT;
     SELECT 'SQLSYNC_V2307_STAGED';
 END TRY
 BEGIN CATCH
+    DECLARE @errorMessage nvarchar(2048), @errorSeverity int, @errorState int;
+    SELECT @errorMessage=ERROR_MESSAGE(), @errorSeverity=ERROR_SEVERITY(), @errorState=ERROR_STATE();
     IF XACT_STATE()<>0 ROLLBACK;
-    THROW;
+    RAISERROR(@errorMessage,@errorSeverity,@errorState);
+    RETURN;
 END CATCH;
 "@
 
@@ -161,25 +164,28 @@ SET XACT_ABORT ON;
 DECLARE @pos uniqueidentifier='$posGuid', @purchase uniqueidentifier='$purchaseGuid', @temporary int=$temporaryNumber;
 BEGIN TRY
     BEGIN TRAN;
-    IF dbo.fnFlag_IsSet(1000)<>0 THROW 52310, 'Maintenance flag 1000 is already set.', 1;
+    IF dbo.fnFlag_IsSet(1000)<>0 RAISERROR('Maintenance flag 1000 is already set.',16,1);
     IF NOT EXISTS(SELECT 1 FROM dbo.ce000 WHERE GUID=@purchase AND Number=$allocatedNumber AND Debit=9531000 AND Credit=9531000)
-        THROW 52311, 'Allocated purchase voucher does not match the verified row.', 1;
+        RAISERROR('Allocated purchase voucher does not match the verified row.',16,1);
     IF NOT EXISTS(SELECT 1 FROM dbo.ce000 WHERE GUID=@pos AND Number=@temporary AND Debit=932000 AND Credit=932000)
-        THROW 52312, 'POS voucher is not in the verified temporary state.', 1;
+        RAISERROR('POS voucher is not in the verified temporary state.',16,1);
     WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)
     INSERT dbo.mc000(type,number,item) VALUES(24,1000,0);
     WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)
     UPDATE dbo.ce000 SET Number=2307 WHERE GUID=@pos AND Number=@temporary;
-    IF @@ROWCOUNT<>1 THROW 52313, 'POS voucher could not be restored to 2307.', 1;
+    IF @@ROWCOUNT<>1 RAISERROR('POS voucher could not be restored to 2307.',16,1);
     WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)
     DELETE dbo.mc000 WHERE type=24 AND number=1000;
-    IF dbo.fnFlag_IsSet(1000)<>0 THROW 52314, 'Maintenance flag cleanup failed.', 1;
+    IF dbo.fnFlag_IsSet(1000)<>0 RAISERROR('Maintenance flag cleanup failed.',16,1);
     COMMIT;
     SELECT 'SQLSYNC_V2307_COMPLETE|$allocatedNumber';
 END TRY
 BEGIN CATCH
+    DECLARE @errorMessage nvarchar(2048), @errorSeverity int, @errorState int;
+    SELECT @errorMessage=ERROR_MESSAGE(), @errorSeverity=ERROR_SEVERITY(), @errorState=ERROR_STATE();
     IF XACT_STATE()<>0 ROLLBACK;
-    THROW;
+    RAISERROR(@errorMessage,@errorSeverity,@errorState);
+    RETURN;
 END CATCH;
 "@
 

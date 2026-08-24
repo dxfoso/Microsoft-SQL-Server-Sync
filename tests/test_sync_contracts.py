@@ -2757,6 +2757,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("COUNT(*) FROM dbo.en000 WHERE ParentGUID=@purchase)<>37", repair)
         self.assertIn("SQLSYNC_V2307_COMPLETE", repair)
         self.assertNotIn("'-f', '65001'", repair)
+        self.assertNotIn("THROW", repair)
+        self.assertIn("RAISERROR(@errorMessage,@errorSeverity,@errorState)", repair)
+        self.assertIn("'-V', '11'", repair)
 
     def test_new_private_export_request_cancels_obsolete_client_work(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
