@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 class SqlSyncColumnDefinition {
   const SqlSyncColumnDefinition({
     required this.name,
@@ -41,6 +43,11 @@ class SqlSyncColumnDefinition {
   }
 
   bool get isWritable => !isComputed && !isRowVersion;
+
+  bool get isFloatingPoint {
+    final normalized = sqlType.trim().toLowerCase();
+    return normalized == 'float' || normalized == 'real';
+  }
 
   bool get isDateOrTimeType {
     final normalized = sqlType.trim().toLowerCase();
@@ -168,11 +175,14 @@ String buildSqlSyncTransportValueExpression({
     return 'CONVERT(nvarchar(33), $columnReference, 126)';
   }
   if (normalized == 'float' || normalized == 'real') {
-    // Style 3 emits 17 significant digits and guarantees that distinct SQL
-    // floating-point values have distinct text representations. The default
-    // style emits at most six digits and turns values such as 9999999 into
-    // 1e+007, silently changing the value when the target parses it.
-    return 'CONVERT(nvarchar(100), $columnReference, 3)';
+    // SQL Server 2016+ documents style 3 as lossless, but older Al-Ameen SQL
+    // installations silently format it like style 0 (six significant
+    // digits). Carry the IEEE bytes instead; binary style 2 is stable across
+    // SQL Server generations and Dart converts the exact bits to a round-trip
+    // decimal before hashing or apply.
+    final byteCount = normalized == 'real' ? 4 : 8;
+    final hexLength = byteCount * 2;
+    return "N'\\F' + CONVERT(nvarchar($hexLength), CONVERT(varbinary($byteCount), $columnReference), 2)";
   }
   if (normalized == 'money' || normalized == 'smallmoney') {
     return 'CONVERT(nvarchar(100), $columnReference, 2)';
@@ -181,6 +191,43 @@ String buildSqlSyncTransportValueExpression({
     return 'CONVERT(nvarchar(36), $columnReference)';
   }
   return 'CONVERT(nvarchar(max), $columnReference)';
+}
+
+String decodeSqlSyncFloatingPointTransport({
+  required SqlSyncColumnDefinition column,
+  required String value,
+}) {
+  final normalized = column.sqlType.trim().toLowerCase();
+  if (normalized != 'float' && normalized != 'real') {
+    return value;
+  }
+  if (!value.startsWith(r'\F')) {
+    throw const FormatException(
+      'SQL floating-point value did not use exact binary transport.',
+    );
+  }
+  final hex = value.substring(2);
+  final expectedBytes = normalized == 'real' ? 4 : 8;
+  if (hex.length != expectedBytes * 2 ||
+      !RegExp(r'^[0-9A-Fa-f]+$').hasMatch(hex)) {
+    throw const FormatException('Invalid SQL floating-point binary transport.');
+  }
+  final bytes = Uint8List(expectedBytes);
+  for (var index = 0; index < expectedBytes; index += 1) {
+    bytes[index] = int.parse(
+      hex.substring(index * 2, index * 2 + 2),
+      radix: 16,
+    );
+  }
+  final data = ByteData.sublistView(bytes);
+  final decoded =
+      normalized == 'real'
+          ? data.getFloat32(0, Endian.big)
+          : data.getFloat64(0, Endian.big);
+  if (!decoded.isFinite) {
+    throw const FormatException('Non-finite SQL floating-point transport.');
+  }
+  return decoded.toString();
 }
 
 class SqlSyncColumnAssessment {

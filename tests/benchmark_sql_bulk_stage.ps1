@@ -18,19 +18,22 @@ function Invoke-SqlFile {
     param([Parameter(Mandatory = $true)][string] $Sql)
     $path = Join-Path $workspace 'command.sql'
     [System.IO.File]::WriteAllText($path, $Sql, [System.Text.UTF8Encoding]::new($false))
-    & $sqlcmd -S $Server -U $User -P $Password -C -b -i $path | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "sqlcmd failed with exit code $LASTEXITCODE." }
+    $output = @(& $sqlcmd -S $Server -U $User -P $Password -N disable -C -b -i $path 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $details = ($output | Out-String).Trim()
+        throw "sqlcmd failed with exit code $LASTEXITCODE.`n$details"
+    }
 }
 
 function Get-StageCount {
-    $output = & $sqlcmd -S $Server -U $User -P $Password -C -b -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT_BIG(*) FROM tempdb.dbo.sqlsync_bulk_benchmark;"
+    $output = & $sqlcmd -S $Server -U $User -P $Password -N disable -C -b -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT_BIG(*) FROM tempdb.dbo.sqlsync_bulk_benchmark;"
     if ($LASTEXITCODE -ne 0) { throw 'Unable to read benchmark stage count.' }
     return [long](@($output | Where-Object { $_ -match '^\s*\d+\s*$' })[0].Trim())
 }
 
 function Get-SqlScalar {
     param([Parameter(Mandatory = $true)][string] $Query)
-    $output = & $sqlcmd -S $Server -U $User -P $Password -C -b -h -1 -W -Q "SET NOCOUNT ON; $Query"
+    $output = & $sqlcmd -S $Server -U $User -P $Password -N disable -C -b -h -1 -W -Q "SET NOCOUNT ON; $Query"
     if ($LASTEXITCODE -ne 0) { throw 'Unable to read benchmark verification value.' }
     return [string](@($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0].Trim())
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:sync_windows_agent/sql_sync_merge.dart';
+import 'package:sync_windows_agent/sql_sync_fingerprint.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
 
 void main(List<String> arguments) {
@@ -21,6 +22,43 @@ void main(List<String> arguments) {
         column: _column(Map<String, dynamic>.from(request['column'] as Map)),
         columnReference: request['columnReference'].toString(),
       ),
+    );
+    return;
+  }
+  if (operation == 'decode-floating-transport') {
+    final columns = (request['columns'] as List)
+        .map((column) => _column(Map<String, dynamic>.from(column as Map)))
+        .toList(growable: false);
+    final values = (request['values'] as List)
+        .map((value) => value.toString())
+        .toList(growable: false);
+    if (columns.length != values.length) {
+      throw const FormatException(
+        'Floating transport columns and values must have equal lengths.',
+      );
+    }
+    stdout.write(
+      jsonEncode([
+        for (var index = 0; index < columns.length; index += 1)
+          decodeSqlSyncFloatingPointTransport(
+            column: columns[index],
+            value: values[index],
+          ),
+      ]),
+    );
+    return;
+  }
+  if (operation == 'fingerprint-row') {
+    final columns = (request['columns'] as List)
+        .map((column) => _column(Map<String, dynamic>.from(column as Map)))
+        .toList(growable: false);
+    final row = Map<String, dynamic>.from(request['row'] as Map);
+    final accumulator = SqlSyncFingerprintAccumulator()..addRow(columns, row);
+    stdout.write(
+      jsonEncode({
+        'tableChecksum': accumulator.build(),
+        'rowHash': canonicalSqlSyncRowSha256(columns, row),
+      }),
     );
     return;
   }

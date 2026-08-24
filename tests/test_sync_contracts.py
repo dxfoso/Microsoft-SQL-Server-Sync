@@ -1287,6 +1287,11 @@ class SyncContractsTests(unittest.TestCase):
             sync_schema,
         )
         self.assertIn(
+            "CONVERT(varbinary($byteCount), $columnReference), 2)",
+            sync_schema,
+        )
+        self.assertIn("decodeSqlSyncFloatingPointTransport(", agent_page)
+        self.assertNotIn(
             "return 'CONVERT(nvarchar(100), $columnReference, 3)';",
             sync_schema,
         )
@@ -1301,6 +1306,24 @@ class SyncContractsTests(unittest.TestCase):
             "const Duration _diagnosticsChangeTrackingTimeout = Duration(seconds: 20);",
             agent_page,
         )
+
+    def test_bulk_benchmark_preserves_sqlcmd_failure_details(self):
+        benchmark = read_text("tests/benchmark_sql_bulk_stage.ps1")
+
+        self.assertIn("2>&1)", benchmark)
+        self.assertEqual(benchmark.count("-N disable -C"), 3)
+        self.assertIn("$details = ($output | Out-String).Trim()", benchmark)
+        self.assertIn(
+            'throw "sqlcmd failed with exit code $LASTEXITCODE.`n$details"',
+            benchmark,
+        )
+
+    def test_updater_rollback_fixture_uses_deterministic_failing_executable(self):
+        rollback = read_text("tests/test_windows_updater_rollback.ps1")
+
+        self.assertIn("public static class FailingProgram", rollback)
+        self.assertIn("public static int Main(string[] args) { return 7; }", rollback)
+        self.assertNotIn("not a valid executable", rollback)
 
     def test_atomic_full_snapshot_apply_does_not_retry_at_ten_minutes(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

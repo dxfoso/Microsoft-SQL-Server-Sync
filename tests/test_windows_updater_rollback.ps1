@@ -43,6 +43,7 @@ $installDir = Join-Path $testRoot 'install'
 $payloadDir = Join-Path $testRoot 'payload'
 $workRoot = Join-Path $testRoot 'work'
 $oldSource = Join-Path $testRoot 'stable-client.cs'
+$failingSource = Join-Path $testRoot 'failing-client.cs'
 $oldExe = Join-Path $installDir 'sync_windows_agent.exe'
 $env:SYNC_WINDOWS_AGENT_SUPERVISOR_SKIP_UPDATE = '1'
 $env:SYNC_WINDOWS_AGENT_SUPERVISOR_SKIP_OBSOLETE_RETIREMENT = '1'
@@ -63,7 +64,12 @@ public static class Program {
     Set-Content -LiteralPath (Join-Path $installDir 'update.ps1') -Value 'exit 0' -Encoding ASCII
     $oldHash = (Get-FileHash -LiteralPath $oldExe -Algorithm SHA256).Hash
 
-    Set-Content -LiteralPath (Join-Path $payloadDir 'sync_windows_agent.exe') -Value 'not a valid executable' -Encoding ASCII
+    Set-Content -LiteralPath $failingSource -Encoding ASCII -Value @'
+public static class FailingProgram {
+    public static int Main(string[] args) { return 7; }
+}
+'@
+    Add-Type -TypeDefinition (Get-Content -LiteralPath $failingSource -Raw) -Language CSharp -OutputAssembly (Join-Path $payloadDir 'sync_windows_agent.exe') -OutputType ConsoleApplication
     Copy-Item -LiteralPath (Join-Path $repoRoot 'sync_windows_agent_supervisor.ps1') -Destination (Join-Path $payloadDir 'sync_windows_agent_supervisor.ps1')
 
     Start-DeferredInstall -PayloadDir $payloadDir -TargetInstallDir $installDir -WorkRoot $workRoot -ParentProcessId ([int]::MaxValue) -Version 'rollback-test'

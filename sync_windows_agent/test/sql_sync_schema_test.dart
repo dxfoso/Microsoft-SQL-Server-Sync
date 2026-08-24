@@ -89,7 +89,7 @@ void main() {
     expect(column('int').usesHexTextTransport, isFalse);
   });
 
-  test('float and real transport uses lossless style 3 conversion', () {
+  test('float and real transport uses legacy-safe exact IEEE bytes', () {
     SqlSyncColumnDefinition column(String sqlType) => SqlSyncColumnDefinition(
       name: 'Qty',
       sqlType: sqlType,
@@ -100,15 +100,47 @@ void main() {
       isComputed: false,
     );
 
-    for (final sqlType in ['float', 'real']) {
-      expect(
-        buildSqlSyncTransportValueExpression(
-          column: column(sqlType),
-          columnReference: '[Qty]',
-        ),
-        'CONVERT(nvarchar(100), [Qty], 3)',
-      );
-    }
+    expect(
+      buildSqlSyncTransportValueExpression(
+        column: column('float'),
+        columnReference: '[Qty]',
+      ),
+      r"N'\F' + CONVERT(nvarchar(16), CONVERT(varbinary(8), [Qty]), 2)",
+    );
+    expect(
+      buildSqlSyncTransportValueExpression(
+        column: column('real'),
+        columnReference: '[Qty]',
+      ),
+      r"N'\F' + CONVERT(nvarchar(8), CONVERT(varbinary(4), [Qty]), 2)",
+    );
+
+    final floatColumn = column('float');
+    expect(floatColumn.isFloatingPoint, isTrue);
+    expect(column('real').isFloatingPoint, isTrue);
+    expect(column('decimal').isFloatingPoint, isFalse);
+    final velvet958 = decodeSqlSyncFloatingPointTransport(
+      column: floatColumn,
+      value: r'\F41717A79A0000000',
+    );
+    final al958 = decodeSqlSyncFloatingPointTransport(
+      column: floatColumn,
+      value: r'\F41717A7CC0000000',
+    );
+    final velvet983 = decodeSqlSyncFloatingPointTransport(
+      column: floatColumn,
+      value: r'\F416A940420000000',
+    );
+    final al983 = decodeSqlSyncFloatingPointTransport(
+      column: floatColumn,
+      value: r'\F416A940100000000',
+    );
+    expect(velvet958, '18327450.0');
+    expect(al958, '18327500.0');
+    expect(velvet983, '13934625.0');
+    expect(al983, '13934600.0');
+    expect(velvet958, isNot(al958));
+    expect(velvet983, isNot(al983));
   });
 
   test('exact SQL types retain their type-specific transport formats', () {

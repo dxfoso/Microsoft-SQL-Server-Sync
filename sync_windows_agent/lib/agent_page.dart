@@ -7951,6 +7951,12 @@ COMMIT TRANSACTION;
       return null;
     }
     final decoded = value;
+    if (column.isFloatingPoint) {
+      return decodeSqlSyncFloatingPointTransport(
+        column: column,
+        value: decoded,
+      );
+    }
     if (!column.usesHexTextTransport) {
       return decoded;
     }
@@ -8336,6 +8342,12 @@ END
       buffer.write(char);
     }
     final decoded = buffer.toString();
+    if (column.isFloatingPoint) {
+      return decodeSqlSyncFloatingPointTransport(
+        column: column,
+        value: decoded,
+      );
+    }
     if (!column.usesHexTextTransport) {
       return decoded;
     }

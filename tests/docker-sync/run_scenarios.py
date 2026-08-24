@@ -513,7 +513,41 @@ WHERE Id = {id_};
     values = [line.strip().split("|") for line in result.stdout.splitlines() if "|" in line]
     if len(values) != 1 or len(values[0]) != 2:
         raise AssertionError(f"Unexpected floating-point capture output: {values}")
-    return values[0]
+    request = {
+        "operation": "decode-floating-transport",
+        "columns": [float_column, real_column],
+        "values": values[0],
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
+        json.dump(request, handle)
+        request_path = Path(handle.name)
+    try:
+        decoded = run(
+            [DART, "run", "tool/sync_sql_harness.dart", str(request_path)],
+            cwd=AGENT_DIR,
+        )
+        return json.loads(decoded.stdout)
+    finally:
+        request_path.unlink(missing_ok=True)
+
+
+def fingerprint_row(row_value):
+    request = {
+        "operation": "fingerprint-row",
+        "columns": COLUMNS,
+        "row": row_value,
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
+        json.dump(request, handle)
+        request_path = Path(handle.name)
+    try:
+        result = run(
+            [DART, "run", "tool/sync_sql_harness.dart", str(request_path)],
+            cwd=AGENT_DIR,
+        )
+        return json.loads(result.stdout)
+    finally:
+        request_path.unlink(missing_ok=True)
 
 
 def row(id_, code, name, *, arabic="مرحبا بالعالم", quantity=1, amount="1.25",
@@ -1752,8 +1786,9 @@ def run_scenarios():
     assert_equal(*DATABASES)
 
     # Exercise the production SQL capture expression against a real float/real
-    # boundary. Default SQL conversion rounds 9999999 to 1e+007; style 3 must
-    # retain the original value through capture, JSON transport, and target apply.
+    # boundary. Legacy SQL Server collapses close values when asked for style
+    # 3 text, so production carries IEEE bytes and decodes them before JSON,
+    # fingerprinting, target comparison, and target apply.
     sqlcmd(
         """
 INSERT dbo.SyncItems
@@ -1767,7 +1802,19 @@ VALUES
    '2026-07-16T23:59:59.987', 0x999998),
   (38, N'FLOAT-FRACTION', N'Lossless fractional float', N'دقة عشرية',
    1, 1.25, CAST(0.84551240822557006 AS float), CAST(0.84551240822557006 AS real),
-   '2026-07-16T23:59:59.987', 0x999997);
+   '2026-07-16T23:59:59.987', 0x999997),
+  (39, N'FLOAT-LIVE-958-VELVET', N'Voucher 958 Velvet', N'دقة 958',
+   1, 1.25, CAST(18327450 AS float), CAST(18327450 AS real),
+   '2026-07-16T23:59:59.987', 0x999996),
+  (40, N'FLOAT-LIVE-958-AL', N'Voucher 958 Al', N'دقة 958',
+   1, 1.25, CAST(18327500 AS float), CAST(18327500 AS real),
+   '2026-07-16T23:59:59.987', 0x999995),
+  (42, N'FLOAT-LIVE-983-VELVET', N'Voucher 983 Velvet', N'دقة 983',
+   1, 1.25, CAST(13934625 AS float), CAST(13934625 AS real),
+   '2026-07-16T23:59:59.987', 0x999994),
+  (43, N'FLOAT-LIVE-983-AL', N'Voucher 983 Al', N'دقة 983',
+   1, 1.25, CAST(13934600 AS float), CAST(13934600 AS real),
+   '2026-07-16T23:59:59.987', 0x999993);
 """,
         database=DATABASES[0],
     )
@@ -1775,15 +1822,17 @@ VALUES
         (36, "FLOAT-ROUNDTRIP", "Lossless float capture", "دقة الأرقام", "9999999", "0x999999"),
         (37, "FLOAT-NEGATIVE", "Lossless negative float", "دقة سالبة", "-9999999", "0x999998"),
         (38, "FLOAT-FRACTION", "Lossless fractional float", "دقة عشرية", "0.84551240822557006", "0x999997"),
+        (39, "FLOAT-LIVE-958-VELVET", "Voucher 958 Velvet", "دقة 958", "18327450", "0x999996"),
+        (40, "FLOAT-LIVE-958-AL", "Voucher 958 Al", "دقة 958", "18327500", "0x999995"),
+        (42, "FLOAT-LIVE-983-VELVET", "Voucher 983 Velvet", "دقة 983", "13934625", "0x999994"),
+        (43, "FLOAT-LIVE-983-AL", "Voucher 983 Al", "دقة 983", "13934600", "0x999993"),
     ]
+    live_float_proofs = {}
     for id_, code, name, arabic, expected, payload in float_cases:
         captured_float, captured_real = capture_float_transport_values(DATABASES[0], id_)
-        if (
-            captured_float.lower() in ("1e+007", "1e+7", "-1e+007", "-1e+7")
-            or captured_real.lower() in ("1e+007", "1e+7", "-1e+007", "-1e+7")
-        ):
+        if captured_float.startswith("\\F") or captured_real.startswith("\\F"):
             raise AssertionError(
-                f"Lossy floating-point transport detected for {expected}: "
+                f"Floating-point transport was not decoded before apply for {expected}: "
                 f"float={captured_float}, real={captured_real}"
             )
         float_row = row(
@@ -1796,9 +1845,24 @@ VALUES
             changed_at="2026-07-16T23:59:59.987",
             payload=payload,
         )
+        proof = fingerprint_row(float_row)
+        if not proof.get("tableChecksum") or not proof.get("rowHash"):
+            raise AssertionError(f"Missing float fingerprint proof for {expected}: {proof}")
+        live_float_proofs[id_] = proof
         for database in DATABASES:
             apply(database, rows=[float_row])
             assert_float_values(database, id_, expected)
+    for left_id, right_id in ((39, 40), (42, 43)):
+        left = live_float_proofs[left_id]
+        right = live_float_proofs[right_id]
+        if left["tableChecksum"] == right["tableChecksum"]:
+            raise AssertionError(
+                f"Close live float table fingerprints collapsed for {left_id}/{right_id}: {left}"
+            )
+        if left["rowHash"] == right["rowHash"]:
+            raise AssertionError(
+                f"Close live float row hashes collapsed for {left_id}/{right_id}: {left}"
+            )
     assert_equal(*DATABASES)
 
     # Historical same-key float drift can exist after every client has already

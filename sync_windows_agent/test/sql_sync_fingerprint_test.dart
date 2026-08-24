@@ -69,21 +69,49 @@ void main() {
         isComputed: false,
       ),
     ];
-    const guid = '4C8ED76B-87E7-4294-A849-4DF83419FFF7';
+    const floatColumn = SqlSyncColumnDefinition(
+      name: 'Debit',
+      sqlType: 'float',
+      maxLength: 8,
+      precision: 53,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+    const guid = 'BFE518EB-0FC5-46AC-AEA5-793CBC26384F';
+    // This is the exact legacy production collapse: SQL8 formatted both
+    // physical values as the same six-significant-digit text.
+    const oldVelvetTransport = '1.83275e+007';
+    const oldAlTransport = '1.83275e+007';
+    expect(oldVelvetTransport, oldAlTransport);
+
+    final velvetValue = decodeSqlSyncFloatingPointTransport(
+      column: floatColumn,
+      value: r'\F41717A79A0000000',
+    );
+    final alValue = decodeSqlSyncFloatingPointTransport(
+      column: floatColumn,
+      value: r'\F41717A7CC0000000',
+    );
     final rounded =
-        SqlSyncFingerprintAccumulator()..addRow(columns, const {
-          'GUID': guid,
-          'Debit': '3.2240900000000000e+007',
-        });
+        SqlSyncFingerprintAccumulator()
+          ..addRow(columns, {'GUID': guid, 'Debit': alValue});
     final lossless =
-        SqlSyncFingerprintAccumulator()..addRow(columns, const {
-          'GUID': guid,
-          'Debit': '3.2240868000000000e+007',
-        });
+        SqlSyncFingerprintAccumulator()
+          ..addRow(columns, {'GUID': guid, 'Debit': velvetValue});
 
     expect(rounded.build(), startsWith('v2:1:'));
     expect(lossless.build(), startsWith('v2:1:'));
     expect(rounded.build(), isNot(lossless.build()));
+    expect(
+      canonicalSqlSyncRowSha256(columns, {'GUID': guid, 'Debit': alValue}),
+      isNot(
+        canonicalSqlSyncRowSha256(columns, {
+          'GUID': guid,
+          'Debit': velvetValue,
+        }),
+      ),
+    );
   });
 
   test('fingerprint encoding escapes separators and nulls', () {
