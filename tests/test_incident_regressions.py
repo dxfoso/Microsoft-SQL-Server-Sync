@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 205)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 209)}
         observed_ids = set()
 
         for row in rows:
@@ -65,6 +65,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("fingerprintAudit: nextFingerprintAudit", control_plane)
         self.assertIn("ValueKey('fingerprint-audit-log-${agent.clientName}')", clients)
         self.assertIn("Recent check batches", clients)
+
+    def test_client_list_groups_each_sync_metric_by_workflow(self):
+        clients = read_text("frontend/lib/clients_page.dart")
+        summary = read_text("frontend/lib/sync_summary_cell.dart")
+
+        self.assertIn("DataColumn(label: Text('Last result'))", clients)
+        self.assertIn("DataColumn(label: Text('Totals / scope'))", clients)
+        self.assertIn("DataColumn(label: Text('Last activity'))", clients)
+        self.assertIn("DataColumn(label: Text('Duration'))", clients)
+        self.assertNotIn("DataColumn(label: Text('Integrity check'))", clients)
+        self.assertNotIn("DataColumn(label: Text('Last Sync All total'))", clients)
+        self.assertIn("label: 'Changes'", clients)
+        self.assertIn("label: 'Sync All'", clients)
+        self.assertIn("label: 'Integrity'", clients)
+        self.assertIn("assert(items.length == 3)", summary)
 
     def test_live_copy_collection_survives_frontend_pod_replacement(self):
         collector = read_text("scripts/collect_live_client_database_copies.ps1")
@@ -541,16 +556,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_clients_list_distinguishes_latest_sync_and_sync_all_durations(self):
         clients_page = read_text("frontend/lib/clients_page.dart")
 
-        self.assertIn("DataColumn(label: Text('Last sync duration'))", clients_page)
-        self.assertIn("DataColumn(label: Text('Last Sync All total'))", clients_page)
+        self.assertIn("DataColumn(label: Text('Duration'))", clients_page)
+        self.assertNotIn("DataColumn(label: Text('Last Sync All total'))", clients_page)
         self.assertIn(
-            "DataCell(Text(formatSyncDuration(agent.lastSyncDuration)))",
+            "changes: formatSyncDuration(agent.lastSyncDuration)",
             clients_page,
         )
         self.assertIn(
-            "formatSyncDuration(_syncAllOperationForAgent(agent)?.duration())",
+            "syncAll: formatSyncDuration(operation?.duration())",
             clients_page,
         )
+        self.assertIn("integrity: formatSyncDuration(audit.duration())", clients_page)
         self.assertIn("DataColumn(label: Text('Client version'))", clients_page)
         self.assertIn("agent.clientVersion.trim()", clients_page)
 

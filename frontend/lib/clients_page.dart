@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'browser_bridge.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
+import 'sync_summary_cell.dart';
 import 'table_comparison_dialog.dart';
 
 enum _ClientSortField { name, status, database, tables, lastSync, heartbeat }
@@ -1138,7 +1139,7 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Widget _buildClientsDataTable(List<AdminAgent> clients) {
-    const rowHeight = 72.0;
+    const rowHeight = 92.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1176,13 +1177,10 @@ class _ClientsPageState extends State<ClientsPage> {
                   DataColumn(label: Text('Status')),
                   DataColumn(label: Text('Database')),
                   DataColumn(label: Text('Tables')),
-                  DataColumn(label: Text('Last row changes')),
-                  DataColumn(label: Text('Total row changes')),
-                  DataColumn(label: Text('Last synced')),
-                  DataColumn(label: Text('Last change check')),
-                  DataColumn(label: Text('Integrity check')),
-                  DataColumn(label: Text('Last sync duration')),
-                  DataColumn(label: Text('Last Sync All total')),
+                  DataColumn(label: Text('Last result')),
+                  DataColumn(label: Text('Totals / scope')),
+                  DataColumn(label: Text('Last activity')),
+                  DataColumn(label: Text('Duration')),
                   DataColumn(label: Text('Last heartbeat')),
                   DataColumn(label: Text('Actions')),
                 ],
@@ -1655,27 +1653,10 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DataCell(Text('${agent.tables.length}')),
-        DataCell(
-          Text(
-            'Uploaded: ${_number(agent.lastUploadedRows)}\n'
-            'Downloaded: ${_number(agent.lastDownloadedRows)}',
-          ),
-        ),
-        DataCell(
-          Text(
-            'Uploaded: ${_number(agent.uploadedRowTotal)}\n'
-            'Downloaded: ${_number(agent.downloadedRowTotal)}',
-          ),
-        ),
-        DataCell(Text(_formatTimestamp(_latestClientSync(agent)))),
-        DataCell(Text(_formatTimestamp(agent.lastChangeCheckAt))),
-        DataCell(_buildFingerprintAuditCell(agent)),
-        DataCell(Text(formatSyncDuration(agent.lastSyncDuration))),
-        DataCell(
-          Text(
-            formatSyncDuration(_syncAllOperationForAgent(agent)?.duration()),
-          ),
-        ),
+        DataCell(_buildLastResultCell(agent)),
+        DataCell(_buildSyncTotalsCell(agent)),
+        DataCell(_buildLastActivityCell(agent)),
+        DataCell(_buildSyncDurationCell(agent)),
         DataCell(Text(_formatTimestamp(agent.lastHeartbeat))),
         DataCell(
           Wrap(
@@ -1698,6 +1679,150 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
       ],
+    );
+  }
+
+  List<SyncSummaryItem> _syncSummaryItems({
+    required String changes,
+    required String syncAll,
+    required String integrity,
+    String? changesTooltip,
+    String? syncAllTooltip,
+    String? integrityTooltip,
+  }) => [
+    SyncSummaryItem(
+      label: 'Changes',
+      value: changes,
+      tooltip: changesTooltip,
+    ),
+    SyncSummaryItem(
+      label: 'Sync All',
+      value: syncAll,
+      tooltip: syncAllTooltip,
+    ),
+    SyncSummaryItem(
+      label: 'Integrity',
+      value: integrity,
+      tooltip: integrityTooltip,
+    ),
+  ];
+
+  Widget _buildLastResultCell(AdminAgent agent) {
+    final operation = _syncAllOperationForAgent(agent);
+    final audit = agent.fingerprintAudit;
+    final completedTables = operation == null
+        ? null
+        : (operation.tableCount - operation.remainingTableCount).clamp(
+            0,
+            operation.tableCount,
+          );
+    return SyncSummaryCell(
+      key: ValueKey('sync-last-result-${agent.clientName}'),
+      width: 244,
+      trailing: IconButton(
+        key: ValueKey('fingerprint-audit-log-${agent.clientName}'),
+        tooltip: 'Show integrity-check log',
+        onPressed: () => unawaited(_showFingerprintAuditDialog(agent)),
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.fact_check_outlined, size: 19),
+      ),
+      items: _syncSummaryItems(
+        changes:
+            'Up ${_number(agent.lastUploadedRows)} · Down ${_number(agent.lastDownloadedRows)}',
+        syncAll: operation == null
+            ? '-'
+            : '$completedTables/${operation.tableCount} tables',
+        integrity: audit.totalTables == 0
+            ? '-'
+            : '${audit.checkedTables}/${audit.totalTables} tables',
+        changesTooltip:
+            'Latest change sync: ${_number(agent.lastUploadedRows)} uploaded, ${_number(agent.lastDownloadedRows)} downloaded.',
+        syncAllTooltip: operation == null
+            ? 'No Sync All result has been reported.'
+            : 'Sync All status: ${operation.status}; $completedTables of ${operation.tableCount} tables complete.',
+        integrityTooltip:
+            'Integrity status: ${audit.status}; ${audit.checkedTables} of ${audit.totalTables} tables checked. Click the log button for details.',
+      ),
+    );
+  }
+
+  Widget _buildSyncTotalsCell(AdminAgent agent) {
+    final operation = _syncAllOperationForAgent(agent);
+    final audit = agent.fingerprintAudit;
+    return SyncSummaryCell(
+      key: ValueKey('sync-totals-${agent.clientName}'),
+      items: _syncSummaryItems(
+        changes:
+            'Up ${_number(agent.uploadedRowTotal)} · Down ${_number(agent.downloadedRowTotal)}',
+        syncAll: operation == null ? '-' : '${operation.tableCount} tables',
+        integrity: audit.totalTables == 0
+            ? '-'
+            : '${audit.totalTables} tables/cycle',
+        changesTooltip:
+            'Lifetime change sync totals: ${_number(agent.uploadedRowTotal)} uploaded, ${_number(agent.downloadedRowTotal)} downloaded.',
+        syncAllTooltip: operation == null
+            ? 'No Sync All scope has been reported.'
+            : 'Latest Sync All scope: ${operation.tableCount} participating tables.',
+        integrityTooltip: audit.totalTables == 0
+            ? 'No integrity-check scope has been reported.'
+            : 'Current integrity cycle covers ${audit.totalTables} tables.',
+      ),
+    );
+  }
+
+  Widget _buildLastActivityCell(AdminAgent agent) {
+    final operation = _syncAllOperationForAgent(agent);
+    final audit = agent.fingerprintAudit;
+    final latestChanges = agent.lastSyncCompletedAt.trim().isNotEmpty
+        ? agent.lastSyncCompletedAt
+        : _latestClientSync(agent);
+    final syncAllAt = operation == null
+        ? ''
+        : operation.isRunning
+        ? operation.startedAt
+        : operation.completedAt;
+    final integrityAt = audit.lastCompletedAt.trim().isNotEmpty
+        ? audit.lastCompletedAt
+        : audit.lastBatchCompletedAt.trim().isNotEmpty
+        ? audit.lastBatchCompletedAt
+        : audit.cycleStartedAt;
+    return SyncSummaryCell(
+      key: ValueKey('sync-last-activity-${agent.clientName}'),
+      width: 224,
+      items: _syncSummaryItems(
+        changes: _formatTimestamp(latestChanges),
+        syncAll: _formatTimestamp(syncAllAt),
+        integrity: _formatTimestamp(integrityAt),
+        changesTooltip:
+            'Last completed change sync: ${_formatTimestamp(latestChanges)}. Last change check: ${_formatTimestamp(agent.lastChangeCheckAt)}.',
+        syncAllTooltip: operation?.isRunning == true
+            ? 'Sync All started ${_formatTimestamp(syncAllAt)} and is still running.'
+            : 'Last Sync All completed: ${_formatTimestamp(syncAllAt)}.',
+        integrityTooltip: audit.isActive
+            ? 'Integrity cycle started ${_formatTimestamp(audit.cycleStartedAt)} and is still running.'
+            : 'Last integrity cycle completed: ${_formatTimestamp(integrityAt)}.',
+      ),
+    );
+  }
+
+  Widget _buildSyncDurationCell(AdminAgent agent) {
+    final operation = _syncAllOperationForAgent(agent);
+    final audit = agent.fingerprintAudit;
+    return SyncSummaryCell(
+      key: ValueKey('sync-duration-${agent.clientName}'),
+      items: _syncSummaryItems(
+        changes: formatSyncDuration(agent.lastSyncDuration),
+        syncAll: formatSyncDuration(operation?.duration()),
+        integrity: formatSyncDuration(audit.duration()),
+        changesTooltip:
+            'Duration of the latest completed change sync: ${formatSyncDuration(agent.lastSyncDuration)}.',
+        syncAllTooltip:
+            'Total ${operation?.isRunning == true ? 'elapsed' : 'duration'} of the latest Sync All: ${formatSyncDuration(operation?.duration())}.',
+        integrityTooltip:
+            'Total ${audit.isActive ? 'elapsed' : 'duration'} of the latest integrity cycle: ${formatSyncDuration(audit.duration())}.',
+      ),
     );
   }
 

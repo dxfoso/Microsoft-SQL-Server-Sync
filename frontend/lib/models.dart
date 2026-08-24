@@ -464,6 +464,21 @@ class AdminFingerprintAudit {
   final List<String> lastBatchTables;
   final List<AdminFingerprintAuditBatch> history;
 
+  bool get isActive {
+    final normalized = status.toLowerCase();
+    return normalized == 'running' || normalized == 'checking';
+  }
+
+  Duration? duration({DateTime? now}) {
+    final start = DateTime.tryParse(cycleStartedAt);
+    if (start == null) return null;
+    final end = isActive
+        ? (now ?? DateTime.now().toUtc())
+        : DateTime.tryParse(lastCompletedAt);
+    if (end == null || end.isBefore(start)) return null;
+    return end.difference(start);
+  }
+
   factory AdminFingerprintAudit.fromJson(Map<String, dynamic> json) {
     List<String> strings(String key) =>
         (json[key] as List<dynamic>? ?? const <dynamic>[])
