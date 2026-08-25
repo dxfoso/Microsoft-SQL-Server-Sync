@@ -2723,22 +2723,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       Platform.resolvedExecutable,
     ).parent.path.replaceAll('/', r'\');
     final localScriptPath = _localClientUpdateScriptPath();
-    // Prefer the manifest-provided updater so updater-only fixes can repair an
-    // older installed client. The bundled script remains an offline fallback.
-    if (scriptUrl.isNotEmpty) {
-      return <String>[
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
-            "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
-            "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
-            "-InstallDir '${_powershellSingleQuoted(installDir)}'",
-      ];
-    }
+    // Start the packaged updater directly. It owns bounded DNS-aware metadata
+    // retries and resumable file transfers; downloading another script first
+    // would create an unreported, non-resumable failure point on slow links.
     if (localScriptPath != null) {
       return <String>[
         '-NoProfile',
@@ -2754,6 +2741,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         installDir,
       ];
     }
+    // Legacy/incomplete portable folders may not contain the packaged updater.
+    // Keep the immutable HTTPS bootstrap as a last-resort compatibility path.
     return <String>[
       '-NoProfile',
       '-ExecutionPolicy',

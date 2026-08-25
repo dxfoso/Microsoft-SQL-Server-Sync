@@ -79,7 +79,13 @@ exit 0
             throw "Supervisor exited while the client executable was absent. exit=$($supervisorProcess.ExitCode)"
         }
         if (Test-Path -LiteralPath $supervisorLogPath -PathType Leaf) {
-            $supervisorLog = Get-Content -LiteralPath $supervisorLogPath -Raw
+            try {
+                $supervisorLog = Get-Content -LiteralPath $supervisorLogPath -Raw
+            }
+            catch [System.IO.IOException] {
+                # The supervisor may be appending this exact line. Keep the
+                # existing bounded deadline and retry the read after 200 ms.
+            }
         }
     } while ($supervisorLog -notmatch 'Agent install is incomplete; launch suppressed' -and [DateTime]::UtcNow -lt $logDeadline)
 

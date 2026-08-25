@@ -1747,12 +1747,17 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_client_manifest_uses_immutable_release_scoped_updater(self):
         publisher = read_text("scripts/publish_windows_client_update.ps1")
+        bootstrap = read_text("scripts/client_update_bootstrap.ps1")
 
         self.assertIn(
-            'updateScriptUrl = "$publicRoot/packages/$packageDirName/update.ps1"',
+            'updateScriptUrl = "$publicRoot/packages/$packageDirName/bootstrap.ps1"',
             publisher,
         )
         self.assertNotIn('updateScriptUrl = "$publicRoot/update.ps1"', publisher)
+        self.assertIn("Copy-Item -LiteralPath $BootstrapUpdaterScript", publisher)
+        self.assertIn("$localUpdater = Join-Path", bootstrap)
+        self.assertIn("& $localUpdater @invokeParameters", bootstrap)
+        self.assertNotIn("Invoke-WebRequest", bootstrap)
 
     def test_windows_update_uses_resumable_verified_compressed_differentials(self):
         update_script = read_text("update.ps1")
@@ -2003,9 +2008,13 @@ class SyncContractsTests(unittest.TestCase):
             body = source.split(f"List<String> {function_name}", 1)[1].split(
                 "\n  }", 1
             )[0]
-            self.assertLess(body.index("if (scriptUrl.isNotEmpty)"), body.index("if (localScriptPath != null)"))
-            self.assertIn("updater-only fixes can repair an", body)
-            self.assertIn("bundled script remains an offline fallback", body)
+            self.assertIn("if (localScriptPath != null)", body)
+            self.assertLess(
+                body.index("if (localScriptPath != null)"),
+                body.index("Invoke-WebRequest"),
+            )
+            self.assertIn("unreported, non-resumable failure point", body)
+            self.assertIn("last-resort compatibility path", body)
 
     def test_update_script_stops_supervisor_before_replacing_client_files(self):
         update_script = read_text("update.ps1")

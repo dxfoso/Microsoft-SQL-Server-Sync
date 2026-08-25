@@ -193,7 +193,42 @@ try {
         throw 'Deferred updater did not complete the no-start test path.'
     }
 
-    Write-Host 'PASS deferred updater handles Windows paths, exact supervisor handoff, and stale verified install retries.'
+    $bootstrapInstallDir = Join-Path -Path $testRoot -ChildPath 'bootstrap installed client'
+    $bootstrapMarker = Join-Path -Path $bootstrapInstallDir -ChildPath 'bootstrap-marker.json'
+    New-Item -Path $bootstrapInstallDir -ItemType Directory -Force | Out-Null
+    @'
+param(
+    [string] $ManifestUrl = '',
+    [string] $InstallDir = '',
+    [int] $LauncherSupervisorProcessId = 0,
+    [switch] $NoStart
+)
+@{
+    manifestUrl = $ManifestUrl
+    installDir = $InstallDir
+    launcherSupervisorProcessId = $LauncherSupervisorProcessId
+    noStart = [bool]$NoStart
+} | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $InstallDir 'bootstrap-marker.json') -Encoding UTF8
+'@ | Set-Content -LiteralPath (Join-Path $bootstrapInstallDir 'update.ps1') -Encoding ASCII
+
+    $bootstrapPath = Join-Path -Path $repoRoot -ChildPath 'scripts\client_update_bootstrap.ps1'
+    & $bootstrapPath `
+        -ManifestUrl 'https://sync.velvet-leaf.com/client/latest.json' `
+        -InstallDir $bootstrapInstallDir `
+        -LauncherSupervisorProcessId 42 `
+        -NoStart
+    if (-not (Test-Path -LiteralPath $bootstrapMarker -PathType Leaf)) {
+        throw 'Immutable client bootstrap did not invoke the packaged updater.'
+    }
+    $bootstrapResult = Get-Content -LiteralPath $bootstrapMarker -Raw | ConvertFrom-Json
+    if ($bootstrapResult.manifestUrl -ne 'https://sync.velvet-leaf.com/client/latest.json' -or
+        $bootstrapResult.installDir -ne [System.IO.Path]::GetFullPath($bootstrapInstallDir) -or
+        [int]$bootstrapResult.launcherSupervisorProcessId -ne 42 -or
+        -not [bool]$bootstrapResult.noStart) {
+        throw "Immutable client bootstrap did not preserve packaged-updater arguments: $($bootstrapResult | ConvertTo-Json -Compress)"
+    }
+
+    Write-Host 'PASS deferred updater paths, exact supervisor handoff, stale verified retries, and immutable local bootstrap.'
 }
 finally {
     if (Test-Path -LiteralPath $resolvedTestRoot) {
