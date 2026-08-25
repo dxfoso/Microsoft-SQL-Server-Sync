@@ -2719,6 +2719,12 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   List<String> _clientUpdatePowerShellArgs(ClientUpdateInfo updateInfo) {
     final manifestUrl = _clientUpdateManifestUrl();
     final scriptUrl = _clientUpdateScriptUrl(updateInfo);
+    final expectedVersion = updateInfo.version.trim();
+    final expectedVersionArgs = RegExp(
+      r'^\d+\.\d+\.\d+\+\d+$',
+    ).hasMatch(expectedVersion)
+        ? <String>['-ExpectedVersion', expectedVersion]
+        : const <String>[];
     final installDir = File(
       Platform.resolvedExecutable,
     ).parent.path.replaceAll('/', r'\');
@@ -2739,6 +2745,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         manifestUrl,
         '-InstallDir',
         installDir,
+        ...expectedVersionArgs,
       ];
     }
     // Legacy/incomplete portable folders may not contain the packaged updater.
@@ -2753,7 +2760,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing "
           "-Uri '${_powershellSingleQuoted(scriptUrl)}').Content)) "
           "-ManifestUrl '${_powershellSingleQuoted(manifestUrl)}' "
-          "-InstallDir '${_powershellSingleQuoted(installDir)}'",
+          "-InstallDir '${_powershellSingleQuoted(installDir)}'"
+          "${expectedVersionArgs.isEmpty ? '' : " -ExpectedVersion '${_powershellSingleQuoted(expectedVersion)}'"}",
     ];
   }
 
@@ -2794,7 +2802,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     ClientUpdateInfo updateInfo, {
     bool force = false,
   }) async {
-    if (!mounted || !_hasClientUpdate || !_supportsAutomaticClientUpdate) {
+    if (!mounted || (!force && !_hasClientUpdate) || !_supportsAutomaticClientUpdate) {
       return;
     }
     if (_applyingClientUpdate || _checkingClientUpdate) {
@@ -4594,9 +4602,25 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
 
     try {
-      final updateInfo = await _controlPlaneClient.fetchClientUpdateInfo(
-        manifestUrl: _clientUpdateManifestUrl(),
-      );
+      final targetVersion = clientUpdate.targetVersion?.trim() ?? '';
+      // A version-pinned, authenticated server request can hand off directly
+      // to the packaged updater. The updater independently downloads and
+      // validates the manifest (including ExpectedVersion) with DNS-aware,
+      // bounded retries, so a fragile Dart manifest request must not prevent
+      // the resilient updater from ever starting on a poor connection.
+      final updateInfo = targetVersion.isNotEmpty
+          ? ClientUpdateInfo(
+              version: targetVersion,
+              commit: '',
+              releaseDate: '',
+              zipUrl: '',
+              updateScriptUrl: '',
+              sha256: '',
+              sizeBytes: 0,
+            )
+          : await _controlPlaneClient.fetchClientUpdateInfo(
+              manifestUrl: _clientUpdateManifestUrl(),
+            );
       if (updateInfo == null) {
         await _controlPlaneClient.acknowledgeClientUpdate(
           clientName: widget.clientName,
@@ -4608,20 +4632,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         return;
       }
 
-      final targetVersion = clientUpdate.targetVersion?.trim() ?? '';
       final manifestVersion = updateInfo.version.trim();
-      if (targetVersion.isNotEmpty && manifestVersion != targetVersion) {
-        await _controlPlaneClient.acknowledgeClientUpdate(
-          clientName: widget.clientName,
-          requestId: requestId,
-          status: 'failed',
-          installedVersion: _agentAppVersion,
-          message:
-              'Requested version $targetVersion is not the current live version $manifestVersion.',
-        );
-        return;
-      }
-
       final currentVersion = _agentAppVersion.trim();
       if (currentVersion.isNotEmpty && currentVersion == manifestVersion) {
         await _controlPlaneClient.acknowledgeClientUpdate(

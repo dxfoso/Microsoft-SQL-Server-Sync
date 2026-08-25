@@ -1,6 +1,7 @@
 param(
     [string] $ManifestUrl = 'https://sync.velvet-leaf.com/client/latest.json',
     [string] $InstallDir = '',
+    [string] $ExpectedVersion = '',
     [int] $LauncherSupervisorProcessId = 0,
     [switch] $NoStart
 )
@@ -21,6 +22,9 @@ if (-not (Test-Path -LiteralPath $localUpdater -PathType Leaf)) {
 $invokeParameters = @{
     ManifestUrl = $ManifestUrl
     InstallDir = $resolvedInstallDir
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion)) {
+    $invokeParameters.ExpectedVersion = $ExpectedVersion
 }
 if ($LauncherSupervisorProcessId -gt 0) {
     $invokeParameters.LauncherSupervisorProcessId = $LauncherSupervisorProcessId

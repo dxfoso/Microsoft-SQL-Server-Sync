@@ -1,6 +1,7 @@
 param(
     [string] $ManifestUrl = 'https://sync.velvet-leaf.com/client/latest.json',
     [string] $InstallDir = '',
+    [string] $ExpectedVersion = '',
     [int] $LauncherSupervisorProcessId = 0,
     [switch] $NoStart
 )
@@ -2038,6 +2039,10 @@ if (-not $updateMutexAcquired) {
 
 $manifest = Invoke-UpdateRestMethod -Uri $ManifestUrl
 $script:UpdateTargetVersion = [string] $manifest.version
+if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and
+    $script:UpdateTargetVersion.Trim() -ne $ExpectedVersion.Trim()) {
+    throw "Update manifest version $($script:UpdateTargetVersion) does not match requested version $ExpectedVersion."
+}
 $priorInstallHandoffNeedsElevation = Test-PriorInstallHandoffNeedsElevation `
     -ProgressPath $script:UpdateProgressPath `
     -TargetVersion $script:UpdateTargetVersion

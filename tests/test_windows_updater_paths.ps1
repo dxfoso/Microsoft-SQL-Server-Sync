@@ -200,12 +200,14 @@ try {
 param(
     [string] $ManifestUrl = '',
     [string] $InstallDir = '',
+    [string] $ExpectedVersion = '',
     [int] $LauncherSupervisorProcessId = 0,
     [switch] $NoStart
 )
 @{
     manifestUrl = $ManifestUrl
     installDir = $InstallDir
+    expectedVersion = $ExpectedVersion
     launcherSupervisorProcessId = $LauncherSupervisorProcessId
     noStart = [bool]$NoStart
 } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $InstallDir 'bootstrap-marker.json') -Encoding UTF8
@@ -215,6 +217,7 @@ param(
     & $bootstrapPath `
         -ManifestUrl 'https://sync.velvet-leaf.com/client/latest.json' `
         -InstallDir $bootstrapInstallDir `
+        -ExpectedVersion '1.0.301+305' `
         -LauncherSupervisorProcessId 42 `
         -NoStart
     if (-not (Test-Path -LiteralPath $bootstrapMarker -PathType Leaf)) {
@@ -223,6 +226,7 @@ param(
     $bootstrapResult = Get-Content -LiteralPath $bootstrapMarker -Raw | ConvertFrom-Json
     if ($bootstrapResult.manifestUrl -ne 'https://sync.velvet-leaf.com/client/latest.json' -or
         $bootstrapResult.installDir -ne [System.IO.Path]::GetFullPath($bootstrapInstallDir) -or
+        $bootstrapResult.expectedVersion -ne '1.0.301+305' -or
         [int]$bootstrapResult.launcherSupervisorProcessId -ne 42 -or
         -not [bool]$bootstrapResult.noStart) {
         throw "Immutable client bootstrap did not preserve packaged-updater arguments: $($bootstrapResult | ConvertTo-Json -Compress)"

@@ -1759,6 +1759,27 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("& $localUpdater @invokeParameters", bootstrap)
         self.assertNotIn("Invoke-WebRequest", bootstrap)
 
+    def test_pinned_server_update_starts_resilient_updater_without_manifest_prefetch(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        updater = read_text("update.ps1")
+        bootstrap = read_text("scripts/client_update_bootstrap.ps1")
+        handler = agent.split(
+            "Future<void> _handleRequestedClientUpdate(", 1
+        )[1].split("Future<", 1)[0]
+
+        self.assertIn("final targetVersion = clientUpdate.targetVersion", handler)
+        self.assertIn("final updateInfo = targetVersion.isNotEmpty", handler)
+        self.assertIn("? ClientUpdateInfo(", handler)
+        self.assertIn(": await _controlPlaneClient.fetchClientUpdateInfo(", handler)
+        self.assertIn("(!force && !_hasClientUpdate)", agent)
+        self.assertIn("'-ExpectedVersion', expectedVersion", agent)
+        self.assertIn("[string] $ExpectedVersion = ''", updater)
+        self.assertIn(
+            "$script:UpdateTargetVersion.Trim() -ne $ExpectedVersion.Trim()",
+            updater,
+        )
+        self.assertIn("$invokeParameters.ExpectedVersion = $ExpectedVersion", bootstrap)
+
     def test_windows_update_uses_resumable_verified_compressed_differentials(self):
         update_script = read_text("update.ps1")
         publisher = read_text("scripts/publish_windows_client_update.ps1")
