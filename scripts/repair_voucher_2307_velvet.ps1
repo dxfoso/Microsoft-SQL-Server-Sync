@@ -73,7 +73,44 @@ END;
 IF EXISTS (SELECT 1 FROM dbo.ce000 WHERE GUID=@pos AND Number=@temporary)
    AND EXISTS (SELECT 1 FROM dbo.ce000 WHERE GUID=@purchase AND Type=1 AND Number=2307 AND Debit=9531000 AND Credit=9531000)
 BEGIN
-    SELECT 'SQLSYNC_V2307_STAGED';
+    BEGIN TRY
+        BEGIN TRAN;
+        IF dbo.fnFlag_IsSet(1000)<>0 RAISERROR('Maintenance flag 1000 is already set.',16,1);
+        IF (SELECT COUNT(*) FROM dbo.en000 WHERE ParentGUID=@pos)<>4
+           OR (SELECT SUM(Debit) FROM dbo.en000 WHERE ParentGUID=@pos)<>932000
+           OR (SELECT SUM(Credit) FROM dbo.en000 WHERE ParentGUID=@pos)<>932000
+            RAISERROR('Staged POS accounting lines no longer match the verified voucher.',16,1);
+        IF (SELECT COUNT(*) FROM dbo.en000 WHERE ParentGUID=@purchase)<>37
+           OR (SELECT SUM(Debit) FROM dbo.en000 WHERE ParentGUID=@purchase)<>9531000
+           OR (SELECT SUM(Credit) FROM dbo.en000 WHERE ParentGUID=@purchase)<>9531000
+            RAISERROR('Staged purchase accounting lines no longer match the verified invoice.',16,1);
+
+        SELECT @priorErrorCount=COUNT(*) FROM dbo.ErrorLog
+        WHERE level=1 AND type=0 AND c1=N'AmnE0001: Can''t insert posted entries' AND g1=@purchase;
+        WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)
+        INSERT dbo.mc000(type,number,item) VALUES(24,1000,0);
+
+        -- Deliberately omit SQLSYNC context here: this content-preserving update
+        -- creates a fresh local Change Tracking operation after inventory init.
+        UPDATE dbo.ce000 SET Number=Number WHERE GUID=@purchase AND Number=2307;
+        IF @@ROWCOUNT<>1 RAISERROR('Staged purchase voucher could not be re-announced.',16,1);
+
+        IF (SELECT COUNT(*) FROM dbo.ErrorLog
+            WHERE level=1 AND type=0 AND c1=N'AmnE0001: Can''t insert posted entries' AND g1=@purchase)<>@priorErrorCount
+            RAISERROR('Re-announcing the staged purchase produced an unexpected validation log.',16,1);
+        WITH CHANGE_TRACKING_CONTEXT ($sqlSyncContext)
+        DELETE dbo.mc000 WHERE type=24 AND number=1000;
+        IF dbo.fnFlag_IsSet(1000)<>0 RAISERROR('Maintenance flag cleanup failed.',16,1);
+        COMMIT;
+        SELECT 'SQLSYNC_V2307_STAGED';
+    END TRY
+    BEGIN CATCH
+        DECLARE @stagedErrorMessage nvarchar(2048), @stagedErrorSeverity int, @stagedErrorState int;
+        SELECT @stagedErrorMessage=ERROR_MESSAGE(), @stagedErrorSeverity=ERROR_SEVERITY(), @stagedErrorState=ERROR_STATE();
+        IF XACT_STATE()<>0 ROLLBACK;
+        RAISERROR(@stagedErrorMessage,@stagedErrorSeverity,@stagedErrorState);
+        RETURN;
+    END CATCH;
     RETURN;
 END;
 

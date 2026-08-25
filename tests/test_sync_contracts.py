@@ -2760,6 +2760,19 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("THROW", repair)
         self.assertIn("RAISERROR(@errorMessage,@errorSeverity,@errorState)", repair)
         self.assertIn("'-V', '11'", repair)
+        self.assertIn(
+            "UPDATE dbo.ce000 SET Number=Number WHERE GUID=@purchase AND Number=2307",
+            repair,
+        )
+        self.assertIn("Staged purchase voucher could not be re-announced.", repair)
+        self.assertIn(
+            "Re-announcing the staged purchase produced an unexpected validation log.",
+            repair,
+        )
+        staged_touch = repair.split(
+            "-- Deliberately omit SQLSYNC context here:", 1
+        )[1].split("IF @@ROWCOUNT<>1", 1)[0]
+        self.assertNotIn("CHANGE_TRACKING_CONTEXT", staged_touch)
 
     def test_new_private_export_request_cancels_obsolete_client_work(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
