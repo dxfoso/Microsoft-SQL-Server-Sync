@@ -32,6 +32,29 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("db.upsertMany(AutoNumberIncident", upload)
         self.assertIn("db.insertMany(AutoNumberReservation", upload)
 
+    def test_automatic_numbering_reuses_one_reservation_for_the_same_physical_row(self):
+        source = read_text("business/control_plane.tru")
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+        physical_lookup = source.split(
+            "function automatic_number_incident_find_by_physical_key(", 1
+        )[1].split("function automatic_number_batch_incident_ids", 1)[0]
+
+        self.assertIn("string.from(row.physicalKey) == physicalKey", physical_lookup)
+        self.assertIn("string.from(row.afterNumber ?? '').trim().length != 0", physical_lookup)
+        self.assertIn("status == 'reserved' || status == 'resolved'", physical_lookup)
+        self.assertIn(
+            "automatic_number_incident_find_by_physical_key(\n"
+            "                currentAutoNumberIncidents.concat(pendingAutoNumberIncidents),\n"
+            "                physicalKey",
+            upload,
+        )
+        self.assertLess(
+            upload.index("automatic_number_incident_find_by_physical_key("),
+            upload.index("maximumObserved) + 1"),
+        )
+
     def test_automatic_number_inventory_is_complete_and_collision_retry_is_bounded(self):
         source = read_text("business/control_plane.tru")
         upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(

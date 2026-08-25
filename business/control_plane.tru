@@ -5779,6 +5779,21 @@ function automatic_number_incident_find_by_operation(rows: array<json>, operatio
   return null;
 }
 
+function automatic_number_incident_find_by_physical_key(rows: array<json>, physicalKey: string): map<json>? {
+  // The same permanent row can be announced by several clients with distinct
+  // Change Tracking operation ids. Reuse its first durable reservation rather
+  // than allocating a second number for the same primary identity.
+  for (const row of rows) {
+    const status = string.from(row.status).trim().toLowerCase();
+    if (string.from(row.physicalKey) == physicalKey &&
+        string.from(row.afterNumber ?? '').trim().length != 0 &&
+        (status == 'reserved' || status == 'resolved')) {
+      return row;
+    }
+  }
+  return null;
+}
+
 function automatic_number_batch_incident_ids(batchId: string): array<string> {
   if (batchId.trim().length == 0) {
     return [];
@@ -9660,10 +9675,16 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             let afterNumber = '';
             let incidentStatus = 'blocked';
             let incidentReason = 'A different primary identity already owns the same SQL unique business key. Automatic numbering is waiting for a complete multi-client number inventory.';
-            const existingIncident = automatic_number_incident_find_by_operation(
+            let existingIncident = automatic_number_incident_find_by_operation(
               currentAutoNumberIncidents,
               operationId
             );
+            if (existingIncident == null) {
+              existingIncident = automatic_number_incident_find_by_physical_key(
+                currentAutoNumberIncidents.concat(pendingAutoNumberIncidents),
+                physicalKey
+              );
+            }
             let allocatedNumber = 0;
             if (existingIncident != null &&
                 string.from(existingIncident.afterNumber ?? '').trim().length != 0) {
