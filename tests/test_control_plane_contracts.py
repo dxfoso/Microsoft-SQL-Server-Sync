@@ -16,7 +16,6 @@ class ControlPlaneContractsTests(unittest.TestCase):
         upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
             "function jobs_multi_writer_download(", 1
         )[0]
-
         self.assertIn("class AutoNumberIncident", source)
         self.assertIn("class AutoNumberSequence", source)
         self.assertIn("class AutoNumberReservation", source)
@@ -24,7 +23,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("localTable != 'ce000'", source)
         self.assertIn("columnSet.length == 3", source)
         self.assertIn("columnSet[1]).trim().toLowerCase() == numberColumn", source)
-        self.assertIn("multiClientUnionBootstrap && ready", upload)
+        self.assertIn("completeMultiClientUnionBootstrap && ready", upload)
         self.assertIn("payloadIsDelta && sequence.initialized == true", upload)
         self.assertIn("incidentStatus = 'reserved'", upload)
         self.assertIn("accepted = false", upload)
@@ -32,6 +31,76 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("automaticNumber: automaticNumberDirective", upload)
         self.assertIn("db.upsertMany(AutoNumberIncident", upload)
         self.assertIn("db.insertMany(AutoNumberReservation", upload)
+
+    def test_automatic_number_inventory_is_complete_and_collision_retry_is_bounded(self):
+        source = read_text("business/control_plane.tru")
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+        download = source.split("function jobs_multi_writer_download(", 1)[1].split(
+            "function jobs_upload_chunk", 1
+        )[0]
+        planner = source.split("function sync_table_baseline_plan(", 1)[1].split(
+            "function enabled_sync_policy_tables_for_agent", 1
+        )[0]
+        failure = source.split("function jobs_fail(", 1)[1].split(
+            "function jobs_cancel_active", 1
+        )[0]
+        completion = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail", 1
+        )[0]
+        recovery = source.split(
+            "function jobs_recover_automatic_number_collision(", 1
+        )[1].split("function jobs_bootstrap", 1)[0]
+
+        self.assertIn("function sync_source_is_complete_union_bootstrap", source)
+        self.assertIn(
+            "'server-range-union-v1:0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15'",
+            source,
+        )
+        incident_lookup = source.split(
+            "function automatic_number_batch_incident_ids(", 1
+        )[1].split("function automatic_number_allocation_collision", 1)[0]
+        self.assertIn("db.page(SnapshotRecord", incident_lookup)
+        self.assertIn("limit: 1000", incident_lookup)
+        self.assertIn("chunkPage.nextCursor", incident_lookup)
+        self.assertIn("return [];", incident_lookup)
+        self.assertIn(
+            "const completeMultiClientUnionBootstrap =", upload
+        )
+        self.assertEqual(
+            upload.count("completeMultiClientUnionBootstrap && ready"), 2
+        )
+        self.assertNotIn(
+            "if (multiClientUnionBootstrap && ready)", upload
+        )
+        self.assertIn("automatic_number_inventory_required(", planner)
+        self.assertIn("mode: 'union_bootstrap'", planner)
+        self.assertIn(
+            "string.from(existingIncident.afterNumber ?? '').trim().length == 0",
+            upload,
+        )
+        self.assertIn("status: 'reserved'", upload)
+        self.assertIn("automatic_number_allocation_collision", failure)
+        self.assertIn("invalidate_automatic_number_batch_reservations", failure)
+        self.assertIn("queue_automatic_number_inventory_recovery", failure)
+        self.assertIn("'automatic-number-retry'", failure)
+        inventory_queue = source.split(
+            "function queue_automatic_number_inventory_recovery(", 1
+        )[1].split("function queue_automatic_number_delta_retry", 1)[0]
+        self.assertIn("'automatic-number-inventory'", inventory_queue)
+        self.assertIn("\n    true,\n    true,", inventory_queue)
+        self.assertIn("resolve_automatic_number_batch_incidents", completion)
+        self.assertIn("queue_automatic_number_delta_retry", completion)
+        self.assertIn("const automaticNumberInventoryOnly =", download)
+        self.assertIn("acceptedOperationIds = [];", download)
+        self.assertIn("chunkPayloadBase64 = '';", download)
+        self.assertIn("totalRowCount = 0;", download)
+        self.assertIn("automatic_sync_is_paused_for_user", recovery)
+        self.assertIn("automatic_number_rule(", recovery)
+        self.assertIn("status: 'reserved'", recovery)
+        self.assertIn("afterNumber: ''", recovery)
+        self.assertIn("queue_automatic_number_inventory_recovery", recovery)
 
     def test_client_update_recovery_path_is_bounded_and_authorized(self):
         source = read_text("business/control_plane.tru")
@@ -2476,7 +2545,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("rangeManifests.length != participantCount", range_plan)
         self.assertIn("differingBuckets.length > 0 && differingBuckets.length < 16", range_plan)
         self.assertIn("mode: 'range_union'", planner)
-        self.assertLess(planner.index("mode: 'range_union'"), planner.index("mode: 'union_bootstrap'"))
+        self.assertLess(planner.index("mode: 'range_union'"), planner.rindex("mode: 'union_bootstrap'"))
         self.assertIn("sync_range_manifest_parts(state)", planner)
         self.assertIn("string.from(parts[2]) != string.from(state.rowCount", source)
         self.assertIn("string.from(parts[3]) != string.from(state.tableChecksum", source)

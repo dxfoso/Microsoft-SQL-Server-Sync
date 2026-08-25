@@ -3851,6 +3851,31 @@ function sync_source_is_union_bootstrap(sourceClientName: string): bool {
     string.from(parts[1]).trim().length != 0;
 }
 
+function sync_source_is_complete_union_bootstrap(sourceClientName: string): bool {
+  const normalized = sourceClientName.trim();
+  return normalized == 'server-union-bootstrap-v3' ||
+    normalized == 'server-range-union-v1:0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15';
+}
+
+function automatic_number_inventory_required(ownerUserId: string, table: string): bool {
+  const reference = sync_table_reference(table);
+  const localTable = string.from(reference.table).trim().toLowerCase();
+  if (localTable != 'ce000' && localTable != 'dbo.ce000') {
+    return false;
+  }
+  const rows = db.selectMany(AutoNumberSequence, {
+    where: {
+      ownerUserId,
+      table,
+      initialized: false
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id'],
+    limit: 1
+  });
+  return rows.length > 0;
+}
+
 // A range manifest is usable only when it describes the exact complete table
 // inventory currently reported by that client. This prevents stale or partial
 // diagnostics from narrowing a repair unsafely.
@@ -4009,6 +4034,21 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       sourceAgent: null,
       targetAgents: [],
       message: 'Table is not enabled for any client.'
+    };
+  }
+  if (participants.length >= 2 &&
+      allowInventoryUnion &&
+      automatic_number_inventory_required(
+        string.from(participants[0].ownerUserId),
+        table
+      )) {
+    return {
+      mode: 'union_bootstrap',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: participants,
+      message: 'Automatic numbering requires a complete multi-client number inventory before another allocation can be reserved.'
     };
   }
   // Complete fingerprints are expected to differ while a valid-cursor client
@@ -5739,6 +5779,163 @@ function automatic_number_incident_find_by_operation(rows: array<json>, operatio
   return null;
 }
 
+function automatic_number_batch_incident_ids(batchId: string): array<string> {
+  if (batchId.trim().length == 0) {
+    return [];
+  }
+  const chunkPage = db.page(SnapshotRecord, {
+    where: {
+      sourceJobId: batchId,
+      rowCount: { gt: 0 }
+    },
+    orderBy: [
+      { field: 'createdAt', dir: 'asc' },
+      { field: 'id', dir: 'asc' }
+    ],
+    fields: ['rows'],
+    limit: 1000,
+    cursor: null
+  });
+  // A batch this fragmented is outside automatic recovery's proven bound.
+  // Fail closed instead of resolving or reallocating from incomplete evidence.
+  if (chunkPage.nextCursor != null &&
+      string.from(chunkPage.nextCursor).trim().length != 0) {
+    return [];
+  }
+  const chunks = chunkPage.rows;
+  let incidentIds = [];
+  for (const chunk of chunks) {
+    for (const operation of chunk.rows ?? []) {
+      if (operation.automaticNumber == null) {
+        continue;
+      }
+      const incidentId = string.from(operation.automaticNumber.incidentId ?? '').trim();
+      if (incidentId.length == 64 &&
+          !string_array_contains(incidentIds, incidentId)) {
+        incidentIds = incidentIds.concat([incidentId]);
+      }
+    }
+  }
+  return incidentIds;
+}
+
+function automatic_number_allocation_collision(message: string, batchId: string): bool {
+  const normalized = message.trim().toLowerCase();
+  return automatic_number_batch_incident_ids(batchId).length > 0 &&
+    normalized.contains('automatic latest-change reconciliation') &&
+    normalized.contains('cannot insert duplicate key row');
+}
+
+function invalidate_automatic_number_batch_reservations(ownerUserId: string, table: string, batchId: string, failedAt: string): int {
+  const incidentIds = automatic_number_batch_incident_ids(batchId);
+  if (incidentIds.length == 0) {
+    return 0;
+  }
+  db.updateMany(AutoNumberSequence, {
+    ownerUserId,
+    table
+  }, {
+    initialized: false,
+    updatedAt: failedAt
+  });
+  return db.updateMany(AutoNumberIncident, {
+    id: { in: incidentIds },
+    ownerUserId,
+    table,
+    status: 'reserved'
+  }, {
+    status: 'blocked',
+    reason: 'The reserved number was already occupied on a client. The reservation was invalidated atomically; a complete multi-client inventory is required before retry.',
+    afterNumber: '',
+    resolvedAt: null,
+    updatedAt: failedAt
+  });
+}
+
+function automatic_number_sync_participants(ownerUserId: string, table: string): map<json> {
+  const policies = list_table_sync_policies_for_scope(ownerUserId);
+  const ownerAgents = list_scheduler_agent_rows().filter((agent) =>
+    string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)
+  );
+  const participants = sync_agents_enabled_for_table(
+    ownerAgents,
+    table,
+    policies
+  );
+  return { policies, participants };
+}
+
+function automatic_number_participants_online(participants: array<json>): bool {
+  if (participants.length < 2) {
+    return false;
+  }
+  for (const participant of participants) {
+    if (!effective_agent_online(participant)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function queue_automatic_number_inventory_recovery(ownerUserId: string, table: string): array<json> {
+  if (string_array_contains(active_job_tables_for_owner(ownerUserId), table)) {
+    return [];
+  }
+  const syncScope = automatic_number_sync_participants(ownerUserId, table);
+  if (!automatic_number_participants_online(syncScope.participants ?? [])) {
+    return [];
+  }
+  return create_multi_writer_batch(
+    ownerUserId,
+    table,
+    syncScope.participants ?? [],
+    '',
+    true,
+    true,
+    syncScope.policies ?? [],
+    'automatic-number-inventory',
+    ''
+  );
+}
+
+function queue_automatic_number_delta_retry(ownerUserId: string, table: string): array<json> {
+  if (string_array_contains(active_job_tables_for_owner(ownerUserId), table)) {
+    return [];
+  }
+  const syncScope = automatic_number_sync_participants(ownerUserId, table);
+  if (!automatic_number_participants_online(syncScope.participants ?? [])) {
+    return [];
+  }
+  return create_multi_writer_batch(
+    ownerUserId,
+    table,
+    syncScope.participants ?? [],
+    '',
+    false,
+    false,
+    syncScope.policies ?? [],
+    'automatic-number-retry',
+    ''
+  );
+}
+
+function resolve_automatic_number_batch_incidents(ownerUserId: string, table: string, batchId: string, resolvedAt: string): int {
+  const incidentIds = automatic_number_batch_incident_ids(batchId);
+  if (incidentIds.length == 0) {
+    return 0;
+  }
+  return db.updateMany(AutoNumberIncident, {
+    id: { in: incidentIds },
+    ownerUserId,
+    table,
+    status: 'reserved'
+  }, {
+    status: 'resolved',
+    resolvedAt,
+    updatedAt: resolvedAt
+  });
+}
+
 function sync_row_logical_winner_refs(ownerUserId: string, table: string, row: map<json>, uniqueKeyColumnSets: array<json>): array<json> {
   let refs = [];
   for (const rawColumnSet of uniqueKeyColumnSets) {
@@ -6084,6 +6281,19 @@ function sync_batch_client_names(batchId: string): array<string> {
   return unique_string_values((rows ?? []).map((row) => string.from(row.clientName)));
 }
 
+function sync_batch_automatic_retry_kind(batchId: string): string {
+  const rows = db.selectMany(SyncJob, {
+    where: { batchId },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['automaticRetryKind'],
+    limit: 1
+  });
+  if (rows.length == 0) {
+    return '';
+  }
+  return string.from(rows[0].automaticRetryKind ?? '').trim();
+}
+
 function merge_rows_by_key(existingRows: array<json>, incomingRows: array<json>, keyColumns: array<string>): array<json> {
   if (incomingRows.length == 0) {
     return existingRows;
@@ -6173,9 +6383,11 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       id: uuid.v4(),
       clientName,
       sourceClientName: unionBootstrap
-        ? rangeBucketCsv.trim().length != 0
-          ? string.concat('server-range-union-v1:', rangeBucketCsv.trim())
-          : 'server-union-bootstrap-v3'
+        ? automaticRetryKind == 'automatic-number-inventory'
+          ? 'server-range-union-v1:0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15'
+          : rangeBucketCsv.trim().length != 0
+            ? string.concat('server-range-union-v1:', rangeBucketCsv.trim())
+            : 'server-union-bootstrap-v3'
         : bootstrapSourceClientName.length != 0
         ? 'server-bootstrap-v3'
         : preserveChangeTrackingBaselines
@@ -6216,10 +6428,10 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
     }, {
       id: uuid.v4(),
       clientName,
-      sourceClientName: unionBootstrap && rangeBucketCsv.trim().length != 0
-        ? string.concat('server-range-union-v1:', rangeBucketCsv.trim())
-        : preserveChangeTrackingBaselines
+      sourceClientName: preserveChangeTrackingBaselines
           ? 'server-partial-merge'
+        : unionBootstrap && rangeBucketCsv.trim().length != 0
+          ? string.concat('server-range-union-v1:', rangeBucketCsv.trim())
           : 'server-merge',
       subscriberClientName: clientName,
       table,
@@ -8827,6 +9039,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   const multiClientUnionBootstrap =
     sync_source_is_union_bootstrap(string.from(job.sourceClientName)) &&
     batch.expectedClients.length >= 2;
+  const completeMultiClientUnionBootstrap =
+    sync_source_is_complete_union_bootstrap(string.from(job.sourceClientName)) &&
+    batch.expectedClients.length >= 2;
   if (!payloadIsDelta &&
       !explicitSingleClientBootstrap &&
       !comparisonPreview &&
@@ -9398,7 +9613,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             sequenceRevision = int.from(sequence.revision ?? 0) + 1;
             sequenceInitialized = sequence.initialized == true;
           }
-          if (multiClientUnionBootstrap && ready) {
+          if (completeMultiClientUnionBootstrap && ready) {
             sequenceInitialized = true;
           }
           sequence = {
@@ -9524,24 +9739,47 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             }
             if (existingIncident == null) {
               pendingAutoNumberIncidents = pendingAutoNumberIncidents.concat([{
-              id: incidentId,
-              ownerUserId: winnerOwnerUserId,
-              clientName: normalizedClientName,
-              conflictingClientName: string.from(conflictingWinner.originClient),
-              table: winnerTable,
-              status: incidentStatus,
-              reason: incidentReason,
-              numberColumn,
-              beforeNumber: string.from(observedNumber),
-              afterNumber,
-              scope: sequenceScope.scope,
-              primaryKey: automatic_number_primary_key(autoNumberRule, incomingRow),
-              beforeRow,
-              afterRow,
-              operationId,
-              physicalKey,
-              detectedAt: serverReceivedAt,
-              resolvedAt: null,
+                id: incidentId,
+                ownerUserId: winnerOwnerUserId,
+                clientName: normalizedClientName,
+                conflictingClientName: string.from(conflictingWinner.originClient),
+                table: winnerTable,
+                status: incidentStatus,
+                reason: incidentReason,
+                numberColumn,
+                beforeNumber: string.from(observedNumber),
+                afterNumber,
+                scope: sequenceScope.scope,
+                primaryKey: automatic_number_primary_key(autoNumberRule, incomingRow),
+                beforeRow,
+                afterRow,
+                operationId,
+                physicalKey,
+                detectedAt: serverReceivedAt,
+                resolvedAt: null,
+                updatedAt: serverReceivedAt
+              }]);
+            } else if (allocatedNumber > 0 &&
+                string.from(existingIncident.afterNumber ?? '').trim().length == 0) {
+              pendingAutoNumberIncidents = pendingAutoNumberIncidents.concat([{
+                id: existingIncident.id,
+                ownerUserId: existingIncident.ownerUserId,
+                clientName: existingIncident.clientName,
+                conflictingClientName: existingIncident.conflictingClientName,
+                table: existingIncident.table,
+                status: 'reserved',
+                reason: 'A different primary identity already owned this voucher number. The server refreshed the complete inventory and reserved the next owner-wide free number while preserving the GUID and child links.',
+                numberColumn: existingIncident.numberColumn,
+                beforeNumber: existingIncident.beforeNumber,
+                afterNumber,
+                scope: existingIncident.scope,
+                primaryKey: existingIncident.primaryKey,
+                beforeRow: existingIncident.beforeRow,
+                afterRow,
+                operationId: existingIncident.operationId,
+                physicalKey: existingIncident.physicalKey,
+                detectedAt: existingIncident.detectedAt,
+                resolvedAt: null,
                 updatedAt: serverReceivedAt
               }]);
             }
@@ -9792,7 +10030,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       }
       db.upsertMany(AutoNumberSequence, pendingAutoNumberSequences, ['id']);
     }
-    if (multiClientUnionBootstrap && ready && autoNumberRule != null) {
+    if (completeMultiClientUnionBootstrap && ready && autoNumberRule != null) {
       db.updateMany(AutoNumberSequence, {
         ownerUserId: winnerOwnerUserId,
         table: winnerTable
@@ -9930,6 +10168,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   });
   const canonicalFullMerge = unionBootstrapJob != null &&
     sync_source_is_union_bootstrap(string.from(unionBootstrapJob.sourceClientName));
+  const automaticNumberInventoryOnly =
+    sync_batch_automatic_retry_kind(batchId) == 'automatic-number-inventory';
   const storedChunkPage = db.page(SnapshotRecord, {
     // Upload snapshots can contain thousands of rows while the durable winner
     // register accepts only a handful. A zero-row relay record has no current
@@ -10068,6 +10308,17 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       }
     }
   }
+  // This phase exists only to initialize the owner-wide maximum. Applying its
+  // ordinary union rows could conflict with the deliberately staged voucher
+  // before the subsequent preserved delta receives its reserved number.
+  if (automaticNumberInventoryOnly) {
+    acceptedOperationIds = [];
+    acceptedOperations = [];
+    chunkRows = [];
+    chunkPayloadBase64 = '';
+    chunkPayloadEncoding = 'json';
+    chunkIsDelta = false;
+  }
   // Progress and immutable transfer identity describe relayable winner rows,
   // not the raw inventory rows received from every union participant.
   let totalRowCount = batch.rows.length;
@@ -10079,6 +10330,9 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     totalRowCount = relayTotals.length == 0
       ? 0
       : int.from(relayTotals[0].rowCount ?? 0);
+  }
+  if (automaticNumberInventoryOnly) {
+    totalRowCount = 0;
   }
   // A canonical union remains a complete, insert/update-only verification
   // even when every stored upload chunk was safely pruned. Never let an empty
@@ -10764,6 +11018,111 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
   return raw_json_success({
     mode: 'protocol-v4',
     jobs: createdJobs.map((job) => public_job_payload(job))
+  }, 201);
+}
+
+function jobs_recover_automatic_number_collision(clientName: string, table: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  if (!automatic_sync_is_paused_for_user(current)) {
+    return raw_json_error(409, 'pause automatic sync before automatic-number recovery');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  const clientUser = find_user_by_identity(normalizedClientName);
+  if (clientUser == null ||
+      !is_client_user(clientUser) ||
+      !can_manage_user(current, clientUser)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const ownerUserId = owner_namespace_for_user(clientUser);
+  const normalizedTable = table.trim();
+  if (normalizedTable.length == 0 ||
+      string_array_contains(active_job_tables_for_owner(ownerUserId), normalizedTable)) {
+    return raw_json_error(409, 'automatic-number recovery requires an idle table');
+  }
+  const failedJobs = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      table: normalizedTable,
+      direction: 'download',
+      status: 'failed'
+    },
+    orderBy: { field: 'completedAt', dir: 'desc' },
+    fields: ['batchId', 'message'],
+    limit: 1
+  });
+  if (failedJobs.length == 0 ||
+      !string.from(failedJobs[0].message ?? '').trim().toLowerCase()
+        .contains('cannot insert duplicate key row')) {
+    return raw_json_error(409, 'no failed automatic-number allocation collision is available for recovery');
+  }
+  const failedBatch = find_sync_batch(string.from(failedJobs[0].batchId ?? ''));
+  if (failedBatch == null ||
+      automatic_number_rule(
+        normalizedTable,
+        failedBatch.columns ?? [],
+        failedBatch.keyColumns ?? [],
+        failedBatch.uniqueKeyColumnSets ?? []
+      ) == null) {
+    return raw_json_error(409, 'the failed table does not have a validated automatic-number schema');
+  }
+  const reservedIncidents = db.selectMany(AutoNumberIncident, {
+    where: {
+      ownerUserId,
+      table: normalizedTable,
+      status: 'reserved'
+    },
+    orderBy: { field: 'detectedAt', dir: 'asc' },
+    fields: ['id'],
+    limit: 100
+  });
+  if (reservedIncidents.length == 0) {
+    return raw_json_error(409, 'no reserved automatic number requires recovery');
+  }
+  const syncScope = automatic_number_sync_participants(
+    ownerUserId,
+    normalizedTable
+  );
+  if (!automatic_number_participants_online(syncScope.participants ?? [])) {
+    return raw_json_error(409, 'every enabled client must be online and SQL-connected for complete number inventory recovery');
+  }
+  const recoveryAt = now_iso();
+  db.updateMany(AutoNumberSequence, {
+    ownerUserId,
+    table: normalizedTable
+  }, {
+    initialized: false,
+    updatedAt: recoveryAt
+  });
+  db.updateMany(AutoNumberIncident, {
+    id: { in: reservedIncidents.map((incident) => string.from(incident.id)) },
+    ownerUserId,
+    table: normalizedTable,
+    status: 'reserved'
+  }, {
+    status: 'blocked',
+    reason: 'The reserved number was already occupied on a client. The reservation was invalidated atomically; a complete multi-client inventory is running before retry.',
+    afterNumber: '',
+    resolvedAt: null,
+    updatedAt: recoveryAt
+  });
+  const jobs = queue_automatic_number_inventory_recovery(
+    ownerUserId,
+    normalizedTable
+  );
+  if (jobs.length == 0) {
+    return raw_json_error(409, 'complete number inventory recovery could not be queued safely');
+  }
+  return raw_json_success({
+    mode: 'automatic-number-complete-inventory-recovery',
+    table: normalizedTable,
+    invalidatedIncidentCount: reservedIncidents.length,
+    jobs: jobs.map((job) => public_job_payload(job))
   }, 201);
 }
 
@@ -11623,6 +11982,23 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     // is required to release a stale Needs input gate.
     refresh_owner_baseline_table_issues(string.from(job.ownerUserId));
   }
+  if (status.trim().toLowerCase() == 'completed' &&
+      string.from(job.direction).trim() == 'download' &&
+      completedBatchId.length != 0 &&
+      sync_batch_all_jobs_completed(completedBatchId)) {
+    resolve_automatic_number_batch_incidents(
+      string.from(job.ownerUserId),
+      string.from(job.table),
+      completedBatchId,
+      completedAt
+    );
+    if (sync_batch_automatic_retry_kind(completedBatchId) == 'automatic-number-inventory') {
+      queue_automatic_number_delta_retry(
+        string.from(job.ownerUserId),
+        string.from(job.table)
+      );
+    }
+  }
   record_periodic_sync_table_attempt(job.ownerUserId, string.from(job.table));
   if (completedBatchId.length != 0 && sync_batch_all_jobs_completed(completedBatchId)) {
     const remainingManualTables = manual_sync_pending_tables_for_owner(string.from(job.ownerUserId));
@@ -11691,6 +12067,16 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     updatedAt: completedAt
   });
   const failedBatchId = string.from(job.batchId ?? '').trim();
+  const automaticNumberCollision = failedBatchId.length != 0 &&
+    automatic_number_allocation_collision(message, failedBatchId);
+  if (automaticNumberCollision) {
+    invalidate_automatic_number_batch_reservations(
+      string.from(job.ownerUserId),
+      string.from(job.table),
+      failedBatchId,
+      completedAt
+    );
+  }
   if (failedBatchId.length != 0) {
     const activeBatchJobs = db.selectMany(SyncJob, {
       where: {
@@ -11715,6 +12101,13 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
       });
     }
     cleanup_multi_writer_batch_storage(failedBatchId);
+    if (automaticNumberCollision &&
+        string.from(job.automaticRetryKind ?? '').trim() != 'automatic-number-retry') {
+      queue_automatic_number_inventory_recovery(
+        string.from(job.ownerUserId),
+        string.from(job.table)
+      );
+    }
   } else if (string.from(job.direction).trim() == 'upload') {
     const targetJob = find_waiting_download_job(string.from(job.clientName), string.from(job.subscriberClientName), string.from(job.table));
     if (targetJob != null) {
