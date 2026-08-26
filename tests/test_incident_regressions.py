@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 281)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 283)}
         observed_ids = set()
 
         for row in rows:
@@ -37,6 +37,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
                     self.assertIn(selector, source, f"{incident_id}: missing {reference}")
 
         self.assertEqual(observed_ids, expected_ids)
+
+    def test_retired_windows_runner_python_alias_bug_cannot_reenter_cloud_tests(self):
+        legacy_test = ROOT / "backend/scripts/tests/test_runner_bootstrap.py"
+        worker_image = read_text("backend/.cloud-ci/images/tru-ci/Dockerfile")
+        ci_task = read_text("backend/.cloud-ci/tasks/ci.sh")
+        common = read_text("backend/.cloud-ci/tasks/lib/common.sh")
+
+        self.assertFalse(legacy_test.exists())
+        self.assertIn("python3 python3-pip", worker_image)
+        self.assertIn("require_command python3", ci_task)
+        self.assertIn("required command not found", common)
 
     def test_background_fingerprint_rotation_survives_client_restart(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
