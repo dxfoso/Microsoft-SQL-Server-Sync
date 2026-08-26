@@ -4608,6 +4608,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   const recentUploadModes = latest_completed_upload_modes_for_owner(normalizedOwnerUserId);
   const scheduledTableAttempts = periodic_sync_scheduled_table_attempts_for_owner(ownerUserId);
   let failedUnionRetryBatches = [];
+  let persistentUnionDivergenceTables = [];
   let dueTables = manualPendingTables;
   if (manualPendingTables.length == 0) {
     dueTables = unique_string_values(
@@ -4636,6 +4637,12 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       tableCaches,
       0
     )) {
+      // A real Change Tracking or offline-catchup signal was admitted above.
+      // Let that evidence-bearing job run before classifying any remaining
+      // fingerprint difference as a persistent post-union conflict.
+      if (string_array_contains(dueTables, table)) {
+        continue;
+      }
       // A complete union may legitimately leave fingerprints different when
       // a target-only row is protected by the explicit-delete-only rule or a
       // local row changes after its upload snapshot. Do not turn that stable
@@ -4647,18 +4654,20 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         normalizedOwnerUserId,
         table
       );
+      let completedUnionWithoutFailedDownload = false;
       if (latestUploadMode != null && latestUploadMode.union == true) {
         const failedBatchId = retryable_failed_union_download_batch_id(
           normalizedOwnerUserId,
           table
         );
         if (failedBatchId.length == 0) {
-          continue;
+          completedUnionWithoutFailedDownload = true;
+        } else {
+          failedUnionRetryBatches = failedUnionRetryBatches.concat([{
+            table,
+            batchId: failedBatchId
+          }]);
         }
-        failedUnionRetryBatches = failedUnionRetryBatches.concat([{
-          table,
-          batchId: failedBatchId
-        }]);
       }
       let retryDue = false;
       for (const agent of ownerAgents) {
@@ -4671,8 +4680,21 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         }
       }
       if (retryDue) {
-        dueTables = unique_string_values(dueTables.concat([table]));
+        if (completedUnionWithoutFailedDownload) {
+          persistentUnionDivergenceTables = unique_string_values(
+            persistentUnionDivergenceTables.concat([table])
+          );
+        } else {
+          dueTables = unique_string_values(dueTables.concat([table]));
+        }
       }
+    }
+    if (persistentUnionDivergenceTables.length > 0) {
+      raise_persistent_union_divergence_issues(
+        normalizedOwnerUserId,
+        persistentUnionDivergenceTables
+      );
+      return [];
     }
     dueTables = order_owner_due_table_candidates(
       dueTables,
@@ -5271,6 +5293,44 @@ function raise_sync_table_issue(ownerUserId: string? = null, table: string, reas
     string.concat('Sync stopped: table ', normalizedTable, ' needs a user decision.')
   );
   return issue;
+}
+
+function raise_persistent_union_divergence_issues(ownerUserId: string, tables: array<string>): void {
+  const detectedAt = now_iso();
+  let nextIssues = sync_table_issues_for_owner(ownerUserId);
+  let changed = false;
+  for (const table of unique_string_values(tables)) {
+    const existing = sync_table_issue_from_values(nextIssues, table);
+    if (existing != null && sync_table_issue_is_blocking(existing)) {
+      continue;
+    }
+    let originalDetectedAt = detectedAt;
+    if (existing != null && existing.detectedAt != null) {
+      originalDetectedAt = existing.detectedAt;
+    }
+    nextIssues = replace_sync_table_issue_in_values(nextIssues, {
+      table,
+      status: 'needs_input',
+      reason: 'persistent_union_divergence',
+      message: 'Every client completed the guarded insert/update union, but fresh complete fingerprints still differ after the retry interval and no local Change Tracking row is pending. Automatic replay stopped instead of guessing between conflicting current values. Compare this table and choose the authoritative client.',
+      clientName: '',
+      action: '',
+      sourceClientName: '',
+      targetClientNames: [],
+      detectedAt: originalDetectedAt,
+      updatedAt: detectedAt,
+      resolvedAt: null
+    });
+    changed = true;
+  }
+  if (!changed) {
+    return;
+  }
+  save_sync_table_issues_for_owner(ownerUserId, nextIssues);
+  cancel_owner_sync_jobs_for_input(
+    ownerUserId,
+    'Sync stopped: a completed union left conflicting current values and needs a user decision.'
+  );
 }
 
 function sync_table_reported_fingerprint(tableState: map<json>? = null): string {

@@ -1130,6 +1130,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         scheduler = source.split(
             "function queue_due_periodic_sync_jobs_for_owner(", 1
         )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        escalation = source.split(
+            "function raise_persistent_union_divergence_issues(", 1
+        )[1].split("function sync_table_reported_fingerprint(", 1)[0]
 
         self.assertIn(
             "const recentUploadModes = latest_completed_upload_modes_for_owner(",
@@ -1148,6 +1151,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
                 "if (latestUploadMode != null && latestUploadMode.union == true)"
             ),
         )
+        self.assertIn("completedUnionWithoutFailedDownload = true", scheduler)
+        self.assertIn("if (string_array_contains(dueTables, table))", scheduler)
+        self.assertIn("persistentUnionDivergenceTables.concat([table])", scheduler)
+        self.assertIn("raise_persistent_union_divergence_issues(", scheduler)
+        self.assertIn("return [];", scheduler.split(
+            "raise_persistent_union_divergence_issues(", 1
+        )[1].split("dueTables = order_owner_due_table_candidates", 1)[0])
+        self.assertIn("reason: 'persistent_union_divergence'", escalation)
+        self.assertIn("status: 'needs_input'", escalation)
+        self.assertIn("save_sync_table_issues_for_owner(ownerUserId, nextIssues)", escalation)
+        self.assertIn("cancel_owner_sync_jobs_for_input(", escalation)
+        self.assertNotIn("save_sync_table_issues_for_owner", escalation.split(
+            "for (const table", 1
+        )[1].split("if (!changed)", 1)[0])
 
     def test_failed_union_download_gets_one_bounded_automatic_retry(self):
         source = read_text("business/control_plane.tru")

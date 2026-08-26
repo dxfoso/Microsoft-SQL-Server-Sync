@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 254)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 255)}
         observed_ids = set()
 
         for row in rows:
@@ -900,9 +900,13 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "latestUploadMode != null && latestUploadMode.union == true",
             scheduler,
         )
-        self.assertIn("continue;", scheduler.split(
+        completed_union = scheduler.split(
             "latestUploadMode != null && latestUploadMode.union == true", 1
-        )[1].split("let retryDue = false", 1)[0])
+        )[1].split("let retryDue = false", 1)[0]
+        self.assertNotIn("dueTables.concat([table])", completed_union)
+        self.assertIn("completedUnionWithoutFailedDownload = true", completed_union)
+        self.assertIn("if (string_array_contains(dueTables, table))", scheduler)
+        self.assertIn("raise_persistent_union_divergence_issues(", scheduler)
 
     def test_failed_full_download_receives_only_one_automatic_retry(self):
         source = read_text("business/control_plane.tru")
