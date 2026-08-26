@@ -147,6 +147,20 @@ function Invoke-NativeChecked {
     }
 }
 
+function Initialize-PinnedBackendSubmodule {
+    $backendProbe = Join-Path $repoRoot 'backend\server\src\eval\expr\builtins\part_01.rs'
+    if (Test-Path -LiteralPath $backendProbe -PathType Leaf) {
+        return
+    }
+    Invoke-NativeChecked -Executable 'git' -Arguments @(
+        '-C', $repoRoot,
+        'submodule', 'update', '--init', '--recursive', '--', 'backend'
+    )
+    if (-not (Test-Path -LiteralPath $backendProbe -PathType Leaf)) {
+        throw "The pinned backend submodule did not provide $backendProbe."
+    }
+}
+
 function Invoke-DockerSyncSuite {
     param(
         [Parameter(Mandatory = $true)][string] $Suite,
@@ -171,6 +185,7 @@ function Invoke-DockerSyncSuite {
 
 Push-Location $repoRoot
 try {
+    Initialize-PinnedBackendSubmodule
     if (-not $SkipPrerequisiteTests) {
         Invoke-VerificationStep 'Flutter analysis and tests' {
             Invoke-NativeChecked -Executable 'flutter' -Arguments @('analyze') -WorkingDirectory (Join-Path $repoRoot 'sync_windows_agent')
