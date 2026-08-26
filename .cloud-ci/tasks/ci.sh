@@ -11,7 +11,7 @@ START_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 START_EPOCH="$(date +%s)"
 RUN_ID="${CLOUD_CI_RUN_ID:-${GITHUB_RUN_ID:-$START_EPOCH}}"
 TRIGGER="${CLOUD_CI_EVENT_NAME:-${GITHUB_EVENT_NAME:-manual}}"
-export DOCKER_CONFIG="${DOCKER_CONFIG:-$REPO_ROOT/.cloud-ci/tmp/docker-$TASK_ID-$RUN_ID}"
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$TASK_ROOT/docker-config}"
 
 mkdir -p "$TASK_ROOT" "$DOCKER_CONFIG"
 
@@ -187,7 +187,9 @@ write_text_summary() {
 run_backend_tests_in_docker() {
   docker run --rm \
     --name "${PG_CONTAINER}-runner" \
+    --user "$(id -u):$(id -g)" \
     --network "$NETWORK_NAME" \
+    -e HOME=/tmp/cloud-ci-home \
     -e TRU_ALLOW_ROOT_TESTS=1 \
     -e TRU_TEST_POSTGRESQL_URL="$DB_URL" \
     -e TRU_POSTGRESQL_URL="$DB_URL" \

@@ -20,7 +20,7 @@ FUZZ_ROUNDS="${SYNC_FUZZ_ROUNDS:-30}"
 SCALE_ROWS="${SYNC_SCALE_ROWS:-5000}"
 STEP_RESULTS=()
 EXIT_CODE=0
-export DOCKER_CONFIG="${DOCKER_CONFIG:-$REPO_ROOT/.cloud-ci/tmp/docker-$TASK_ID-$RUN_ID}"
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$TASK_ROOT/docker-config}"
 
 if [[ "$TRIGGER" == schedule* || "$TRIGGER" == *nightly* ]]; then
   PROFILE="${SYNC_VERIFICATION_PROFILE:-All}"
@@ -94,7 +94,10 @@ run_in_test_image() {
   local container_id
   container_id="$(cat "$TASK_ROOT/sql-container-id.txt")"
   docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    --group-add "$(stat -c '%g' /var/run/docker.sock)" \
     --network host \
+    -e HOME=/tmp/cloud-ci-home \
     -e PYTHONUTF8=1 \
     -e SQL_SYNC_TEST_SERVER="localhost,$SQL_PORT" \
     -e SQL_SYNC_TEST_USER=sa \
