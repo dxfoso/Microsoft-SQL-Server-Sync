@@ -956,7 +956,9 @@ def assert_atomic_fault_rollback(database, marker, label):
     assert_stage_table_removed(generated)
 
 
-def wait_for_fault_session(host_name, process=None, timeout_seconds=20):
+def wait_for_fault_session(
+    host_name, process=None, timeout_seconds=20, context_hex=None
+):
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         if process is not None and process.poll() is not None:
@@ -970,7 +972,8 @@ SET NOCOUNT ON;
 SELECT session_id
 FROM sys.dm_exec_sessions AS sessions
 WHERE sessions.host_name = N'{host_name.replace("'", "''")}'
-  AND sessions.session_id <> @@SPID;
+  AND sessions.session_id <> @@SPID
+  {f"AND sessions.context_info = {context_hex}" if context_hex else ""};
 """,
             check=False,
         )
@@ -1124,7 +1127,9 @@ def assert_commit_response_loss_is_idempotent(database):
         stderr=subprocess.PIPE,
     )
     try:
-        spid = wait_for_fault_session(host_name, process)
+        spid = wait_for_fault_session(
+            host_name, process, context_hex=context_hex
+        )
         sqlcmd(f"KILL {spid};")
         process.communicate(timeout=45)
         if process.returncode == 0:

@@ -36,6 +36,8 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("assert_atomic_fault_rollback", runner)
         self.assertIn("assert_connection_loss_atomicity", runner)
         self.assertIn("assert_commit_response_loss_is_idempotent", runner)
+        self.assertIn("context_hex=context_hex", runner)
+        self.assertIn("sessions.context_info = {context_hex}", runner)
         self.assertIn("run_concurrency_scenarios", runner)
         self.assertIn("run_relational_scenarios", runner)
         self.assertIn("run_fuzz_scenarios", runner)
