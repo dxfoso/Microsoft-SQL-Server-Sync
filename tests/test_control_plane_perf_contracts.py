@@ -14,7 +14,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
     def test_live_state_preloads_active_jobs_instead_of_querying_per_table(self):
         control_plane = read_text("business/control_plane.tru")
         live_state_body = control_plane.split(
-            "function live_state(token: string? = null): map<json> {", 1
+            "function live_state(token: string? = null, comparisonRequestId: string? = null): map<json> {", 1
         )[1].split("function agents_heartbeat", 1)[0]
         bounded_agents_body = control_plane.split(
             "function bounded_public_agent_payloads(", 1
@@ -32,7 +32,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
     def test_live_state_preloads_latest_completed_sync_durations_once(self):
         control_plane = read_text("business/control_plane.tru")
         live_state_body = control_plane.split(
-            "function live_state(token: string? = null): map<json> {", 1
+            "function live_state(token: string? = null, comparisonRequestId: string? = null): map<json> {", 1
         )[1].split("function agents_heartbeat", 1)[0]
         completed_rows_body = control_plane.split(
             "function live_state_completed_job_rows_for(", 1
@@ -61,7 +61,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
             "function live_state_completed_row_totals_for(", 1
         )[1].split("function live_state_automatic_number_incident_counts", 1)[0]
         live_state_body = control_plane.split(
-            "function live_state(token: string? = null): map<json> {", 1
+            "function live_state(token: string? = null, comparisonRequestId: string? = null): map<json> {", 1
         )[1].split("function agents_heartbeat", 1)[0]
 
         self.assertEqual(totals_body.count("db.aggregate("), 1)
@@ -82,7 +82,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
             "function automatic_number_incident_count_for_client(", 1
         )[1].split("function public_agent_payload", 1)[0]
         live_state_body = control_plane.split(
-            "function live_state(token: string? = null): map<json> {", 1
+            "function live_state(token: string? = null, comparisonRequestId: string? = null): map<json> {", 1
         )[1].split("function agents_heartbeat", 1)[0]
 
         self.assertEqual(counts_body.count("db.aggregate("), 1)
@@ -98,7 +98,7 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
             "function live_state_manual_sync_rows_for_owner_ids(", 1
         )[1].split("function public_client_activity_payloads", 1)[0]
         live_state_body = control_plane.split(
-            "function live_state(token: string? = null): map<json> {", 1
+            "function live_state(token: string? = null, comparisonRequestId: string? = null): map<json> {", 1
         )[1].split("function agents_heartbeat", 1)[0]
 
         self.assertEqual(rows_body.count("db.selectMany("), 1)
