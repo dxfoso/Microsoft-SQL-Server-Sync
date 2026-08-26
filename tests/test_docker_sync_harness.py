@@ -36,8 +36,16 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("assert_atomic_fault_rollback", runner)
         self.assertIn("assert_connection_loss_atomicity", runner)
         self.assertIn("assert_commit_response_loss_is_idempotent", runner)
-        self.assertIn("context_hex=context_hex", runner)
-        self.assertIn("sessions.context_info = {context_hex}", runner)
+        visibility = '"Commit did not become visible before response loss."'
+        response_loss = runner[
+            runner.index("def assert_commit_response_loss_is_idempotent"):
+            runner.index("\ndef relational_rows")
+        ]
+        self.assertIn(visibility, response_loss)
+        self.assertLess(
+            response_loss.index(visibility),
+            response_loss.index('sqlcmd(f"KILL {spid};")'),
+        )
         self.assertIn("run_concurrency_scenarios", runner)
         self.assertIn("run_relational_scenarios", runner)
         self.assertIn("run_fuzz_scenarios", runner)
