@@ -11709,7 +11709,7 @@ function table_comparison_status(requestId: string, token: string? = null): map<
   // filter it in memory so status authorization cannot disagree with request
   // creation or the clients page.
   let jobs = [];
-  for (const candidate of live_state_job_rows_for(current, 1000)) {
+  for (const candidate of live_state_job_rows_for(current, 999)) {
     if (string.from(candidate.batchId ?? '').trim() == normalizedRequestId &&
         string.from(candidate.sourceClientName ?? '').trim() == 'server-diff-preview' &&
         string.from(candidate.direction ?? '').trim() == 'upload') {
