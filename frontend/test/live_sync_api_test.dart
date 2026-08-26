@@ -480,15 +480,15 @@ void main() {
             Map<String, dynamic>.from(jsonDecode(request.body) as Map),
           );
           call += 1;
-          final value =
-              call == 1
-                  ? {
-                    'requestId': 'comparison-1',
-                    'table': 'db::pt000',
-                    'clientNames': ['factory', 'home', 'shop'],
-                    'jobs': const <dynamic>[],
-                  }
-                  : {
+          final value = call == 1
+              ? {
+                  'requestId': 'comparison-1',
+                  'table': 'db::pt000',
+                  'clientNames': ['factory', 'home', 'shop'],
+                  'jobs': const <dynamic>[],
+                }
+              : {
+                  'comparisonStatus': {
                     'requestId': 'comparison-1',
                     'table': 'db::pt000',
                     'clientNames': ['factory', 'home', 'shop'],
@@ -498,7 +498,8 @@ void main() {
                     'complete': true,
                     'failed': false,
                     'jobs': const <dynamic>[],
-                  };
+                  },
+                };
           return http.Response(
             jsonEncode({'status': 'success', 'value': value}),
             200,
@@ -523,9 +524,9 @@ void main() {
         'table': 'db::pt000',
         'token': 'test-token',
       });
-      expect(requests[1]['name'], 'table_comparison_status');
+      expect(requests[1]['name'], 'live_state');
       expect(requests[1]['args'], {
-        'requestId': 'comparison-1',
+        'comparisonRequestId': 'comparison-1',
         'token': 'test-token',
       });
       api.dispose();

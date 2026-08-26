@@ -338,9 +338,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         source = read_text("business/control_plane.tru")
         frontend = read_text("frontend/lib/clients_page.dart")
         models = read_text("frontend/lib/models.dart")
-        live_state = source.split(
-            "function live_state(token: string? = null): map<json> {", 1
-        )[1].split("function agents_heartbeat", 1)[0]
+        live_state = source.split("function live_state(", 1)[1].split(
+            "function agents_heartbeat", 1
+        )[0]
         periodic_rows = source.split(
             "function live_state_manual_sync_rows_for_owner_ids(", 1
         )[1].split("function public_client_activity_payloads", 1)[0]
@@ -2548,6 +2548,23 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("fields: ['keyColumns', 'columns']", status_body)
         self.assertIn("responseKeyColumns = chunk.keyColumns", status_body)
         self.assertIn("jobs\n  });", status_body)
+
+        live_state_body = source.split("function live_state(", 1)[1].split(
+            "function agents_heartbeat(", 1
+        )[0]
+        self.assertIn("comparisonRequestId: string? = null", live_state_body)
+        self.assertIn("for (const candidate of jobPage.items)", live_state_body)
+        self.assertIn("candidate.batchId", live_state_body)
+        self.assertIn("'server-diff-preview'", live_state_body)
+        self.assertIn("comparisonStatus", live_state_body)
+        frontend_api = read_text("frontend/lib/live_sync_api.dart")
+        fetch_body = frontend_api.split(
+            "Future<AdminTableComparisonStatus> fetchTableComparisonStatus(", 1
+        )[1].split("Future<AdminBulkDiagnosticsRequestResult>", 1)[0]
+        self.assertIn("_invokeFunction('live_state'", fetch_body)
+        self.assertIn("'comparisonRequestId': requestId.trim()", fetch_body)
+        self.assertIn("decoded['comparisonStatus']", fetch_body)
+        self.assertNotIn("'table_comparison_status'", fetch_body)
 
     def test_table_row_comparison_upload_skips_winners_and_accepts_full_rows(self):
         source = read_text("business/control_plane.tru")

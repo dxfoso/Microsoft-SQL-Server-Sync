@@ -24,10 +24,9 @@ class LiveSyncApiClient {
     if (trimmed.isEmpty) {
       return '/call';
     }
-    final normalized =
-        trimmed.endsWith('/')
-            ? trimmed.substring(0, trimmed.length - 1)
-            : trimmed;
+    final normalized = trimmed.endsWith('/')
+        ? trimmed.substring(0, trimmed.length - 1)
+        : trimmed;
     if (normalized == '/call') {
       return normalized;
     }
@@ -335,16 +334,17 @@ class LiveSyncApiClient {
   Future<AdminTableComparisonStatus> fetchTableComparisonStatus(
     String requestId,
   ) async {
-    final decoded = await _invokeFunction('table_comparison_status', {
-      'requestId': requestId.trim(),
+    final decoded = await _invokeFunction('live_state', {
+      'comparisonRequestId': requestId.trim(),
     });
-    if (decoded is! Map) {
+    final comparison = decoded is Map ? decoded['comparisonStatus'] : null;
+    if (comparison is! Map) {
       throw const LiveSyncApiException(
-        'Unexpected table comparison status payload.',
+        'The table comparison is unavailable or outside your scope.',
       );
     }
     return AdminTableComparisonStatus.fromJson(
-      Map<String, dynamic>.from(decoded),
+      Map<String, dynamic>.from(comparison),
     );
   }
 
@@ -590,13 +590,11 @@ class LiveSyncApiClient {
         final storedBytes = base64Decode(encodedPayload);
         final decodedBytes =
             storedBytes.length >= 2 &&
-                    storedBytes[0] == 0x1f &&
-                    storedBytes[1] == 0x8b
-                ? GZipDecoder().decodeBytes(storedBytes)
-                : storedBytes;
-        rows = _jobDataRows(
-          jsonDecode(utf8.decode(decodedBytes)),
-        );
+                storedBytes[0] == 0x1f &&
+                storedBytes[1] == 0x8b
+            ? GZipDecoder().decodeBytes(storedBytes)
+            : storedBytes;
+        rows = _jobDataRows(jsonDecode(utf8.decode(decodedBytes)));
       } catch (_) {
         throw const LiveSyncApiException('Stored sync job data is unreadable.');
       }
@@ -616,8 +614,8 @@ class LiveSyncApiClient {
       columns: columns,
       rows: rows,
       rowCount: (payload['rowCount'] as num? ?? rows.length).round(),
-      retainedRowCount:
-          (payload['retainedRowCount'] as num? ?? rows.length).round(),
+      retainedRowCount: (payload['retainedRowCount'] as num? ?? rows.length)
+          .round(),
       retainedBytes: (payload['retainedBytes'] as num? ?? 0).round(),
       chunkCount: (payload['chunkCount'] as num? ?? 0).round(),
       nextCursor: payload['nextCursor']?.toString(),

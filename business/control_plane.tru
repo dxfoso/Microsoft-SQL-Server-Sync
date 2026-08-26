@@ -7017,7 +7017,7 @@ function automatic_number_incidents_list(clientName: string, limit: int = 100, t
   };
 }
 
-function live_state(token: string? = null): map<json> {
+function live_state(token: string? = null, comparisonRequestId: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -7053,6 +7053,64 @@ function live_state(token: string? = null): map<json> {
     prioritized_live_state_job_rows(activeJobRows, recentJobRows),
     jobLimit
   );
+  let comparisonStatus = null;
+  const normalizedComparisonRequestId = string.from(comparisonRequestId ?? '').trim();
+  if (normalizedComparisonRequestId.length != 0) {
+    let comparisonJobs = [];
+    for (const candidate of jobPage.items) {
+      if (string.from(candidate.batchId ?? '').trim() == normalizedComparisonRequestId &&
+          string.from(candidate.sourceClientName ?? '').trim() == 'server-diff-preview' &&
+          string.from(candidate.direction ?? '').trim() == 'upload') {
+        comparisonJobs = comparisonJobs.concat([candidate]);
+      }
+    }
+    if (comparisonJobs.length != 0) {
+      let complete = true;
+      let failed = false;
+      let uploadedClientNames = [];
+      for (const job of comparisonJobs) {
+        const status = string.from(job.status).trim().toLowerCase();
+        if (status == 'completed') {
+          uploadedClientNames = unique_string_values(
+            uploadedClientNames.concat([string.from(job.clientName)])
+          );
+        }
+        if (status == 'failed' || status == 'cancelled') {
+          failed = true;
+        }
+        if (status != 'completed') {
+          complete = false;
+        }
+      }
+      let keyColumns = [];
+      let columns = [];
+      const comparisonChunks = db.selectMany(SyncJobDataChunk, {
+        where: { batchId: normalizedComparisonRequestId },
+        orderBy: { field: 'createdAt', dir: 'asc' },
+        fields: ['keyColumns', 'columns'],
+        limit: 100
+      });
+      for (const chunk of comparisonChunks) {
+        if (keyColumns.length == 0 && chunk.keyColumns != null) {
+          keyColumns = chunk.keyColumns;
+        }
+        if (columns.length == 0 && chunk.columns.length != 0) {
+          columns = chunk.columns;
+        }
+      }
+      comparisonStatus = {
+        requestId: normalizedComparisonRequestId,
+        table: string.from(comparisonJobs[0].table),
+        clientNames: comparisonJobs.map((job) => string.from(job.clientName)),
+        uploadedClientNames,
+        keyColumns,
+        columns,
+        complete,
+        failed,
+        jobs: comparisonJobs
+      };
+    }
+  }
   const clientActivities = public_client_activity_payloads(
     live_state_client_activity_rows_for(current)
   );
@@ -7071,6 +7129,7 @@ function live_state(token: string? = null): map<json> {
     syncAllOperations,
     agents: agentPage.items,
     jobs: jobPage.items,
+    comparisonStatus,
     clientActivities,
     limits: {
       agents: agentLimit,
