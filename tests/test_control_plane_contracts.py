@@ -2533,9 +2533,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field keyColumns: array<json>?", chunk_model)
         self.assertIn("keyColumns: resolvedKeyColumns", upload_body)
         self.assertLess(
-            status_body.index("const jobs = db.selectMany(SyncJob"),
+            status_body.index("live_state_job_rows_for(current, 10000)"),
             status_body.index("const batch = find_sync_batch"),
         )
+        self.assertNotIn("const jobs = db.selectMany(SyncJob", status_body)
+        self.assertIn("candidate.batchId", status_body)
+        self.assertIn("candidate.sourceClientName", status_body)
+        self.assertIn("candidate.direction", status_body)
+        self.assertNotIn("can_access_job(current, jobs[0])", status_body)
         self.assertNotIn("row comparison request not found", status_body)
         self.assertIn("db.selectMany(SyncJobDataChunk", status_body)
         self.assertIn("fields: ['keyColumns', 'columns']", status_body)

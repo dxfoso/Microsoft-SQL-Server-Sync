@@ -11703,17 +11703,20 @@ function table_comparison_status(requestId: string, token: string? = null): map<
     return raw_json_error(403, 'permission denied');
   }
   const normalizedRequestId = requestId.trim();
-  const jobs = db.selectMany(SyncJob, {
-    where: {
-      batchId: normalizedRequestId,
-      sourceClientName: 'server-diff-preview',
-      direction: 'upload'
-    },
-    orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
-    limit: 100
-  });
-  if (jobs.length == 0 || !can_access_job(current, jobs[0])) {
+  // A targeted owner-scoped batch query can be empty for an administrator in
+  // the runtime even though the same jobs are visible through the established
+  // role-aware live-state query. Load that authorized bounded view first and
+  // filter it in memory so status authorization cannot disagree with request
+  // creation or the clients page.
+  let jobs = [];
+  for (const candidate of live_state_job_rows_for(current, 10000)) {
+    if (string.from(candidate.batchId ?? '').trim() == normalizedRequestId &&
+        string.from(candidate.sourceClientName ?? '').trim() == 'server-diff-preview' &&
+        string.from(candidate.direction ?? '').trim() == 'upload') {
+      jobs = jobs.concat([candidate]);
+    }
+  }
+  if (jobs.length == 0) {
     return raw_json_error(403, 'row comparison request is outside your scope');
   }
   // An administrator can inspect an owner's jobs while the runtime's scoped
