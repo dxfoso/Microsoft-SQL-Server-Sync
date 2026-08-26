@@ -16,7 +16,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 256)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 259)}
         observed_ids = set()
 
         for row in rows:
@@ -410,6 +410,12 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_production_image_builder_excludes_local_caches_by_construction(self):
         builder = read_text("scripts/build_production_images.ps1")
 
+        self.assertIn("[string] $ClientArtifactsDir", builder)
+        self.assertIn(
+            "'latest.json', 'latest-files.json', 'update.ps1', 'sync_windows_agent_latest.zip'",
+            builder,
+        )
+        self.assertIn("Missing current Windows client artifact", builder)
         self.assertIn("git -C (Join-Path $repoRoot 'backend') archive", builder)
         self.assertIn("git -C $repoRoot archive", builder)
         self.assertIn("$commit business", builder)
