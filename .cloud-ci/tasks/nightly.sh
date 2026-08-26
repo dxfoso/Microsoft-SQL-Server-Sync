@@ -11,8 +11,8 @@ mkdir -p "$TASK_ROOT"
 
 START_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 START_EPOCH="$(date +%s)"
-RUN_ID="${ACTION_SERVER_RUN_ID:-${GITHUB_RUN_ID:-$START_EPOCH}}"
-TRIGGER="${ACTION_SERVER_TRIGGER:-${GITHUB_EVENT_NAME:-manual}}"
+RUN_ID="${CLOUD_CI_RUN_ID:-${GITHUB_RUN_ID:-$START_EPOCH}}"
+TRIGGER="${CLOUD_CI_EVENT_NAME:-${GITHUB_EVENT_NAME:-manual}}"
 
 NETWORK_NAME="mssql-sync-nightly-${TASK_ID}-${RUN_ID}"
 PG_CONTAINER="mssql-sync-pg-${TASK_ID}-${RUN_ID}"
@@ -209,7 +209,7 @@ if ! run_step "Create nightly network" docker network create "$NETWORK_NAME"; th
 fi
 
 if (( EXIT_CODE == 0 )); then
-  if ! run_step "Build or reuse nightly test image" docker build -f "$REPO_ROOT/.action-server/Dockerfile.ci" -t "$IMAGE_TAG" "$REPO_ROOT/.action-server"; then
+  if ! run_step "Build or reuse nightly test image" docker build -f "$REPO_ROOT/.cloud-ci/Dockerfile.ci" -t "$IMAGE_TAG" "$REPO_ROOT/.cloud-ci"; then
     EXIT_CODE=1
   fi
 fi

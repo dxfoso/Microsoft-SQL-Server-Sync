@@ -1,3 +1,4 @@
+version: 1
 name: Sync Verification
 "on":
   push:
@@ -16,5 +17,8 @@ name: Sync Verification
 jobs:
   sync-verification:
     name: Sync atomicity, chaos, compatibility, fuzz, and soak
-    run: .action-server/tasks/sync-verification.sh
+    required: true
+    runsOn: [linux, x64, docker, host]
+    executor: host
+    run: .cloud-ci/tasks/sync-verification.sh
     timeoutMinutes: 240

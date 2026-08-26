@@ -5,10 +5,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 TASK_ID="sync-verification"
 TASK_ROOT="$REPO_ROOT/workspace/tests/$TASK_ID"
-RUN_ID="${ACTION_SERVER_RUN_ID:-${GITHUB_RUN_ID:-$(date +%s)}}"
+RUN_ID="${CLOUD_CI_RUN_ID:-${GITHUB_RUN_ID:-$(date +%s)}}"
 SAFE_RUN_ID="$(printf '%s' "$RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-' | cut -c1-80)"
 IMAGE_TAG="mssql-sync-verification:${SAFE_RUN_ID:-local}"
-TRIGGER="${ACTION_SERVER_TRIGGER:-${GITHUB_EVENT_NAME:-manual}}"
+TRIGGER="${CLOUD_CI_EVENT_NAME:-${GITHUB_EVENT_NAME:-manual}}"
 PROFILE="${SYNC_VERIFICATION_PROFILE:-Standard}"
 START_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 START_EPOCH="$(date +%s)"
@@ -141,7 +141,7 @@ cleanup() {
 trap cleanup EXIT
 
 run_step "Build sync verification image" \
-  docker build -f "$REPO_ROOT/.action-server/Dockerfile.sync-tests" -t "$IMAGE_TAG" "$REPO_ROOT" || true
+  docker build -f "$REPO_ROOT/.cloud-ci/Dockerfile.sync-tests" -t "$IMAGE_TAG" "$REPO_ROOT" || true
 
 if (( EXIT_CODE == 0 )); then
   run_step "Start SQL Server 2022" start_sql mcr.microsoft.com/mssql/server:2022-latest || true

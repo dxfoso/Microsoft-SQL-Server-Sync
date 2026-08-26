@@ -1,3 +1,4 @@
+version: 1
 name: Nightly
 "on":
   schedule:
@@ -8,5 +9,8 @@ name: Nightly
 jobs:
   nightly:
     name: Nightly
-    run: .action-server/tasks/nightly.sh
+    required: true
+    runsOn: [linux, x64, docker, host]
+    executor: host
+    run: .cloud-ci/tasks/nightly.sh
     timeoutMinutes: 180

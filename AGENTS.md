@@ -84,7 +84,7 @@ Use the launcher when a local stack restart is actually needed.
 ## Cloud Tests
 
 - This repository owns its test source of truth under `.cloud-ci/`: settings, workflow YAML, task scripts, services, timeouts, schedules, and artifacts. Do not put repository-specific test commands in Cloud.
-- Cloud only validates those definitions, assigns isolated matching workers, records logs/results, and renders one standard UI. Action Server is not part of the test path.
+- Cloud only validates those definitions, assigns isolated matching workers, records logs/results, and renders one standard UI. Do not introduce a second CI server or runner control plane.
 - Keep tests separate from deployment: test tasks must not run Helm, change DNS/ingress, push release images, mutate deployment state, or use deployment credentials.
 - Use only `push`, `pull_request`, `workflow_dispatch`, and `schedule` triggers. Pull requests must run every required job and publish `Cloud Tests / required`; protect `master` from merging unless it succeeds.
 - Every task must persist `task-status.json`, `task-results.json`, `task-summary.txt`, and `task-step-results.json` for multi-step work, including trigger metadata and a stable `latestPublicUrl` for shareable artifacts.

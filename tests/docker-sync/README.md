@@ -59,10 +59,10 @@ Run the Python harness with `--external` and provide
 `SQL_SYNC_TEST_PASSWORD` only against an approved disposable instance. The
 harness drops and recreates `SyncClient1`, `SyncClient2`, and `SyncClient3`.
 
-The Action Server workflow `.action-server/workflows/sync-verification.yaml`
-runs the standard tier for pushes and pull requests and expands scheduled runs
-to the compatibility matrix and a longer soak. Its stable artifacts are under
-`workspace/tests/sync-verification/`.
+The Cloud Tests workflow `.cloud-ci/workflows/sync-verification.yaml` runs the
+standard tier for pushes and pull requests and expands scheduled runs to the
+compatibility matrix and a longer soak. Its stable artifacts are under
+`workspace/tests/sync-verification/` and appear on the repository Tests page.
 
 The harness is destructive only to its Docker volume. It does not connect to
 the live server or live clients.

@@ -53,15 +53,15 @@ if (-not $pythonCommand) {
 }
 
 $started = [DateTimeOffset]::UtcNow
-$runId = if ($env:ACTION_SERVER_RUN_ID) {
-    $env:ACTION_SERVER_RUN_ID
+$runId = if ($env:CLOUD_CI_RUN_ID) {
+    $env:CLOUD_CI_RUN_ID
 } elseif ($env:GITHUB_RUN_ID) {
     $env:GITHUB_RUN_ID
 } else {
     $started.ToUnixTimeSeconds().ToString()
 }
-$trigger = if ($env:ACTION_SERVER_TRIGGER) {
-    $env:ACTION_SERVER_TRIGGER
+$trigger = if ($env:CLOUD_CI_EVENT_NAME) {
+    $env:CLOUD_CI_EVENT_NAME
 } elseif ($env:GITHUB_EVENT_NAME) {
     $env:GITHUB_EVENT_NAME
 } else {

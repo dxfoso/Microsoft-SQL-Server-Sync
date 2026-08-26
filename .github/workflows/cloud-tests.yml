@@ -1,0 +1,50 @@
+name: Cloud Tests dispatcher
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      workflow:
+        description: Cloud workflow name without .yaml
+        required: false
+        default: push
+  schedule:
+    - cron: "15 03 * * *"
+    - cron: "45 02 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch exact commit
+        env:
+          CLOUD_CI_TOKEN: ${{ secrets.CLOUD_CI_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_WORKFLOW: ${{ inputs.workflow }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.error, urllib.request
+          event = os.environ["EVENT_NAME"]
+          schedules = {"15 03 * * *": "nightly", "45 02 * * *": "sync-verification"}
+          workflow = schedules[os.environ["EVENT_SCHEDULE"]] if event == "schedule" else (os.environ.get("MANUAL_WORKFLOW") or "push")
+          cloud_event = event if event in {"push", "pull_request", "schedule"} else "workflow_dispatch"
+          args = {"repositoryId": "ebbd5457-3253-46e0-b67d-5668ca1e5225", "workflowPath": f".cloud-ci/workflows/{workflow}.yaml", "eventName": cloud_event, "commitHash": os.environ["HEAD_SHA"], "ciToken": os.environ["CLOUD_CI_TOKEN"]}
+          if os.environ.get("PR_NUMBER"): args["pullRequestNumber"] = int(os.environ["PR_NUMBER"])
+          request = urllib.request.Request("https://cloud.divclouds.com/call", data=json.dumps({"name": "api_ci_dispatch_run", "args": args}).encode(), headers={"Content-Type": "application/json"})
+          try:
+              with urllib.request.urlopen(request, timeout=45) as response:
+                  result = json.load(response)
+                  if response.status not in (200, 201) or not result.get("id"): raise SystemExit(f"Cloud dispatch failed: {result}")
+                  print(f"Queued Cloud run {result['id']}")
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f"Cloud dispatch failed: HTTP {error.code}: {error.read().decode(errors='replace')}") from None
+          PY

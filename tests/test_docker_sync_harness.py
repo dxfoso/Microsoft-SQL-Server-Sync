@@ -93,7 +93,7 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn(r".\tests\docker-sync\run.ps1", agents)
         self.assertIn("Before publishing sync logic changes", agents)
 
-    def test_standard_launcher_writes_action_compatible_task_artifacts(self):
+    def test_standard_launcher_writes_cloud_task_artifacts(self):
         launcher = (ROOT / "tests/run_sync_verification.ps1").read_text(
             encoding="utf-8"
         )
@@ -102,7 +102,7 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("task-results.json", launcher)
         self.assertIn("task-step-results.json", launcher)
         self.assertIn("final-summary.txt", launcher)
-        self.assertIn("ACTION_SERVER_TRIGGER", launcher)
+        self.assertIn("CLOUD_CI_EVENT_NAME", launcher)
         self.assertIn('("history\\{0}" -f $runId)', launcher)
         self.assertIn("SQL Server 2017 compatibility", launcher)
         self.assertIn("SQL Server 2019 compatibility", launcher)
@@ -117,19 +117,19 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("$null -eq $gitRefOutput", launcher)
         self.assertIn('"detached/$commit"', launcher)
 
-    def test_action_server_registers_sync_robustness_workflow(self):
+    def test_cloud_tests_registers_sync_robustness_workflow(self):
         workflow = (
-            ROOT / ".action-server/workflows/sync-verification.yaml"
+            ROOT / ".cloud-ci/workflows/sync-verification.yaml"
         ).read_text(encoding="utf-8")
         task = (
-            ROOT / ".action-server/tasks/sync-verification.sh"
+            ROOT / ".cloud-ci/tasks/sync-verification.sh"
         ).read_text(encoding="utf-8")
-        settings = (ROOT / ".action-server/settings.yaml").read_text(
+        settings = (ROOT / ".cloud-ci/settings.yaml").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("nightly-sync-robustness", workflow)
-        self.assertIn(".action-server/tasks/sync-verification.sh", workflow)
+        self.assertIn(".cloud-ci/tasks/sync-verification.sh", workflow)
         self.assertIn("run_sql_suite robustness", task)
         self.assertIn("run_sql_suite soak", task)
         self.assertIn("mssql/server:2017-latest", task)
