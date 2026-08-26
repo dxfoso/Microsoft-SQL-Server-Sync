@@ -2533,7 +2533,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field keyColumns: array<json>?", chunk_model)
         self.assertIn("keyColumns: resolvedKeyColumns", upload_body)
         self.assertLess(
-            status_body.index("live_state_job_rows_for(current, 999)"),
+            status_body.index(
+                "live_state_job_rows_for(current, live_state_job_limit())"
+            ),
             status_body.index("const batch = find_sync_batch"),
         )
         self.assertNotIn("const jobs = db.selectMany(SyncJob", status_body)
