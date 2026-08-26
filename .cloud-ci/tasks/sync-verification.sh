@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 TASK_ID="sync-verification"
-TASK_ROOT="$REPO_ROOT/workspace/tests/$TASK_ID"
+TASK_ROOT="${CLOUD_CI_ARTIFACT_DIR:-$REPO_ROOT/workspace/tests/$TASK_ID}"
 RUN_ID="${CLOUD_CI_RUN_ID:-${GITHUB_RUN_ID:-$(date +%s)}}"
 SAFE_RUN_ID="$(printf '%s' "$RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-' | cut -c1-80)"
 IMAGE_TAG="mssql-sync-verification:${SAFE_RUN_ID:-local}"
@@ -20,6 +20,7 @@ FUZZ_ROUNDS="${SYNC_FUZZ_ROUNDS:-30}"
 SCALE_ROWS="${SYNC_SCALE_ROWS:-5000}"
 STEP_RESULTS=()
 EXIT_CODE=0
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$REPO_ROOT/.cloud-ci/tmp/docker-$TASK_ID-$RUN_ID}"
 
 if [[ "$TRIGGER" == schedule* || "$TRIGGER" == *nightly* ]]; then
   PROFILE="${SYNC_VERIFICATION_PROFILE:-All}"
@@ -27,7 +28,7 @@ if [[ "$TRIGGER" == schedule* || "$TRIGGER" == *nightly* ]]; then
   SCALE_ROWS="${SYNC_SCALE_ROWS:-25000}"
 fi
 
-mkdir -p "$TASK_ROOT"
+mkdir -p "$TASK_ROOT" "$DOCKER_CONFIG"
 
 json_escape() {
   local value="$1"
@@ -179,8 +180,8 @@ STEP_JSON=""
 if (( ${#STEP_RESULTS[@]} > 0 )); then
   STEP_JSON="$(printf '%s\n' "${STEP_RESULTS[@]}" | sed '$!s/$/,/')"
 fi
-COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-REF="$(git -C "$REPO_ROOT" branch --show-current)"
+COMMIT="${CLOUD_CI_COMMIT_SHA:-${GITHUB_SHA:-unknown}}"
+REF="${CLOUD_CI_GIT_REF:-${GITHUB_REF_NAME:-detached}}"
 
 cat >"$TASK_ROOT/task-status.json" <<JSON
 {

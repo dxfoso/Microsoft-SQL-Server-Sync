@@ -4,15 +4,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 TASK_ID="ci"
-TASK_ROOT="$REPO_ROOT/workspace/tests/$TASK_ID"
+TASK_ROOT="${CLOUD_CI_ARTIFACT_DIR:-$REPO_ROOT/workspace/tests/$TASK_ID}"
 IMAGE_TAG="mssql-sync-backend-ci:ci"
-
-mkdir -p "$TASK_ROOT"
 
 START_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 START_EPOCH="$(date +%s)"
 RUN_ID="${CLOUD_CI_RUN_ID:-${GITHUB_RUN_ID:-$START_EPOCH}}"
 TRIGGER="${CLOUD_CI_EVENT_NAME:-${GITHUB_EVENT_NAME:-manual}}"
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$REPO_ROOT/.cloud-ci/tmp/docker-$TASK_ID-$RUN_ID}"
+
+mkdir -p "$TASK_ROOT" "$DOCKER_CONFIG"
 
 NETWORK_NAME="mssql-sync-ci-${TASK_ID}-${RUN_ID}"
 PG_CONTAINER="mssql-sync-pg-${TASK_ID}-${RUN_ID}"
