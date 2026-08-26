@@ -68,6 +68,6 @@ Server compatibility gates, run:
 ```
 
 Use `-Profile All` for the SQL Server 2017/2019/2022 matrix. The same suite is
-registered in Action Server as **Sync Verification**, with task status,
+registered in Cloud Tests as **Sync Verification**, with task status,
 results, per-step results, logs, and a stable text summary retained under
 `workspace/tests/sync-verification/`.
