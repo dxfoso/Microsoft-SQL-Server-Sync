@@ -98,6 +98,9 @@ run_in_test_image() {
     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
     --network host \
     -e HOME=/tmp/cloud-ci-home \
+    -e GIT_CONFIG_COUNT=1 \
+    -e GIT_CONFIG_KEY_0=safe.directory \
+    -e GIT_CONFIG_VALUE_0=/sdks/flutter \
     -e PYTHONUTF8=1 \
     -e SQL_SYNC_TEST_SERVER="localhost,$SQL_PORT" \
     -e SQL_SYNC_TEST_USER=sa \

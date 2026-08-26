@@ -21,6 +21,9 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends mssql-tools18 unixodbc \
   && rm -rf /var/lib/apt/lists/*
 
+RUN git config --system --add safe.directory /sdks/flutter \
+  && chmod -R a+rwX /sdks/flutter
+
 WORKDIR /workspace
 
 CMD ["bash"]

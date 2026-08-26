@@ -199,7 +199,7 @@ run_backend_tests_in_docker() {
     -v "$REPO_ROOT:/workspace" \
     -w /workspace/backend \
     "$IMAGE_TAG" \
-    bash -c "python3 -m unittest scripts.tests.test_repo_layout scripts.tests.test_check_test_guardrails scripts.tests.test_tru_source_lint_coverage scripts.tests.test_test_cpu_limit scripts.tests.test_cloud_ci_helpers -v"
+    bash -c "python3 -m unittest scripts/tests/test_repo_layout.py scripts/tests/test_check_test_guardrails.py scripts/tests/test_tru_source_lint_coverage.py scripts/tests/test_test_cpu_limit.py scripts/tests/test_cloud_ci_helpers.py -v"
 }
 
 cleanup() {

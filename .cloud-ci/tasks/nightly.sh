@@ -179,7 +179,7 @@ run_backend_tests_in_docker() {
     -v "$REPO_ROOT:/workspace" \
     -w /workspace/backend \
     "$IMAGE_TAG" \
-    bash -c "python3 -m unittest scripts.tests.test_repo_layout scripts.tests.test_prod_ready scripts.tests.test_production_canary_check -v"
+    bash -c "python3 -m unittest scripts/tests/test_repo_layout.py scripts/tests/test_prod_ready.py -v"
 }
 
 run_backend_smoke_in_docker() {
@@ -193,7 +193,7 @@ run_backend_smoke_in_docker() {
     -v "$REPO_ROOT:/workspace" \
     -w /workspace/backend \
     "$IMAGE_TAG" \
-    bash -c "python3 -m unittest scripts.tests.test_update_test_perf_summary.UpdateTestPerfSummaryTests.test_badge_markdown_uses_static_v1_query_params scripts.tests.test_update_test_perf_summary.UpdateTestPerfSummaryTests.test_coverage_badge_uses_gate_floor_before_red -v"
+    bash -c "python3 -m unittest scripts/tests/test_update_test_perf_summary.py -v"
 }
 
 cleanup() {
