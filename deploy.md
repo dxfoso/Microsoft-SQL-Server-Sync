@@ -53,4 +53,4 @@ Require all of the following before reporting success:
 - `/client/latest.json` and the current update artifacts remain readable.
 - Repeat public health, page, workload, and restart-count checks after at least one minute.
 
-Do not use Cloud deployment APIs, Cloud deployment tokens, action-server deployment sessions, deployment UI triggers, or cross-namespace Kubernetes commands.
+Do not use Cloud deployment APIs, Cloud deployment tokens, deployment UI triggers, or cross-namespace Kubernetes commands.
