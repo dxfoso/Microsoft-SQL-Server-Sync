@@ -2533,11 +2533,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("field keyColumns: array<json>?", chunk_model)
         self.assertIn("keyColumns: resolvedKeyColumns", upload_body)
         self.assertLess(
-            status_body.index(
-                "live_state_job_rows_for(current, live_state_job_limit())"
-            ),
+            status_body.index("const visibleState = live_state(token)"),
             status_body.index("const batch = find_sync_batch"),
         )
+        self.assertIn("for (const candidate of visibleState.jobs)", status_body)
+        self.assertNotIn("live_state_job_rows_for(current", status_body)
         self.assertNotIn("const jobs = db.selectMany(SyncJob", status_body)
         self.assertIn("candidate.batchId", status_body)
         self.assertIn("candidate.sourceClientName", status_body)
@@ -2547,6 +2547,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("db.selectMany(SyncJobDataChunk", status_body)
         self.assertIn("fields: ['keyColumns', 'columns']", status_body)
         self.assertIn("responseKeyColumns = chunk.keyColumns", status_body)
+        self.assertIn("jobs\n  });", status_body)
 
     def test_table_row_comparison_upload_skips_winners_and_accepts_full_rows(self):
         source = read_text("business/control_plane.tru")

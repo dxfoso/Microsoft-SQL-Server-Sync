@@ -1,6 +1,7 @@
 import pathlib
 import re
 import subprocess
+import tempfile
 import unittest
 
 
@@ -16,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 288)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 294)}
         observed_ids = set()
 
         for row in rows:
@@ -37,6 +38,81 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
                     self.assertIn(selector, source, f"{incident_id}: missing {reference}")
 
         self.assertEqual(observed_ids, expected_ids)
+
+    def test_production_deploy_has_a_hidden_logged_launcher(self):
+        launcher = read_text("scripts/start_production_deploy_hidden.ps1")
+
+        self.assertIn("Start-Process", launcher)
+        self.assertIn("-WindowStyle Hidden", launcher)
+        self.assertIn("-RedirectStandardOutput $stdout", launcher)
+        self.assertIn("-RedirectStandardError $stderr", launcher)
+        self.assertIn("deploy_production_images.ps1", launcher)
+        self.assertNotIn("Remove-Item", launcher)
+
+    def test_backend_dependency_cache_precedes_commit_metadata(self):
+        dockerfile = read_text("backend/Dockerfile")
+        first_compile = dockerfile.index(
+            "RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server"
+        )
+        commit_arg = dockerfile.index('ARG BUILD_COMMIT_HASH=""')
+        source_copy = dockerfile.index("COPY server/src ./server/src")
+        final_compile = dockerfile.rindex(
+            "RUN cargo build --manifest-path server/Cargo.toml --release --bin tru_server"
+        )
+
+        self.assertLess(first_compile, commit_arg)
+        self.assertLess(commit_arg, source_copy)
+        self.assertLess(source_copy, final_compile)
+
+    def test_repository_identity_bootstrap_is_local_and_history_derived(self):
+        helper = read_text("scripts/ensure_repository_git_identity.ps1")
+
+        self.assertIn("config --local user.name", helper)
+        self.assertIn("config --local user.email", helper)
+        self.assertIn("log -1 --format=%an", helper)
+        self.assertIn("log -1 --format=%ae", helper)
+        self.assertNotIn("config --global", helper)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = pathlib.Path(temp_dir) / "repo"
+            repository.mkdir()
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            (repository / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "seed.txt"], check=True)
+            subprocess.run(
+                [
+                    "git", "-C", str(repository),
+                    "-c", "user.name=Seed Author",
+                    "-c", "user.email=seed@example.test",
+                    "commit", "-q", "-m", "seed",
+                ],
+                check=True,
+            )
+            completed = subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", str(ROOT / "scripts/ensure_repository_git_identity.ps1"),
+                    "-Repository", str(repository),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(
+                subprocess.check_output(
+                    ["git", "-C", str(repository), "config", "--local", "user.name"],
+                    text=True,
+                ).strip(),
+                "Seed Author",
+            )
+            self.assertEqual(
+                subprocess.check_output(
+                    ["git", "-C", str(repository), "config", "--local", "user.email"],
+                    text=True,
+                ).strip(),
+                "seed@example.test",
+            )
 
     def test_retired_windows_runner_python_alias_bug_cannot_reenter_cloud_tests(self):
         legacy_test = ROOT / "backend/scripts/tests/test_runner_bootstrap.py"
