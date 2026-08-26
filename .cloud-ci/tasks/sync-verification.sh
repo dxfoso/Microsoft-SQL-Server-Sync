@@ -64,6 +64,7 @@ run_step() {
   else
     local code=$?
     record_step "$name" failed "$(($(date +%s) - started))" "$log" "exit $code"
+    tail -n 400 "$log" >&2 || true
     EXIT_CODE=1
     return "$code"
   fi

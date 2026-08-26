@@ -72,6 +72,7 @@ run_step() {
     local end="$(date +%s)"
     local duration=$((end - start))
     record_step "$name" "failed" "$duration" "$log_file" "failed"
+    tail -n 400 "$log_file" >&2 || true
     return 1
   fi
 }
@@ -196,7 +197,7 @@ run_backend_tests_in_docker() {
     -v "$REPO_ROOT:/workspace" \
     -w /workspace/backend \
     "$IMAGE_TAG" \
-    bash -c "python3 -m unittest scripts.tests.test_repo_layout scripts.tests.test_check_test_guardrails scripts.tests.test_tru_source_lint_coverage scripts.tests.test_test_cpu_limit scripts.tests.test_action_server_helpers -v"
+    bash -c "python3 -m unittest scripts.tests.test_repo_layout scripts.tests.test_check_test_guardrails scripts.tests.test_tru_source_lint_coverage scripts.tests.test_test_cpu_limit scripts.tests.test_cloud_ci_helpers -v"
 }
 
 cleanup() {
