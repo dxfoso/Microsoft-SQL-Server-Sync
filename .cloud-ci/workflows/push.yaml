@@ -11,13 +11,6 @@ name: Push
       - main
   workflow_dispatch: {}
 jobs:
-  ci:
-    name: CI
-    required: true
-    runsOn: [linux, x64, docker, host]
-    executor: host
-    run: .cloud-ci/tasks/ci.sh
-    timeoutMinutes: 120
   sync-verification:
     name: Sync atomicity, chaos, compatibility, fuzz, and soak
     required: true

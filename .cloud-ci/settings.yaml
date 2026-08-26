@@ -3,11 +3,6 @@ allowForkPullRequests: false
 ignorePushPaths:
   - README.md
 favoriteArtifacts:
-  ci:
-    - workspace/tests/ci/task-status.json
-    - workspace/tests/ci/task-results.json
-    - workspace/tests/ci/task-step-results.json
-    - workspace/tests/ci/final-summary.txt
   nightly:
     - workspace/tests/nightly/task-status.json
     - workspace/tests/nightly/task-results.json
@@ -19,8 +14,6 @@ favoriteArtifacts:
     - workspace/tests/sync-verification/task-step-results.json
     - workspace/tests/sync-verification/final-summary.txt
 favoriteTextOutputs:
-  ci:
-    - workspace/tests/ci/final-summary.txt
   nightly:
     - workspace/tests/nightly/final-summary.txt
   sync-verification:

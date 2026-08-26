@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
-TASK_ID="sync-verification"
+TASK_ID="${CLOUD_CI_TASK_ID:-sync-verification}"
 TASK_ROOT="${CLOUD_CI_ARTIFACT_DIR:-$REPO_ROOT/workspace/tests/$TASK_ID}"
 RUN_ID="${CLOUD_CI_RUN_ID:-${GITHUB_RUN_ID:-$(date +%s)}}"
 SAFE_RUN_ID="$(printf '%s' "$RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-' | cut -c1-80)"
@@ -98,6 +98,7 @@ run_in_test_image() {
     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
     --network host \
     -e HOME=/tmp/cloud-ci-home \
+    -e PUB_CACHE=/workspace/.cloud-ci/tmp/pub-cache \
     -e GIT_CONFIG_COUNT=1 \
     -e GIT_CONFIG_KEY_0=safe.directory \
     -e GIT_CONFIG_VALUE_0=/sdks/flutter \

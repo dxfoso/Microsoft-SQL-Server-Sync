@@ -16,6 +16,7 @@ update.log
 business/logs/
 .codex-run/
 /.codex-tmp/
+/.cloud-ci/tmp/
 # Generated local validation output and runtime caches.
 /test-results/
 /.pytest_cache/
