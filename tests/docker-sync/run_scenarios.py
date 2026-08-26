@@ -229,6 +229,41 @@ def wait_for_sql():
     raise RuntimeError("SQL Server container did not become ready within 180 seconds.")
 
 
+def sql_container_diagnostics():
+    sections = []
+    for label, command in (
+        ("compose ps", COMPOSE + ["ps", "-a"]),
+        ("compose logs", COMPOSE + ["logs", "--no-color", "--tail", "200", "sql"]),
+    ):
+        result = run(command, check=False)
+        sections.append(
+            f"[{label}] exit={result.returncode}\n{result.stdout}\n{result.stderr}".strip()
+        )
+    return "\n\n".join(sections)
+
+
+def start_fresh_sql_container(max_attempts=2):
+    failures = []
+    for attempt in range(1, max_attempts + 1):
+        # A previous interrupted or just-completed run can leave the disposable SQL volume
+        # or container transition in progress. Every attempt remains
+        # strictly scoped to this Compose project and starts from fresh data.
+        run(COMPOSE + ["down", "-v"], check=False)
+        run(COMPOSE + ["up", "-d"])
+        try:
+            wait_for_sql()
+            return
+        except RuntimeError as error:
+            failures.append(
+                f"attempt {attempt}: {error}\n{sql_container_diagnostics()}"
+            )
+            run(COMPOSE + ["down", "-v"], check=False)
+    raise RuntimeError(
+        "Disposable SQL Server failed to become ready after "
+        f"{max_attempts} clean attempt(s).\n" + "\n\n".join(failures)
+    )
+
+
 def wait_for_test_databases():
     deadline = time.time() + 180
     database_names = ", ".join(f"N'{name}'" for name in DATABASES)
@@ -2202,14 +2237,10 @@ def main():
     if args.soak_seconds < 1 or args.fuzz_rounds < 1 or args.scale_rows < 1:
         raise SystemExit("soak-seconds, fuzz-rounds, and scale-rows must be positive.")
     if not args.external:
-        # A prior interrupted run can leave the disposable SQL volume or
-        # container behind. Reset only this harness-owned Compose project so
-        # every invocation starts with fresh client databases and cannot fail
-        # on stale tables from an earlier local run.
-        run(COMPOSE + ["down", "-v"], check=False)
-        run(COMPOSE + ["up", "-d"])
+        start_fresh_sql_container()
     try:
-        wait_for_sql()
+        if args.external:
+            wait_for_sql()
         if args.suite in ("standard", "all"):
             run_scenarios()
             run_windows_bulk_stage_performance_regression()

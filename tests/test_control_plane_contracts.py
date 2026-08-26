@@ -2518,6 +2518,29 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("active_job_tables_for_client", request_body)
         self.assertIn("create_table_comparison_batch", request_body)
 
+    def test_table_row_comparison_status_survives_admin_batch_visibility_gap(self):
+        source = read_text("business/control_plane.tru")
+        chunk_model = source.split("class SyncJobDataChunk {", 1)[1].split(
+            "class SyncRowWinner {", 1
+        )[0]
+        upload_body = source.split(
+            "function jobs_multi_writer_upload(", 1
+        )[1].split("function jobs_multi_writer_download(", 1)[0]
+        status_body = source.split(
+            "function table_comparison_status(", 1
+        )[1].split("function table_sync_issue_resolve(", 1)[0]
+
+        self.assertIn("field keyColumns: array<json>?", chunk_model)
+        self.assertIn("keyColumns: resolvedKeyColumns", upload_body)
+        self.assertLess(
+            status_body.index("const jobs = db.selectMany(SyncJob"),
+            status_body.index("const batch = find_sync_batch"),
+        )
+        self.assertNotIn("row comparison request not found", status_body)
+        self.assertIn("db.selectMany(SyncJobDataChunk", status_body)
+        self.assertIn("fields: ['keyColumns', 'columns']", status_body)
+        self.assertIn("responseKeyColumns = chunk.keyColumns", status_body)
+
     def test_table_row_comparison_upload_skips_winners_and_accepts_full_rows(self):
         source = read_text("business/control_plane.tru")
         upload_body = source.split(
@@ -2554,6 +2577,28 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("row comparison requires permanent primary key columns", upload_body)
         self.assertIn("different primary key definitions", upload_body)
         self.assertIn("if (finalChunk && !comparisonPreview)", upload_body)
+
+    def test_automatic_number_target_precheck_hashes_the_reserved_after_row(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+        dart_tests = read_text(
+            "sync_windows_agent/test/sql_sync_fingerprint_test.dart"
+        )
+
+        comparison = agent.split(
+            "Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged(", 1
+        )[1].split("Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1)[0]
+        self.assertIn("canonicalSqlSyncTargetComparisonSha256", comparison)
+        self.assertNotIn("row['__sync_row_hash']", comparison)
+        self.assertIn(
+            "String canonicalSqlSyncTargetComparisonSha256(", fingerprint
+        )
+        self.assertIn("hasValidCanonicalSqlSyncRowHash(columns, row)", fingerprint)
+        self.assertIn("return canonicalSqlSyncRowSha256(columns, row);", fingerprint)
+        self.assertIn(
+            "the source client must compare its current before row with the reserved after value",
+            dart_tests,
+        )
 
     def test_union_bootstrap_waits_for_all_clients_and_uses_full_client_snapshots(self):
         source = read_text("business/control_plane.tru")

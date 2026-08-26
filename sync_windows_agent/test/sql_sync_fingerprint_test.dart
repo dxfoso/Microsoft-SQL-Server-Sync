@@ -215,6 +215,19 @@ void main() {
 
     expect(hasValidCanonicalSqlSyncRowHash(columns, reserved), isTrue);
     expect(
+      canonicalSqlSyncTargetComparisonSha256(columns, reserved),
+      canonicalSqlSyncRowSha256(columns, {
+        'GUID': 'purchase-guid',
+        'Number': '2308',
+      }),
+    );
+    expect(
+      canonicalSqlSyncTargetComparisonSha256(columns, reserved),
+      isNot(sourceHash),
+      reason:
+          'the source client must compare its current before row with the reserved after value',
+    );
+    expect(
       hasValidCanonicalSqlSyncRowHash(columns, {...reserved, 'Number': '2309'}),
       isFalse,
     );

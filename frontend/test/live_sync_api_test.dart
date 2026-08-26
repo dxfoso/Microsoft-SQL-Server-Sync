@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -396,6 +397,45 @@ void main() {
     expect(page.rows.single['name'], 'مرحبا');
     expect(page.columns, ['id', 'name']);
     expect(page.retainedBytes, 42);
+    api.dispose();
+  });
+
+  test('sync job data decodes retained gzip rows', () async {
+    final encodedRows = base64Encode(
+      GZipEncoder().encode(
+        utf8.encode(
+          jsonEncode([
+            {'GUID': 'voucher-guid', 'Number': 2307},
+          ]),
+        ),
+      ),
+    );
+    final api = LiveSyncApiClient(
+      baseUrl: 'https://sync.example/call',
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'status': 'success',
+            'value': {
+              'available': true,
+              'columns': ['GUID', 'Number'],
+              'rows': [],
+              'payloadBase64': encodedRows,
+              'rowCount': 1,
+              'retainedRowCount': 1,
+              'done': true,
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
+
+    final page = await api.fetchSyncJobData(jobId: 'comparison-job');
+
+    expect(page.rows.single['GUID'], 'voucher-guid');
+    expect(page.rows.single['Number'], 2307);
     api.dispose();
   });
 

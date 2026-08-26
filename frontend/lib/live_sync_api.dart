@@ -1,4 +1,6 @@
 import 'dart:convert';
+
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
@@ -585,8 +587,15 @@ class LiveSyncApiClient {
     final encodedPayload = payload['payloadBase64']?.toString().trim() ?? '';
     if (encodedPayload.isNotEmpty) {
       try {
+        final storedBytes = base64Decode(encodedPayload);
+        final decodedBytes =
+            storedBytes.length >= 2 &&
+                    storedBytes[0] == 0x1f &&
+                    storedBytes[1] == 0x8b
+                ? GZipDecoder().decodeBytes(storedBytes)
+                : storedBytes;
         rows = _jobDataRows(
-          jsonDecode(utf8.decode(base64Decode(encodedPayload))),
+          jsonDecode(utf8.decode(decodedBytes)),
         );
       } catch (_) {
         throw const LiveSyncApiException('Stored sync job data is unreadable.');

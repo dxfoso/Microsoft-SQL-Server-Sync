@@ -2857,6 +2857,24 @@ class SyncContractsTests(unittest.TestCase):
             verification_body,
         )
 
+    def test_disposable_sql_startup_retries_one_clean_scoped_attempt_with_logs(self):
+        harness = read_text("tests/docker-sync/run_scenarios.py")
+        startup = harness.split("def sql_container_diagnostics():", 1)[1].split(
+            "def wait_for_test_databases():", 1
+        )[0]
+        main = harness.split("def main():", 1)[1]
+
+        self.assertIn('COMPOSE + ["ps", "-a"]', startup)
+        self.assertIn(
+            'COMPOSE + ["logs", "--no-color", "--tail", "200", "sql"]',
+            startup,
+        )
+        self.assertIn("def start_fresh_sql_container(max_attempts=2):", startup)
+        self.assertIn('run(COMPOSE + ["down", "-v"], check=False)', startup)
+        self.assertIn('run(COMPOSE + ["up", "-d"])', startup)
+        self.assertIn("start_fresh_sql_container()", main)
+        self.assertIn("if args.external:\n            wait_for_sql()", main)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -373,3 +373,19 @@ bool hasValidCanonicalSqlSyncRowHash(
   sourceRow[directiveColumn] = before;
   return supplied == canonicalSqlSyncRowSha256(columns, sourceRow);
 }
+
+String canonicalSqlSyncTargetComparisonSha256(
+  List<SqlSyncColumnDefinition> columns,
+  Map<String, dynamic> row,
+) {
+  final supplied =
+      row['__sync_row_hash']?.toString().trim().toLowerCase() ?? '';
+  if (!hasValidCanonicalSqlSyncRowHash(columns, row)) {
+    return supplied;
+  }
+  // A validated automatic-number directive intentionally keeps the signed
+  // hash of the source/before row while transporting the server-reserved
+  // after value. Target comparison must hash that after row; otherwise the
+  // originating client sees its unchanged before row and skips the correction.
+  return canonicalSqlSyncRowSha256(columns, row);
+}

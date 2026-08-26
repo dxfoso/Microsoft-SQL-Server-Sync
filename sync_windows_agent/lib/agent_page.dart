@@ -8022,8 +8022,10 @@ COMMIT TRANSACTION;
           }
           final identity = syncRejectedRowIdentity(row, primaryKeyColumns);
           final targetHash = targetHashByIdentity[identity];
-          final incomingHash =
-              row['__sync_row_hash']?.toString().trim().toLowerCase() ?? '';
+          final incomingHash = canonicalSqlSyncTargetComparisonSha256(
+            columns,
+            row,
+          );
           return targetHash == null || targetHash != incomingHash;
         })
         .toList(growable: false);

@@ -222,6 +222,7 @@ class SyncJobDataChunk {
   field table: string min=1 max=256
   field ordinal: int min=0 max=1000000
   field columns: array<json>
+  field keyColumns: array<json>?
   field rows: array<json>
   field rowCount: int min=0 max=1000000000
   field snapshotBytes: int min=0 max=2147483647
@@ -9530,6 +9531,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     table: batch.table,
     ordinal: nextOrdinal,
     columns: resolvedColumns,
+    keyColumns: resolvedKeyColumns,
     // The payload storage object is shared with the live relay record. Keep
     // only lightweight metadata here so retained audit data is not duplicated
     // in the database.
@@ -11701,10 +11703,6 @@ function table_comparison_status(requestId: string, token: string? = null): map<
     return raw_json_error(403, 'permission denied');
   }
   const normalizedRequestId = requestId.trim();
-  const batch = find_sync_batch(normalizedRequestId);
-  if (batch == null) {
-    return raw_json_error(404, 'row comparison request not found');
-  }
   const jobs = db.selectMany(SyncJob, {
     where: {
       batchId: normalizedRequestId,
@@ -11718,10 +11716,47 @@ function table_comparison_status(requestId: string, token: string? = null): map<
   if (jobs.length == 0 || !can_access_job(current, jobs[0])) {
     return raw_json_error(403, 'row comparison request is outside your scope');
   }
+  // An administrator can inspect an owner's jobs while the runtime's scoped
+  // model lookup can hide the owner-owned batch row. Retain the comparison
+  // schema with every archived upload chunk so the read-only result remains
+  // available to the same authorized operator after both uploads complete.
+  const batch = find_sync_batch(normalizedRequestId);
+  let responseTable = string.from(jobs[0].table);
+  let responseClientNames = jobs.map((job) => string.from(job.clientName));
+  let responseUploadedClientNames = [];
+  let responseKeyColumns = [];
+  let responseColumns = [];
+  if (batch != null) {
+    responseTable = string.from(batch.table);
+    responseClientNames = batch.expectedClients;
+    responseUploadedClientNames = batch.uploadedClients;
+    responseKeyColumns = batch.keyColumns;
+    responseColumns = batch.columns;
+  } else {
+    const comparisonChunks = db.selectMany(SyncJobDataChunk, {
+      where: { batchId: normalizedRequestId },
+      orderBy: { field: 'createdAt', dir: 'asc' },
+      fields: ['keyColumns', 'columns'],
+      limit: 100
+    });
+    for (const chunk of comparisonChunks) {
+      if (responseKeyColumns.length == 0 && chunk.keyColumns != null) {
+        responseKeyColumns = chunk.keyColumns;
+      }
+      if (responseColumns.length == 0 && chunk.columns.length != 0) {
+        responseColumns = chunk.columns;
+      }
+    }
+  }
   let complete = true;
   let failed = false;
   for (const job of jobs) {
     const status = string.from(job.status).trim().toLowerCase();
+    if (status == 'completed') {
+      responseUploadedClientNames = unique_string_values(
+        responseUploadedClientNames.concat([string.from(job.clientName)])
+      );
+    }
     if (status == 'failed' || status == 'cancelled') {
       failed = true;
     }
@@ -11731,11 +11766,11 @@ function table_comparison_status(requestId: string, token: string? = null): map<
   }
   return raw_json_success({
     requestId: normalizedRequestId,
-    table: batch.table,
-    clientNames: batch.expectedClients,
-    uploadedClientNames: batch.uploadedClients,
-    keyColumns: batch.keyColumns,
-    columns: batch.columns,
+    table: responseTable,
+    clientNames: responseClientNames,
+    uploadedClientNames: responseUploadedClientNames,
+    keyColumns: responseKeyColumns,
+    columns: responseColumns,
     complete,
     failed,
     jobs: jobs.map((job) => public_job_payload(job))
