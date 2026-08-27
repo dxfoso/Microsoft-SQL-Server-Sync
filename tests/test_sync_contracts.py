@@ -2315,7 +2315,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_discoveredDatabaseAccessIssues()", agent_page)
         self.assertIn("Database access required", agent_page)
         self.assertIn("Copy grant scripts", agent_page)
-        self.assertIn("Grant all access", agent_page)
+        self.assertIn("Grant selected", agent_page)
         self.assertIn("'databaseAccessDiscovery':", agent_page)
         self.assertIn("database.access_grant.completed", agent_page)
         self.assertIn("buildWindowsUacLauncherPowerShell(", agent_page)
@@ -2337,6 +2337,39 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("-Verb RunAs", database_access)
         self.assertNotIn("-Credential", database_access)
         self.assertNotIn("ALTER ROLE", database_access)
+
+    def test_database_access_is_local_notification_only_and_not_web_client_status(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        clients_page = read_text("frontend/lib/clients_page.dart")
+        load_databases = agent_page.split(
+            "Future<void> _loadDatabases({", 1
+        )[1].split("Future<void> _loadTables({", 1)[0]
+        select_database = agent_page.split(
+            "Future<void> _selectDatabase(", 1
+        )[1].split("String? _preferredDatabase", 1)[0]
+        sync_panel = agent_page.split(
+            "Widget _buildSyncPanel()", 1
+        )[1].split("Widget _buildSyncTableListCard", 1)[0]
+        agent_actions = agent_page.split(
+            "Widget _buildAgentActionButtons()", 1
+        )[1].split("Future<void> _refreshSelectedTableFingerprints", 1)[0]
+        web_status = clients_page.split(
+            "String _clientActivityStatus(", 1
+        )[1].split("AdminJob? _primaryActiveJob", 1)[0]
+
+        self.assertIn("Widget _buildDatabaseAccessNotificationButton()", agent_page)
+        self.assertIn("ValueKey('database-access-notifications')", agent_page)
+        self.assertIn("Icons.notifications_active_outlined", agent_page)
+        self.assertIn("_buildDatabaseAccessNotificationButton()", agent_actions)
+        self.assertIn(
+            "? () => unawaited(_showDatabaseAccessDialog())", agent_page
+        )
+        self.assertNotIn("_showDatabaseAccessDialog", load_databases)
+        self.assertNotIn("_showDatabaseAccessDialog", select_database)
+        self.assertNotIn("_buildDatabaseAccessNotice", sync_panel)
+        self.assertNotIn("ownerIssues", web_status)
+        self.assertNotIn("return 'Needs input'", web_status)
+        self.assertNotIn("return 'Repairing'", web_status)
 
     def test_windows_client_update_manifest_ignores_localhost_overrides(self):
         app = read_text("sync_windows_agent/lib/app.dart")

@@ -1266,28 +1266,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     }
   }
 
-  Future<void> _grantDatabaseAccessFromNotice(DatabaseAccessIssue issue) async {
-    final grantableIssues = _grantableDatabaseAccessIssues();
-    if (grantableIssues.isEmpty) {
-      await _showDatabaseAccessDialog();
-      return;
-    }
-    final result = await _grantDatabaseAccessWithWindowsUac(
-      grantableIssues.first,
-      requestedIssues: grantableIssues,
-    );
-    if (!mounted) {
-      return;
-    }
-    if (result.success) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(result.message)));
-      return;
-    }
-    await _showDatabaseAccessDialog();
-  }
-
   Future<void> _showDatabaseAccessDialog() async {
     final initialIssues = _discoveredDatabaseAccessIssues();
     if (!mounted || initialIssues.isEmpty || _databaseAccessDialogVisible) {
@@ -1661,9 +1639,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         database: selectedDatabase,
         autoLoadRows: true,
       );
-    }
-    if (mounted && _databaseAccessIssue != null) {
-      unawaited(_showDatabaseAccessDialog());
     }
   }
 
@@ -2080,7 +2055,6 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         _errorMessage =
             '${accessIssue.database} requires SQL Server access before its tables can be loaded.';
       });
-      unawaited(_showDatabaseAccessDialog());
       return;
     }
 
@@ -3383,6 +3357,57 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  Widget _buildDatabaseAccessNotificationButton() {
+    final issueCount = _discoveredDatabaseAccessIssues().length;
+    final hasIssues = issueCount > 0;
+    return Tooltip(
+      message: hasIssues
+          ? '$issueCount ${issueCount == 1 ? 'database requires' : 'databases require'} attention'
+          : 'No database access notifications',
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          IconButton(
+            key: const ValueKey('database-access-notifications'),
+            onPressed: hasIssues
+                ? () => unawaited(_showDatabaseAccessDialog())
+                : null,
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              hasIssues
+                  ? Icons.notifications_active_outlined
+                  : Icons.notifications_none_rounded,
+            ),
+          ),
+          if (hasIssues)
+            Positioned(
+              right: 1,
+              top: 1,
+              child: IgnorePointer(
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFB42318),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    issueCount > 99 ? '99+' : '$issueCount',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAgentActionButtons() {
     return Wrap(
       alignment: WrapAlignment.end,
@@ -3398,6 +3423,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               ? null
               : () => unawaited(_refreshLocalRowCounts()),
         ),
+        _buildDatabaseAccessNotificationButton(),
         _buildSyncActionIconButton(
           tooltip: 'Settings',
           icon: Icons.settings_outlined,
@@ -10730,111 +10756,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     serverController.dispose();
   }
 
-  Widget _buildDatabaseAccessNotice() {
-    final issue = _databaseAccessIssue;
-    if (issue == null) {
-      return const SizedBox.shrink();
-    }
-    final issues = _discoveredDatabaseAccessIssues();
-    final grantableIssues = _grantableDatabaseAccessIssues();
-    final databaseNames = issues.map((item) => item.database).join(', ');
-
-    final message = Text(
-      '${issues.length} ${issues.length == 1 ? 'database needs' : 'databases need'} '
-      'attention for ${issue.login}: $databaseNames. Their tables will appear '
-      'after access is available.',
-      style: const TextStyle(
-        color: Color(0xFF7A2E0E),
-        fontWeight: FontWeight.w700,
-        height: 1.35,
-      ),
-    );
-    final actions = Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        TextButton.icon(
-          onPressed: grantableIssues.isEmpty
-              ? null
-              : () => unawaited(
-                  _copyDatabaseAccessGrantSql(
-                    grantableIssues.first,
-                    requestedIssues: grantableIssues,
-                  ),
-                ),
-          icon: const Icon(Icons.copy_rounded, size: 16),
-          label: const Text('Copy SQL'),
-        ),
-        TextButton.icon(
-          onPressed: _databaseAccessGrantBusy
-              ? null
-              : () => unawaited(_showDatabaseAccessDialog()),
-          icon: const Icon(Icons.list_alt_rounded, size: 17),
-          label: const Text('Review list'),
-        ),
-        FilledButton.tonalIcon(
-          onPressed: _databaseAccessGrantBusy || grantableIssues.isEmpty
-              ? null
-              : () => unawaited(_grantDatabaseAccessFromNotice(issue)),
-          icon: const Icon(Icons.admin_panel_settings_outlined, size: 17),
-          label: Text(
-            _databaseAccessGrantBusy
-                ? 'Waiting for Windows…'
-                : 'Grant all access',
-          ),
-        ),
-      ],
-    );
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF4E5),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFF5C27A)),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 680) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(
-                      Icons.lock_outline_rounded,
-                      color: Color(0xFFB54708),
-                      size: 21,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(child: message),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                actions,
-              ],
-            );
-          }
-          return Row(
-            children: [
-              const Icon(
-                Icons.lock_outline_rounded,
-                color: Color(0xFFB54708),
-                size: 21,
-              ),
-              const SizedBox(width: 10),
-              Expanded(child: message),
-              const SizedBox(width: 12),
-              actions,
-            ],
-          );
-        },
-      ),
-    );
-  }
-
   Widget _buildDatabaseDropdown() {
     final selectedValue =
         _selectedDatabase != null && _databases.contains(_selectedDatabase)
@@ -10936,10 +10857,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
       return Column(
         children: [
           _buildSyncTablesHeader(),
-          if (_databaseAccessIssue != null) ...[
-            const SizedBox(height: 8),
-            _buildDatabaseAccessNotice(),
-          ],
           const SizedBox(height: 8),
           AgentSurfaceCard(
             title: 'Sync Tables',
@@ -10963,10 +10880,6 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
     return Column(
       children: [
         _buildSyncTablesHeader(),
-        if (_databaseAccessIssue != null) ...[
-          const SizedBox(height: 8),
-          _buildDatabaseAccessNotice(),
-        ],
         const SizedBox(height: 8),
         Expanded(
           child: LayoutBuilder(

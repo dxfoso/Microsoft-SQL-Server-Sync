@@ -2390,15 +2390,6 @@ class _ClientsPageState extends State<ClientsPage> {
       }
       return 'Offline';
     }
-    final ownerIssues =
-        (_state?.syncGate.issues ?? const <AdminTableSyncIssue>[]).where(
-      (issue) =>
-          issue.ownerUserId == (agent.ownerUserId ?? '') && issue.blocksSync,
-    );
-    if (ownerIssues.any((issue) => issue.needsInput)) {
-      return 'Needs input';
-    }
-    if (ownerIssues.any((issue) => issue.resolving)) return 'Repairing';
     if (!agent.serverConnected) return 'Server offline';
     if (!agent.sqlConnected) return 'SQL offline';
     final activeJob = _primaryActiveJob(jobs);
