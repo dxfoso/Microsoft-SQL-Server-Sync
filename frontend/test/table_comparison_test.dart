@@ -73,4 +73,31 @@ void main() {
 
     expect(differences, isEmpty);
   });
+
+  test('does not report a missing row until paged client data is complete', () {
+    final differences = buildTableComparisonDifferences(
+      keyColumns: const ['Id'],
+      includeMissingRows: false,
+      clients: const [
+        TableComparisonClientRows(
+          clientName: 'a',
+          columns: ['Id', 'Name'],
+          rows: [
+            {'Id': '1', 'Name': 'loaded first'},
+          ],
+          reportedRowCount: 2,
+          truncated: true,
+        ),
+        TableComparisonClientRows(
+          clientName: 'b',
+          columns: ['Id', 'Name'],
+          rows: [],
+          reportedRowCount: 2,
+          truncated: true,
+        ),
+      ],
+    );
+
+    expect(differences, isEmpty);
+  });
 }

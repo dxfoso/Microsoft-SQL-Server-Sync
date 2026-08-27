@@ -45,6 +45,7 @@ String _rowKey(Map<String, dynamic> row, List<String> keyColumns) {
 List<TableComparisonDifference> buildTableComparisonDifferences({
   required List<String> keyColumns,
   required List<TableComparisonClientRows> clients,
+  bool includeMissingRows = true,
 }) {
   if (keyColumns.isEmpty || clients.length < 2) return const [];
   final rowsByClient = <String, Map<String, Map<String, dynamic>>>{};
@@ -68,6 +69,9 @@ List<TableComparisonDifference> buildTableComparisonDifferences({
       for (final client in clients)
         client.clientName: rowsByClient[client.clientName]?[key],
     };
+    if (!includeMissingRows && clientRows.values.any((row) => row == null)) {
+      continue;
+    }
     final changedColumns = <String>[];
     for (final column in orderedColumns) {
       final values = <String>{};

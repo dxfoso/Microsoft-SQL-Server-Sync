@@ -2371,6 +2371,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("return 'Needs input'", web_status)
         self.assertNotIn("return 'Repairing'", web_status)
 
+    def test_table_comparison_uses_parallel_pages_and_virtualized_infinite_scroll(self):
+        dialog = read_text("frontend/lib/table_comparison_dialog.dart")
+        comparison = read_text("frontend/lib/table_comparison.dart")
+
+        self.assertIn("await Future.wait(", dialog)
+        self.assertIn(".map(_fetchNextClientPage)", dialog)
+        self.assertIn("_verticalController.position.extentAfter < 480", dialog)
+        self.assertIn("ListView.builder(", dialog)
+        self.assertIn("_prefetchIfViewportIsNotFilled()", dialog)
+        self.assertIn("includeMissingRows: allPagesLoaded", dialog)
+        self.assertNotIn("_maximumRowsPerClient", dialog)
+        self.assertNotIn("_maximumVisibleDifferences", dialog)
+        self.assertIn("bool includeMissingRows = true", comparison)
+
     def test_windows_client_update_manifest_ignores_localhost_overrides(self):
         app = read_text("sync_windows_agent/lib/app.dart")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
