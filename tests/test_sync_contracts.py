@@ -368,7 +368,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Table sync readiness", clients_page)
         self.assertNotIn("SegmentedButton<_ClientDetailView>", clients_page)
         self.assertIn("All sync is stopped", clients_page)
-        self.assertIn("Choose resolution", clients_page)
+        self.assertIn("Future changes only", clients_page)
+        self.assertIn("Other table actions", clients_page)
         self.assertIn("_changedRowsLabel", clients_page)
         client_list = clients_page.split(
             "Widget _buildClientList() {", 1
@@ -2384,6 +2385,31 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("_maximumRowsPerClient", dialog)
         self.assertNotIn("_maximumVisibleDifferences", dialog)
         self.assertIn("bool includeMissingRows = true", comparison)
+
+    def test_table_readiness_actions_are_fixed_visible_and_safely_labeled(self):
+        clients_page = read_text("frontend/lib/clients_page.dart")
+        grid = clients_page.split("Widget _buildPinnedTableGrid(", 1)[1].split(
+            "void _sortTables(", 1
+        )[0]
+        actions = clients_page.split("Widget _buildTableResolutionMenu(", 1)[
+            1
+        ].split("Future<void> _openTableComparison", 1)[0]
+        confirmation = clients_page.split(
+            "Future<void> _confirmAndResolveTable(", 1
+        )[1].split("Widget _buildTableLog", 1)[0]
+
+        self.assertIn("const actionColumnWidth = 448.0", grid)
+        self.assertIn("child: LayoutBuilder(", grid)
+        self.assertIn("minWidth: constraints.maxWidth", grid)
+        self.assertIn("sortColumnIndex: _tableSortColumnIndex(", grid)
+        self.assertIn("_TableSortField.readiness => 1", grid)
+        self.assertLess(grid.index("Text('Readiness')"), grid.index("Text('Changed rows')"))
+        self.assertIn("ValueKey('future-changes-only-${table.table}')", actions)
+        self.assertIn("const Text('Future changes only')", actions)
+        self.assertIn("'accept_baseline'", actions)
+        self.assertNotIn("title: Text('Accept current differences')", actions)
+        self.assertIn("Keep old differences and sync future changes?", confirmation)
+        self.assertIn("Use future changes only", confirmation)
 
     def test_windows_client_update_manifest_ignores_localhost_overrides(self):
         app = read_text("sync_windows_agent/lib/app.dart")

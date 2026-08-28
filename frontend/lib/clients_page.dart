@@ -3007,6 +3007,9 @@ class _ClientsPageState extends State<ClientsPage> {
       ..sort(
         (left, right) => _compareTableStates(agent, left, right, jobsByTable),
       );
+    final needsInputCount = agent.tables
+        .where((table) => _tableSyncIssue(agent, table.table)?.needsInput == true)
+        .length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3019,6 +3022,38 @@ class _ClientsPageState extends State<ClientsPage> {
           'Every table must be ready before manual or automatic sync can start.',
           style: TextStyle(color: Color(0xFF667085), fontSize: 12),
         ),
+        if (needsInputCount > 0) ...[
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFAEB),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFFEC84B)),
+            ),
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.fast_forward_rounded,
+                  size: 18,
+                  color: Color(0xFFB54708),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'To keep the old differences and synchronize only new changes, select Future changes only in the fixed Actions column.',
+                    style: TextStyle(
+                      color: Color(0xFF7A2E0E),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -3091,32 +3126,41 @@ class _ClientsPageState extends State<ClientsPage> {
   ) {
     const headingHeight = 48.0;
     const rowHeight = 64.0;
+    const actionColumnWidth = 448.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: Scrollbar(
-            controller: _tableHorizontalController,
-            thumbVisibility: true,
-            trackVisibility: true,
-            thickness: 8,
-            radius: const Radius.circular(8),
-            child: SingleChildScrollView(
+          child: LayoutBuilder(
+            builder: (context, constraints) => Scrollbar(
               controller: _tableHorizontalController,
-              scrollDirection: Axis.horizontal,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: DataTable(
+              thumbVisibility: true,
+              trackVisibility: true,
+              thickness: 8,
+              radius: const Radius.circular(8),
+              child: SingleChildScrollView(
+                controller: _tableHorizontalController,
+                scrollDirection: Axis.horizontal,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                    child: DataTable(
                   headingRowHeight: headingHeight,
                   dataRowMinHeight: rowHeight,
                   dataRowMaxHeight: rowHeight,
-                  sortColumnIndex: _tableSortField.index,
+                  sortColumnIndex: _tableSortColumnIndex(_tableSortField),
                   sortAscending: _tableSortAscending,
                   columns: [
                     DataColumn(
                       label: const Text('Table'),
                       onSort: (_, ascending) =>
                           _sortTables(_TableSortField.table, ascending),
+                    ),
+                    DataColumn(
+                      label: const Text('Readiness'),
+                      onSort: (_, ascending) =>
+                          _sortTables(_TableSortField.readiness, ascending),
                     ),
                     DataColumn(
                       numeric: true,
@@ -3141,9 +3185,9 @@ class _ClientsPageState extends State<ClientsPage> {
                       ),
                     ),
                     DataColumn(
-                      label: const Text('Readiness'),
+                      label: const Text('Last sync'),
                       onSort: (_, ascending) =>
-                          _sortTables(_TableSortField.readiness, ascending),
+                          _sortTables(_TableSortField.lastSync, ascending),
                     ),
                     DataColumn(
                       label: const Text('Client status'),
@@ -3151,11 +3195,6 @@ class _ClientsPageState extends State<ClientsPage> {
                         _TableSortField.clientStatus,
                         ascending,
                       ),
-                    ),
-                    DataColumn(
-                      label: const Text('Last sync'),
-                      onSort: (_, ascending) =>
-                          _sortTables(_TableSortField.lastSync, ascending),
                     ),
                   ],
                   rows: tables.map((table) {
@@ -3170,6 +3209,12 @@ class _ClientsPageState extends State<ClientsPage> {
                           : null,
                       cells: [
                         DataCell(Text(_displayTable(table.table))),
+                        DataCell(
+                          _statusChip(
+                            _tableReadinessLabel(issue),
+                            _tableReadinessColor(issue),
+                          ),
+                        ),
                         DataCell(Text(_changedRowsLabel(tableJobs))),
                         DataCell(
                           Text(
@@ -3187,22 +3232,18 @@ class _ClientsPageState extends State<ClientsPage> {
                             ),
                           ),
                         ),
-                        DataCell(
-                          _statusChip(
-                            _tableReadinessLabel(issue),
-                            _tableReadinessColor(issue),
-                          ),
-                        ),
+                        DataCell(Text(_formatTimestamp(table.lastSync))),
                         DataCell(
                           _statusChip(
                             table.status,
                             _statusColor(table.status),
                           ),
                         ),
-                        DataCell(Text(_formatTimestamp(table.lastSync))),
                       ],
                     );
                   }).toList(growable: false),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -3212,6 +3253,13 @@ class _ClientsPageState extends State<ClientsPage> {
           decoration: const BoxDecoration(
             color: Colors.white,
             border: Border(left: BorderSide(color: Color(0xFFD0D5DD))),
+            boxShadow: [
+              BoxShadow(
+                color: Color(0x14000000),
+                offset: Offset(-6, 0),
+                blurRadius: 10,
+              ),
+            ],
           ),
           child: DataTable(
             horizontalMargin: 12,
@@ -3220,7 +3268,12 @@ class _ClientsPageState extends State<ClientsPage> {
             dataRowMinHeight: rowHeight,
             dataRowMaxHeight: rowHeight,
             columns: const [
-              DataColumn(label: SizedBox(width: 176, child: Text('Actions'))),
+              DataColumn(
+                label: SizedBox(
+                  width: actionColumnWidth,
+                  child: Text('Actions'),
+                ),
+              ),
             ],
             rows: tables.map((table) {
               final issue = _tableSyncIssue(agent, table.table);
@@ -3231,9 +3284,9 @@ class _ClientsPageState extends State<ClientsPage> {
                 cells: [
                   DataCell(
                     SizedBox(
-                      width: 176,
+                      width: actionColumnWidth,
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.start,
                         children: [
                           TextButton.icon(
                             onPressed: () => setState(() {
@@ -3246,7 +3299,13 @@ class _ClientsPageState extends State<ClientsPage> {
                             label: const Text('Open'),
                           ),
                           if (issue?.blocksSync == true)
-                            _buildTableResolutionMenu(agent, table, issue!),
+                            Expanded(
+                              child: _buildTableResolutionMenu(
+                                agent,
+                                table,
+                                issue!,
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -3259,6 +3318,16 @@ class _ClientsPageState extends State<ClientsPage> {
       ],
     );
   }
+
+  int _tableSortColumnIndex(_TableSortField field) => switch (field) {
+    _TableSortField.table => 0,
+    _TableSortField.readiness => 1,
+    _TableSortField.changedRows => 2,
+    _TableSortField.uploaded => 3,
+    _TableSortField.downloaded => 4,
+    _TableSortField.lastSync => 5,
+    _TableSortField.clientStatus => 6,
+  };
 
   void _sortTables(_TableSortField field, bool ascending) {
     setState(() {
@@ -3387,10 +3456,23 @@ class _ClientsPageState extends State<ClientsPage> {
         OutlinedButton.icon(
           onPressed: () => unawaited(_openTableComparison(agent, table, issue)),
           icon: const Icon(Icons.difference_rounded, size: 17),
-          label: const Text('Compare client rows'),
+          label: const Text('Compare'),
+        ),
+        FilledButton.tonalIcon(
+          key: ValueKey('future-changes-only-${table.table}'),
+          onPressed: () => unawaited(
+            _confirmAndResolveTable(
+              agent,
+              table,
+              issue,
+              'accept_baseline',
+            ),
+          ),
+          icon: const Icon(Icons.fast_forward_rounded, size: 17),
+          label: const Text('Future changes only'),
         ),
         PopupMenuButton<String>(
-          tooltip: 'Resolve table issue',
+          tooltip: 'Other table actions',
           position: PopupMenuPosition.under,
           onSelected: (action) => unawaited(
             _confirmAndResolveTable(agent, table, issue, action),
@@ -3418,30 +3500,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 subtitle: Text('Keep it local and do not synchronize it'),
               ),
             ),
-            PopupMenuItem(
-              value: 'accept_baseline',
-              child: ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.fast_forward_rounded),
-                title: Text('Accept current differences'),
-                subtitle: Text(
-                  'Keep both copies and sync only future changes',
-                ),
-              ),
-            ),
           ],
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.rule_rounded, size: 17),
-                SizedBox(width: 5),
-                Text('Choose resolution'),
-              ],
-            ),
-          ),
+          icon: const Icon(Icons.more_vert_rounded),
         ),
       ],
     );
@@ -3473,7 +3533,7 @@ class _ClientsPageState extends State<ClientsPage> {
     final title = switch (action) {
       'retry_sync' => 'Retry this table after local correction?',
       'exclude_table' => 'Exclude this table from sync?',
-      _ => 'Accept the current differences?',
+      _ => 'Keep old differences and sync future changes?',
     };
     final explanation = switch (action) {
       'retry_sync' =>
@@ -3481,7 +3541,7 @@ class _ClientsPageState extends State<ClientsPage> {
       'exclude_table' =>
         'This table will remain local on every client and will no longer synchronize.',
       _ =>
-        'Existing differences will remain. Only future Change Tracking changes will synchronize.',
+        'The current client copies will remain different and become the accepted baseline. Only SQL Change Tracking changes made after this decision will synchronize.',
     };
     final confirmed = await showDialog<bool>(
       context: context,
@@ -3521,7 +3581,11 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Confirm resolution'),
+            child: Text(
+              action == 'accept_baseline'
+                  ? 'Use future changes only'
+                  : 'Confirm resolution',
+            ),
           ),
         ],
       ),
