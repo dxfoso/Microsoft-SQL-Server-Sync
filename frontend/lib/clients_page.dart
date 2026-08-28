@@ -3042,7 +3042,7 @@ class _ClientsPageState extends State<ClientsPage> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Choose Future changes only to keep the current differences, or Ignore table to remove the table from synchronization completely.',
+                    'Open Table actions to compare rows, keep only future changes, retry after correction, or ignore the table completely.',
                     style: TextStyle(
                       color: Color(0xFF7A2E0E),
                       fontSize: 12,
@@ -3126,7 +3126,7 @@ class _ClientsPageState extends State<ClientsPage> {
   ) {
     const headingHeight = 48.0;
     const rowHeight = 64.0;
-    const actionColumnWidth = 584.0;
+    const actionColumnWidth = 304.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3448,52 +3448,39 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
       );
     }
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        OutlinedButton.icon(
-          onPressed: () => unawaited(_openTableComparison(agent, table, issue)),
-          icon: const Icon(Icons.difference_rounded, size: 17),
-          label: const Text('Compare'),
-        ),
-        FilledButton.tonalIcon(
-          key: ValueKey('future-changes-only-${table.table}'),
-          onPressed: () => unawaited(
-            _confirmAndResolveTable(
-              agent,
-              table,
-              issue,
-              'accept_baseline',
+    return PopupMenuButton<String>(
+      key: ValueKey('table-actions-${table.table}'),
+      tooltip: 'Table actions',
+      position: PopupMenuPosition.under,
+      onSelected: (action) {
+        if (action == 'compare_rows') {
+          unawaited(_openTableComparison(agent, table, issue));
+          return;
+        }
+        unawaited(_confirmAndResolveTable(agent, table, issue, action));
+      },
+      itemBuilder: (context) => const [
+            PopupMenuItem(
+              value: 'compare_rows',
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.difference_rounded),
+                title: Text('Compare client rows'),
+                subtitle: Text('Inspect row content before deciding'),
+              ),
             ),
-          ),
-          icon: const Icon(Icons.fast_forward_rounded, size: 17),
-          label: const Text('Future changes only'),
-        ),
-        OutlinedButton.icon(
-          key: ValueKey('ignore-table-${table.table}'),
-          onPressed: () => unawaited(
-            _confirmAndResolveTable(
-              agent,
-              table,
-              issue,
-              'exclude_table',
+            PopupMenuDivider(),
+            PopupMenuItem(
+              value: 'accept_baseline',
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.fast_forward_rounded),
+                title: Text('Future changes only'),
+                subtitle: Text('Keep current differences as the baseline'),
+              ),
             ),
-          ),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFB42318),
-          ),
-          icon: const Icon(Icons.sync_disabled_rounded, size: 17),
-          label: const Text('Ignore table'),
-        ),
-        PopupMenuButton<String>(
-          tooltip: 'Other table actions',
-          position: PopupMenuPosition.under,
-          onSelected: (action) => unawaited(
-            _confirmAndResolveTable(agent, table, issue, action),
-          ),
-          itemBuilder: (context) => const [
             PopupMenuItem(
               value: 'retry_sync',
               child: ListTile(
@@ -3506,10 +3493,40 @@ class _ClientsPageState extends State<ClientsPage> {
                 ),
               ),
             ),
-          ],
-          icon: const Icon(Icons.more_vert_rounded),
-        ),
+            PopupMenuItem(
+              value: 'exclude_table',
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.sync_disabled_rounded,
+                  color: Color(0xFFB42318),
+                ),
+                title: Text(
+                  'Ignore table',
+                  style: TextStyle(color: Color(0xFFB42318)),
+                ),
+                subtitle: Text('Stop uploads and downloads for this table'),
+              ),
+            ),
       ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFFD0D5DD)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.rule_rounded, size: 17),
+            SizedBox(width: 6),
+            Text('Table actions'),
+            SizedBox(width: 4),
+            Icon(Icons.arrow_drop_down_rounded, size: 18),
+          ],
+        ),
+      ),
     );
   }
 
