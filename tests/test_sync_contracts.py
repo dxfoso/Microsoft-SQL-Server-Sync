@@ -2398,7 +2398,7 @@ class SyncContractsTests(unittest.TestCase):
             "Future<void> _confirmAndResolveTable(", 1
         )[1].split("Widget _buildTableLog", 1)[0]
 
-        self.assertIn("const actionColumnWidth = 448.0", grid)
+        self.assertIn("const actionColumnWidth = 584.0", grid)
         self.assertIn("child: LayoutBuilder(", grid)
         self.assertIn("minWidth: constraints.maxWidth", grid)
         self.assertIn("sortColumnIndex: _tableSortColumnIndex(", grid)
@@ -2407,9 +2407,16 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("ValueKey('future-changes-only-${table.table}')", actions)
         self.assertIn("const Text('Future changes only')", actions)
         self.assertIn("'accept_baseline'", actions)
+        self.assertIn("ValueKey('ignore-table-${table.table}')", actions)
+        self.assertIn("const Text('Ignore table')", actions)
+        self.assertIn("'exclude_table'", actions)
+        self.assertNotIn("title: Text('Exclude this table')", actions)
         self.assertNotIn("title: Text('Accept current differences')", actions)
         self.assertIn("Keep old differences and sync future changes?", confirmation)
         self.assertIn("Use future changes only", confirmation)
+        self.assertIn("Ignore this table completely?", confirmation)
+        self.assertIn("Other tables will continue synchronizing.", confirmation)
+        self.assertIn("'Ignore this table'", confirmation)
 
     def test_windows_client_update_manifest_ignores_localhost_overrides(self):
         app = read_text("sync_windows_agent/lib/app.dart")

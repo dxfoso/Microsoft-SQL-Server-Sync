@@ -3042,7 +3042,7 @@ class _ClientsPageState extends State<ClientsPage> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'To keep the old differences and synchronize only new changes, select Future changes only in the fixed Actions column.',
+                    'Choose Future changes only to keep the current differences, or Ignore table to remove the table from synchronization completely.',
                     style: TextStyle(
                       color: Color(0xFF7A2E0E),
                       fontSize: 12,
@@ -3126,7 +3126,7 @@ class _ClientsPageState extends State<ClientsPage> {
   ) {
     const headingHeight = 48.0;
     const rowHeight = 64.0;
-    const actionColumnWidth = 448.0;
+    const actionColumnWidth = 584.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3471,6 +3471,22 @@ class _ClientsPageState extends State<ClientsPage> {
           icon: const Icon(Icons.fast_forward_rounded, size: 17),
           label: const Text('Future changes only'),
         ),
+        OutlinedButton.icon(
+          key: ValueKey('ignore-table-${table.table}'),
+          onPressed: () => unawaited(
+            _confirmAndResolveTable(
+              agent,
+              table,
+              issue,
+              'exclude_table',
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFB42318),
+          ),
+          icon: const Icon(Icons.sync_disabled_rounded, size: 17),
+          label: const Text('Ignore table'),
+        ),
         PopupMenuButton<String>(
           tooltip: 'Other table actions',
           position: PopupMenuPosition.under,
@@ -3488,16 +3504,6 @@ class _ClientsPageState extends State<ClientsPage> {
                 subtitle: Text(
                   'Use after deleting the unwanted row in Al-Ameen',
                 ),
-              ),
-            ),
-            PopupMenuItem(
-              value: 'exclude_table',
-              child: ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.sync_disabled_rounded),
-                title: Text('Exclude this table'),
-                subtitle: Text('Keep it local and do not synchronize it'),
               ),
             ),
           ],
@@ -3532,14 +3538,14 @@ class _ClientsPageState extends State<ClientsPage> {
   ) async {
     final title = switch (action) {
       'retry_sync' => 'Retry this table after local correction?',
-      'exclude_table' => 'Exclude this table from sync?',
+      'exclude_table' => 'Ignore this table completely?',
       _ => 'Keep old differences and sync future changes?',
     };
     final explanation = switch (action) {
       'retry_sync' =>
         'Confirm only after the unwanted row was deleted through Al-Ameen. Sync will relay that explicit SQL Change Tracking delete; a missing snapshot row never deletes data.',
       'exclude_table' =>
-        'This table will remain local on every client and will no longer synchronize.',
+        'This table will remain local on every client and will no longer upload or download changes. Other tables will continue synchronizing.',
       _ =>
         'The current client copies will remain different and become the accepted baseline. Only SQL Change Tracking changes made after this decision will synchronize.',
     };
@@ -3584,6 +3590,8 @@ class _ClientsPageState extends State<ClientsPage> {
             child: Text(
               action == 'accept_baseline'
                   ? 'Use future changes only'
+                  : action == 'exclude_table'
+                  ? 'Ignore this table'
                   : 'Confirm resolution',
             ),
           ),
