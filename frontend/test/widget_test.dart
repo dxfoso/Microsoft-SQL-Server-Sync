@@ -5,7 +5,7 @@ void main() {
   testWidgets('renders the website login gate', (tester) async {
     await tester.pumpWidget(const SyncAdminApp());
 
-    expect(find.text('Website Login'), findsOneWidget);
-    expect(find.text('Open Dashboard'), findsOneWidget);
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Open dashboard'), findsOneWidget);
   });
 }

@@ -11,6 +11,7 @@ import 'live_sync_api.dart';
 import 'models.dart';
 import 'sync_summary_cell.dart';
 import 'table_comparison_dialog.dart';
+import 'theme.dart';
 
 enum _ClientSortField { name, status, database, tables, lastSync, heartbeat }
 
@@ -4330,69 +4331,94 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
-  Widget _panel({required Widget child}) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFDDE3EA)),
-        ),
-        child: child,
-      );
+  Widget _panel({required Widget child}) {
+    final t = AppTokens.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: t.hairline),
+      ),
+      child: child,
+    );
+  }
 
-  Widget _buildMessage(String message, {required bool error}) => _panel(
+  Widget _buildMessage(String message, {required bool error}) {
+    final t = AppTokens.of(context);
+    return _panel(
+      child: Text(
+        message,
+        style: TextStyle(color: error ? t.crit : t.muted),
+      ),
+    );
+  }
+
+  Widget _buildEmpty(String message) {
+    final t = AppTokens.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(26),
         child: Text(
           message,
-          style: TextStyle(
-            color: error ? const Color(0xFFB42318) : const Color(0xFF667085),
-          ),
+          textAlign: TextAlign.center,
+          style: TextStyle(color: t.muted),
         ),
-      );
-
-  Widget _buildEmpty(String message) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(26),
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF667085)),
-          ),
-        ),
-      );
+      ),
+    );
+  }
 
   Widget _statusChip(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(999),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: color.withValues(alpha: 0.30)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          margin: const EdgeInsets.only(right: 6),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-        child: Text(
+        Text(
           label,
           style: TextStyle(
-              color: color, fontSize: 11, fontWeight: FontWeight.w800),
+            color: color,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      );
+      ],
+    ),
+  );
 
-  Widget _metric(String label, String value) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: const Color(0xFFDDE3EA)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(color: Color(0xFF667085), fontSize: 11),
-            ),
-            const SizedBox(height: 2),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-          ],
-        ),
-      );
+  Widget _metric(String label, String value) {
+    final t = AppTokens.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: t.surface2,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: t.hairline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(color: t.muted, fontSize: 11),
+          ),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
 
   Color _statusColor(String status) {
     final value = status.toLowerCase();

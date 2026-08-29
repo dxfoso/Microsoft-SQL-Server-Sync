@@ -10,6 +10,7 @@ import 'database_selection.dart';
 import 'dashboard_widgets.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
+import 'theme.dart';
 
 const String _historyLimitStorageKey = 'sync_admin_web.history_limit';
 const int _defaultHistoryLimit = 5;
@@ -5560,15 +5561,256 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return parts.isEmpty ? _userRoleDescription(user.role) : parts.join(' - ');
   }
 
+  String _shortTableName(String raw) {
+    var name = raw;
+    final sep = name.indexOf('::');
+    if (sep >= 0) name = name.substring(sep + 2);
+    return name.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
+  }
+
+  /// Five state tiles answering "is anything wrong right now?" before any table.
+  Widget? _buildSituationStrip(double maxWidth) {
+    final state = _state;
+    if (state == null) return null;
+
+    final agents = state.agents;
+    final onlineCount = agents.where((a) => a.isOnline).length;
+    final offline = agents.where((a) => !a.isOnline).toList(growable: false);
+    final activeJobs =
+        state.jobs.where((j) => j.isActive).toList(growable: false);
+    final gate = state.syncGate;
+    final uploads = activeJobs
+        .where((j) => j.direction.toLowerCase() == 'upload')
+        .length;
+    final downloads = activeJobs
+        .where((j) => j.direction.toLowerCase() == 'download')
+        .length;
+    final firstBatch = activeJobs.isNotEmpty ? activeJobs.first.batchId : '';
+
+    final tiles = <Widget>[
+      SituationTile(
+        label: 'Sync gate',
+        value: gate.blocked ? 'Blocked' : 'Ready',
+        tone: gate.blocked ? StateTone.crit : StateTone.ok,
+        detail: gate.blocked
+            ? (gate.message.trim().isNotEmpty ? gate.message.trim() : 'Sync held')
+            : 'Clear to sync',
+      ),
+      SituationTile(
+        label: 'Clients online',
+        value: '$onlineCount',
+        valueSuffix: '/ ${agents.length}',
+        tone: agents.isEmpty
+            ? StateTone.neutral
+            : (offline.isEmpty ? StateTone.ok : StateTone.warn),
+        detailTone: offline.isEmpty ? StateTone.ok : StateTone.warn,
+        detail: offline.isEmpty
+            ? 'All connected'
+            : '${offline.first.clientName} offline'
+                '${offline.length > 1 ? ' +${offline.length - 1}' : ''}',
+      ),
+      SituationTile(
+        label: 'Active jobs',
+        value: '${activeJobs.length}',
+        tone: activeJobs.isEmpty ? StateTone.ok : StateTone.info,
+        detail: activeJobs.isEmpty
+            ? 'Idle'
+            : '$uploads upload · $downloads download'
+                '${firstBatch.isNotEmpty ? ' · $firstBatch' : ''}',
+      ),
+      SituationTile(
+        label: 'Pending decisions',
+        value: '${gate.decisionCount}',
+        tone: gate.decisionCount > 0 ? StateTone.crit : StateTone.ok,
+        detailTone: gate.resolvingCount > 0 ? StateTone.warn : StateTone.ok,
+        detail: gate.decisionCount > 0
+            ? 'Open Clients to resolve'
+            : (gate.resolvingCount > 0
+                ? '${gate.resolvingCount} '
+                    '${gate.resolvingCount == 1 ? 'conflict' : 'conflicts'} '
+                    'resolving automatically'
+                : 'None'),
+      ),
+      SituationTile(
+        label: 'Automatic sync',
+        value: state.automaticSyncPaused ? 'Paused' : 'Active',
+        tone: state.automaticSyncPaused ? StateTone.warn : StateTone.ok,
+        detail: state.automaticSyncPaused ? 'Manual runs only' : 'Scheduled',
+      ),
+    ];
+
+    final columns = !maxWidth.isFinite || maxWidth >= 1180
+        ? 5
+        : (maxWidth >= 760 ? 3 : 2);
+    const spacing = 10.0;
+    final width = maxWidth.isFinite
+        ? (maxWidth - spacing * (columns - 1)) / columns
+        : 220.0;
+
+    return Wrap(
+      spacing: spacing,
+      runSpacing: spacing,
+      children: [
+        for (final tile in tiles) SizedBox(width: width, child: tile),
+      ],
+    );
+  }
+
+  /// Conditional panel: failed jobs and unsettled conflicts, with the
+  /// "resolving automatically" vs "waiting on you" split made explicit.
+  Widget? _buildAttentionPanel() {
+    final state = _state;
+    if (state == null) return null;
+    final failed = state.jobs
+        .where((j) => j.status.toLowerCase() == 'failed')
+        .toList(growable: false);
+    final gate = state.syncGate;
+    if (failed.isEmpty && gate.decisionCount == 0 && gate.resolvingCount == 0) {
+      return null;
+    }
+    final t = AppTokens.of(context);
+
+    final rows = <Widget>[
+      for (final job in failed.take(6))
+        _attentionRow(
+          tone: StateTone.crit,
+          table: _shortTableName(job.table),
+          description: (job.error?.trim().isNotEmpty ?? false)
+              ? job.error!.trim()
+              : (job.message.trim().isNotEmpty
+                  ? job.message.trim()
+                  : 'Sync job failed'),
+          chipLabel: 'Failed',
+        ),
+      if (gate.resolvingCount > 0)
+        _attentionRow(
+          tone: StateTone.warn,
+          table:
+              '${gate.resolvingCount} ${gate.resolvingCount == 1 ? 'table' : 'tables'}',
+          description: gate.message.trim().isNotEmpty
+              ? gate.message.trim()
+              : 'Automatic latest-change repair is verifying results. '
+                  'No user decision is required.',
+          chipLabel: 'Resolving',
+        ),
+    ];
+
+    final decisionLine = '${gate.decisionCount} waiting on you';
+    final headline = gate.resolvingCount > 0
+        ? '${gate.resolvingCount} repairing · $decisionLine'
+        : (failed.isNotEmpty
+            ? '${failed.length} failed ${failed.length == 1 ? 'job' : 'jobs'} · $decisionLine'
+            : decisionLine);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: Color.lerp(t.hairline, t.warn, 0.45)!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            decoration: BoxDecoration(
+              color: t.warnWash,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(6)),
+              border: Border(
+                bottom: BorderSide(color: Color.lerp(t.hairline, t.warn, 0.35)!),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.report_problem_outlined, size: 16, color: t.warn),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Needs a look — $headline',
+                    style: TextStyle(
+                      color: t.warn,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: t.hairline2),
+            rows[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _attentionRow({
+    required StateTone tone,
+    required String table,
+    required String description,
+    required String chipLabel,
+  }) {
+    final t = AppTokens.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            margin: const EdgeInsets.only(top: 5, right: 10),
+            decoration: BoxDecoration(
+              color: toneColor(context, tone),
+              shape: BoxShape.circle,
+            ),
+          ),
+          SizedBox(
+            width: 104,
+            child: Text(
+              table,
+              textDirection: directionForDisplayText(table),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 12.5,
+                fontFamilyFallback: kMonoFallback,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              description,
+              textDirection: directionForDisplayText(description),
+              style: TextStyle(color: t.ink2, fontSize: 12.5, height: 1.3),
+            ),
+          ),
+          const SizedBox(width: 12),
+          StatusBadge(label: chipLabel, color: toneColor(context, tone)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOverviewPage() {
     return LayoutBuilder(
       builder: (context, constraints) {
         final ownerView = widget.authenticatedUser.isOwner;
         final mobileStack = constraints.maxWidth < 760;
         final useSideBySide = constraints.maxWidth >= 1180;
+        final situation = _buildSituationStrip(constraints.maxWidth);
+        final attention = _buildAttentionPanel();
         if (mobileStack) {
           return ListView(
             children: [
+              if (situation != null) ...[situation, const SizedBox(height: 10)],
+              if (attention != null) ...[attention, const SizedBox(height: 10)],
               _buildOverviewIntroCard(),
               if (!ownerView) ...[
                 const SizedBox(height: 10),
@@ -5586,6 +5828,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         }
         return Column(
           children: [
+            if (situation != null) ...[situation, const SizedBox(height: 10)],
+            if (attention != null) ...[attention, const SizedBox(height: 10)],
             _buildOverviewIntroCard(),
             if (!ownerView) ...[
               const SizedBox(height: 10),
