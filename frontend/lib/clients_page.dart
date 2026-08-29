@@ -611,7 +611,7 @@ class _ClientsPageState extends State<ClientsPage> {
               Text(
                 '$online online of ${clients.length} registered clients. Select a client to inspect its sync log.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: const Color(0xFF667085),
+                      color: AppTokens.of(context).muted,
                     ),
               ),
             ],
@@ -660,14 +660,14 @@ class _ClientsPageState extends State<ClientsPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF6ED),
-        border: Border.all(color: const Color(0xFFF7B27A)),
+        color: AppTokens.of(context).warnWash,
+        border: Border.all(color: AppTokens.of(context).warn.withValues(alpha: 0.4)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.pause_circle_filled, color: Color(0xFFB54708)),
+          Icon(Icons.pause_circle_filled, color: AppTokens.of(context).warn),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -677,16 +677,16 @@ class _ClientsPageState extends State<ClientsPage> {
                   gate.decisionCount > 0
                       ? 'All sync is stopped · ${gate.decisionCount} ${gate.decisionCount == 1 ? 'table needs' : 'tables need'} a decision'
                       : 'Automatic repair · ${gate.resolvingCount} ${gate.resolvingCount == 1 ? 'table is' : 'tables are'} being verified',
-                  style: const TextStyle(
-                    color: Color(0xFF7A2E0E),
+                  style: TextStyle(
+                    color: AppTokens.of(context).warn,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
                   gate.message,
-                  style: const TextStyle(
-                    color: Color(0xFF93451A),
+                  style: TextStyle(
+                    color: AppTokens.of(context).warn,
                     fontSize: 12,
                     height: 1.35,
                   ),
@@ -754,18 +754,18 @@ class _ClientsPageState extends State<ClientsPage> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFDDE3EA)),
+          border: Border.all(color: AppTokens.of(context).hairline),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircleAvatar(
+            CircleAvatar(
               radius: 11,
-              backgroundColor: Color(0xFFE6F4F1),
+              backgroundColor: AppTokens.of(context).accentWash,
               child: Icon(
                 Icons.person_outline_rounded,
                 size: 14,
-                color: Color(0xFF0F766E),
+                color: AppTokens.of(context).accent,
               ),
             ),
             if (!compact) ...[
@@ -783,10 +783,10 @@ class _ClientsPageState extends State<ClientsPage> {
               ),
             ],
             const SizedBox(width: 2),
-            const Icon(
+            Icon(
               Icons.keyboard_arrow_down_rounded,
               size: 16,
-              color: Color(0xFF667085),
+              color: AppTokens.of(context).muted,
             ),
           ],
         ),
@@ -843,17 +843,17 @@ class _ClientsPageState extends State<ClientsPage> {
                   agents.isEmpty
                       ? 'No clients are currently available.'
                       : 'Applies to all ${agents.length} visible clients. The server scheduler uses the new interval on its next one-minute tick.',
-                  style: const TextStyle(
-                    color: Color(0xFF475467),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink2,
                     height: 1.4,
                   ),
                 ),
                 if (intervalValues.length > 1) ...[
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'Clients currently have mixed settings. Saving will make them consistent.',
                     style: TextStyle(
-                      color: Color(0xFFB54708),
+                      color: AppTokens.of(context).warn,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -899,8 +899,8 @@ class _ClientsPageState extends State<ClientsPage> {
                   const SizedBox(height: 12),
                   Text(
                     saveError!,
-                    style: const TextStyle(
-                      color: Color(0xFFB42318),
+                    style: TextStyle(
+                      color: AppTokens.of(context).crit,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -1012,7 +1012,7 @@ class _ClientsPageState extends State<ClientsPage> {
     final jobs = _jobsFor(agent);
     final activeSyncs = _activeSyncCount(agent, jobs);
     final statusColor =
-        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+        agent.isOnline ? AppTokens.of(context).accent : AppTokens.of(context).crit;
     final machine = agent.machineName.isEmpty ? '-' : agent.machineName;
     final database = agent.database.isEmpty ? '-' : agent.database;
     return SizedBox(
@@ -1043,7 +1043,7 @@ class _ClientsPageState extends State<ClientsPage> {
             const SizedBox(width: 10),
             Text(
               '$machine · $database',
-              style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+              style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
             ),
             const SizedBox(width: 12),
             _toolbarMetric(
@@ -1053,12 +1053,12 @@ class _ClientsPageState extends State<ClientsPage> {
             _toolbarMetric(
               Icons.arrow_upward_rounded,
               '${_changedRowsLabel(jobs, direction: 'upload')} uploaded',
-              color: const Color(0xFF2563EB),
+              color: AppTokens.of(context).info,
             ),
             _toolbarMetric(
               Icons.arrow_downward_rounded,
               '${_changedRowsLabel(jobs, direction: 'download')} downloaded',
-              color: const Color(0xFFB54708),
+              color: AppTokens.of(context).warn,
             ),
             _toolbarMetric(Icons.sync_rounded, '$activeSyncs active'),
           ],
@@ -1071,12 +1071,12 @@ class _ClientsPageState extends State<ClientsPage> {
         padding: const EdgeInsets.only(right: 10),
         child: Row(
           children: [
-            Icon(icon, size: 14, color: color ?? const Color(0xFF667085)),
+            Icon(icon, size: 14, color: color ?? AppTokens.of(context).muted),
             const SizedBox(width: 4),
             Text(
               label,
               style: TextStyle(
-                color: color ?? const Color(0xFF475467),
+                color: color ?? AppTokens.of(context).ink2,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
               ),
@@ -1102,7 +1102,7 @@ class _ClientsPageState extends State<ClientsPage> {
               ),
               Text(
                 '${clients.length} shown',
-                style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+                style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
               ),
               if (compactFilters) ...[
                 const SizedBox(width: 4),
@@ -1205,9 +1205,9 @@ class _ClientsPageState extends State<ClientsPage> {
       padding: EdgeInsets.zero,
       style: IconButton.styleFrom(
         foregroundColor:
-            active ? const Color(0xFF0F766E) : const Color(0xFF475467),
+            active ? AppTokens.of(context).accent : AppTokens.of(context).ink2,
         backgroundColor:
-            active ? const Color(0xFFCCFBEF) : const Color(0xFFF2F4F7),
+            active ? AppTokens.of(context).okWash : AppTokens.of(context).hairline2,
       ),
       onPressed: () => unawaited(_showCompactClientFilters()),
       icon: Stack(
@@ -1215,12 +1215,12 @@ class _ClientsPageState extends State<ClientsPage> {
         children: [
           const Icon(Icons.tune_rounded, size: 18),
           if (active)
-            const Positioned(
+            Positioned(
               right: -3,
               top: -3,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: Color(0xFF12B76A),
+                  color: AppTokens.of(context).ok,
                   shape: BoxShape.circle,
                 ),
                 child: SizedBox(width: 7, height: 7),
@@ -1432,8 +1432,8 @@ class _ClientsPageState extends State<ClientsPage> {
         if (widget.authenticatedUser.canManageUsers)
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFB42318),
-              side: const BorderSide(color: Color(0xFFFDA29B)),
+              foregroundColor: AppTokens.of(context).crit,
+              side: BorderSide(color: AppTokens.of(context).crit.withValues(alpha: 0.45)),
             ),
             onPressed: _serverResetBusy
                 ? null
@@ -1459,8 +1459,8 @@ class _ClientsPageState extends State<ClientsPage> {
                     : Icons.check_circle_outline_rounded,
                 size: 17,
                 color: _serverResetBusy
-                    ? const Color(0xFF175CD3)
-                    : const Color(0xFF067647),
+                    ? AppTokens.of(context).info
+                    : AppTokens.of(context).ok,
               ),
               label: Text(
                 _serverResetBusy
@@ -1471,17 +1471,17 @@ class _ClientsPageState extends State<ClientsPage> {
               ),
               labelStyle: TextStyle(
                 color: _serverResetBusy
-                    ? const Color(0xFF175CD3)
-                    : const Color(0xFF067647),
+                    ? AppTokens.of(context).info
+                    : AppTokens.of(context).ok,
                 fontWeight: FontWeight.w700,
               ),
               backgroundColor: _serverResetBusy
-                  ? const Color(0xFFEFF8FF)
-                  : const Color(0xFFECFDF3),
+                  ? AppTokens.of(context).infoWash
+                  : AppTokens.of(context).okWash,
               side: BorderSide(
                 color: _serverResetBusy
-                    ? const Color(0xFFB2DDFF)
-                    : const Color(0xFFABEFC6),
+                    ? AppTokens.of(context).info.withValues(alpha: 0.4)
+                    : AppTokens.of(context).ok.withValues(alpha: 0.4),
               ),
             ),
           ),
@@ -1855,10 +1855,10 @@ class _ClientsPageState extends State<ClientsPage> {
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: failed
-                        ? const Color(0xFFB42318)
+                        ? AppTokens.of(context).crit
                         : active
-                            ? const Color(0xFF175CD3)
-                            : const Color(0xFF067647),
+                            ? AppTokens.of(context).info
+                            : AppTokens.of(context).ok,
                   ),
                 ),
                 const SizedBox(height: 5),
@@ -1948,8 +1948,8 @@ class _ClientsPageState extends State<ClientsPage> {
                                   ? Icons.error_outline_rounded
                                   : Icons.check_circle_outline_rounded,
                               color: batch.failedCount > 0
-                                  ? const Color(0xFFB42318)
-                                  : const Color(0xFF067647),
+                                  ? AppTokens.of(context).crit
+                                  : AppTokens.of(context).ok,
                             ),
                             title: Text(
                               _formatTimestamp(batch.completedAt),
@@ -2044,8 +2044,8 @@ class _ClientsPageState extends State<ClientsPage> {
                           ? Icons.check_circle_outline_rounded
                           : Icons.warning_amber_rounded,
                       color: incident.status == 'resolved'
-                          ? const Color(0xFF067647)
-                          : const Color(0xFFB54708),
+                          ? AppTokens.of(context).ok
+                          : AppTokens.of(context).warn,
                     ),
                     title: Text(
                       '${incident.table} · ${incident.beforeNumber} → $replacement',
@@ -2120,8 +2120,8 @@ class _ClientsPageState extends State<ClientsPage> {
       Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF9FAFB),
-          border: Border.all(color: const Color(0xFFEAECF0)),
+          color: AppTokens.of(context).surface2,
+          border: Border.all(color: AppTokens.of(context).hairline),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Column(
@@ -2306,16 +2306,16 @@ class _ClientsPageState extends State<ClientsPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE4E7EC)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Text(
         hasSingleSource
             ? 'Conflict policy: ${selectedSources.single} is the source of truth only when the same row or unique business key conflicts. Normal non-conflicting changes still upload from every active client.'
             : 'Conflict policy: no source client is selected. The server accepts the most recent committed change; exact timestamp ties use deterministic server receipt order.',
-        style: const TextStyle(
-          color: Color(0xFF475467),
+        style: TextStyle(
+          color: AppTokens.of(context).ink2,
           fontSize: 12,
           height: 1.4,
           fontWeight: FontWeight.w600,
@@ -2549,14 +2549,14 @@ class _ClientsPageState extends State<ClientsPage> {
         normalizedStatus.startsWith('downloading') ||
         normalizedStatus.startsWith('uploading') ||
         normalizedStatus.startsWith('syncing')) {
-      return const Color(0xFF2563EB);
+      return AppTokens.of(context).info;
     }
     if (normalizedStatus.startsWith('update downloading')) {
-      return const Color(0xFF2563EB);
+      return AppTokens.of(context).info;
     }
     switch (status.toLowerCase()) {
       case 'ready':
-        return const Color(0xFF0F766E);
+        return AppTokens.of(context).accent;
       case 'uploading':
       case 'updating':
       case 'update pending':
@@ -2565,29 +2565,29 @@ class _ClientsPageState extends State<ClientsPage> {
       case 'update restarting':
       case 'update retrying':
       case 'syncing':
-        return const Color(0xFF2563EB);
+        return AppTokens.of(context).info;
       case 'downloading':
       case 'applying':
       case 'catching up':
-        return const Color(0xFFB54708);
+        return AppTokens.of(context).warn;
       case 'waiting':
       case 'queued':
-        return const Color(0xFF7A5D00);
+        return AppTokens.of(context).warn;
       case 'offline':
       case 'disabled':
       case 'server offline':
       case 'sql offline':
       case 'needs input':
-        return const Color(0xFFB42318);
+        return AppTokens.of(context).crit;
       default:
-        return const Color(0xFF475467);
+        return AppTokens.of(context).ink2;
     }
   }
 
   Widget _buildClientListItem(AdminAgent agent) {
     final selected = agent.clientName == _selectedClientName;
     final color =
-        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+        agent.isOnline ? AppTokens.of(context).accent : AppTokens.of(context).crit;
     final database =
         agent.database.trim().isEmpty ? '-' : agent.database.trim();
     return Material(
@@ -2599,11 +2599,11 @@ class _ClientsPageState extends State<ClientsPage> {
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFFE6F4F1) : const Color(0xFFF8FAFC),
+            color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface2,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color:
-                  selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
+                  selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
             ),
           ),
           child: Row(
@@ -2633,16 +2633,16 @@ class _ClientsPageState extends State<ClientsPage> {
                     const SizedBox(height: 3),
                     Text(
                       '$database · ${agent.tables.length} tables · Client ${agent.clientVersion.trim().isEmpty ? '-' : agent.clientVersion.trim()}',
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 12,
                       ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       'Change check ${_formatTimestamp(agent.lastChangeCheckAt)} · Heartbeat ${_formatTimestamp(agent.lastHeartbeat)}',
-                      style: const TextStyle(
-                        color: Color(0xFF98A2B3),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11,
                       ),
                     ),
@@ -2769,8 +2769,8 @@ class _ClientsPageState extends State<ClientsPage> {
     return Container(
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        color: AppTokens.of(context).surface2,
+        border: Border.all(color: AppTokens.of(context).hairline),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
@@ -2784,8 +2784,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 ? '$tableCount ready to review'
                 : '$issueCount ${issueCount == 1 ? 'needs' : 'need'} input',
             detailColor: issueCount == 0
-                ? const Color(0xFF667085)
-                : const Color(0xFFB42318),
+                ? AppTokens.of(context).muted
+                : AppTokens.of(context).crit,
           ),
           const SizedBox(height: 4),
           _buildDetailNavigationItem(
@@ -2804,11 +2804,12 @@ class _ClientsPageState extends State<ClientsPage> {
     required IconData icon,
     required String label,
     required String detail,
-    Color detailColor = const Color(0xFF667085),
+    Color? detailColor,
   }) {
+    detailColor ??= AppTokens.of(context).muted;
     final selected = _detailView == view;
     return Material(
-      color: selected ? const Color(0xFFE6F4F1) : Colors.transparent,
+      color: selected ? AppTokens.of(context).accentWash : Colors.transparent,
       borderRadius: BorderRadius.circular(7),
       child: InkWell(
         borderRadius: BorderRadius.circular(7),
@@ -2821,8 +2822,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 icon,
                 size: 19,
                 color: selected
-                    ? const Color(0xFF0F766E)
-                    : const Color(0xFF475467),
+                    ? AppTokens.of(context).accent
+                    : AppTokens.of(context).ink2,
               ),
               const SizedBox(width: 9),
               Expanded(
@@ -2833,8 +2834,8 @@ class _ClientsPageState extends State<ClientsPage> {
                       label,
                       style: TextStyle(
                         color: selected
-                            ? const Color(0xFF095C56)
-                            : const Color(0xFF344054),
+                            ? AppTokens.of(context).accent
+                            : AppTokens.of(context).ink2,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -2844,7 +2845,7 @@ class _ClientsPageState extends State<ClientsPage> {
                       style: TextStyle(
                         color: detailColor,
                         fontSize: 11,
-                        fontWeight: detailColor == const Color(0xFFB42318)
+                        fontWeight: detailColor == AppTokens.of(context).crit
                             ? FontWeight.w700
                             : FontWeight.w400,
                       ),
@@ -2853,10 +2854,10 @@ class _ClientsPageState extends State<ClientsPage> {
                 ),
               ),
               if (selected)
-                const Icon(
+                Icon(
                   Icons.chevron_right_rounded,
                   size: 18,
-                  color: Color(0xFF0F766E),
+                  color: AppTokens.of(context).accent,
                 ),
             ],
           ),
@@ -2921,7 +2922,7 @@ class _ClientsPageState extends State<ClientsPage> {
               const SizedBox(height: 6),
               Text(
                 '${agent.clientName} · ${agent.database.isEmpty ? '-' : agent.database}',
-                style: const TextStyle(color: Color(0xFF667085)),
+                style: TextStyle(color: AppTokens.of(context).muted),
               ),
               const SizedBox(height: 14),
               Wrap(
@@ -3019,9 +3020,9 @@ class _ClientsPageState extends State<ClientsPage> {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'Every table must be ready before manual or automatic sync can start.',
-          style: TextStyle(color: Color(0xFF667085), fontSize: 12),
+          style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
         ),
         if (needsInputCount > 0) ...[
           const SizedBox(height: 10),
@@ -3029,23 +3030,23 @@ class _ClientsPageState extends State<ClientsPage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFFAEB),
+              color: AppTokens.of(context).warnWash,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFFEC84B)),
+              border: Border.all(color: AppTokens.of(context).warn.withValues(alpha: 0.5)),
             ),
-            child: const Row(
+            child: Row(
               children: [
                 Icon(
                   Icons.fast_forward_rounded,
                   size: 18,
-                  color: Color(0xFFB54708),
+                  color: AppTokens.of(context).warn,
                 ),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Open Table actions to compare rows, keep only future changes, retry after correction, or ignore the table completely.',
                     style: TextStyle(
-                      color: Color(0xFF7A2E0E),
+                      color: AppTokens.of(context).warn,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -3086,8 +3087,8 @@ class _ClientsPageState extends State<ClientsPage> {
                   const SizedBox(height: 6),
                   Text(
                     '${tables.length} of ${agent.tables.length} tables',
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
+                    style: TextStyle(
+                      color: AppTokens.of(context).muted,
                       fontSize: 12,
                     ),
                   ),
@@ -3100,8 +3101,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 const Spacer(),
                 Text(
                   '${tables.length} of ${agent.tables.length} tables',
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
+                  style: TextStyle(
+                    color: AppTokens.of(context).muted,
                     fontSize: 12,
                   ),
                 ),
@@ -3205,7 +3206,7 @@ class _ClientsPageState extends State<ClientsPage> {
                     return DataRow(
                       color: issue?.blocksSync == true
                           ? WidgetStateProperty.all(
-                              const Color(0xFFFFF6ED),
+                              AppTokens.of(context).warnWash,
                             )
                           : null,
                       cells: [
@@ -3251,9 +3252,9 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
         ),
         DecoratedBox(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: Colors.white,
-            border: Border(left: BorderSide(color: Color(0xFFD0D5DD))),
+            border: Border(left: BorderSide(color: AppTokens.of(context).hairline)),
             boxShadow: [
               BoxShadow(
                 color: Color(0x14000000),
@@ -3280,7 +3281,7 @@ class _ClientsPageState extends State<ClientsPage> {
               final issue = _tableSyncIssue(agent, table.table);
               return DataRow(
                 color: issue?.blocksSync == true
-                    ? WidgetStateProperty.all(const Color(0xFFFFF6ED))
+                    ? WidgetStateProperty.all(AppTokens.of(context).warnWash)
                     : null,
                 cells: [
                   DataCell(
@@ -3413,11 +3414,11 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Color _tableReadinessColor(AdminTableSyncIssue? issue) {
-    if (issue?.needsInput == true) return const Color(0xFFB42318);
-    if (issue?.resolving == true) return const Color(0xFFB54708);
-    if (issue?.action == 'exclude_table') return const Color(0xFF667085);
-    if (issue?.action == 'accept_baseline') return const Color(0xFF7A5D00);
-    return const Color(0xFF0F766E);
+    if (issue?.needsInput == true) return AppTokens.of(context).crit;
+    if (issue?.resolving == true) return AppTokens.of(context).warn;
+    if (issue?.action == 'exclude_table') return AppTokens.of(context).muted;
+    if (issue?.action == 'accept_baseline') return AppTokens.of(context).warn;
+    return AppTokens.of(context).accent;
   }
 
   Widget _buildTableResolutionMenu(
@@ -3426,12 +3427,12 @@ class _ClientsPageState extends State<ClientsPage> {
     AdminTableSyncIssue issue,
   ) {
     if (!widget.authenticatedUser.canManageUsers) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Text(
           'Awaiting an owner decision',
           style: TextStyle(
-            color: Color(0xFFB54708),
+            color: AppTokens.of(context).warn,
             fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
@@ -3460,7 +3461,7 @@ class _ClientsPageState extends State<ClientsPage> {
         }
         unawaited(_confirmAndResolveTable(agent, table, issue, action));
       },
-      itemBuilder: (context) => const [
+      itemBuilder: (context) => [
             PopupMenuItem(
               value: 'compare_rows',
               child: ListTile(
@@ -3501,11 +3502,11 @@ class _ClientsPageState extends State<ClientsPage> {
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(
                   Icons.sync_disabled_rounded,
-                  color: Color(0xFFB42318),
+                  color: AppTokens.of(context).crit,
                 ),
                 title: Text(
                   'Ignore table',
-                  style: TextStyle(color: Color(0xFFB42318)),
+                  style: TextStyle(color: AppTokens.of(context).crit),
                 ),
                 subtitle: Text('Stop uploads and downloads for this table'),
               ),
@@ -3514,7 +3515,7 @@ class _ClientsPageState extends State<ClientsPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFFD0D5DD)),
+          border: Border.all(color: AppTokens.of(context).hairline),
           borderRadius: BorderRadius.circular(8),
         ),
         child: const Row(
@@ -3586,10 +3587,10 @@ class _ClientsPageState extends State<ClientsPage> {
               Text(explanation),
               if (action == 'retry_sync') ...[
                 const SizedBox(height: 12),
-                const Text(
+                Text(
                   'This never chooses an authoritative client or replaces a table. Inserts and updates merge by primary key; deletes require an explicit tombstone.',
                   style: TextStyle(
-                    color: Color(0xFF667085),
+                    color: AppTokens.of(context).muted,
                     fontSize: 12,
                     height: 1.35,
                   ),
@@ -3654,9 +3655,9 @@ class _ClientsPageState extends State<ClientsPage> {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'Current row count and last reported sync state for this client.',
-          style: TextStyle(color: Color(0xFF667085), fontSize: 12),
+          style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
         ),
         const SizedBox(height: 10),
         if (tables.isEmpty)
@@ -3688,7 +3689,7 @@ class _ClientsPageState extends State<ClientsPage> {
                 table.message.isEmpty ? 'No message reported.' : table.message,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+                style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
               ),
             ],
           ),
@@ -3706,7 +3707,7 @@ class _ClientsPageState extends State<ClientsPage> {
             const SizedBox(height: 3),
             Text(
               _formatTimestamp(table.lastSync),
-              style: const TextStyle(color: Color(0xFF98A2B3), fontSize: 11),
+              style: TextStyle(color: AppTokens.of(context).muted, fontSize: 11),
             ),
           ],
         ),
@@ -3780,9 +3781,9 @@ class _ClientsPageState extends State<ClientsPage> {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'One row represents one sync. Open it to inspect each table difference.',
-          style: TextStyle(color: Color(0xFF667085), fontSize: 12),
+          style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
         ),
         const SizedBox(height: 10),
         LayoutBuilder(
@@ -3877,8 +3878,8 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   DataRow _buildSyncDataRow(_SyncLogBatch batch) {
-    final uploadColor = const Color(0xFF2563EB);
-    final downloadColor = const Color(0xFFB54708);
+    final uploadColor = AppTokens.of(context).info;
+    final downloadColor = AppTokens.of(context).warn;
     return DataRow(
       onSelectChanged: (_) {
         setState(() {
@@ -3914,8 +3915,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 : batch.changedRows == null
                     ? '-'
                     : '+${_number(batch.changedRows!)}',
-            style: const TextStyle(
-              color: Color(0xFFB54708),
+            style: TextStyle(
+              color: AppTokens.of(context).warn,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -3995,7 +3996,7 @@ class _ClientsPageState extends State<ClientsPage> {
             batch.isReconciliation
                 ? '${batch.operations.length} tables - full reconciliation snapshot'
                 : '${batch.operations.length} tables - totals show only changed rows',
-            style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+            style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
           ),
           const SizedBox(height: 12),
           SingleChildScrollView(
@@ -4160,8 +4161,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 : changed == null
                     ? '-'
                     : '+${_number(changed)}',
-            style: const TextStyle(
-              color: Color(0xFFB54708),
+            style: TextStyle(
+              color: AppTokens.of(context).warn,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -4173,8 +4174,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 : operation.uploadedRows == null
                     ? '-'
                     : '+${_number(operation.uploadedRows!)}',
-            style: const TextStyle(
-              color: Color(0xFF2563EB),
+            style: TextStyle(
+              color: AppTokens.of(context).info,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -4186,8 +4187,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 : operation.downloadedRows == null
                     ? '-'
                     : '+${_number(operation.downloadedRows!)}',
-            style: const TextStyle(
-              color: Color(0xFFB54708),
+            style: TextStyle(
+              color: AppTokens.of(context).warn,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -4216,17 +4217,17 @@ class _ClientsPageState extends State<ClientsPage> {
   Color _phaseColor(String phase) {
     switch (phase.toLowerCase()) {
       case 'upload':
-        return const Color(0xFF2563EB);
+        return AppTokens.of(context).info;
       case 'download':
-        return const Color(0xFFB54708);
+        return AppTokens.of(context).warn;
       case 'waiting':
-        return const Color(0xFF667085);
+        return AppTokens.of(context).muted;
       case 'failed':
-        return const Color(0xFFB42318);
+        return AppTokens.of(context).crit;
       case 'completed':
-        return const Color(0xFF15803D);
+        return AppTokens.of(context).ok;
       default:
-        return const Color(0xFF667085);
+        return AppTokens.of(context).muted;
     }
   }
 
@@ -4235,7 +4236,7 @@ class _ClientsPageState extends State<ClientsPage> {
         job.status.toLowerCase() == 'failed';
     final isUpload = job.direction.toLowerCase() == 'upload';
     final deltaColor =
-        isUpload ? const Color(0xFF2563EB) : const Color(0xFFB54708);
+        isUpload ? AppTokens.of(context).info : AppTokens.of(context).warn;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4266,8 +4267,8 @@ class _ClientsPageState extends State<ClientsPage> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: failed
-                      ? const Color(0xFFB42318)
-                      : const Color(0xFF667085),
+                      ? AppTokens.of(context).crit
+                      : AppTokens.of(context).muted,
                   fontSize: 12,
                 ),
               ),
@@ -4277,8 +4278,8 @@ class _ClientsPageState extends State<ClientsPage> {
                   'Quarantined: ${job.rejectedRowCount}${job.rejectionSummary?.trim().isNotEmpty == true ? ' (${job.rejectionSummary})' : ''}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFB54708),
+                  style: TextStyle(
+                    color: AppTokens.of(context).warn,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -4299,12 +4300,12 @@ class _ClientsPageState extends State<ClientsPage> {
             const SizedBox(height: 3),
             Text(
               formatSyncDuration(job.duration()),
-              style: const TextStyle(color: Color(0xFF667085), fontSize: 11),
+              style: TextStyle(color: AppTokens.of(context).muted, fontSize: 11),
             ),
             const SizedBox(height: 3),
             Text(
               _formatTimestamp(job.updatedAt),
-              style: const TextStyle(color: Color(0xFF98A2B3), fontSize: 11),
+              style: TextStyle(color: AppTokens.of(context).muted, fontSize: 11),
             ),
           ],
         ),
@@ -4423,18 +4424,18 @@ class _ClientsPageState extends State<ClientsPage> {
   Color _statusColor(String status) {
     final value = status.toLowerCase();
     if (value == 'completed' || value == 'complete' || value == 'idle') {
-      return const Color(0xFF0F766E);
+      return AppTokens.of(context).accent;
     }
     if (value == 'failed' ||
         value == 'completed_errors' ||
         value == 'cancelled' ||
         value == 'offline') {
-      return const Color(0xFFB42318);
+      return AppTokens.of(context).crit;
     }
     if (value == 'queued' || value == 'waiting' || value == 'paused') {
-      return const Color(0xFFB54708);
+      return AppTokens.of(context).warn;
     }
-    return const Color(0xFF475467);
+    return AppTokens.of(context).ink2;
   }
 
   String _displayTable(String table) {
@@ -4727,10 +4728,10 @@ class _ClientsPageState extends State<ClientsPage> {
                       ),
                     const SizedBox(height: 8),
                     if (!automaticPaused)
-                      const Text(
+                      Text(
                         'Pause automatic sync before starting this repair.',
                         style: TextStyle(
-                          color: Color(0xFFB42318),
+                          color: AppTokens.of(context).crit,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -4809,7 +4810,7 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFB42318),
+              backgroundColor: AppTokens.of(context).crit,
               foregroundColor: Colors.white,
             ),
             onPressed: () => Navigator.of(context).pop(true),
@@ -5058,8 +5059,8 @@ class _SyncJobDataTableState extends State<_SyncJobDataTable> {
                   const SizedBox(height: 4),
                   Text(
                     widget.subtitle,
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
+                    style: TextStyle(
+                      color: AppTokens.of(context).muted,
                       fontSize: 12,
                     ),
                   ),
@@ -5082,7 +5083,7 @@ class _SyncJobDataTableState extends State<_SyncJobDataTable> {
           _inlineState(
             icon: Icons.error_outline_rounded,
             text: _error!,
-            color: const Color(0xFFB42318),
+            color: AppTokens.of(context).crit,
           )
         else if (_loading && _rows.isEmpty)
           const LinearProgressIndicator(minHeight: 2)
@@ -5094,13 +5095,13 @@ class _SyncJobDataTableState extends State<_SyncJobDataTable> {
             text: _pruned
                 ? 'This job’s saved row data was removed by the configured storage limit. Job metadata remains available.'
                 : 'No row data has been captured for this job yet.',
-            color: _pruned ? const Color(0xFFB54708) : const Color(0xFF667085),
+            color: _pruned ? AppTokens.of(context).warn : AppTokens.of(context).muted,
           )
         else if (_rows.isEmpty)
           _inlineState(
             icon: Icons.check_circle_outline_rounded,
             text: 'This job captured no changed rows.',
-            color: const Color(0xFF0F766E),
+            color: AppTokens.of(context).accent,
           )
         else ...[
           Scrollbar(
@@ -5153,7 +5154,7 @@ class _SyncJobDataTableState extends State<_SyncJobDataTable> {
             children: [
               Text(
                 '${_rows.length} of $_retainedRowCount rows loaded',
-                style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+                style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
               ),
               const Spacer(),
               if (!_done)
@@ -5179,12 +5180,12 @@ class _SyncJobDataTableState extends State<_SyncJobDataTable> {
     return Chip(
       visualDensity: VisualDensity.compact,
       label: Text('$label $value'),
-      labelStyle: const TextStyle(
-        color: Color(0xFF344054),
+      labelStyle: TextStyle(
+        color: AppTokens.of(context).ink2,
         fontSize: 11,
         fontWeight: FontWeight.w700,
       ),
-      backgroundColor: const Color(0xFFF2F4F7),
+      backgroundColor: AppTokens.of(context).hairline2,
       side: BorderSide.none,
     );
   }
@@ -5198,7 +5199,7 @@ class _SyncJobDataTableState extends State<_SyncJobDataTable> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(

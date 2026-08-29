@@ -359,7 +359,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
             FilledButton(
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFB42318),
+                backgroundColor: AppTokens.of(context).crit,
                 foregroundColor: Colors.white,
               ),
               onPressed: () => Navigator.of(context).pop(true),
@@ -1072,8 +1072,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       else ...[
                         Text(
                           'Applies to all ${agents.length} client${agents.length == 1 ? '' : 's'}.',
-                          style: const TextStyle(
-                            color: Color(0xFF667085),
+                          style: TextStyle(
+                            color: AppTokens.of(context).muted,
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
@@ -1103,8 +1103,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         const SizedBox(height: 12),
                         Text(
                           saveError!,
-                          style: const TextStyle(
-                            color: Color(0xFFB42318),
+                          style: TextStyle(
+                            color: AppTokens.of(context).crit,
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
@@ -1525,8 +1525,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   const SizedBox(height: 12),
                                   Text(
                                     resetErrorText!,
-                                    style: const TextStyle(
-                                      color: Color(0xFFB42318),
+                                    style: TextStyle(
+                                      color: AppTokens.of(context).crit,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -1593,7 +1593,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
                       FilledButton(
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFB42318),
+                          backgroundColor: AppTokens.of(context).crit,
                           foregroundColor: Colors.white,
                         ),
                         onPressed: () => Navigator.of(context).pop(true),
@@ -1663,8 +1663,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         widget.authenticatedUser.isAdmin
                             ? 'Admins can create server users or client accounts. Server users can create client accounts in their own namespace.'
                             : 'Server users can create client accounts in their own namespace.',
-                        style: const TextStyle(
-                          color: Color(0xFF58656B),
+                        style: TextStyle(
+                          color: AppTokens.of(context).muted,
                           height: 1.45,
                         ),
                       ),
@@ -1804,8 +1804,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         const SizedBox(height: 12),
                         Text(
                           errorText!,
-                          style: const TextStyle(
-                            color: Color(0xFFB42318),
+                          style: TextStyle(
+                            color: AppTokens.of(context).crit,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1840,10 +1840,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                     final deleting = deletingUserId == user.id;
                                     final roleColor =
                                         user.isAdmin
-                                            ? const Color(0xFF143842)
+                                            ? AppTokens.of(context).accent
                                             : user.isOwner
-                                            ? const Color(0xFF2B6F73)
-                                            : const Color(0xFFD8A23A);
+                                            ? AppTokens.of(context).accent
+                                            : AppTokens.of(context).warn;
                                     final identity = Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
@@ -1861,8 +1861,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                             user.email,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              color: Color(0xFF8A949A),
+                                            style: TextStyle(
+                                              color: AppTokens.of(context).muted,
                                               fontSize: 12,
                                             ),
                                           ),
@@ -1875,8 +1875,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       textAlign: TextAlign.right,
-                                      style: const TextStyle(
-                                        color: Color(0xFF58656B),
+                                      style: TextStyle(
+                                        color: AppTokens.of(context).muted,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     );
@@ -1915,8 +1915,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                               foregroundColor: const Color(
                                                 0xFFB42318,
                                               ),
-                                              side: const BorderSide(
-                                                color: Color(0xFFFDA29B),
+                                              side: BorderSide(
+                                                color: AppTokens.of(context).crit.withValues(alpha: 0.45),
                                               ),
                                             ),
                                             onPressed:
@@ -1945,7 +1945,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                         color: Colors.white,
                                         borderRadius: BorderRadius.circular(8),
                                         border: Border.all(
-                                          color: const Color(0xFFDDE3EA),
+                                          color: AppTokens.of(context).hairline,
                                         ),
                                       ),
                                       child: LayoutBuilder(
@@ -2235,20 +2235,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Client Sync Status',
                   style: TextStyle(
-                    color: Color(0xFF101828),
+                    color: AppTokens.of(context).ink,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
                   ),
@@ -2259,10 +2259,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
           const SizedBox(height: 8),
           if (clients.isEmpty)
-            const Text(
+            Text(
               'No clients expose this table yet.',
               style: TextStyle(
-                color: Color(0xFF667085),
+                color: AppTokens.of(context).muted,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -2402,12 +2402,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         ).textTheme.bodyMedium?.copyWith(height: 1.45),
                       ),
                       const SizedBox(height: 16),
-                      const Text(
+                      Text(
                         'Type RESET to confirm.',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFB42318),
+                          color: AppTokens.of(context).crit,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -2431,7 +2431,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                   FilledButton(
                     style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFB42318),
+                      backgroundColor: AppTokens.of(context).crit,
                       foregroundColor: Colors.white,
                     ),
                     onPressed:
@@ -2715,11 +2715,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final pendingNames = _bulkDiagnosticsPendingClientNames;
     final completedNames = _bulkDiagnosticsCompletedClientNames;
     final accentColor =
-        waiting ? const Color(0xFF2563EB) : const Color(0xFF15803D);
+        waiting ? AppTokens.of(context).info : AppTokens.of(context).ok;
     final backgroundColor =
-        waiting ? const Color(0xFFEFF6FF) : const Color(0xFFECFDF3);
+        waiting ? AppTokens.of(context).infoWash : AppTokens.of(context).okWash;
     final borderColor =
-        waiting ? const Color(0xFFD7E4FF) : const Color(0xFFABEFC6);
+        waiting ? AppTokens.of(context).infoWash : AppTokens.of(context).ok.withValues(alpha: 0.4);
     final label =
         waiting
             ? 'Waiting for $completedCount of $totalCount client logs'
@@ -2759,8 +2759,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           const SizedBox(height: 6),
           Text(
             'Request ${requestId.length > 12 ? requestId.substring(0, 12) : requestId} • Started ${_formatTimestamp(_bulkDiagnosticsRequestedAt ?? '')}',
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: AppTokens.of(context).muted,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
@@ -2975,8 +2975,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 children: [
                   Text(
                     'Status ${diagnostics.status} • Requested ${_formatTimestamp(diagnostics.requestedAt ?? '')} • Uploaded ${_formatTimestamp(diagnostics.uploadedAt ?? '')}',
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
+                    style: TextStyle(
+                      color: AppTokens.of(context).muted,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -2988,8 +2988,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   const SizedBox(height: 5),
                   Text(
                     'Stage ${diagnostics.stage} · ${diagnostics.progressPercent}%',
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
+                    style: TextStyle(
+                      color: AppTokens.of(context).muted,
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -3008,9 +3008,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
+                        color: AppTokens.of(context).surface2,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFDDE3EA)),
+                        border: Border.all(color: AppTokens.of(context).hairline),
                       ),
                       child: SingleChildScrollView(
                         child: SelectableText(
@@ -3081,9 +3081,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       constraints: const BoxConstraints(maxHeight: 260),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: ListView(
         children: [
@@ -3106,10 +3106,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     fontSize: 11.5,
                     color:
                         check['status'] == 'failed'
-                            ? const Color(0xFFB42318)
+                            ? AppTokens.of(context).crit
                             : check['status'] == 'warning'
-                            ? const Color(0xFFB54708)
-                            : const Color(0xFF027A48),
+                            ? AppTokens.of(context).warn
+                            : AppTokens.of(context).ok,
                   ),
                 ),
               ),
@@ -3267,17 +3267,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     switch (status.toLowerCase()) {
       case 'completed':
       case 'synced':
-        return const Color(0xFF0F766E);
+        return AppTokens.of(context).accent;
       case 'failed':
-        return const Color(0xFFB42318);
+        return AppTokens.of(context).crit;
       case 'paused':
-        return const Color(0xFF718096);
+        return AppTokens.of(context).muted;
       default:
-        return const Color(0xFFB7791F);
+        return AppTokens.of(context).warn;
     }
   }
 
-  Color _roleColor() => const Color(0xFF0F766E);
+  Color _roleColor() => AppTokens.of(context).accent;
 
   IconData _roleIcon() => Icons.sync_rounded;
 
@@ -3290,12 +3290,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Color _userRoleColor(String role) {
     switch (role) {
       case 'owner':
-        return const Color(0xFF7C3AED);
+        return AppTokens.of(context).info;
       case 'admin':
-        return const Color(0xFFB7791F);
+        return AppTokens.of(context).warn;
       case 'client':
       default:
-        return const Color(0xFF0F766E);
+        return AppTokens.of(context).accent;
     }
   }
 
@@ -3378,8 +3378,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       Text(
                         description,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF667085),
+                        style: TextStyle(
+                          color: AppTokens.of(context).muted,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w600,
                         ),
@@ -3784,10 +3784,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         constraints: const BoxConstraints(minHeight: 58),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFE6F4F1) : Colors.white,
+          color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
+            color: selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
           ),
         ),
         child: LayoutBuilder(
@@ -3847,14 +3847,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   height: 34,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE6F4F1),
+                    color: AppTokens.of(context).accentWash,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFB8DDD6)),
+                    border: Border.all(color: AppTokens.of(context).accent.withValues(alpha: 0.4)),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.table_chart_outlined,
                     size: 18,
-                    color: Color(0xFF0F766E),
+                    color: AppTokens.of(context).accent,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -3986,14 +3986,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       constraints: const BoxConstraints(minHeight: 24),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Text(
         label,
-        style: const TextStyle(
-          color: Color(0xFF667085),
+        style: TextStyle(
+          color: AppTokens.of(context).muted,
           fontSize: 11,
           fontWeight: FontWeight.w800,
         ),
@@ -4041,8 +4041,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       'Last update $lastSync',
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: Color(0xFF667085),
+      style: TextStyle(
+        color: AppTokens.of(context).muted,
         fontSize: 12.5,
         fontWeight: FontWeight.w600,
       ),
@@ -4059,24 +4059,24 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       constraints: const BoxConstraints(minHeight: 26),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: onPressed == null ? Colors.white : const Color(0xFFF8FAFC),
+        color: onPressed == null ? AppTokens.of(context).surface2 : AppTokens.of(context).surface,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color:
               onPressed == null
-                  ? const Color(0xFFDDE3EA)
-                  : const Color(0xFFC9D5E1),
+                  ? AppTokens.of(context).hairline
+                  : AppTokens.of(context).hairline,
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: const Color(0xFF667085)),
+          Icon(icon, size: 14, color: AppTokens.of(context).muted),
           const SizedBox(width: 5),
           Text(
             value,
-            style: const TextStyle(
-              color: Color(0xFF101828),
+            style: TextStyle(
+              color: AppTokens.of(context).ink,
               fontSize: 11,
               fontWeight: FontWeight.w800,
             ),
@@ -4125,8 +4125,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     const SizedBox(height: 10),
                     Text(
                       data.meaning,
-                      style: const TextStyle(
-                        color: Color(0xFF475467),
+                      style: TextStyle(
+                        color: AppTokens.of(context).ink2,
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
                         height: 1.35,
@@ -4264,9 +4264,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Row(
         children: [
@@ -4276,9 +4276,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(9),
-              border: Border.all(color: const Color(0xFFD9E2EC)),
+              border: Border.all(color: AppTokens.of(context).hairline),
             ),
-            child: Icon(data.icon, size: 17, color: const Color(0xFF0F766E)),
+            child: Icon(data.icon, size: 17, color: AppTokens.of(context).accent),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -4290,8 +4290,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   '${data.title} (${data.countText})',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink,
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
                   ),
@@ -4301,8 +4301,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   data.tableName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
+                  style: TextStyle(
+                    color: AppTokens.of(context).muted,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
                   ),
@@ -4327,7 +4327,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4339,8 +4339,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             decoration: BoxDecoration(
               color:
                   client.active
-                      ? const Color(0xFF16A34A)
-                      : const Color(0xFF94A3B8),
+                      ? AppTokens.of(context).ok
+                      : AppTokens.of(context).muted,
               shape: BoxShape.circle,
             ),
           ),
@@ -4353,8 +4353,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   client.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink,
                     fontSize: 13,
                     fontWeight: FontWeight.w900,
                   ),
@@ -4364,8 +4364,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   client.subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF475467),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink2,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w800,
                   ),
@@ -4375,8 +4375,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   client.detail,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
+                  style: TextStyle(
+                    color: AppTokens.of(context).muted,
                     fontSize: 11.5,
                     height: 1.25,
                     fontWeight: FontWeight.w600,
@@ -4451,9 +4451,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             width: fillWidth ? double.infinity : null,
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
-              color: const Color(0xFFF2F4F7),
+              color: AppTokens.of(context).hairline2,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFDDE3EA)),
+              border: Border.all(color: AppTokens.of(context).hairline),
             ),
             child: Row(
               mainAxisSize: fillWidth ? MainAxisSize.max : MainAxisSize.min,
@@ -4482,7 +4482,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required VoidCallback onTap,
   }) {
     return Material(
-      color: selected ? Colors.white : Colors.transparent,
+      color: selected ? AppTokens.of(context).surface : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
@@ -4496,7 +4496,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             textAlign: TextAlign.center,
             style: TextStyle(
               color:
-                  selected ? const Color(0xFF101828) : const Color(0xFF667085),
+                  selected ? AppTokens.of(context).ink : AppTokens.of(context).muted,
               fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
@@ -4628,9 +4628,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: AppTokens.of(context).surface2,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(color: AppTokens.of(context).hairline),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -4640,8 +4640,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       Expanded(
                         child: Text(
                           progressLabel,
-                          style: const TextStyle(
-                            color: Color(0xFF0F172A),
+                          style: TextStyle(
+                            color: AppTokens.of(context).ink,
                             fontSize: 12,
                             fontWeight: FontWeight.w800,
                           ),
@@ -4652,8 +4652,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         child: Text(
                           '$normalizedProgress%',
                           textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: Color(0xFF475467),
+                          style: TextStyle(
+                            color: AppTokens.of(context).ink2,
                             fontSize: 11.5,
                             fontWeight: FontWeight.w800,
                           ),
@@ -4671,8 +4671,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     activityMessage,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
+                    style: TextStyle(
+                      color: AppTokens.of(context).muted,
                       fontSize: 11.5,
                       height: 1.3,
                       fontWeight: FontWeight.w600,
@@ -4713,9 +4713,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
+                        color: AppTokens.of(context).surface2,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        border: Border.all(color: AppTokens.of(context).hairline),
                       ),
                       child: Row(
                         children: [
@@ -4726,13 +4726,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(9),
                               border: Border.all(
-                                color: const Color(0xFFD9E2EC),
+                                color: AppTokens.of(context).hairline,
                               ),
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.info_outline_rounded,
                               size: 17,
-                              color: Color(0xFF0F766E),
+                              color: AppTokens.of(context).accent,
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -4745,8 +4745,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Color(0xFF0F172A),
+                                  style: TextStyle(
+                                    color: AppTokens.of(context).ink,
                                     fontSize: 16,
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -4756,8 +4756,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   subtitle,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Color(0xFF667085),
+                                  style: TextStyle(
+                                    color: AppTokens.of(context).muted,
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -4795,9 +4795,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Row(
         children: [
@@ -4807,12 +4807,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFD9E2EC)),
+              border: Border.all(color: AppTokens.of(context).hairline),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.computer_rounded,
               size: 18,
-              color: Color(0xFF2563EB),
+              color: AppTokens.of(context).info,
             ),
           ),
           const SizedBox(width: 10),
@@ -4825,8 +4825,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   entry.agent.clientName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink,
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
                   ),
@@ -4848,8 +4848,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         '${tableState.status} - ${summary.displayTitle} - Last sync $lastSync',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF667085),
+                        style: TextStyle(
+                          color: AppTokens.of(context).muted,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
                         ),
@@ -4877,9 +4877,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFFCFCFD),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -4910,15 +4910,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           children: [
             TextSpan(
               text: '${item.key}: ',
-              style: const TextStyle(
-                color: Color(0xFF667085),
+              style: TextStyle(
+                color: AppTokens.of(context).muted,
                 fontWeight: FontWeight.w700,
               ),
             ),
             TextSpan(
               text: item.value,
-              style: const TextStyle(
-                color: Color(0xFF101828),
+              style: TextStyle(
+                color: AppTokens.of(context).ink,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -4944,7 +4944,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           Text(
             tableName,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: const Color(0xFF0F172A),
+              color: AppTokens.of(context).ink,
               fontSize: 15,
               fontWeight: FontWeight.w800,
             ),
@@ -4954,8 +4954,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             '${agent.machineName} - ${agent.server}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: AppTokens.of(context).muted,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
@@ -4986,10 +4986,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _buildSectionLabel(String value) {
     return Text(
       value,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 13,
         fontWeight: FontWeight.w800,
-        color: Color(0xFF667085),
+        color: AppTokens.of(context).muted,
       ),
     );
   }
@@ -5035,10 +5035,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         constraints: const BoxConstraints(minHeight: 40),
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFE6F4F1) : Colors.white,
+          color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
+            color: selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
           ),
         ),
         child: LayoutBuilder(
@@ -5144,8 +5144,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: Color(0xFF62717C),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -5391,9 +5391,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5405,7 +5405,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   title: title,
                   subtitle: subtitle,
                   icon: Icons.dns_rounded,
-                  color: const Color(0xFF2563EB),
+                  color: AppTokens.of(context).info,
                 ),
               ),
               StatusBadge(
@@ -5413,7 +5413,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     serverUser == null
                         ? '${clients.length} clients'
                         : 'Server User',
-                color: const Color(0xFF2563EB),
+                color: AppTokens.of(context).info,
               ),
             ],
           ),
@@ -5451,8 +5451,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         if (_canDeleteClientUser(user))
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFB42318),
-              side: const BorderSide(color: Color(0xFFFDA29B)),
+              foregroundColor: AppTokens.of(context).crit,
+              side: BorderSide(color: AppTokens.of(context).crit.withValues(alpha: 0.45)),
             ),
             onPressed:
                 deleting
@@ -5468,7 +5468,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -5526,8 +5526,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 title.trim().isEmpty ? 'Unnamed account' : title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF101828),
+                style: TextStyle(
+                  color: AppTokens.of(context).ink,
                   fontSize: 13.5,
                   fontWeight: FontWeight.w800,
                 ),
@@ -5537,8 +5537,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF667085),
+                style: TextStyle(
+                  color: AppTokens.of(context).muted,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -5978,17 +5978,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Color _clientSyncProgressColor(String label) {
     switch (label) {
       case 'Failed':
-        return const Color(0xFFB42318);
+        return AppTokens.of(context).crit;
       case 'Complete':
-        return const Color(0xFF0F766E);
+        return AppTokens.of(context).accent;
       case 'Syncing':
-        return const Color(0xFF2563EB);
+        return AppTokens.of(context).info;
       case 'No sync jobs':
-        return const Color(0xFF667085);
+        return AppTokens.of(context).muted;
       case 'Partial':
       case 'Waiting':
       default:
-        return const Color(0xFFB54708);
+        return AppTokens.of(context).warn;
     }
   }
 
@@ -6109,7 +6109,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   child: LinearProgressIndicator(
                     value: progress.progress / 100,
                     minHeight: 7,
-                    backgroundColor: const Color(0xFFE6EAF0),
+                    backgroundColor: AppTokens.of(context).hairline,
                     valueColor: AlwaysStoppedAnimation<Color>(progress.color),
                   ),
                 ),
@@ -6135,8 +6135,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 'Last sync $lastSyncLabel',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF475467),
+                style: TextStyle(
+                  color: AppTokens.of(context).ink2,
                   fontSize: 10.5,
                   fontWeight: FontWeight.w800,
                 ),
@@ -6161,14 +6161,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE7F8EF),
+                      color: AppTokens.of(context).okWash,
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: const Color(0xFFB7E4C7)),
+                      border: Border.all(color: AppTokens.of(context).ok.withValues(alpha: 0.4)),
                     ),
                     child: Text(
                       '+${_formatCompactCount(delta.rowsAdded)} rows',
-                      style: const TextStyle(
-                        color: Color(0xFF087443),
+                      style: TextStyle(
+                        color: AppTokens.of(context).ok,
                         fontSize: 10.5,
                         fontWeight: FontWeight.w900,
                       ),
@@ -6196,24 +6196,24 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Servers',
             style: TextStyle(
-              color: Color(0xFF101828),
+              color: AppTokens.of(context).ink,
               fontSize: 15,
               fontWeight: FontWeight.w900,
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             'Open a server to see its tables and clients.',
             style: TextStyle(
-              color: Color(0xFF667085),
+              color: AppTokens.of(context).muted,
               fontSize: 12,
               height: 1.35,
             ),
@@ -6256,24 +6256,24 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Clients',
             style: TextStyle(
-              color: Color(0xFF101828),
+              color: AppTokens.of(context).ink,
               fontSize: 15,
               fontWeight: FontWeight.w900,
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             'Open all tables or inspect one client.',
             style: TextStyle(
-              color: Color(0xFF667085),
+              color: AppTokens.of(context).muted,
               fontSize: 12,
               height: 1.35,
             ),
@@ -6331,9 +6331,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     required String subtitle,
     required bool selected,
     required VoidCallback onTap,
-    Color iconColor = const Color(0xFF0F766E),
+    Color? iconColor,
     Widget? trailing,
   }) {
+    iconColor ??= AppTokens.of(context).accent;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -6343,11 +6344,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFFE6F4F1) : const Color(0xFFF8FAFC),
+            color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface2,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color:
-                  selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
+                  selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
             ),
           ),
           child: Row(
@@ -6358,7 +6359,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(9),
-                  border: Border.all(color: const Color(0xFFDDE3EA)),
+                  border: Border.all(color: AppTokens.of(context).hairline),
                 ),
                 child: Icon(icon, size: 18, color: iconColor),
               ),
@@ -6371,8 +6372,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF101828),
+                      style: TextStyle(
+                        color: AppTokens.of(context).ink,
                         fontSize: 13,
                         fontWeight: FontWeight.w800,
                       ),
@@ -6382,8 +6383,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       subtitle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                         height: 1.25,
@@ -6406,7 +6407,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }) {
     final selected = _selectedPageClientName == agent.clientName;
     final statusColor =
-        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+        agent.isOnline ? AppTokens.of(context).accent : AppTokens.of(context).crit;
     final database =
         agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
     final version = _simpleClientVersion(agent);
@@ -6429,11 +6430,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFFE6F4F1) : const Color(0xFFF8FAFC),
+            color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface2,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color:
-                  selected ? const Color(0xFF85C7BC) : const Color(0xFFDDE3EA),
+                  selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
             ),
           ),
           child: Row(
@@ -6445,7 +6446,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(7),
-                  border: Border.all(color: const Color(0xFFDDE3EA)),
+                  border: Border.all(color: AppTokens.of(context).hairline),
                 ),
                 child: Icon(
                   Icons.computer_rounded,
@@ -6465,8 +6466,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             agent.clientName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFF101828),
+                            style: TextStyle(
+                              color: AppTokens.of(context).ink,
                               fontSize: 12.5,
                               fontWeight: FontWeight.w900,
                             ),
@@ -6484,8 +6485,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         height: 1.2,
@@ -6514,7 +6515,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _buildNavigationTile(
       icon: Icons.dns_rounded,
       iconColor:
-          item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318),
+          item.available ? AppTokens.of(context).accent : AppTokens.of(context).crit,
       label: item.title,
       subtitle: '${item.connectedClients} clients',
       selected: selected,
@@ -6526,7 +6527,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       trailing: StatusBadge(
         label: item.available ? 'Live' : 'Down',
         color:
-            item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318),
+            item.available ? AppTokens.of(context).accent : AppTokens.of(context).crit,
       ),
     );
   }
@@ -6566,7 +6567,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildServerClientTile(_ServerInventoryItem item, AdminAgent agent) {
     final statusColor =
-        agent.isOnline ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+        agent.isOnline ? AppTokens.of(context).accent : AppTokens.of(context).crit;
     final database =
         agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
     final lastSync = _formatCompactTimestamp(
@@ -6575,9 +6576,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -6588,7 +6589,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(7),
-              border: Border.all(color: const Color(0xFFDDE3EA)),
+              border: Border.all(color: AppTokens.of(context).hairline),
             ),
             child: Icon(Icons.computer_rounded, size: 16, color: statusColor),
           ),
@@ -6604,8 +6605,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         agent.clientName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF101828),
+                        style: TextStyle(
+                          color: AppTokens.of(context).ink,
                           fontSize: 12.5,
                           fontWeight: FontWeight.w900,
                         ),
@@ -6623,8 +6624,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   '$database - ${agent.tables.length} tables - ${item.serverName} - Sync $lastSync',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
+                  style: TextStyle(
+                    color: AppTokens.of(context).muted,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     height: 1.2,
@@ -6834,9 +6835,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -6850,14 +6851,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ? Icons.restart_alt_rounded
                     : Icons.system_update_alt_rounded,
                 size: 18,
-                color: const Color(0xFF2563EB),
+                color: AppTokens.of(context).info,
               ),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
                   _clientUpdateStageLabel(agent),
-                  style: const TextStyle(
-                    color: Color(0xFF101828),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
                   ),
@@ -6872,8 +6873,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               if (percent != null)
                 Text(
                   '$percent%',
-                  style: const TextStyle(
-                    color: Color(0xFF2563EB),
+                  style: TextStyle(
+                    color: AppTokens.of(context).info,
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
                   ),
@@ -6895,17 +6896,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             if (downloaded != null && total != null && total > 0)
               Text(
                 'Downloaded ${_formatClientUpdateBytes(downloaded)} of ${_formatClientUpdateBytes(total)}',
-                style: const TextStyle(
-                  color: Color(0xFF667085),
+                style: TextStyle(
+                  color: AppTokens.of(context).muted,
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                 ),
               ),
             if (status == 'retrying')
-              const Text(
+              Text(
                 'The verified partial download is preserved and will resume automatically after the connection returns.',
                 style: TextStyle(
-                  color: Color(0xFF667085),
+                  color: AppTokens.of(context).muted,
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                 ),
@@ -6915,17 +6916,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 agent.isOnline
                     ? 'Installing safely; the client will restart automatically.'
                     : 'The client is restarting to finish the update.',
-                style: const TextStyle(
-                  color: Color(0xFF667085),
+                style: TextStyle(
+                  color: AppTokens.of(context).muted,
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                 ),
               )
             else if (downloaded == null || total == null || total <= 0)
-              const Text(
+              Text(
                 'Waiting for the client to report download progress.',
                 style: TextStyle(
-                  color: Color(0xFF667085),
+                  color: AppTokens.of(context).muted,
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                 ),
@@ -6934,8 +6935,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           const SizedBox(height: 7),
           Text(
             'Current ${_simpleClientVersion(agent)} • Target ${targetVersion.isEmpty ? 'latest' : targetVersion}',
-            style: const TextStyle(
-              color: Color(0xFF475467),
+            style: TextStyle(
+              color: AppTokens.of(context).ink2,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
@@ -6943,8 +6944,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           const SizedBox(height: 4),
           Text(
             'Requested ${_formatTimestamp(update.requestedAt ?? '')} • Last report ${_formatTimestamp(update.acknowledgedAt ?? '')}',
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: AppTokens.of(context).muted,
               fontSize: 11.5,
               fontWeight: FontWeight.w600,
             ),
@@ -7102,9 +7103,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: AppTokens.of(context).surface2,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFDDE3EA)),
+                border: Border.all(color: AppTokens.of(context).hairline),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -7115,8 +7116,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         : diagnostics.status == 'running'
                         ? 'Remote self-test running'
                         : 'Latest remote self-test',
-                    style: const TextStyle(
-                      color: Color(0xFF101828),
+                    style: TextStyle(
+                      color: AppTokens.of(context).ink,
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
                     ),
@@ -7130,8 +7131,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     const SizedBox(height: 6),
                     Text(
                       '${diagnostics.stage} · ${diagnostics.progressPercent}%',
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w700,
                       ),
@@ -7142,8 +7143,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     diagnostics.summary.trim().isEmpty
                         ? 'Requested ${_formatTimestamp(diagnostics.requestedAt ?? '')}'
                         : diagnostics.summary,
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
+                    style: TextStyle(
+                      color: AppTokens.of(context).muted,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -7152,8 +7153,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     const SizedBox(height: 6),
                     Text(
                       'Uploaded ${_formatTimestamp(diagnostics.uploadedAt ?? '')}',
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                       ),
@@ -7178,9 +7179,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Row(
         children: [
@@ -7193,8 +7194,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   textDirection: directionForDisplayText(
                     _displayTableName(tableState.table),
                   ),
-                  style: const TextStyle(
-                    color: Color(0xFF101828),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink,
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
                   ),
@@ -7204,8 +7205,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   '${tableState.rowCount} rows - Last sync ${_formatTimestamp(_tableTimestampToken(tableState))}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
+                  style: TextStyle(
+                    color: AppTokens.of(context).muted,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -7273,9 +7274,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
+        border: Border.all(color: AppTokens.of(context).hairline),
       ),
       child: Row(
         children: [
@@ -7285,8 +7286,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               children: [
                 Text(
                   _displayTableName(job.table),
-                  style: const TextStyle(
-                    color: Color(0xFF101828),
+                  style: TextStyle(
+                    color: AppTokens.of(context).ink,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
                   ),
@@ -7294,8 +7295,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 const SizedBox(height: 3),
                 Text(
                   '${_syncDirectionDisplay()} - ${_formatTimestamp(job.updatedAt)}',
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
+                  style: TextStyle(
+                    color: AppTokens.of(context).muted,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -7346,7 +7347,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildServerInventoryTile(_ServerInventoryItem item) {
     final statusColor =
-        item.available ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+        item.available ? AppTokens.of(context).accent : AppTokens.of(context).crit;
     final compactMeta = _compactServerMeta(item);
     final databases =
         item.databases.isEmpty ? 'None reported' : item.databases.join(', ');
@@ -7357,11 +7358,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
       decoration: BoxDecoration(
-        color: item.isLocal ? const Color(0xFFF8FFFC) : const Color(0xFFFCFCFD),
+        color: item.isLocal ? AppTokens.of(context).accentWash : AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color:
-              item.isLocal ? const Color(0xFFB7DDD7) : const Color(0xFFDDE3EA),
+              item.isLocal ? AppTokens.of(context).accent.withValues(alpha: 0.4) : AppTokens.of(context).hairline,
         ),
       ),
       child: Column(
@@ -7376,12 +7377,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFDDE3EA)),
+                  border: Border.all(color: AppTokens.of(context).hairline),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.dns_rounded,
                   size: 17,
-                  color: Color(0xFF0F766E),
+                  color: AppTokens.of(context).accent,
                 ),
               ),
               const SizedBox(width: 8),
@@ -7393,8 +7394,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       item.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF101828),
+                      style: TextStyle(
+                        color: AppTokens.of(context).ink,
                         fontSize: 13.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -7404,8 +7405,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       compactMeta,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                       ),
@@ -7457,16 +7458,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         children: [
           TextSpan(
             text: '$label: ',
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: AppTokens.of(context).muted,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
           ),
           TextSpan(
             text: value,
-            style: const TextStyle(
-              color: Color(0xFF101828),
+            style: TextStyle(
+              color: AppTokens.of(context).ink,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
@@ -7493,7 +7494,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: const Color(0xFFE2D8CB)),
+            border: Border.all(color: AppTokens.of(context).hairline),
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -7507,31 +7508,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   children: [
                     Text(
                       job.clientName,
-                      style: const TextStyle(
-                        color: Color(0xFF5F6B76),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontWeight: FontWeight.w700,
                         fontSize: 11,
                       ),
                     ),
                     Text(
                       '${job.progress}%',
-                      style: const TextStyle(
-                        color: Color(0xFF5F6B76),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontWeight: FontWeight.w700,
                         fontSize: 11,
                       ),
                     ),
                     Text(
                       '${job.rowCount} rows',
-                      style: const TextStyle(
-                        color: Color(0xFF5F6B76),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11,
                       ),
                     ),
                     Text(
                       formatSyncDuration(job.duration()),
-                      style: const TextStyle(
-                        color: Color(0xFF5F6B76),
+                      style: TextStyle(
+                        color: AppTokens.of(context).muted,
                         fontSize: 11,
                       ),
                     ),
@@ -7560,8 +7561,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           ),
                           Text(
                             eventTime,
-                            style: const TextStyle(
-                              color: Color(0xFF5F6B76),
+                            style: TextStyle(
+                              color: AppTokens.of(context).muted,
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
                             ),
@@ -7617,8 +7618,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          color: Color(0xFF5F6B76),
+                        style: TextStyle(
+                          color: AppTokens.of(context).muted,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
@@ -7680,9 +7681,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
         return Container(
           width: double.infinity,
-          decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Color(0xFFDDE3EA))),
-            color: Color(0xFFF6F7F9),
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: AppTokens.of(context).hairline)),
+            color: AppTokens.of(context).surface2,
           ),
           child: SafeArea(
             top: false,
@@ -7726,7 +7727,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildBackendStatusIndicator() {
     final color =
-        _connected ? const Color(0xFF0F766E) : const Color(0xFFB42318);
+        _connected ? AppTokens.of(context).accent : AppTokens.of(context).crit;
     final label = _connected ? 'Online' : 'Offline';
 
     return Tooltip(
@@ -7782,7 +7783,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         title: Text(
           compactAppBar ? 'SQL Sync' : title,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
         actions: [
           if (widget.authenticatedUser.isAdmin)
@@ -7811,8 +7812,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       )
                       : OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFB42318),
-                          side: const BorderSide(color: Color(0xFFF4C7C3)),
+                          foregroundColor: AppTokens.of(context).crit,
+                          side: BorderSide(color: AppTokens.of(context).crit.withValues(alpha: 0.35)),
                         ),
                         onPressed:
                             _serverResetBusy
@@ -7849,18 +7850,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               child: Tooltip(
                 message: 'Server data cleaned; automatic sync is paused',
                 child: Chip(
-                  avatar: const Icon(
+                  avatar: Icon(
                     Icons.check_circle_outline_rounded,
                     size: 16,
-                    color: Color(0xFF067647),
+                    color: AppTokens.of(context).ok,
                   ),
                   label: const Text('Cleaned'),
-                  labelStyle: const TextStyle(
-                    color: Color(0xFF067647),
+                  labelStyle: TextStyle(
+                    color: AppTokens.of(context).ok,
                     fontWeight: FontWeight.w700,
                   ),
-                  backgroundColor: const Color(0xFFECFDF3),
-                  side: const BorderSide(color: Color(0xFFABEFC6)),
+                  backgroundColor: AppTokens.of(context).okWash,
+                  side: BorderSide(color: AppTokens.of(context).ok.withValues(alpha: 0.4)),
                 ),
               ),
             ),
@@ -8046,7 +8047,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFDDE3EA)),
+              border: Border.all(color: AppTokens.of(context).hairline),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -8062,7 +8063,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.refresh_rounded, size: 18),
                 ),
-                Container(width: 1, height: 20, color: const Color(0xFFE4E7EC)),
+                Container(width: 1, height: 20, color: AppTokens.of(context).hairline),
                 PopupMenuButton<_ProfileMenuAction>(
                   tooltip: 'Profile',
                   position: PopupMenuPosition.under,
@@ -8131,13 +8132,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const CircleAvatar(
+                        CircleAvatar(
                           radius: 12,
-                          backgroundColor: Color(0xFFE6F4F1),
+                          backgroundColor: AppTokens.of(context).accentWash,
                           child: Icon(
                             Icons.person_outline,
                             size: 14,
-                            color: Color(0xFF0F766E),
+                            color: AppTokens.of(context).accent,
                           ),
                         ),
                         if (!profileCompact) ...[
@@ -8147,19 +8148,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             child: Text(
                               profileLabel,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF101828),
+                                color: AppTokens.of(context).ink,
                               ),
                             ),
                           ),
                         ],
                         const SizedBox(width: 2),
-                        const Icon(
+                        Icon(
                           Icons.keyboard_arrow_down_rounded,
                           size: 16,
-                          color: Color(0xFF667085),
+                          color: AppTokens.of(context).muted,
                         ),
                       ],
                     ),
@@ -8183,12 +8184,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   margin: const EdgeInsets.only(bottom: 8),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
-                    color: const Color(0xFFFEF3F2),
-                    border: Border.all(color: const Color(0xFFF7C9C4)),
+                    color: AppTokens.of(context).critWash,
+                    border: Border.all(color: AppTokens.of(context).crit.withValues(alpha: 0.35)),
                   ),
                   child: Text(
                     _error!,
-                    style: const TextStyle(color: Color(0xFFB42318)),
+                    style: TextStyle(color: AppTokens.of(context).crit),
                   ),
                 ),
               ),
@@ -8199,15 +8200,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: const Color(0xFFFFF6ED),
-                  border: Border.all(color: const Color(0xFFF7B27A)),
+                  color: AppTokens.of(context).warnWash,
+                  border: Border.all(color: AppTokens.of(context).warn.withValues(alpha: 0.4)),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.pause_circle_filled,
-                      color: Color(0xFFB54708),
+                      color: AppTokens.of(context).warn,
                     ),
                     const SizedBox(width: 9),
                     Expanded(
@@ -8215,8 +8216,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         state!.syncGate.decisionCount > 0
                             ? 'All sync is stopped: ${state.syncGate.decisionCount} ${state.syncGate.decisionCount == 1 ? 'table needs' : 'tables need'} a user decision. Open Clients and resolve every table marked Needs input before manual or automatic sync can start.'
                             : 'Automatic repair is verifying ${state.syncGate.resolvingCount} ${state.syncGate.resolvingCount == 1 ? 'table' : 'tables'}. No user decision is required; normal sync will resume automatically.',
-                        style: const TextStyle(
-                          color: Color(0xFF7A2E0E),
+                        style: TextStyle(
+                          color: AppTokens.of(context).warn,
                           fontWeight: FontWeight.w700,
                           height: 1.35,
                         ),
