@@ -1862,7 +1862,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
-                                              color: AppTokens.of(context).muted,
+                                              color:
+                                                  AppTokens.of(context).muted,
                                               fontSize: 12,
                                             ),
                                           ),
@@ -1916,7 +1917,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                                 0xFFB42318,
                                               ),
                                               side: BorderSide(
-                                                color: AppTokens.of(context).crit.withValues(alpha: 0.45),
+                                                color: AppTokens.of(
+                                                  context,
+                                                ).crit.withValues(alpha: 0.45),
                                               ),
                                             ),
                                             onPressed:
@@ -2719,7 +2722,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final backgroundColor =
         waiting ? AppTokens.of(context).infoWash : AppTokens.of(context).okWash;
     final borderColor =
-        waiting ? AppTokens.of(context).infoWash : AppTokens.of(context).ok.withValues(alpha: 0.4);
+        waiting
+            ? AppTokens.of(context).infoWash
+            : AppTokens.of(context).ok.withValues(alpha: 0.4);
     final label =
         waiting
             ? 'Waiting for $completedCount of $totalCount client logs'
@@ -3010,7 +3015,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       decoration: BoxDecoration(
                         color: AppTokens.of(context).surface2,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppTokens.of(context).hairline),
+                        border: Border.all(
+                          color: AppTokens.of(context).hairline,
+                        ),
                       ),
                       child: SingleChildScrollView(
                         child: SelectableText(
@@ -3784,10 +3791,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         constraints: const BoxConstraints(minHeight: 58),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface,
+          color:
+              selected
+                  ? AppTokens.of(context).accentWash
+                  : AppTokens.of(context).surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
+            color:
+                selected
+                    ? AppTokens.of(context).accent.withValues(alpha: 0.5)
+                    : AppTokens.of(context).hairline,
           ),
         ),
         child: LayoutBuilder(
@@ -3849,7 +3862,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   decoration: BoxDecoration(
                     color: AppTokens.of(context).accentWash,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppTokens.of(context).accent.withValues(alpha: 0.4)),
+                    border: Border.all(
+                      color: AppTokens.of(
+                        context,
+                      ).accent.withValues(alpha: 0.4),
+                    ),
                   ),
                   child: Icon(
                     Icons.table_chart_outlined,
@@ -4059,7 +4076,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       constraints: const BoxConstraints(minHeight: 26),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: onPressed == null ? AppTokens.of(context).surface2 : AppTokens.of(context).surface,
+        color:
+            onPressed == null
+                ? AppTokens.of(context).surface2
+                : AppTokens.of(context).surface,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color:
@@ -4278,7 +4298,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               borderRadius: BorderRadius.circular(9),
               border: Border.all(color: AppTokens.of(context).hairline),
             ),
-            child: Icon(data.icon, size: 17, color: AppTokens.of(context).accent),
+            child: Icon(
+              data.icon,
+              size: 17,
+              color: AppTokens.of(context).accent,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -4496,7 +4520,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             textAlign: TextAlign.center,
             style: TextStyle(
               color:
-                  selected ? AppTokens.of(context).ink : AppTokens.of(context).muted,
+                  selected
+                      ? AppTokens.of(context).ink
+                      : AppTokens.of(context).muted,
               fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
@@ -4715,7 +4741,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       decoration: BoxDecoration(
                         color: AppTokens.of(context).surface2,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppTokens.of(context).hairline),
+                        border: Border.all(
+                          color: AppTokens.of(context).hairline,
+                        ),
                       ),
                       child: Row(
                         children: [
@@ -5035,10 +5063,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         constraints: const BoxConstraints(minHeight: 40),
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
         decoration: BoxDecoration(
-          color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface,
+          color:
+              selected
+                  ? AppTokens.of(context).accentWash
+                  : AppTokens.of(context).surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
+            color:
+                selected
+                    ? AppTokens.of(context).accent.withValues(alpha: 0.5)
+                    : AppTokens.of(context).hairline,
           ),
         ),
         child: LayoutBuilder(
@@ -5452,7 +5486,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
               foregroundColor: AppTokens.of(context).crit,
-              side: BorderSide(color: AppTokens.of(context).crit.withValues(alpha: 0.45)),
+              side: BorderSide(
+                color: AppTokens.of(context).crit.withValues(alpha: 0.45),
+              ),
             ),
             onPressed:
                 deleting
@@ -5561,241 +5597,23 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return parts.isEmpty ? _userRoleDescription(user.role) : parts.join(' - ');
   }
 
-  String _shortTableName(String raw) {
-    var name = raw;
-    final sep = name.indexOf('::');
-    if (sep >= 0) name = name.substring(sep + 2);
-    return name.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
-  }
-
   /// Five state tiles answering "is anything wrong right now?" before any table.
   Widget? _buildSituationStrip(double maxWidth) {
     final state = _state;
     if (state == null) return null;
-
-    final agents = state.agents;
-    final onlineCount = agents.where((a) => a.isOnline).length;
-    final offline = agents.where((a) => !a.isOnline).toList(growable: false);
-    final activeJobs =
-        state.jobs.where((j) => j.isActive).toList(growable: false);
-    final gate = state.syncGate;
-    final uploads = activeJobs
-        .where((j) => j.direction.toLowerCase() == 'upload')
-        .length;
-    final downloads = activeJobs
-        .where((j) => j.direction.toLowerCase() == 'download')
-        .length;
-    final firstBatch = activeJobs.isNotEmpty ? activeJobs.first.batchId : '';
-
-    final tiles = <Widget>[
-      SituationTile(
-        label: 'Sync gate',
-        value: gate.blocked ? 'Blocked' : 'Ready',
-        tone: gate.blocked ? StateTone.crit : StateTone.ok,
-        detail: gate.blocked
-            ? (gate.message.trim().isNotEmpty ? gate.message.trim() : 'Sync held')
-            : 'Clear to sync',
-      ),
-      SituationTile(
-        label: 'Clients online',
-        value: '$onlineCount',
-        valueSuffix: '/ ${agents.length}',
-        tone: agents.isEmpty
-            ? StateTone.neutral
-            : (offline.isEmpty ? StateTone.ok : StateTone.warn),
-        detailTone: offline.isEmpty ? StateTone.ok : StateTone.warn,
-        detail: offline.isEmpty
-            ? 'All connected'
-            : '${offline.first.clientName} offline'
-                '${offline.length > 1 ? ' +${offline.length - 1}' : ''}',
-      ),
-      SituationTile(
-        label: 'Active jobs',
-        value: '${activeJobs.length}',
-        tone: activeJobs.isEmpty ? StateTone.ok : StateTone.info,
-        detail: activeJobs.isEmpty
-            ? 'Idle'
-            : '$uploads upload · $downloads download'
-                '${firstBatch.isNotEmpty ? ' · $firstBatch' : ''}',
-      ),
-      SituationTile(
-        label: 'Pending decisions',
-        value: '${gate.decisionCount}',
-        tone: gate.decisionCount > 0 ? StateTone.crit : StateTone.ok,
-        detailTone: gate.resolvingCount > 0 ? StateTone.warn : StateTone.ok,
-        detail: gate.decisionCount > 0
-            ? 'Open Clients to resolve'
-            : (gate.resolvingCount > 0
-                ? '${gate.resolvingCount} '
-                    '${gate.resolvingCount == 1 ? 'conflict' : 'conflicts'} '
-                    'resolving automatically'
-                : 'None'),
-      ),
-      SituationTile(
-        label: 'Automatic sync',
-        value: state.automaticSyncPaused ? 'Paused' : 'Active',
-        tone: state.automaticSyncPaused ? StateTone.warn : StateTone.ok,
-        detail: state.automaticSyncPaused ? 'Manual runs only' : 'Scheduled',
-      ),
-    ];
-
-    final columns = !maxWidth.isFinite || maxWidth >= 1180
-        ? 5
-        : (maxWidth >= 760 ? 3 : 2);
-    const spacing = 10.0;
-    final width = maxWidth.isFinite
-        ? (maxWidth - spacing * (columns - 1)) / columns
-        : 220.0;
-
-    return Wrap(
-      spacing: spacing,
-      runSpacing: spacing,
-      children: [
-        for (final tile in tiles) SizedBox(width: width, child: tile),
-      ],
-    );
+    return SituationStrip(state: state, maxWidth: maxWidth);
   }
 
-  /// Conditional panel: failed jobs and unsettled conflicts, with the
-  /// "resolving automatically" vs "waiting on you" split made explicit.
+  /// Failed jobs and unsettled conflicts; null when nothing needs attention.
   Widget? _buildAttentionPanel() {
     final state = _state;
     if (state == null) return null;
-    final failed = state.jobs
-        .where((j) => j.status.toLowerCase() == 'failed')
-        .toList(growable: false);
+    final failed = state.jobs.where((j) => j.status.toLowerCase() == 'failed');
     final gate = state.syncGate;
     if (failed.isEmpty && gate.decisionCount == 0 && gate.resolvingCount == 0) {
       return null;
     }
-    final t = AppTokens.of(context);
-
-    final rows = <Widget>[
-      for (final job in failed.take(6))
-        _attentionRow(
-          tone: StateTone.crit,
-          table: _shortTableName(job.table),
-          description: (job.error?.trim().isNotEmpty ?? false)
-              ? job.error!.trim()
-              : (job.message.trim().isNotEmpty
-                  ? job.message.trim()
-                  : 'Sync job failed'),
-          chipLabel: 'Failed',
-        ),
-      if (gate.resolvingCount > 0)
-        _attentionRow(
-          tone: StateTone.warn,
-          table:
-              '${gate.resolvingCount} ${gate.resolvingCount == 1 ? 'table' : 'tables'}',
-          description: gate.message.trim().isNotEmpty
-              ? gate.message.trim()
-              : 'Automatic latest-change repair is verifying results. '
-                  'No user decision is required.',
-          chipLabel: 'Resolving',
-        ),
-    ];
-
-    final decisionLine = '${gate.decisionCount} waiting on you';
-    final headline = gate.resolvingCount > 0
-        ? '${gate.resolvingCount} repairing · $decisionLine'
-        : (failed.isNotEmpty
-            ? '${failed.length} failed ${failed.length == 1 ? 'job' : 'jobs'} · $decisionLine'
-            : decisionLine);
-
-    return Container(
-      decoration: BoxDecoration(
-        color: t.surface,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: Color.lerp(t.hairline, t.warn, 0.45)!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-            decoration: BoxDecoration(
-              color: t.warnWash,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(6)),
-              border: Border(
-                bottom: BorderSide(color: Color.lerp(t.hairline, t.warn, 0.35)!),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.report_problem_outlined, size: 16, color: t.warn),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Needs a look — $headline',
-                    style: TextStyle(
-                      color: t.warn,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          for (var i = 0; i < rows.length; i++) ...[
-            if (i > 0) Divider(height: 1, color: t.hairline2),
-            rows[i],
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _attentionRow({
-    required StateTone tone,
-    required String table,
-    required String description,
-    required String chipLabel,
-  }) {
-    final t = AppTokens.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            margin: const EdgeInsets.only(top: 5, right: 10),
-            decoration: BoxDecoration(
-              color: toneColor(context, tone),
-              shape: BoxShape.circle,
-            ),
-          ),
-          SizedBox(
-            width: 104,
-            child: Text(
-              table,
-              textDirection: directionForDisplayText(table),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 12.5,
-                fontFamilyFallback: kMonoFallback,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              description,
-              textDirection: directionForDisplayText(description),
-              style: TextStyle(color: t.ink2, fontSize: 12.5, height: 1.3),
-            ),
-          ),
-          const SizedBox(width: 12),
-          StatusBadge(label: chipLabel, color: toneColor(context, tone)),
-        ],
-      ),
-    );
+    return AttentionPanel(state: state);
   }
 
   Widget _buildOverviewPage() {
@@ -6163,7 +5981,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     decoration: BoxDecoration(
                       color: AppTokens.of(context).okWash,
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: AppTokens.of(context).ok.withValues(alpha: 0.4)),
+                      border: Border.all(
+                        color: AppTokens.of(context).ok.withValues(alpha: 0.4),
+                      ),
                     ),
                     child: Text(
                       '+${_formatCompactCount(delta.rowsAdded)} rows',
@@ -6344,11 +6164,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface2,
+            color:
+                selected
+                    ? AppTokens.of(context).accentWash
+                    : AppTokens.of(context).surface2,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color:
-                  selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
+                  selected
+                      ? AppTokens.of(context).accent.withValues(alpha: 0.5)
+                      : AppTokens.of(context).hairline,
             ),
           ),
           child: Row(
@@ -6407,7 +6232,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }) {
     final selected = _selectedPageClientName == agent.clientName;
     final statusColor =
-        agent.isOnline ? AppTokens.of(context).accent : AppTokens.of(context).crit;
+        agent.isOnline
+            ? AppTokens.of(context).accent
+            : AppTokens.of(context).crit;
     final database =
         agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
     final version = _simpleClientVersion(agent);
@@ -6430,11 +6257,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
           decoration: BoxDecoration(
-            color: selected ? AppTokens.of(context).accentWash : AppTokens.of(context).surface2,
+            color:
+                selected
+                    ? AppTokens.of(context).accentWash
+                    : AppTokens.of(context).surface2,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color:
-                  selected ? AppTokens.of(context).accent.withValues(alpha: 0.5) : AppTokens.of(context).hairline,
+                  selected
+                      ? AppTokens.of(context).accent.withValues(alpha: 0.5)
+                      : AppTokens.of(context).hairline,
             ),
           ),
           child: Row(
@@ -6515,7 +6347,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _buildNavigationTile(
       icon: Icons.dns_rounded,
       iconColor:
-          item.available ? AppTokens.of(context).accent : AppTokens.of(context).crit,
+          item.available
+              ? AppTokens.of(context).accent
+              : AppTokens.of(context).crit,
       label: item.title,
       subtitle: '${item.connectedClients} clients',
       selected: selected,
@@ -6527,7 +6361,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       trailing: StatusBadge(
         label: item.available ? 'Live' : 'Down',
         color:
-            item.available ? AppTokens.of(context).accent : AppTokens.of(context).crit,
+            item.available
+                ? AppTokens.of(context).accent
+                : AppTokens.of(context).crit,
       ),
     );
   }
@@ -6567,7 +6403,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildServerClientTile(_ServerInventoryItem item, AdminAgent agent) {
     final statusColor =
-        agent.isOnline ? AppTokens.of(context).accent : AppTokens.of(context).crit;
+        agent.isOnline
+            ? AppTokens.of(context).accent
+            : AppTokens.of(context).crit;
     final database =
         agent.database.trim().isEmpty ? 'No database' : agent.database.trim();
     final lastSync = _formatCompactTimestamp(
@@ -7347,7 +7185,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   Widget _buildServerInventoryTile(_ServerInventoryItem item) {
     final statusColor =
-        item.available ? AppTokens.of(context).accent : AppTokens.of(context).crit;
+        item.available
+            ? AppTokens.of(context).accent
+            : AppTokens.of(context).crit;
     final compactMeta = _compactServerMeta(item);
     final databases =
         item.databases.isEmpty ? 'None reported' : item.databases.join(', ');
@@ -7358,11 +7198,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
       decoration: BoxDecoration(
-        color: item.isLocal ? AppTokens.of(context).accentWash : AppTokens.of(context).surface2,
+        color:
+            item.isLocal
+                ? AppTokens.of(context).accentWash
+                : AppTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color:
-              item.isLocal ? AppTokens.of(context).accent.withValues(alpha: 0.4) : AppTokens.of(context).hairline,
+              item.isLocal
+                  ? AppTokens.of(context).accent.withValues(alpha: 0.4)
+                  : AppTokens.of(context).hairline,
         ),
       ),
       child: Column(
@@ -7682,7 +7527,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return Container(
           width: double.infinity,
           decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: AppTokens.of(context).hairline)),
+            border: Border(
+              top: BorderSide(color: AppTokens.of(context).hairline),
+            ),
             color: AppTokens.of(context).surface2,
           ),
           child: SafeArea(
@@ -7813,7 +7660,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       : OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppTokens.of(context).crit,
-                          side: BorderSide(color: AppTokens.of(context).crit.withValues(alpha: 0.35)),
+                          side: BorderSide(
+                            color: AppTokens.of(
+                              context,
+                            ).crit.withValues(alpha: 0.35),
+                          ),
                         ),
                         onPressed:
                             _serverResetBusy
@@ -7861,7 +7712,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     fontWeight: FontWeight.w700,
                   ),
                   backgroundColor: AppTokens.of(context).okWash,
-                  side: BorderSide(color: AppTokens.of(context).ok.withValues(alpha: 0.4)),
+                  side: BorderSide(
+                    color: AppTokens.of(context).ok.withValues(alpha: 0.4),
+                  ),
                 ),
               ),
             ),
@@ -8063,7 +7916,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.refresh_rounded, size: 18),
                 ),
-                Container(width: 1, height: 20, color: AppTokens.of(context).hairline),
+                Container(
+                  width: 1,
+                  height: 20,
+                  color: AppTokens.of(context).hairline,
+                ),
                 PopupMenuButton<_ProfileMenuAction>(
                   tooltip: 'Profile',
                   position: PopupMenuPosition.under,
@@ -8185,7 +8042,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
                     color: AppTokens.of(context).critWash,
-                    border: Border.all(color: AppTokens.of(context).crit.withValues(alpha: 0.35)),
+                    border: Border.all(
+                      color: AppTokens.of(context).crit.withValues(alpha: 0.35),
+                    ),
                   ),
                   child: Text(
                     _error!,
@@ -8201,7 +8060,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   color: AppTokens.of(context).warnWash,
-                  border: Border.all(color: AppTokens.of(context).warn.withValues(alpha: 0.4)),
+                  border: Border.all(
+                    color: AppTokens.of(context).warn.withValues(alpha: 0.4),
+                  ),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,

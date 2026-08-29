@@ -36,8 +36,9 @@ class _SyncAdminAppState extends State<SyncAdminApp> {
   @override
   void initState() {
     super.initState();
-    themeModeNotifier.value =
-        _themeModeFromName(readBrowserStorage(_themeModeKey));
+    themeModeNotifier.value = _themeModeFromName(
+      readBrowserStorage(_themeModeKey),
+    );
     themeModeNotifier.addListener(_persistThemeMode);
   }
 
@@ -359,9 +360,7 @@ class _WebsiteShellState extends State<_WebsiteShell> {
                                       ? null
                                       : () => unawaited(_handleLogin()),
                               child: Text(
-                                _submitting
-                                    ? 'Signing in…'
-                                    : 'Open dashboard',
+                                _submitting ? 'Signing in…' : 'Open dashboard',
                               ),
                             ),
                           ),
@@ -401,8 +400,13 @@ class _AdminWorkspace extends StatefulWidget {
 
 class _AdminWorkspaceState extends State<_AdminWorkspace> {
   static const _windowsClientDownloadPath = '/client/download';
-  int _selectedIndex = 0;
   String _latestWindowsClientVersion = '';
+
+  bool get _isAdmin => widget.authenticatedUser.isAdmin;
+
+  /// Single destination now: admins land on user management, everyone else on
+  /// the merged operations page (situation + clients + activity).
+  String get _sectionTitle => _isAdmin ? 'Users' : 'Operations';
 
   void _downloadWindowsClient() {
     final releaseNonce = DateTime.now().millisecondsSinceEpoch;
@@ -412,11 +416,6 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
   @override
   void initState() {
     super.initState();
-    _selectedIndex =
-        Uri.base.pathSegments.isNotEmpty &&
-                Uri.base.pathSegments.first == 'clients'
-            ? 1
-            : 0;
     unawaited(_loadLatestWindowsClientVersion());
   }
 
@@ -436,26 +435,22 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
     }
   }
 
-  void _select(int index) {
-    replaceBrowserUrl(
-      Uri.base.replace(path: index == 1 ? '/clients' : '/dashboard').toString(),
-    );
-    setState(() => _selectedIndex = index);
+  void _goHome() {
     if (MediaQuery.sizeOf(context).width < 900) {
       Navigator.of(context).maybePop();
     }
   }
 
   Widget _page() {
-    if (_selectedIndex == 1) {
-      return ClientsPage(
-        key: ValueKey('clients:${Uri.base.path}'),
+    if (_isAdmin) {
+      return AdminDashboardPage(
         authenticatedUser: widget.authenticatedUser,
         authToken: widget.authToken,
         onLogout: widget.onLogout,
       );
     }
-    return AdminDashboardPage(
+    return ClientsPage(
+      key: ValueKey('ops:${Uri.base.path}'),
       authenticatedUser: widget.authenticatedUser,
       authToken: widget.authToken,
       onLogout: widget.onLogout,
@@ -467,7 +462,12 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
     return Container(
       width: compact ? null : 216,
       color: t.rail,
-      padding: EdgeInsets.fromLTRB(compact ? 12 : 12, 16, compact ? 12 : 12, 16),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 12 : 12,
+        16,
+        compact ? 12 : 12,
+        16,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -528,8 +528,12 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
               ),
             ),
           ),
-          _navItem(0, Icons.dashboard_outlined, 'Dashboard'),
-          _navItem(1, Icons.devices_other_outlined, 'Clients'),
+          _navItem(
+            _isAdmin
+                ? Icons.manage_accounts_outlined
+                : Icons.dashboard_outlined,
+            _sectionTitle,
+          ),
           const Spacer(),
           Container(
             padding: const EdgeInsets.only(top: 14),
@@ -564,8 +568,10 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: t.railMuted,
                     side: BorderSide(color: t.railLine),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
                     minimumSize: const Size(0, 30),
                   ),
                 ),
@@ -577,37 +583,30 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
     );
   }
 
-  Widget _navItem(int index, IconData icon, String label) {
+  Widget _navItem(IconData icon, String label) {
     final t = AppTokens.of(context);
-    final selected = _selectedIndex == index;
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Material(
-        color: selected ? t.rail2 : Colors.transparent,
+        color: t.rail2,
         borderRadius: BorderRadius.circular(5),
         child: InkWell(
-          onTap: () => _select(index),
+          onTap: _goHome,
           borderRadius: BorderRadius.circular(5),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(5),
-              border: Border.all(
-                color: selected ? t.railLine : Colors.transparent,
-              ),
+              border: Border.all(color: t.railLine),
             ),
             child: Row(
               children: [
-                Icon(
-                  icon,
-                  size: 16,
-                  color: selected ? t.accentInk : t.railMuted,
-                ),
+                Icon(icon, size: 16, color: t.accentInk),
                 const SizedBox(width: 10),
                 Text(
                   label,
-                  style: TextStyle(
-                    color: selected ? Colors.white : t.railMuted,
+                  style: const TextStyle(
+                    color: Colors.white,
                     fontWeight: FontWeight.w500,
                     fontSize: 13,
                   ),
@@ -622,7 +621,8 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
 
   Widget _themeToggleButton() {
     final mode = themeModeNotifier.value;
-    final isDark = mode == ThemeMode.dark ||
+    final isDark =
+        mode == ThemeMode.dark ||
         (mode == ThemeMode.system &&
             MediaQuery.platformBrightnessOf(context) == Brightness.dark);
     return IconButton(
@@ -654,9 +654,7 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
       onPressed: _downloadWindowsClient,
       icon: const Icon(Icons.download_for_offline_outlined, size: 16),
       label: Text(
-        version.isEmpty
-            ? 'Windows client'
-            : 'Windows client · v$version',
+        version.isEmpty ? 'Windows client' : 'Windows client · v$version',
       ),
       style: OutlinedButton.styleFrom(
         foregroundColor: t.ink,
@@ -678,7 +676,7 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
       child: Row(
         children: [
           Text(
-            _selectedIndex == 0 ? 'Dashboard' : 'Clients',
+            _sectionTitle,
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
           ),
           const Spacer(),
@@ -710,7 +708,7 @@ class _AdminWorkspaceState extends State<_AdminWorkspace> {
     return Scaffold(
       drawer: Drawer(child: SafeArea(child: _navigation(compact: true))),
       appBar: AppBar(
-        title: Text(_selectedIndex == 0 ? 'Dashboard' : 'Clients'),
+        title: Text(_sectionTitle),
         actions: [
           _downloadWindowsClientButton(compact: true),
           const SizedBox(width: 4),

@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 
+import 'models.dart';
 import 'theme.dart';
 
-final RegExp _rtlScriptPattern = RegExp(
-  r'[֐-׿؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]',
-);
+/// Local table name without the `database::` prefix or a leading `dbo.`.
+String shortLocalTableName(String raw) {
+  var name = raw;
+  final sep = name.indexOf('::');
+  if (sep >= 0) name = name.substring(sep + 2);
+  return name.replaceFirst(RegExp(r'^dbo\.', caseSensitive: false), '');
+}
+
+final RegExp _rtlScriptPattern = RegExp(r'[֐-׿؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]');
 
 TextDirection directionForDisplayText(String value) {
   return _rtlScriptPattern.hasMatch(value)
@@ -87,19 +94,14 @@ class _ReadoutCell extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        border: first
-            ? null
-            : Border(left: BorderSide(color: t.hairline)),
+        border: first ? null : Border(left: BorderSide(color: t.hairline)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
         children: [
-          Text(
-            label,
-            style: TextStyle(color: t.muted, fontSize: 12),
-          ),
+          Text(label, style: TextStyle(color: t.muted, fontSize: 12)),
           const SizedBox(width: 6),
           Text(
             value,
@@ -161,37 +163,38 @@ class SurfaceCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   border: Border(bottom: BorderSide(color: t.hairline)),
                 ),
-                child: stackHeader
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _SurfaceCardHeading(
-                            title: title,
-                            subtitle: subtitle,
-                            hasSubtitle: hasSubtitle,
-                          ),
-                          if (headerTrailing != null) ...[
-                            const SizedBox(height: 8),
-                            headerTrailing!,
-                          ],
-                        ],
-                      )
-                    : Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            child: _SurfaceCardHeading(
+                child:
+                    stackHeader
+                        ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SurfaceCardHeading(
                               title: title,
                               subtitle: subtitle,
                               hasSubtitle: hasSubtitle,
                             ),
-                          ),
-                          if (headerTrailing != null) ...[
-                            const SizedBox(width: 8),
-                            Flexible(child: headerTrailing!),
+                            if (headerTrailing != null) ...[
+                              const SizedBox(height: 8),
+                              headerTrailing!,
+                            ],
                           ],
-                        ],
-                      ),
+                        )
+                        : Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: _SurfaceCardHeading(
+                                title: title,
+                                subtitle: subtitle,
+                                hasSubtitle: hasSubtitle,
+                              ),
+                            ),
+                            if (headerTrailing != null) ...[
+                              const SizedBox(width: 8),
+                              Flexible(child: headerTrailing!),
+                            ],
+                          ],
+                        ),
               ),
               if (expandChild)
                 Expanded(
@@ -201,10 +204,7 @@ class SurfaceCard extends StatelessWidget {
                   ),
                 )
               else
-                Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: child,
-                ),
+                Padding(padding: const EdgeInsets.all(14), child: child),
             ],
           ),
         );
@@ -303,10 +303,7 @@ class MetricPill extends StatelessWidget {
           children: [
             TextSpan(
               text: '$label ',
-              style: TextStyle(
-                color: t.muted,
-                fontWeight: FontWeight.w600,
-              ),
+              style: TextStyle(color: t.muted, fontWeight: FontWeight.w600),
             ),
             TextSpan(
               text: value,
@@ -573,6 +570,272 @@ class _SurfaceCardHeading extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// The dashboard "Situation" strip: five state tiles answering
+/// "is anything wrong right now?" before any table. Reused by the merged
+/// operations page and the legacy dashboard.
+class SituationStrip extends StatelessWidget {
+  const SituationStrip({super.key, required this.state, this.maxWidth});
+
+  final AdminLiveState state;
+  final double? maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final agents = state.agents;
+    final onlineCount = agents.where((a) => a.isOnline).length;
+    final offline = agents.where((a) => !a.isOnline).toList(growable: false);
+    final activeJobs = state.jobs
+        .where((j) => j.isActive)
+        .toList(growable: false);
+    final gate = state.syncGate;
+    final uploads =
+        activeJobs.where((j) => j.direction.toLowerCase() == 'upload').length;
+    final downloads =
+        activeJobs.where((j) => j.direction.toLowerCase() == 'download').length;
+    final firstBatch = activeJobs.isNotEmpty ? activeJobs.first.batchId : '';
+
+    final tiles = <Widget>[
+      SituationTile(
+        label: 'Sync gate',
+        value: gate.blocked ? 'Blocked' : 'Ready',
+        tone: gate.blocked ? StateTone.crit : StateTone.ok,
+        detail:
+            gate.blocked
+                ? (gate.message.trim().isNotEmpty
+                    ? gate.message.trim()
+                    : 'Sync held')
+                : 'Clear to sync',
+      ),
+      SituationTile(
+        label: 'Clients online',
+        value: '$onlineCount',
+        valueSuffix: '/ ${agents.length}',
+        tone:
+            agents.isEmpty
+                ? StateTone.neutral
+                : (offline.isEmpty ? StateTone.ok : StateTone.warn),
+        detailTone: offline.isEmpty ? StateTone.ok : StateTone.warn,
+        detail:
+            offline.isEmpty
+                ? 'All connected'
+                : '${offline.first.clientName} offline'
+                    '${offline.length > 1 ? ' +${offline.length - 1}' : ''}',
+      ),
+      SituationTile(
+        label: 'Active jobs',
+        value: '${activeJobs.length}',
+        tone: activeJobs.isEmpty ? StateTone.ok : StateTone.info,
+        detail:
+            activeJobs.isEmpty
+                ? 'Idle'
+                : '$uploads upload · $downloads download'
+                    '${firstBatch.isNotEmpty ? ' · $firstBatch' : ''}',
+      ),
+      SituationTile(
+        label: 'Pending decisions',
+        value: '${gate.decisionCount}',
+        tone: gate.decisionCount > 0 ? StateTone.crit : StateTone.ok,
+        detailTone: gate.resolvingCount > 0 ? StateTone.warn : StateTone.ok,
+        detail:
+            gate.decisionCount > 0
+                ? 'Resolve to unblock sync'
+                : (gate.resolvingCount > 0
+                    ? '${gate.resolvingCount} '
+                        '${gate.resolvingCount == 1 ? 'conflict' : 'conflicts'} '
+                        'resolving automatically'
+                    : 'None'),
+      ),
+      SituationTile(
+        label: 'Automatic sync',
+        value: state.automaticSyncPaused ? 'Paused' : 'Active',
+        tone: state.automaticSyncPaused ? StateTone.warn : StateTone.ok,
+        detail: state.automaticSyncPaused ? 'Manual runs only' : 'Scheduled',
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = maxWidth ?? c.maxWidth;
+        final columns = !w.isFinite || w >= 1180 ? 5 : (w >= 760 ? 3 : 2);
+        const spacing = 10.0;
+        final tileWidth =
+            w.isFinite ? (w - spacing * (columns - 1)) / columns : 220.0;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final tile in tiles) SizedBox(width: tileWidth, child: tile),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Conditional panel: failed jobs and unsettled conflicts, with the
+/// "resolving automatically" vs "waiting on you" split made explicit.
+/// Renders nothing when there is nothing to act on.
+class AttentionPanel extends StatelessWidget {
+  const AttentionPanel({super.key, required this.state});
+
+  final AdminLiveState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = state.jobs
+        .where((j) => j.status.toLowerCase() == 'failed')
+        .toList(growable: false);
+    final gate = state.syncGate;
+    if (failed.isEmpty && gate.decisionCount == 0 && gate.resolvingCount == 0) {
+      return const SizedBox.shrink();
+    }
+    final t = AppTokens.of(context);
+
+    final rows = <Widget>[
+      for (final job in failed.take(6))
+        _AttentionRow(
+          tone: StateTone.crit,
+          table: shortLocalTableName(job.table),
+          description:
+              (job.error?.trim().isNotEmpty ?? false)
+                  ? job.error!.trim()
+                  : (job.message.trim().isNotEmpty
+                      ? job.message.trim()
+                      : 'Sync job failed'),
+          chipLabel: 'Failed',
+        ),
+      if (gate.resolvingCount > 0)
+        _AttentionRow(
+          tone: StateTone.warn,
+          table:
+              '${gate.resolvingCount} ${gate.resolvingCount == 1 ? 'table' : 'tables'}',
+          description:
+              gate.message.trim().isNotEmpty
+                  ? gate.message.trim()
+                  : 'Automatic latest-change repair is verifying results. '
+                      'No user decision is required.',
+          chipLabel: 'Resolving',
+        ),
+    ];
+
+    final decisionLine = '${gate.decisionCount} waiting on you';
+    final headline =
+        gate.resolvingCount > 0
+            ? '${gate.resolvingCount} repairing · $decisionLine'
+            : (failed.isNotEmpty
+                ? '${failed.length} failed ${failed.length == 1 ? 'job' : 'jobs'} · $decisionLine'
+                : decisionLine);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: Color.lerp(t.hairline, t.warn, 0.45)!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            decoration: BoxDecoration(
+              color: t.warnWash,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(6),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: Color.lerp(t.hairline, t.warn, 0.35)!,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.report_problem_outlined, size: 16, color: t.warn),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Needs a look — $headline',
+                    style: TextStyle(
+                      color: t.warn,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: t.hairline2),
+            rows[i],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AttentionRow extends StatelessWidget {
+  const _AttentionRow({
+    required this.tone,
+    required this.table,
+    required this.description,
+    required this.chipLabel,
+  });
+
+  final StateTone tone;
+  final String table;
+  final String description;
+  final String chipLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppTokens.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            margin: const EdgeInsets.only(top: 5, right: 10),
+            decoration: BoxDecoration(
+              color: toneColor(context, tone),
+              shape: BoxShape.circle,
+            ),
+          ),
+          SizedBox(
+            width: 104,
+            child: Text(
+              table,
+              textDirection: directionForDisplayText(table),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 12.5,
+                fontFamilyFallback: kMonoFallback,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              description,
+              textDirection: directionForDisplayText(description),
+              style: TextStyle(color: t.ink2, fontSize: 12.5, height: 1.3),
+            ),
+          ),
+          const SizedBox(width: 12),
+          StatusBadge(label: chipLabel, color: toneColor(context, tone)),
+        ],
+      ),
     );
   }
 }
