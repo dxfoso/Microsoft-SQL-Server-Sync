@@ -264,7 +264,6 @@ class _ClientsPageState extends State<ClientsPage> {
   final TextEditingController _filterController = TextEditingController();
   final TextEditingController _logFilterController = TextEditingController();
   final TextEditingController _tableFilterController = TextEditingController();
-  final ScrollController _clientTableHorizontalController = ScrollController();
   final ScrollController _tableHorizontalController = ScrollController();
   Timer? _refreshTimer;
   AdminLiveState? _state;
@@ -378,7 +377,6 @@ class _ClientsPageState extends State<ClientsPage> {
     _filterController.dispose();
     _logFilterController.dispose();
     _tableFilterController.dispose();
-    _clientTableHorizontalController.dispose();
     _tableHorizontalController.dispose();
     _api.dispose();
     super.dispose();
@@ -2998,85 +2996,6 @@ class _ClientsPageState extends State<ClientsPage> {
       default:
         return AppTokens.of(context).ink2;
     }
-  }
-
-  Widget _buildClientListItem(AdminAgent agent) {
-    final selected = agent.clientName == _selectedClientName;
-    final color =
-        agent.isOnline
-            ? AppTokens.of(context).accent
-            : AppTokens.of(context).crit;
-    final database =
-        agent.database.trim().isEmpty ? '-' : agent.database.trim();
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => setState(() => _selectedClientName = agent.clientName),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color:
-                selected
-                    ? AppTokens.of(context).accentWash
-                    : AppTokens.of(context).surface2,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color:
-                  selected
-                      ? AppTokens.of(context).accent.withValues(alpha: 0.5)
-                      : AppTokens.of(context).hairline,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.computer_rounded, color: color, size: 20),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            agent.clientName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        _statusChip(
-                          agent.isOnline ? 'Online' : 'Offline',
-                          color,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '$database · ${agent.tables.length} tables · Client ${agent.clientVersion.trim().isEmpty ? '-' : agent.clientVersion.trim()}',
-                      style: TextStyle(
-                        color: AppTokens.of(context).muted,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'Change check ${_formatTimestamp(agent.lastChangeCheckAt)} · Heartbeat ${_formatTimestamp(agent.lastHeartbeat)}',
-                      style: TextStyle(
-                        color: AppTokens.of(context).muted,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildDetailWithBack() {

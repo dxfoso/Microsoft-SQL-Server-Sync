@@ -5312,8 +5312,23 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       clients.sort((left, right) => left.name.compareTo(right.name));
     }
 
+    final liveState = _state;
     return ListView(
       children: [
+        if (liveState != null) ...[
+          LayoutBuilder(
+            builder:
+                (context, c) =>
+                    SituationStrip(state: liveState, maxWidth: c.maxWidth),
+          ),
+          const SizedBox(height: 10),
+          if (liveState.jobs.any((j) => j.status.toLowerCase() == 'failed') ||
+              liveState.syncGate.decisionCount > 0 ||
+              liveState.syncGate.resolvingCount > 0) ...[
+            AttentionPanel(state: liveState),
+            const SizedBox(height: 10),
+          ],
+        ],
         SurfaceCard(
           title: 'Users',
           subtitle:
