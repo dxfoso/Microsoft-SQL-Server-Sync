@@ -680,9 +680,12 @@ class SituationStrip extends StatelessWidget {
 /// "resolving automatically" vs "waiting on you" split made explicit.
 /// Renders nothing when there is nothing to act on.
 class AttentionPanel extends StatelessWidget {
-  const AttentionPanel({super.key, required this.state});
+  const AttentionPanel({super.key, required this.state, this.onResolveBlocked});
 
   final AdminLiveState state;
+
+  /// When sync is stopped on user decisions, this opens the in-page resolver.
+  final VoidCallback? onResolveBlocked;
 
   @override
   Widget build(BuildContext context) {
@@ -690,12 +693,23 @@ class AttentionPanel extends StatelessWidget {
         .where((j) => j.status.toLowerCase() == 'failed')
         .toList(growable: false);
     final gate = state.syncGate;
+    final blockers = gate.issues
+        .where((i) => i.needsInput)
+        .toList(growable: false);
     if (failed.isEmpty && gate.decisionCount == 0 && gate.resolvingCount == 0) {
       return const SizedBox.shrink();
     }
     final t = AppTokens.of(context);
+    final stopped = gate.blocked && gate.decisionCount > 0;
 
     final rows = <Widget>[
+      for (final issue in blockers.take(8))
+        _AttentionRow(
+          tone: StateTone.crit,
+          table: shortLocalTableName(issue.table),
+          description: _issueLine(issue),
+          chipLabel: 'Decision needed',
+        ),
       for (final job in failed.take(6))
         _AttentionRow(
           tone: StateTone.crit,
@@ -724,49 +738,77 @@ class AttentionPanel extends StatelessWidget {
 
     final decisionLine = '${gate.decisionCount} waiting on you';
     final headline =
-        gate.resolvingCount > 0
-            ? '${gate.resolvingCount} repairing · $decisionLine'
-            : (failed.isNotEmpty
-                ? '${failed.length} failed ${failed.length == 1 ? 'job' : 'jobs'} · $decisionLine'
-                : decisionLine);
+        stopped
+            ? 'All sync is stopped — $decisionLine'
+            : (gate.resolvingCount > 0
+                ? '${gate.resolvingCount} repairing · $decisionLine'
+                : (failed.isNotEmpty
+                    ? '${failed.length} failed ${failed.length == 1 ? 'job' : 'jobs'} · $decisionLine'
+                    : decisionLine));
 
     return Container(
       decoration: BoxDecoration(
         color: t.surface,
         borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: Color.lerp(t.hairline, t.warn, 0.45)!),
+        border: Border.all(
+          color: Color.lerp(t.hairline, stopped ? t.crit : t.warn, 0.5)!,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            padding: const EdgeInsets.fromLTRB(14, 9, 12, 9),
             decoration: BoxDecoration(
-              color: t.warnWash,
+              color: stopped ? t.critWash : t.warnWash,
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(6),
               ),
               border: Border(
                 bottom: BorderSide(
-                  color: Color.lerp(t.hairline, t.warn, 0.35)!,
+                  color:
+                      Color.lerp(t.hairline, stopped ? t.crit : t.warn, 0.35)!,
                 ),
               ),
             ),
             child: Row(
               children: [
-                Icon(Icons.report_problem_outlined, size: 16, color: t.warn),
+                Icon(
+                  stopped
+                      ? Icons.pause_circle_outline_rounded
+                      : Icons.report_problem_outlined,
+                  size: 16,
+                  color: stopped ? t.crit : t.warn,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Needs a look — $headline',
+                    stopped ? headline : 'Needs a look — $headline',
                     style: TextStyle(
-                      color: t.warn,
+                      color: stopped ? t.crit : t.warn,
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
                     ),
                   ),
                 ),
+                if (stopped && onResolveBlocked != null) ...[
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: onResolveBlocked,
+                    icon: const Icon(Icons.build_circle_outlined, size: 16),
+                    label: const Text('Show & resolve'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: t.crit,
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -777,6 +819,19 @@ class AttentionPanel extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  static String _issueLine(AdminTableSyncIssue issue) {
+    final parts = <String>[];
+    if (issue.clientName.trim().isNotEmpty) parts.add(issue.clientName.trim());
+    final detail =
+        issue.message.trim().isNotEmpty
+            ? issue.message.trim()
+            : (issue.reason.trim().isNotEmpty
+                ? issue.reason.trim()
+                : 'Waiting for a decision before sync can continue.');
+    parts.add(detail);
+    return parts.join(' · ');
   }
 }
 

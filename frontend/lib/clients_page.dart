@@ -1142,7 +1142,10 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           const SizedBox(height: 10),
           if (_hasAttentionItems) ...[
-            AttentionPanel(state: state),
+            AttentionPanel(
+              state: state,
+              onResolveBlocked: () => unawaited(_openSyncResolver()),
+            ),
             const SizedBox(height: 10),
           ],
         ],
@@ -3947,6 +3950,284 @@ class _ClientsPageState extends State<ClientsPage> {
             table: table.table,
             issue: issue,
           ),
+    );
+  }
+
+  AdminAgent? _agentByName(String clientName) {
+    for (final a in _state?.agents ?? const <AdminAgent>[]) {
+      if (a.clientName == clientName) return a;
+    }
+    return null;
+  }
+
+  AdminTableState _tableStateFor(AdminAgent agent, String tableName) {
+    for (final tbl in agent.tables) {
+      if (tbl.table == tableName) return tbl;
+    }
+    return AdminTableState(
+      table: tableName,
+      enabled: true,
+      status: '',
+      lastSync: '',
+      progress: 0,
+      rowCount: 0,
+      message: '',
+    );
+  }
+
+  Future<void> _resolveIssue(AdminTableSyncIssue issue, String action) async {
+    final agent = _agentByName(issue.clientName);
+    if (agent == null) {
+      _showActionError(
+        'Client ${issue.clientName} is offline. Reconnect it, then resolve.',
+      );
+      return;
+    }
+    if (action == 'compare_rows') {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (context) => TableComparisonDialog(
+              api: _api,
+              clientName: issue.clientName,
+              table: issue.table,
+              issue: issue,
+            ),
+      );
+      return;
+    }
+    await _confirmAndResolveTable(
+      agent,
+      _tableStateFor(agent, issue.table),
+      issue,
+      action,
+    );
+  }
+
+  /// In-page resolver for a stopped sync gate: every table that needs a
+  /// decision, with the same actions the per-table menu offers.
+  Future<void> _openSyncResolver() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 720),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final t = AppTokens.of(context);
+            final gate = _state?.syncGate;
+            final blockers = (gate?.issues ?? const <AdminTableSyncIssue>[])
+                .where((i) => i.needsInput)
+                .toList(growable: false);
+
+            Future<void> run(AdminTableSyncIssue issue, String action) async {
+              await _resolveIssue(issue, action);
+              await _refresh(silent: true);
+              if (!mounted) return;
+              setSheetState(() {});
+              final left = (_state?.syncGate.issues ??
+                      const <AdminTableSyncIssue>[])
+                  .where((i) => i.needsInput);
+              if (left.isEmpty && sheetContext.mounted) {
+                Navigator.of(sheetContext).pop();
+              }
+            }
+
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  0,
+                  16,
+                  16 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.pause_circle_outline_rounded,
+                          size: 18,
+                          color: t.crit,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            blockers.isEmpty
+                                ? 'Sync is no longer blocked'
+                                : 'Resolve blocked sync · ${blockers.length} '
+                                    '${blockers.length == 1 ? 'table' : 'tables'}',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Automatic sync stays stopped until every table below is '
+                      'decided. None of these actions replaces a table or '
+                      'picks an authoritative client — inserts and updates '
+                      'merge by primary key; deletes need an explicit '
+                      'tombstone.',
+                      style: TextStyle(
+                        color: t.muted,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            for (final issue in blockers) ...[
+                              _buildResolverCard(issue, run),
+                              const SizedBox(height: 8),
+                            ],
+                            if (blockers.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 24,
+                                ),
+                                child: Text(
+                                  'Every table is decided. You can start sync '
+                                  'again from the toolbar.',
+                                  style: TextStyle(color: t.muted),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildResolverCard(
+    AdminTableSyncIssue issue,
+    Future<void> Function(AdminTableSyncIssue, String) run,
+  ) {
+    final t = AppTokens.of(context);
+    final busy = _resolvingTable == issue.table;
+    final detail =
+        issue.message.trim().isNotEmpty
+            ? issue.message.trim()
+            : (issue.reason.trim().isNotEmpty
+                ? issue.reason.trim()
+                : 'This table needs a decision before sync can continue.');
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: t.hairline),
+      ),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _displayTable(issue.table),
+                  textDirection: directionForDisplayText(
+                    _displayTable(issue.table),
+                  ),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
+                    fontFamilyFallback: kMonoFallback,
+                  ),
+                ),
+              ),
+              if (issue.clientName.trim().isNotEmpty)
+                _statusChip(issue.clientName.trim(), t.info),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            detail,
+            textDirection: directionForDisplayText(detail),
+            style: TextStyle(color: t.ink2, fontSize: 12.5, height: 1.35),
+          ),
+          if (issue.detectedAt.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Detected ${_formatTimestamp(issue.detectedAt)}',
+              style: TextStyle(color: t.muted, fontSize: 11.5),
+            ),
+          ],
+          const SizedBox(height: 10),
+          if (busy)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else if (!widget.authenticatedUser.canManageUsers)
+            Text(
+              'Awaiting an owner decision',
+              style: TextStyle(
+                color: t.warn,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => run(issue, 'compare_rows'),
+                  icon: const Icon(Icons.difference_rounded, size: 16),
+                  label: const Text('Compare rows'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => run(issue, 'accept_baseline'),
+                  icon: const Icon(Icons.fast_forward_rounded, size: 16),
+                  label: const Text('Future changes only'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => run(issue, 'retry_sync'),
+                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                  label: const Text('Retry after local fix'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => run(issue, 'exclude_table'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: t.crit,
+                    side: BorderSide(color: t.crit.withValues(alpha: 0.4)),
+                  ),
+                  icon: const Icon(Icons.sync_disabled_rounded, size: 16),
+                  label: const Text('Ignore table'),
+                ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 
