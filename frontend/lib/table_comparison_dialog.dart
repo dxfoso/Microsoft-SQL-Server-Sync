@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'live_sync_api.dart';
 import 'models.dart';
 import 'table_comparison.dart';
+import 'theme.dart';
 
 class TableComparisonDialog extends StatefulWidget {
   const TableComparisonDialog({
@@ -220,7 +221,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
                         ),
                         Text(
                           widget.table,
-                          style: const TextStyle(color: Color(0xFF667085)),
+                          style: TextStyle(color: AppTokens.of(context).muted),
                         ),
                       ],
                     ),
@@ -244,6 +245,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
   Widget _buildBody() {
     if (_loading) return _buildLoading();
     if (_error != null) return _buildError();
+    final t = AppTokens.of(context);
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -270,8 +272,8 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
           const SizedBox(height: 10),
           Text(
             'Rows are aligned by ${_status!.keyColumns.join(', ')}. Only differing fields are shown. This read-only comparison does not advance Change Tracking or change SQL data.',
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: t.muted,
               fontSize: 12,
               height: 1.35,
             ),
@@ -281,24 +283,20 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF6ED),
+                color: t.warnWash,
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFFF0C48A)),
+                border: Border.all(color: t.warn.withValues(alpha: 0.4)),
               ),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.cloud_off_rounded,
-                    size: 16,
-                    color: Color(0xFF9A5B00),
-                  ),
+                  Icon(Icons.cloud_off_rounded, size: 16, color: t.warn),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Offline, not included: ${_skippedOfflineClients.join(', ')}. '
                       'Reconnect and re-run to compare every client.',
-                      style: const TextStyle(
-                        color: Color(0xFF9A5B00),
+                      style: TextStyle(
+                        color: t.warn,
                         fontSize: 12,
                         height: 1.35,
                       ),
@@ -318,7 +316,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
                   Expanded(
                     child: Text(
                       _pageError!,
-                      style: const TextStyle(color: Color(0xFFB42318)),
+                      style: TextStyle(color: t.crit),
                     ),
                   ),
                   TextButton(
@@ -335,6 +333,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
   }
 
   Widget _buildComparisonGrid() {
+    final t = AppTokens.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final contentWidth =
@@ -352,7 +351,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
                 children: [
                   Container(
                     height: 46,
-                    color: const Color(0xFFF2F4F7),
+                    color: t.surface2,
                     child: Row(
                       children: [
                         _comparisonHeaderCell('Primary key', _keyColumnWidth),
@@ -377,9 +376,9 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
                           }
                           final difference = _differences[index];
                           return Container(
-                            decoration: const BoxDecoration(
+                            decoration: BoxDecoration(
                               border: Border(
-                                bottom: BorderSide(color: Color(0xFFE4E7EC)),
+                                bottom: BorderSide(color: t.hairline),
                               ),
                             ),
                             child: Row(
@@ -389,7 +388,10 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
                                   width: _keyColumnWidth,
                                   child: Padding(
                                     padding: const EdgeInsets.all(10),
-                                    child: SelectableText(difference.key),
+                                    child: SelectableText(
+                                      difference.key,
+                                      style: TextStyle(color: t.ink),
+                                    ),
                                   ),
                                 ),
                                 for (final client in _clients)
@@ -418,7 +420,13 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
       width: width,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 13),
-        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: AppTokens.of(context).ink2,
+          ),
+        ),
       ),
     );
   }
@@ -449,8 +457,8 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
           _differences.isEmpty
               ? 'No row differences were found.'
               : 'All retained rows compared.',
-          style: const TextStyle(
-            color: Color(0xFF667085),
+          style: TextStyle(
+            color: AppTokens.of(context).muted,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -493,16 +501,17 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
   }
 
   Widget _buildError() {
+    final t = AppTokens.of(context);
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Comparison could not be completed',
             style: TextStyle(
-              color: Color(0xFFB42318),
+              color: t.crit,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -511,7 +520,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
           const SizedBox(height: 12),
           Text(
             widget.issue.message,
-            style: const TextStyle(color: Color(0xFF667085)),
+            style: TextStyle(color: t.muted),
           ),
         ],
       ),
@@ -522,16 +531,17 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
     TableComparisonDifference difference,
     String clientName,
   ) {
+    final t = AppTokens.of(context);
     final row = difference.rowsByClient[clientName];
     if (row == null) {
       return Container(
         width: _clientColumnWidth,
         padding: const EdgeInsets.all(8),
-        color: const Color(0xFFFFE4E8),
-        child: const Text(
+        color: t.critWash,
+        child: Text(
           'Row missing',
           style: TextStyle(
-            color: Color(0xFFB42318),
+            color: t.crit,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -540,7 +550,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
     return Container(
       width: _clientColumnWidth,
       padding: const EdgeInsets.all(8),
-      color: const Color(0xFFFFF6ED),
+      color: t.warnWash,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -550,7 +560,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: SelectableText(
                 '$column: ${tableComparisonValue(row[column])}',
-                style: const TextStyle(fontSize: 12, height: 1.3),
+                style: TextStyle(fontSize: 12, height: 1.3, color: t.ink2),
               ),
             ),
         ],
