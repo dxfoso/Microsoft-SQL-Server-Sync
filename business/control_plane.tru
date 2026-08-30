@@ -11676,6 +11676,37 @@ function jobs_replay_retained_union(batchId: string, clientNames: array<string>,
   }, 201);
 }
 
+// Stopped-sync table issues are stored without a client name. When a table
+// decision endpoint is called without one, resolve the owner scope from the
+// table alone: the one visible owner that currently has a needs_input issue
+// for it. Returns null when no visible owner - or more than one - has such an
+// issue, in which case the caller must pass an explicit client name.
+function owner_scope_for_table_decision(current: map<json>, table: string): string? {
+  const normalizedTable = table.trim();
+  if (normalizedTable.length == 0) {
+    return null;
+  }
+  let ownerIds = [];
+  for (const agent of visible_agent_rows_for(current)) {
+    const ownerId = string.from(agent.ownerUserId).trim();
+    if (ownerId.length != 0 && !string_array_contains(ownerIds, ownerId)) {
+      ownerIds = ownerIds.concat([ownerId]);
+    }
+  }
+  let match = null;
+  for (const ownerId of ownerIds) {
+    const issue = sync_table_issue_for_owner(ownerId, normalizedTable);
+    if (issue != null &&
+        string.from(issue.status ?? '').trim() == 'needs_input') {
+      if (match != null) {
+        return null;
+      }
+      match = ownerId;
+    }
+  }
+  return match;
+}
+
 function table_comparison_request(clientName: string, table: string, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
@@ -11684,17 +11715,34 @@ function table_comparison_request(clientName: string, table: string, token: stri
   if (!is_admin_user(current) && !is_owner_user(current)) {
     return raw_json_error(403, 'permission denied');
   }
-  const normalizedClientName = normalize_user_name(clientName);
+  const trimmedClientName = string.from(clientName).trim();
   const normalizedTable = table.trim();
-  if (normalizedClientName.length == 0 || normalizedTable.length == 0) {
-    return raw_json_error(400, 'clientName and table are required');
+  if (normalizedTable.length == 0) {
+    return raw_json_error(400, 'table is required');
   }
   const visibleAgents = visible_agent_rows_for(current);
-  const pageAgent = find_agent_row_by_name(visibleAgents, normalizedClientName);
-  if (pageAgent == null) {
-    return raw_json_error(403, 'client is unavailable or outside your scope');
+  let ownerId = '';
+  if (trimmedClientName.length != 0) {
+    const pageAgent = find_agent_row_by_name(
+      visibleAgents,
+      normalize_user_name(trimmedClientName)
+    );
+    if (pageAgent == null) {
+      return raw_json_error(403, 'client is unavailable or outside your scope');
+    }
+    ownerId = string.from(pageAgent.ownerUserId);
+  } else {
+    // The stopped-sync resolver opens comparison straight from the issue,
+    // which carries no client name. Scope it by the table's pending decision.
+    const scopedOwnerId = owner_scope_for_table_decision(current, normalizedTable);
+    if (scopedOwnerId == null) {
+      return raw_json_error(
+        403,
+        'no matching table decision was found in your scope'
+      );
+    }
+    ownerId = string.from(scopedOwnerId);
   }
-  const ownerId = string.from(pageAgent.ownerUserId);
   const existingIssue = sync_table_issue_for_owner(ownerId, normalizedTable);
   if (existingIssue == null ||
       string.from(existingIssue.status ?? '').trim() != 'needs_input') {
@@ -11847,11 +11895,11 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
   if (!is_admin_user(current) && !is_owner_user(current)) {
     return raw_json_error(403, 'permission denied');
   }
-  const normalizedClientName = normalize_user_name(clientName);
+  const trimmedClientName = string.from(clientName).trim();
   const normalizedTable = table.trim();
   const normalizedAction = action.trim().toLowerCase();
-  if (normalizedClientName.length == 0 || normalizedTable.length == 0) {
-    return raw_json_error(400, 'clientName and table are required');
+  if (normalizedTable.length == 0) {
+    return raw_json_error(400, 'table is required');
   }
   if (normalizedAction != 'retry_sync' &&
       normalizedAction != 'exclude_table' &&
@@ -11860,11 +11908,27 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
   }
 
   const visibleAgents = visible_agent_rows_for(current);
-  const pageAgent = find_agent_row_by_name(visibleAgents, normalizedClientName);
-  if (pageAgent == null) {
-    return raw_json_error(403, 'client is unavailable or outside your scope');
+  let ownerId = '';
+  let resolvedClientName = '';
+  if (trimmedClientName.length != 0) {
+    resolvedClientName = normalize_user_name(trimmedClientName);
+    const pageAgent = find_agent_row_by_name(visibleAgents, resolvedClientName);
+    if (pageAgent == null) {
+      return raw_json_error(403, 'client is unavailable or outside your scope');
+    }
+    ownerId = string.from(pageAgent.ownerUserId);
+  } else {
+    // The stopped-sync resolver acts straight from the issue, which carries
+    // no client name. Scope it by the table's pending decision instead.
+    const scopedOwnerId = owner_scope_for_table_decision(current, normalizedTable);
+    if (scopedOwnerId == null) {
+      return raw_json_error(
+        403,
+        'no matching table decision was found in your scope'
+      );
+    }
+    ownerId = string.from(scopedOwnerId);
   }
-  const ownerId = string.from(pageAgent.ownerUserId);
   const existingIssue = sync_table_issue_for_owner(ownerId, normalizedTable);
   if (existingIssue == null ||
       string.from(existingIssue.status ?? '').trim() != 'needs_input') {
@@ -11872,13 +11936,13 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
   }
 
   if (normalizedAction == 'exclude_table') {
-    upsert_table_sync_policy(ownerId, normalizedTable, false, normalizedClientName);
+    upsert_table_sync_policy(ownerId, normalizedTable, false, resolvedClientName);
     const resolved = replace_sync_table_issue(ownerId, {
       table: normalizedTable,
       status: 'ready',
       reason: '',
       message: 'Excluded from synchronization. Local data is left unchanged on every client.',
-      clientName: normalizedClientName,
+      clientName: resolvedClientName,
       action: normalizedAction,
       sourceClientName: '',
       targetClientNames: [],
@@ -11895,7 +11959,7 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
       status: 'ready',
       reason: '',
       message: 'Current differences were accepted. Only future Change Tracking changes will synchronize.',
-      clientName: normalizedClientName,
+      clientName: resolvedClientName,
       action: normalizedAction,
       sourceClientName: '',
       targetClientNames: [],
@@ -11913,7 +11977,7 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
     message: string.from(existingIssue.reason).trim() == 'unique_business_key'
       ? 'Conflict acknowledged after an explicit local deletion. Start sync to relay its Change Tracking tombstone and retry atomically.'
       : 'Issue acknowledged. Start sync to retry with primary-key union and explicit tombstones only.',
-    clientName: normalizedClientName,
+    clientName: resolvedClientName,
     action: normalizedAction,
     sourceClientName: '',
     targetClientNames: [],

@@ -4080,8 +4080,9 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Future<void> _resolveIssue(AdminTableSyncIssue issue, String action) async {
-    // Compare rows runs server-side snapshot jobs and does not need a live
-    // local agent entry, so it must not be gated by the offline guard below.
+    // A stopped-sync issue carries no client name: the server scopes both
+    // comparison and resolution by the table's pending decision. Don't gate
+    // either on a live local agent entry.
     if (action == 'compare_rows') {
       await showDialog<void>(
         context: context,
@@ -4097,15 +4098,19 @@ class _ClientsPageState extends State<ClientsPage> {
       return;
     }
     final agent = _agentByName(issue.clientName);
-    if (agent == null) {
-      _showActionError(
-        'Client ${issue.clientName} is offline. Reconnect it, then resolve.',
-      );
-      return;
-    }
     await _confirmAndResolveTable(
       agent,
-      _tableStateFor(agent, issue.table),
+      agent != null
+          ? _tableStateFor(agent, issue.table)
+          : AdminTableState(
+              table: issue.table,
+              enabled: true,
+              status: '',
+              lastSync: '',
+              progress: 0,
+              rowCount: 0,
+              message: '',
+            ),
       issue,
       action,
     );
@@ -4338,7 +4343,7 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Future<void> _confirmAndResolveTable(
-    AdminAgent agent,
+    AdminAgent? agent,
     AdminTableState table,
     AdminTableSyncIssue issue,
     String action,
@@ -4410,7 +4415,9 @@ class _ClientsPageState extends State<ClientsPage> {
     setState(() => _resolvingTable = table.table);
     try {
       final jobCount = await _api.resolveTableSyncIssue(
-        clientName: agent.clientName,
+        // Empty when the stopped-sync issue names no client; the server then
+        // scopes the decision by the table itself.
+        clientName: agent?.clientName ?? issue.clientName,
         table: table.table,
         action: action,
       );

@@ -2518,6 +2518,37 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("active_job_tables_for_client", request_body)
         self.assertIn("create_table_comparison_batch", request_body)
 
+    def test_table_decision_endpoints_scope_by_table_when_no_client_named(self):
+        # A stopped-sync issue is stored with clientName: '' , so the resolver
+        # opens comparison and resolution straight from the issue. Both
+        # endpoints must derive the owner scope from the table's pending
+        # decision instead of turning the empty name into a bogus lookup.
+        source = read_text("business/control_plane.tru")
+        helper = source.split(
+            "function owner_scope_for_table_decision(", 1
+        )[1].split("function table_comparison_request(", 1)[0]
+        self.assertIn("sync_table_issue_for_owner(ownerId, normalizedTable)", helper)
+        self.assertIn("'needs_input'", helper)
+        self.assertIn("return null;", helper)  # ambiguous / not found
+
+        request_body = source.split(
+            "function table_comparison_request(", 1
+        )[1].split("function table_sync_issue_resolve(", 1)[0]
+        resolve_body = source.split(
+            "function table_sync_issue_resolve(", 1
+        )[1].split("function sync_job_status_is_terminal(", 1)[0]
+        for body in (request_body, resolve_body):
+            self.assertIn("trimmedClientName.length != 0", body)
+            self.assertIn(
+                "owner_scope_for_table_decision(current, normalizedTable)", body
+            )
+            self.assertNotIn("clientName and table are required", body)
+        # The empty name must never be fed through normalize_user_name (which
+        # would mint a random user-XXXX id and 403 every stopped-sync issue).
+        self.assertNotIn("normalize_user_name(clientName)", request_body)
+        self.assertNotIn("normalize_user_name(clientName)", resolve_body)
+        self.assertNotIn("normalizedClientName", resolve_body)
+
     def test_table_row_comparison_status_survives_admin_batch_visibility_gap(self):
         source = read_text("business/control_plane.tru")
         chunk_model = source.split("class SyncJobDataChunk {", 1)[1].split(
