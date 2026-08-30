@@ -283,6 +283,7 @@ class _ClientsPageState extends State<ClientsPage> {
   bool _reconcileBusy = false;
   final Set<String> _clientActivationBusy = <String>{};
   final Set<String> _conflictSourceBusy = <String>{};
+  final Set<String> _expandedClients = <String>{};
   AdminServerResetResult? _lastServerResetResult;
   String _filter = '';
   String _tableFilter = '';
@@ -1204,59 +1205,363 @@ class _ClientsPageState extends State<ClientsPage> {
     );
   }
 
+  // Kept name for the call site in _buildClientList; now renders a vertical
+  // list of expandable client cards instead of a wide DataTable.
   Widget _buildClientsDataTable(List<AdminAgent> clients) {
-    const rowHeight = 92.0;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
       children: [
-        DataTable(
-          key: const ValueKey('fixed-client-name-column'),
-          columnSpacing: 0,
-          horizontalMargin: 12,
-          headingRowHeight: 42,
-          dataRowMinHeight: rowHeight,
-          dataRowMaxHeight: rowHeight,
-          columns: const [DataColumn(label: Text('Client'))],
-          rows: clients.map(_buildClientNameDataRow).toList(),
+        for (var i = 0; i < clients.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _buildClientCard(clients[i]),
+        ],
+      ],
+    );
+  }
+
+  Widget _connLine(String label, {required bool ok, String? detail}) {
+    final t = AppTokens.of(context);
+    final color = ok ? t.ok : t.crit;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          ok ? Icons.check_rounded : Icons.close_rounded,
+          size: 13,
+          color: color,
         ),
-        const VerticalDivider(width: 1, thickness: 1),
-        Expanded(
-          child: Scrollbar(
-            controller: _clientTableHorizontalController,
-            thumbVisibility: true,
-            trackVisibility: true,
-            scrollbarOrientation: ScrollbarOrientation.bottom,
-            child: SingleChildScrollView(
-              key: const ValueKey('scrollable-client-details'),
-              controller: _clientTableHorizontalController,
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.only(bottom: 12),
-              child: DataTable(
-                columnSpacing: 22,
-                headingRowHeight: 42,
-                dataRowMinHeight: rowHeight,
-                dataRowMaxHeight: rowHeight,
-                columns: const [
-                  DataColumn(label: Text('Client version')),
-                  DataColumn(label: Text('Active')),
-                  DataColumn(label: Text('Conflict source')),
-                  DataColumn(label: Text('Auto numbering')),
-                  DataColumn(label: Text('Status')),
-                  DataColumn(label: Text('Database')),
-                  DataColumn(label: Text('Tables')),
-                  DataColumn(label: Text('Last result')),
-                  DataColumn(label: Text('Totals / scope')),
-                  DataColumn(label: Text('Last activity')),
-                  DataColumn(label: Text('Duration')),
-                  DataColumn(label: Text('Last heartbeat')),
-                  DataColumn(label: Text('Actions')),
+        const SizedBox(width: 5),
+        Text(
+          detail == null || detail.trim().isEmpty ? label : '$label · $detail',
+          style: TextStyle(color: t.ink2, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  void _openClient(AdminAgent agent) {
+    setState(() {
+      _selectedClientName = agent.clientName;
+      _screen = _ClientScreen.detail;
+      _selectedTable = null;
+      _selectedSyncKey = null;
+      _selectedJobId = null;
+      _replaceRoute();
+    });
+  }
+
+  Widget _clientMetaChip(String label, String value) {
+    final t = AppTokens.of(context);
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '$label ',
+            style: TextStyle(color: t.muted, fontSize: 11.5),
+          ),
+          TextSpan(
+            text: value,
+            style: TextStyle(
+              color: t.ink,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  Widget _buildClientCard(AdminAgent agent) {
+    final t = AppTokens.of(context);
+    final expanded = _expandedClients.contains(agent.clientName);
+    final jobs = _jobsFor(agent);
+    final activityStatus = _clientActivityStatus(
+      agent,
+      jobs,
+      serverActivities: (_state?.clientActivities ??
+              const <AdminClientActivity>[])
+          .where((a) => a.clientName == agent.clientName),
+    );
+    final version =
+        agent.clientVersion.trim().isEmpty ? '—' : agent.clientVersion.trim();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(
+          color:
+              agent.clientName == _selectedClientName
+                  ? t.accent.withValues(alpha: 0.5)
+                  : t.hairline,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap:
+                () => setState(() {
+                  if (expanded) {
+                    _expandedClients.remove(agent.clientName);
+                  } else {
+                    _expandedClients.add(agent.clientName);
+                  }
+                }),
+            borderRadius: BorderRadius.circular(7),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      AnimatedRotation(
+                        turns: expanded ? 0.25 : 0,
+                        duration: const Duration(milliseconds: 150),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: t.muted,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              agent.clientName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textDirection: directionForDisplayText(
+                                agent.clientName,
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            if (agent.machineName.trim().isNotEmpty)
+                              Text(
+                                agent.machineName.trim(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: t.muted,
+                                  fontSize: 11.5,
+                                  fontFamilyFallback: kMonoFallback,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _statusChip(
+                        activityStatus,
+                        _clientActivityColor(activityStatus),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 9),
+                  Wrap(
+                    spacing: 16,
+                    runSpacing: 6,
+                    children: [
+                      _connLine(
+                        'SQL Server',
+                        ok: agent.sqlConnected,
+                        detail:
+                            agent.sqlConnected
+                                ? [
+                                  agent.server,
+                                  agent.database,
+                                ].where((s) => s.trim().isNotEmpty).join(' · ')
+                                : 'not connected',
+                      ),
+                      _connLine(
+                        'Control plane',
+                        ok: agent.serverConnected,
+                        detail: agent.serverConnected ? 'connected' : 'offline',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 16,
+                    runSpacing: 6,
+                    children: [
+                      _clientMetaChip('version', version),
+                      _clientMetaChip(
+                        'db',
+                        agent.database.trim().isEmpty
+                            ? '—'
+                            : agent.database.trim(),
+                      ),
+                      _clientMetaChip('tables', '${agent.tables.length}'),
+                      _clientMetaChip(
+                        'heartbeat',
+                        _formatTimestamp(agent.lastHeartbeat),
+                      ),
+                    ],
+                  ),
                 ],
-                rows: clients.map(_buildClientDataRow).toList(),
               ),
             ),
           ),
-        ),
-      ],
+          if (expanded) _buildClientCardDetail(agent),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClientCardDetail(AdminAgent agent) {
+    final t = AppTokens.of(context);
+    final tables = agent.tables;
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: t.surface2,
+        border: Border(top: BorderSide(color: t.hairline)),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(6)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 16,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildClientActiveCheckbox(agent),
+                  Text(
+                    'Active in sync',
+                    style: TextStyle(fontSize: 12, color: t.ink2),
+                  ),
+                ],
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildConflictSourceCheckbox(agent),
+                  Text(
+                    'Conflict source',
+                    style: TextStyle(fontSize: 12, color: t.ink2),
+                  ),
+                ],
+              ),
+              TextButton.icon(
+                key: ValueKey('automatic-number-incidents-${agent.clientName}'),
+                onPressed:
+                    () => unawaited(_showAutomaticNumberIncidentsDialog(agent)),
+                icon: const Icon(Icons.pin_outlined, size: 16),
+                label: Text(
+                  'Auto-number (${agent.automaticNumberIncidentCount})',
+                ),
+              ),
+              TextButton.icon(
+                key: ValueKey('fingerprint-audit-log-${agent.clientName}'),
+                onPressed: () => unawaited(_showFingerprintAuditDialog(agent)),
+                icon: const Icon(Icons.fact_check_outlined, size: 16),
+                label: const Text('Integrity log'),
+              ),
+              TextButton.icon(
+                key: ValueKey('client-update-recovery-${agent.clientName}'),
+                onPressed:
+                    () => unawaited(_showClientUpdateRecoveryDialog(agent)),
+                icon: const Icon(Icons.terminal_rounded, size: 16),
+                label: const Text('Update command'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'TABLES · ${agent.database.trim().isEmpty ? 'selected database' : agent.database.trim()}',
+            style: TextStyle(
+              color: t.muted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (tables.isEmpty)
+            Text(
+              'No tables reported.',
+              style: TextStyle(color: t.muted, fontSize: 12),
+            )
+          else ...[
+            for (final table in tables.take(40))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Text(
+                        _displayTable(table.table),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textDirection: directionForDisplayText(
+                          _displayTable(table.table),
+                        ),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontFamilyFallback: kMonoFallback,
+                          color: table.enabled ? t.ink : t.muted,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        '${_number(table.rowCount)} rows',
+                        style: TextStyle(color: t.muted, fontSize: 11.5),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Text(
+                        _formatTimestamp(table.lastSync),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: t.muted, fontSize: 11.5),
+                      ),
+                    ),
+                    _statusChip(
+                      _displayTableStatus(table),
+                      _statusColor(table.status),
+                    ),
+                  ],
+                ),
+              ),
+            if (tables.length > 40)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '+ ${tables.length - 40} more',
+                  style: TextStyle(color: t.muted, fontSize: 11.5),
+                ),
+              ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: () => _openClient(agent),
+                icon: const Icon(Icons.open_in_full_rounded, size: 15),
+                label: const Text('Open client'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
