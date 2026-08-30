@@ -3479,8 +3479,112 @@ class _ClientsPageState extends State<ClientsPage> {
         else if (tables.isEmpty)
           _buildEmpty('No tables match this filter.')
         else
-          _buildPinnedTableGrid(agent, tables, jobsByTable),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 760) {
+                return Column(
+                  children: [
+                    for (final table in tables) ...[
+                      _tableReadinessCard(agent, table, jobsByTable),
+                      const SizedBox(height: 8),
+                    ],
+                  ],
+                );
+              }
+              return _buildPinnedTableGrid(agent, tables, jobsByTable);
+            },
+          ),
       ],
+    );
+  }
+
+  /// Narrow-viewport equivalent of one table-readiness DataTable row, keeping
+  /// the Open action and the inline resolution menu for blocked tables.
+  Widget _tableReadinessCard(
+    AdminAgent agent,
+    AdminTableState table,
+    Map<String, List<AdminJob>> jobsByTable,
+  ) {
+    final t = AppTokens.of(context);
+    final issue = _tableSyncIssue(agent, table.table);
+    final tableJobs = jobsByTable[table.table] ?? const <AdminJob>[];
+    final blocked = issue?.blocksSync == true;
+    final name = _displayTable(table.table);
+    return Container(
+      decoration: BoxDecoration(
+        color: blocked ? t.warnWash : t.surface,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(
+          color: blocked ? t.warn.withValues(alpha: 0.5) : t.hairline,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  name,
+                  textDirection: directionForDisplayText(name),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    fontFamilyFallback: kMonoFallback,
+                  ),
+                ),
+              ),
+              _statusChip(
+                _tableReadinessLabel(issue),
+                _tableReadinessColor(issue),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 14,
+            runSpacing: 6,
+            children: [
+              _clientMetaChip('changed', _changedRowsLabel(tableJobs)),
+              _clientMetaChip(
+                'up',
+                _changedRowsLabel(tableJobs, direction: 'upload'),
+              ),
+              _clientMetaChip(
+                'down',
+                _changedRowsLabel(tableJobs, direction: 'download'),
+              ),
+              _clientMetaChip('last sync', _formatTimestamp(table.lastSync)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _statusChip(table.status, _statusColor(table.status)),
+              const Spacer(),
+              TextButton.icon(
+                onPressed:
+                    () => setState(() {
+                      _selectedTable = table.table;
+                      _selectedJobId = null;
+                      _screen = _ClientScreen.table;
+                      _replaceRoute();
+                    }),
+                icon: const Icon(Icons.open_in_new, size: 15),
+                label: const Text('Open'),
+              ),
+            ],
+          ),
+          if (blocked) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _buildTableResolutionMenu(agent, table, issue!),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -4547,27 +4651,138 @@ class _ClientsPageState extends State<ClientsPage> {
                 : 'No logs match the current filters.',
           )
         else
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columnSpacing: 20,
-              columns: const [
-                DataColumn(label: Text('Sync / updated')),
-                DataColumn(label: Text('Duration')),
-                DataColumn(label: Text('Changed rows')),
-                DataColumn(label: Text('Uploaded new')),
-                DataColumn(label: Text('Downloaded new')),
-                DataColumn(label: Text('Status')),
-                DataColumn(label: Text('Tables')),
-                DataColumn(label: Text('Progress')),
-                DataColumn(label: Text('Message')),
-              ],
-              rows: visibleBatches
-                  .map(_buildSyncDataRow)
-                  .toList(growable: false),
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 720) {
+                return Column(
+                  children: [
+                    for (final batch in visibleBatches) ...[
+                      _syncLogCard(batch),
+                      const SizedBox(height: 8),
+                    ],
+                  ],
+                );
+              }
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columnSpacing: 20,
+                  columns: const [
+                    DataColumn(label: Text('Sync / updated')),
+                    DataColumn(label: Text('Duration')),
+                    DataColumn(label: Text('Changed rows')),
+                    DataColumn(label: Text('Uploaded new')),
+                    DataColumn(label: Text('Downloaded new')),
+                    DataColumn(label: Text('Status')),
+                    DataColumn(label: Text('Tables')),
+                    DataColumn(label: Text('Progress')),
+                    DataColumn(label: Text('Message')),
+                  ],
+                  rows: visibleBatches
+                      .map(_buildSyncDataRow)
+                      .toList(growable: false),
+                ),
+              );
+            },
           ),
       ],
+    );
+  }
+
+  void _openSyncLogBatch(_SyncLogBatch batch) {
+    setState(() {
+      _selectedSyncKey = batch.key;
+      _screen = _ClientScreen.sync;
+      _replaceRoute();
+    });
+  }
+
+  /// Narrow-viewport equivalent of one sync-log DataTable row.
+  Widget _syncLogCard(_SyncLogBatch batch) {
+    final t = AppTokens.of(context);
+    final changed =
+        batch.isReconciliation
+            ? 'Reconciliation'
+            : batch.changedRows == null
+            ? '—'
+            : '+${_number(batch.changedRows!)}';
+    final up =
+        batch.isReconciliation
+            ? 'Snapshot'
+            : batch.uploadedRows == null
+            ? '—'
+            : '+${_number(batch.uploadedRows!)}';
+    final down =
+        batch.isReconciliation
+            ? 'Snapshot'
+            : batch.downloadedRows == null
+            ? '—'
+            : '+${_number(batch.downloadedRows!)}';
+    return Material(
+      color: t.surface,
+      borderRadius: BorderRadius.circular(7),
+      child: InkWell(
+        onTap: () => _openSyncLogBatch(batch),
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: t.hairline),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 11, 10, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.sync_rounded, size: 15, color: t.muted),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _formatTimestamp(
+                        batch.representative.representative.updatedAt,
+                      ),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ),
+                  _statusChip(batch.status, _statusColor(batch.status)),
+                  const SizedBox(width: 2),
+                  Icon(Icons.chevron_right_rounded, size: 18, color: t.muted),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 14,
+                runSpacing: 6,
+                children: [
+                  _clientMetaChip(
+                    'duration',
+                    formatSyncDuration(batch.duration()),
+                  ),
+                  _clientMetaChip('changed', changed),
+                  _clientMetaChip('up', up),
+                  _clientMetaChip('down', down),
+                  _clientMetaChip('tables', '${batch.operations.length}'),
+                  _clientMetaChip('progress', '${batch.progress}%'),
+                ],
+              ),
+              if (batch.message.trim().isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  batch.message.trim(),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  textDirection: directionForDisplayText(batch.message.trim()),
+                  style: TextStyle(color: t.ink2, fontSize: 12, height: 1.35),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -4693,24 +4908,123 @@ class _ClientsPageState extends State<ClientsPage> {
             style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
           ),
           const SizedBox(height: 12),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columnSpacing: 20,
-              columns: const [
-                DataColumn(label: Text('Table')),
-                DataColumn(label: Text('Phase')),
-                DataColumn(label: Text('Status')),
-                DataColumn(label: Text('Duration')),
-                DataColumn(label: Text('Changed')),
-                DataColumn(label: Text('Uploaded new')),
-                DataColumn(label: Text('Downloaded new')),
-                DataColumn(label: Text('Message')),
-                DataColumn(label: Text('Data')),
-              ],
-              rows: batch.operations
-                  .map(_buildLogDataRow)
-                  .toList(growable: false),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 720) {
+                return Column(
+                  children: [
+                    for (final op in batch!.operations) ...[
+                      _syncOperationCard(op),
+                      const SizedBox(height: 8),
+                    ],
+                  ],
+                );
+              }
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columnSpacing: 20,
+                  columns: const [
+                    DataColumn(label: Text('Table')),
+                    DataColumn(label: Text('Phase')),
+                    DataColumn(label: Text('Status')),
+                    DataColumn(label: Text('Duration')),
+                    DataColumn(label: Text('Changed')),
+                    DataColumn(label: Text('Uploaded new')),
+                    DataColumn(label: Text('Downloaded new')),
+                    DataColumn(label: Text('Message')),
+                    DataColumn(label: Text('Data')),
+                  ],
+                  rows: batch!.operations
+                      .map(_buildLogDataRow)
+                      .toList(growable: false),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Narrow-viewport equivalent of one per-table sync-detail DataTable row.
+  Widget _syncOperationCard(_SyncLogOperation op) {
+    final t = AppTokens.of(context);
+    final changed =
+        op.isReconciliation
+            ? 'Reconciliation'
+            : op.changedRows == null
+            ? '—'
+            : '+${_number(op.changedRows!)}';
+    final up =
+        op.isReconciliation
+            ? 'Snapshot'
+            : op.uploadedRows == null
+            ? '—'
+            : '+${_number(op.uploadedRows!)}';
+    final down =
+        op.isReconciliation
+            ? 'Snapshot'
+            : op.downloadedRows == null
+            ? '—'
+            : '+${_number(op.downloadedRows!)}';
+    final name = _displayTable(op.representative.table);
+    return Container(
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: t.hairline),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            name,
+            textDirection: directionForDisplayText(name),
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              fontFamilyFallback: kMonoFallback,
+            ),
+          ),
+          const SizedBox(height: 7),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _statusChip(op.phase, _phaseColor(op.phase)),
+              _statusChip(op.status, _statusColor(op.status)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 14,
+            runSpacing: 6,
+            children: [
+              _clientMetaChip('duration', formatSyncDuration(op.duration())),
+              _clientMetaChip('changed', changed),
+              _clientMetaChip('up', up),
+              _clientMetaChip('down', down),
+            ],
+          ),
+          if (op.message.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              op.message.trim(),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              textDirection: directionForDisplayText(op.message.trim()),
+              style: TextStyle(color: t.ink2, fontSize: 12, height: 1.35),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () => _openJobData(op.representative),
+              icon: const Icon(Icons.table_rows_outlined, size: 15),
+              label: const Text('View data'),
             ),
           ),
         ],
