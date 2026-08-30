@@ -304,12 +304,14 @@ class AdminTableComparisonRequest {
     required this.requestId,
     required this.table,
     required this.clientNames,
+    required this.skippedOfflineClients,
     required this.jobs,
   });
 
   final String requestId;
   final String table;
   final List<String> clientNames;
+  final List<String> skippedOfflineClients;
   final List<AdminJob> jobs;
 
   factory AdminTableComparisonRequest.fromJson(Map<String, dynamic> json) {
@@ -319,6 +321,10 @@ class AdminTableComparisonRequest {
       clientNames: (json['clientNames'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
           .toList(growable: false),
+      skippedOfflineClients:
+          (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(growable: false),
       jobs: (json['jobs'] as List<dynamic>? ?? const [])
           .map(
             (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),

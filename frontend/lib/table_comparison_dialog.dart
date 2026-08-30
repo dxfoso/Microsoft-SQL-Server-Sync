@@ -34,6 +34,7 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
   List<_ClientComparisonPageState> _pageStates = const [];
   List<TableComparisonClientRows> _clients = const [];
   List<TableComparisonDifference> _differences = const [];
+  List<String> _skippedOfflineClients = const [];
   String? _error;
   String? _pageError;
   bool _loading = true;
@@ -66,6 +67,9 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
         throw const LiveSyncApiException(
           'The server did not return a comparison request ID.',
         );
+      }
+      if (mounted && request.skippedOfflineClients.isNotEmpty) {
+        setState(() => _skippedOfflineClients = request.skippedOfflineClients);
       }
       AdminTableComparisonStatus? status;
       for (var attempt = 0; attempt < 90; attempt += 1) {
@@ -272,6 +276,38 @@ class _TableComparisonDialogState extends State<TableComparisonDialog> {
               height: 1.35,
             ),
           ),
+          if (_skippedOfflineClients.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF6ED),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFFF0C48A)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.cloud_off_rounded,
+                    size: 16,
+                    color: Color(0xFF9A5B00),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Offline, not included: ${_skippedOfflineClients.join(', ')}. '
+                      'Reconnect and re-run to compare every client.',
+                      style: const TextStyle(
+                        color: Color(0xFF9A5B00),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 10),
           Expanded(child: _buildComparisonGrid()),
           if (_pageError != null)

@@ -4080,13 +4080,8 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 
   Future<void> _resolveIssue(AdminTableSyncIssue issue, String action) async {
-    final agent = _agentByName(issue.clientName);
-    if (agent == null) {
-      _showActionError(
-        'Client ${issue.clientName} is offline. Reconnect it, then resolve.',
-      );
-      return;
-    }
+    // Compare rows runs server-side snapshot jobs and does not need a live
+    // local agent entry, so it must not be gated by the offline guard below.
     if (action == 'compare_rows') {
       await showDialog<void>(
         context: context,
@@ -4098,6 +4093,13 @@ class _ClientsPageState extends State<ClientsPage> {
               table: issue.table,
               issue: issue,
             ),
+      );
+      return;
+    }
+    final agent = _agentByName(issue.clientName);
+    if (agent == null) {
+      _showActionError(
+        'Client ${issue.clientName} is offline. Reconnect it, then resolve.',
       );
       return;
     }

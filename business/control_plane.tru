@@ -11703,7 +11703,7 @@ function table_comparison_request(clientName: string, table: string, token: stri
 
   const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
   let participants = [];
-  let unavailableClients = [];
+  let skippedOfflineClients = [];
   for (const agent of visibleAgents) {
     if (string.from(agent.ownerUserId) != ownerId || !agent_sync_enabled(agent)) {
       continue;
@@ -11716,19 +11716,18 @@ function table_comparison_request(clientName: string, table: string, token: stri
     if (!string_array_contains(enabledTables, normalizedTable)) {
       continue;
     }
-    participants = participants.concat([agent]);
+    // Compare only clients that are reachable right now. An offline client is
+    // skipped rather than blocking the whole comparison; its snapshot simply
+    // does not appear in the diff. The caller is told which clients were left
+    // out via skippedOfflineClients.
     if (!effective_agent_online(agent)) {
-      unavailableClients = unavailableClients.concat([string.from(agent.clientName)]);
+      skippedOfflineClients = skippedOfflineClients.concat([string.from(agent.clientName)]);
+      continue;
     }
+    participants = participants.concat([agent]);
   }
   if (participants.length < 2) {
-    return raw_json_error(409, 'row comparison requires at least two enabled clients');
-  }
-  if (unavailableClients.length > 0) {
-    return raw_json_error(409, string.concat(
-      'Every enabled client must be online and SQL-connected before comparison: ',
-      json.stringify(unavailableClients)
-    ));
+    return raw_json_error(409, 'row comparison requires at least two online enabled clients');
   }
   for (const participant of participants) {
     if (string_array_contains(
@@ -11749,6 +11748,7 @@ function table_comparison_request(clientName: string, table: string, token: stri
     requestId: string.from(jobs[0].batchId),
     table: normalizedTable,
     clientNames: participants.map((agent) => string.from(agent.clientName)),
+    skippedOfflineClients: skippedOfflineClients,
     jobs: jobs.map((job) => public_job_payload(job))
   }, 201);
 }
