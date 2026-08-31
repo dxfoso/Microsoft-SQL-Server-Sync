@@ -5206,6 +5206,28 @@ function sync_owner_has_needs_input_table_issues(ownerUserId: string? = null): b
   return false;
 }
 
+function durable_origin_repair_was_interrupted(ownerUserId: string, table: string): bool {
+  if (sync_owner_table_has_active_jobs(ownerUserId, table)) {
+    return false;
+  }
+  const rows = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      table,
+      direction: 'download',
+      automaticRetryKind: 'durable-origin-reconcile'
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['status'],
+    limit: 1
+  });
+  if (rows.length == 0) {
+    return false;
+  }
+  const status = string.from(rows[0].status ?? '').trim().toLowerCase();
+  return status == 'cancelled' || status == 'failed';
+}
+
 function release_durable_origin_automatable_issues(ownerUserId: string): array<string> {
   const normalizedOwnerUserId = ownerUserId.trim();
   const existingIssues = sync_table_issues_for_owner(normalizedOwnerUserId);
@@ -5216,7 +5238,8 @@ function release_durable_origin_automatable_issues(ownerUserId: string): array<s
     const reason = string.from(issue.reason ?? '').trim().toLowerCase();
     const action = string.from(issue.action ?? '').trim().toLowerCase();
     if (status == 'needs_input' &&
-        reason == 'persistent_union_divergence' &&
+        (reason == 'persistent_union_divergence' ||
+         reason == 'durable_origin_nonconvergence') &&
         action.length == 0) {
       nextIssues = nextIssues.concat([{
         table: issue.table,
@@ -5236,6 +5259,26 @@ function release_durable_origin_automatable_issues(ownerUserId: string): array<s
                reason == 'durable_origin_reconcile_pending' &&
                action == 'automatic_durable_origin_reconcile') {
       nextIssues = nextIssues.concat([issue]);
+      releasedTables = releasedTables.concat([string.from(issue.table)]);
+    } else if (status == 'resolving' &&
+               action == 'automatic_durable_origin_reconcile' &&
+               durable_origin_repair_was_interrupted(
+                 normalizedOwnerUserId,
+                 string.from(issue.table)
+               )) {
+      nextIssues = nextIssues.concat([{
+        table: issue.table,
+        status: 'ready',
+        reason: 'durable_origin_reconcile_pending',
+        message: 'The prior durable-origin repair was interrupted by another table gate; it will resume automatically without changing authority policy.',
+        clientName: '',
+        action: 'automatic_durable_origin_reconcile',
+        sourceClientName: '',
+        targetClientNames: [],
+        detectedAt: issue.detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: now_iso()
+      }]);
       releasedTables = releasedTables.concat([string.from(issue.table)]);
     } else {
       nextIssues = nextIssues.concat([issue]);
@@ -5652,6 +5695,54 @@ function sync_table_reported_change_tracking_version(tableState: map<json>? = nu
   return int.from(tableState.changeTrackingVersion);
 }
 
+function repair_resolution_fingerprints_are_fresh(ownerUserId: string, table: string, clientNames: array<string>, agents: array<json>): bool {
+  if (clientNames.length < 2) {
+    return false;
+  }
+  const completedDownloads = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId,
+      table,
+      direction: 'download',
+      status: 'completed'
+    },
+    orderBy: { field: 'completedAt', dir: 'desc' },
+    fields: ['clientName', 'completedAt'],
+    limit: 100
+  });
+  for (const clientName of clientNames) {
+    let latestCompletedAt = '';
+    for (const job of completedDownloads) {
+      if (normalize_user_name(job.clientName) == normalize_user_name(clientName)) {
+        latestCompletedAt = string.from(job.completedAt ?? '').trim();
+        break;
+      }
+    }
+    let participant = null;
+    for (const agent of agents) {
+      if (normalize_user_name(agent.clientName) == normalize_user_name(clientName)) {
+        participant = agent;
+        break;
+      }
+    }
+    if (participant == null || latestCompletedAt.length == 0) {
+      return false;
+    }
+    const heartbeatAt = string.from(participant.lastHeartbeat ?? '').trim();
+    if (heartbeatAt.length == 0) {
+      return false;
+    }
+    try {
+      if (date.diff(heartbeatAt, latestCompletedAt, 'ms') <= 0) {
+        return false;
+      }
+    } catch (err) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<json>? = null, policies: array<json>? = null): void {
   const sourceAgents = agents ?? list_scheduler_agent_rows();
   const ownerPolicies = policies ?? list_table_sync_policies_for_scope(ownerUserId);
@@ -5709,6 +5800,14 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       }
       resolutionClientNames = unique_string_values(resolutionClientNames);
     }
+    const resolutionFingerprintsFresh = existing != null &&
+      string.from(existing.status ?? '').trim() == 'resolving' &&
+      repair_resolution_fingerprints_are_fresh(
+        ownerUserId,
+        table,
+        resolutionClientNames,
+        ownerAgents
+      );
     for (const agent of participants) {
       const cache = scheduler_agent_table_state_cache_for_agent(
         string.from(agent.clientName),
@@ -5749,6 +5848,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         resolutionClientNames.length > 1 &&
         resolutionParticipantCount == resolutionClientNames.length &&
         resolutionReportedClientCount == resolutionClientNames.length &&
+        resolutionFingerprintsFresh &&
         resolutionFingerprints.length == 1) {
       nextIssues = replace_sync_table_issue_in_values(nextIssues, {
         table,
@@ -5775,11 +5875,12 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         resolutionClientNames.length > 1 &&
         resolutionParticipantCount == resolutionClientNames.length &&
         resolutionReportedClientCount == resolutionClientNames.length &&
+        resolutionFingerprintsFresh &&
         resolutionFingerprints.length > 1) {
       nextIssues = replace_sync_table_issue_in_values(nextIssues, {
         table,
         status: 'needs_input',
-        reason: 'durable_origin_nonconvergence',
+        reason: 'durable_origin_nonconvergence_fresh',
         message: 'The bounded durable latest-origin repair completed atomically, but fresh fingerprints still differ. At least one conflicting row lacks sufficient causal history or was rewritten locally; no value was guessed and no target-only row was deleted.',
         clientName: existing.clientName,
         action: '',
@@ -5800,6 +5901,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         resolutionClientNames.length > 1 &&
         resolutionParticipantCount == resolutionClientNames.length &&
         resolutionReportedClientCount == resolutionClientNames.length &&
+        resolutionFingerprintsFresh &&
         resolutionFingerprints.length > 1) {
       nextIssues = replace_sync_table_issue_in_values(nextIssues, {
         table,

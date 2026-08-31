@@ -6342,6 +6342,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     final reconciledTargetRowCount = await _refreshTargetStateAfterRemoteApply(
       job,
       refreshFingerprint:
+          authoritativeReconcile ||
+          canonicalFullMerge ||
           selectiveRangeReconcile ||
           (!snapshotToApply.isDelta &&
               !authoritativeReconcile &&
@@ -6402,6 +6404,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       overrideMessage:
           'Applied ${applyStats.appliedRows} change${applyStats.appliedRows == 1 ? '' : 's'}: ${applyStats.insertedRows} inserted, ${applyStats.updatedRows} updated, ${applyStats.deletedRows} deleted; ${applyStats.protectedRows} post-upload local change${applyStats.protectedRows == 1 ? '' : 's'} protected; ${pendingAfterApply.length} quarantined.',
     );
+    // Publish the freshly recomputed post-apply fingerprint only after the
+    // server has committed this download. The scheduler requires a heartbeat
+    // newer than completedAt, so it cannot compare a pre-repair inventory.
+    await _syncWithControlPlane();
     await _controlPlaneClient.clearMultiWriterTransfer(
       job.id,
       batchId: job.batchId!,

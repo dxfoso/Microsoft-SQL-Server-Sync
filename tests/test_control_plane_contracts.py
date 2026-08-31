@@ -1247,6 +1247,31 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertIn("if (tableHasActiveJobs)", escalation)
 
+    def test_repair_convergence_requires_post_completion_fingerprints(self):
+        source = read_text("business/control_plane.tru")
+        refresh = source.split(
+            "function repair_resolution_fingerprints_are_fresh(", 1
+        )[1].split("function sync_gate_payload_for_owners(", 1)[0]
+        release = source.split(
+            "function release_durable_origin_automatable_issues(", 1
+        )[1].split("function release_primary_source_automatable_issues(", 1)[0]
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        download = agent.split(
+            "Future<void> _processSnapshotRelayDownloadJob(", 1
+        )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
+
+        self.assertIn("direction: 'download'", refresh)
+        self.assertIn("status: 'completed'", refresh)
+        self.assertIn("date.diff(heartbeatAt, latestCompletedAt, 'ms') <= 0", refresh)
+        self.assertEqual(refresh.count("resolutionFingerprintsFresh &&"), 3)
+        self.assertIn("durable_origin_nonconvergence_fresh", refresh)
+        self.assertIn("reason == 'durable_origin_nonconvergence'", release)
+        self.assertIn("durable_origin_repair_was_interrupted(", release)
+        self.assertIn("canonicalFullMerge ||", download)
+        complete_pos = download.index("activeJob = await _controlPlaneClient.completeJob(")
+        publish_pos = download.index("await _syncWithControlPlane();", complete_pos)
+        self.assertGreater(publish_pos, complete_pos)
+
     def test_primary_source_releases_old_divergence_gate_and_repairs_ambiguous_baseline(self):
         source = read_text("business/control_plane.tru")
         release = source.split(
