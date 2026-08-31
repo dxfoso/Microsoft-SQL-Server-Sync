@@ -1218,6 +1218,35 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("durable_origin_nonconvergence", refresh)
         self.assertIn("no value was guessed", refresh)
 
+    def test_legacy_durable_origin_repair_bypasses_unbounded_scheduler_scan(self):
+        source = read_text("business/control_plane.tru")
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        release = source.split(
+            "function release_durable_origin_automatable_issues(", 1
+        )[1].split("function release_primary_source_automatable_issues(", 1)[0]
+        escalation = source.split(
+            "function raise_persistent_union_divergence_issues(", 1
+        )[1].split("function sync_table_reported_fingerprint(", 1)[0]
+
+        release_pos = scheduler.index(
+            "const durableOriginRepairTables = release_durable_origin_automatable_issues("
+        )
+        cache_pos = scheduler.index("const tableCaches = ownerAgents.map(")
+        self.assertLess(release_pos, cache_pos)
+        self.assertIn("if (durableOriginRepairTables.length > 0)", scheduler)
+        self.assertIn("raise_persistent_union_divergence_issues(", scheduler)
+        self.assertIn("return durableOriginRepairJobs;", scheduler)
+        self.assertIn("function release_durable_origin_automatable_issues(ownerUserId: string): array<string>", source)
+        self.assertIn("return releasedTables;", release)
+        self.assertIn("reason == 'durable_origin_reconcile_pending'", release)
+        self.assertIn(
+            "if (conflictSourceClient.length == 0 && !everyOwnerAgentOnline)",
+            escalation,
+        )
+        self.assertIn("if (tableHasActiveJobs)", escalation)
+
     def test_primary_source_releases_old_divergence_gate_and_repairs_ambiguous_baseline(self):
         source = read_text("business/control_plane.tru")
         release = source.split(

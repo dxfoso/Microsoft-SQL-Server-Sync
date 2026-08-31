@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 325)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 330)}
         observed_ids = set()
 
         for row in rows:
@@ -64,6 +64,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn('NULLIF("updatedAt", \'\')::timestamptz', probe)
         self.assertNotIn('WHERE "ownerUserId" IN (SELECT DISTINCT "ownerUserId" FROM agents WHERE "conflictPolicy"=', probe)
         self.assertNotIn("replicationPassword", probe)
+
+    def test_production_scheduler_probe_uses_stable_namespaced_resources(self):
+        probe = read_text("scripts/query_production_scheduler_status.ps1")
+
+        self.assertIn("ToBase64String", probe)
+        self.assertIn("base64 -d | bash", probe)
+        self.assertIn("kubectl get cronjob sql-sync-auto-tick -n $namespace", probe)
+        self.assertIn("kubectl get jobs -n $namespace", probe)
+        self.assertIn("kubectl logs deployment/sql-sync-back -n $namespace", probe)
+        self.assertIn("-o custom-columns=", probe)
+        self.assertNotIn("jsonpath", probe)
+        self.assertNotIn(".items[0]", probe)
 
     def test_pos_inventory_normalization_is_narrow_and_exact_transport_remains(self):
         fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")

@@ -4576,8 +4576,31 @@ function order_owner_due_table_candidates(dueTables: array<string>, ownerAgents:
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
-  release_durable_origin_automatable_issues(normalizedOwnerUserId);
+  const durableOriginRepairTables = release_durable_origin_automatable_issues(normalizedOwnerUserId);
   release_primary_source_automatable_issues(normalizedOwnerUserId);
+  // Legacy input gates already identify the exact tables needing durable-origin
+  // reconstruction. Queue those bounded tables directly before building the
+  // owner's complete policy/table-state caches. On owners with thousands of
+  // enrolled tables, materializing the complete scheduler expression merely to
+  // rediscover two known repair tables can exceed the TRU request arena.
+  if (durableOriginRepairTables.length > 0) {
+    let repairOwnerAgents = [];
+    for (const agent of sourceAgents) {
+      if (string.from(agent.ownerUserId) == normalizedOwnerUserId &&
+          agent_sync_enabled(agent)) {
+        repairOwnerAgents = repairOwnerAgents.concat([agent]);
+      }
+    }
+    const durableOriginRepairJobs = raise_persistent_union_divergence_issues(
+      normalizedOwnerUserId,
+      durableOriginRepairTables,
+      repairOwnerAgents,
+      list_table_sync_policies_for_scope(normalizedOwnerUserId)
+    );
+    // An offline participant or an already-active table is retryable state, not
+    // permission to fall through to the owner's full scheduler scan.
+    return durableOriginRepairJobs;
+  }
   // A genuine Needs input issue can only continue after a user decision.
   // Resolving issues must still refresh fingerprints so a completed automatic
   // repair can reopen the gate without waiting for an offline client.
@@ -5183,11 +5206,11 @@ function sync_owner_has_needs_input_table_issues(ownerUserId: string? = null): b
   return false;
 }
 
-function release_durable_origin_automatable_issues(ownerUserId: string): int {
+function release_durable_origin_automatable_issues(ownerUserId: string): array<string> {
   const normalizedOwnerUserId = ownerUserId.trim();
   const existingIssues = sync_table_issues_for_owner(normalizedOwnerUserId);
   let nextIssues = [];
-  let releasedCount = 0;
+  let releasedTables = [];
   for (const issue of existingIssues) {
     const status = string.from(issue.status ?? '').trim().toLowerCase();
     const reason = string.from(issue.reason ?? '').trim().toLowerCase();
@@ -5208,15 +5231,20 @@ function release_durable_origin_automatable_issues(ownerUserId: string): int {
         updatedAt: now_iso(),
         resolvedAt: now_iso()
       }]);
-      releasedCount += 1;
+      releasedTables = releasedTables.concat([string.from(issue.table)]);
+    } else if (status == 'ready' &&
+               reason == 'durable_origin_reconcile_pending' &&
+               action == 'automatic_durable_origin_reconcile') {
+      nextIssues = nextIssues.concat([issue]);
+      releasedTables = releasedTables.concat([string.from(issue.table)]);
     } else {
       nextIssues = nextIssues.concat([issue]);
     }
   }
-  if (releasedCount > 0) {
+  if (releasedTables.length > 0) {
     save_sync_table_issues_for_owner(normalizedOwnerUserId, nextIssues);
   }
-  return releasedCount;
+  return releasedTables;
 }
 
 function release_primary_source_automatable_issues(ownerUserId: string): int {
@@ -5500,6 +5528,9 @@ function raise_persistent_union_divergence_issues(ownerUserId: string, tables: a
           continue;
         }
       }
+      if (tableHasActiveJobs) {
+        continue;
+      }
     }
     // A Primary data source is an explicit, durable owner policy. Use it to
     // repair same-primary-key content automatically after the guarded union
@@ -5568,6 +5599,9 @@ function raise_persistent_union_divergence_issues(ownerUserId: string, tables: a
     // Leave the table retryable so the next scheduler pass can repair it after
     // all enabled participants reconnect.
     if (conflictSourceClient.length != 0 && !everyOwnerAgentOnline) {
+      continue;
+    }
+    if (conflictSourceClient.length == 0 && !everyOwnerAgentOnline) {
       continue;
     }
     nextIssues = replace_sync_table_issue_in_values(nextIssues, {
