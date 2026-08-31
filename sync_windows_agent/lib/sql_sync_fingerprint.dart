@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
@@ -8,8 +10,8 @@ const int _sqlSyncFingerprintFieldSeparator = 31;
 const int _sqlSyncFingerprintRowSeparator = 29;
 const int _sqlSyncFingerprintEscapeSeparator = 30;
 const int kSqlSyncRangeBucketCount = 16;
-const String kSqlSyncTableFingerprintVersion = 'v2';
-const String kSqlSyncRangeFingerprintVersion = 'v2';
+const String kSqlSyncTableFingerprintVersion = 'v3';
+const String kSqlSyncRangeFingerprintVersion = 'v3';
 const String kSqlSyncRangeUnionSourcePrefix = 'server-range-union-v1:';
 
 class SqlSyncUploadInventoryMetadata {
@@ -48,6 +50,9 @@ SqlSyncUploadInventoryMetadata resolveSqlSyncUploadInventoryMetadata({
 }
 
 class SqlSyncFingerprintAccumulator {
+  SqlSyncFingerprintAccumulator({this.table = ''});
+
+  final String table;
   int _rowCount = 0;
   final _digestSink = _SingleDigestSink();
   late final ByteConversionSink _hashSink = sha256.startChunkedConversion(
@@ -62,7 +67,15 @@ class SqlSyncFingerprintAccumulator {
       throw StateError('A completed SQL sync fingerprint cannot accept rows.');
     }
     for (final column in columns) {
-      _addEncodedString(encodeSqlSyncFingerprintField(row[column.name]));
+      _addEncodedString(
+        encodeSqlSyncFingerprintField(
+          canonicalSqlSyncInventoryValue(
+            table: table,
+            column: column,
+            value: row[column.name],
+          ),
+        ),
+      );
       _addByte(_sqlSyncFingerprintFieldSeparator);
     }
     _addByte(_sqlSyncFingerprintRowSeparator);
@@ -170,12 +183,14 @@ int sqlSyncRangeBucketForRow({
 }
 
 SqlSyncRangeFingerprintManifest buildSqlSyncRangeFingerprintManifest({
+  String table = '',
   required List<SqlSyncColumnDefinition> columns,
   required List<String> keyColumns,
   required Iterable<Map<String, dynamic>> rows,
   int bucketCount = kSqlSyncRangeBucketCount,
 }) {
   final accumulator = SqlSyncRangeFingerprintAccumulator(
+    table: table,
     columns: columns,
     keyColumns: keyColumns,
     bucketCount: bucketCount,
@@ -188,13 +203,14 @@ SqlSyncRangeFingerprintManifest buildSqlSyncRangeFingerprintManifest({
 
 class SqlSyncRangeFingerprintAccumulator {
   SqlSyncRangeFingerprintAccumulator({
+    this.table = '',
     required this.columns,
     required this.keyColumns,
     this.bucketCount = kSqlSyncRangeBucketCount,
-  }) : _table = SqlSyncFingerprintAccumulator(),
+  }) : _table = SqlSyncFingerprintAccumulator(table: table),
        _buckets = List<SqlSyncFingerprintAccumulator>.generate(
          bucketCount,
-         (_) => SqlSyncFingerprintAccumulator(),
+         (_) => SqlSyncFingerprintAccumulator(table: table),
          growable: false,
        ) {
     if (keyColumns.isEmpty || bucketCount <= 0) {
@@ -202,6 +218,7 @@ class SqlSyncRangeFingerprintAccumulator {
     }
   }
 
+  final String table;
   final List<SqlSyncColumnDefinition> columns;
   final List<String> keyColumns;
   final int bucketCount;
@@ -225,6 +242,65 @@ class SqlSyncRangeFingerprintAccumulator {
       _buckets.map((bucket) => bucket.build()),
     ),
   );
+}
+
+/// Returns a comparison-only representation for explicitly proven SQL float
+/// artifacts. Transport and canonical row hashes intentionally remain exact.
+///
+/// Historical production copies contain two POS totals that differ from their
+/// integer value by exactly one IEEE-754 ULP. SQL Server and the application
+/// treat those values as the same amount. This narrow table/column allowlist
+/// prevents that representation noise from blocking anti-entropy without
+/// hiding any other fractional value or any accounting-voucher difference.
+Object? canonicalSqlSyncInventoryValue({
+  required String table,
+  required SqlSyncColumnDefinition column,
+  required Object? value,
+}) {
+  if (value == null || !_isPosOrderInventoryAmount(table, column)) {
+    return value;
+  }
+  final number = double.tryParse(value.toString());
+  if (number == null || !number.isFinite || number.abs() > 9007199254740992) {
+    return value;
+  }
+  final integer = number.roundToDouble();
+  if ((number - integer).abs() > _sqlSyncDoubleUlp(number)) {
+    return value;
+  }
+  return integer == 0 ? '0' : integer.toStringAsFixed(0);
+}
+
+bool _isPosOrderInventoryAmount(String table, SqlSyncColumnDefinition column) {
+  final normalizedTable =
+      table
+          .trim()
+          .toLowerCase()
+          .replaceAll('[', '')
+          .replaceAll(']', '')
+          .split('::')
+          .last
+          .split('.')
+          .last;
+  final normalizedColumn = column.name.trim().toLowerCase();
+  final normalizedType = column.sqlType.trim().toLowerCase();
+  return normalizedTable == 'posorder000' &&
+      (normalizedColumn == 'cashed' || normalizedColumn == 'subtotal') &&
+      (normalizedType == 'float' || normalizedType == 'real');
+}
+
+double _sqlSyncDoubleUlp(double value) {
+  final absolute = value.abs();
+  if (absolute == 0) {
+    return double.minPositive;
+  }
+  final bits = ByteData(8)..setFloat64(0, absolute, Endian.big);
+  final exponentBits = (bits.getUint64(0, Endian.big) >> 52) & 0x7ff;
+  if (exponentBits == 0) {
+    return double.minPositive;
+  }
+  final exponent = exponentBits - 1023;
+  return math.pow(2, exponent - 52).toDouble();
 }
 
 Set<int> parseSqlSyncRangeUnionBuckets(

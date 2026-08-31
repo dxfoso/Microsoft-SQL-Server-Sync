@@ -35,6 +35,11 @@ COLUMNS = [
     {"name": "ChangedAt", "sqlType": "datetime2", "maxLength": 8, "precision": 0, "scale": 3, "isIdentity": False, "isComputed": False},
     {"name": "Payload", "sqlType": "varbinary", "maxLength": 32, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
 ]
+POS_INVENTORY_COLUMNS = [
+    {"name": "GUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "Cashed", "sqlType": "float", "maxLength": 8, "precision": 53, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "SubTotal", "sqlType": "float", "maxLength": 8, "precision": 53, "scale": 0, "isIdentity": False, "isComputed": False},
+]
 INVOICE_LINE_COLUMNS = [
     {"name": "GUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
     {"name": "ParentGUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
@@ -566,11 +571,12 @@ WHERE Id = {id_};
         request_path.unlink(missing_ok=True)
 
 
-def fingerprint_row(row_value):
+def fingerprint_row(row_value, *, columns=COLUMNS, table=""):
     request = {
         "operation": "fingerprint-row",
-        "columns": COLUMNS,
+        "columns": columns,
         "row": row_value,
+        "table": table,
     }
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
         json.dump(request, handle)
@@ -1913,6 +1919,35 @@ VALUES
         (42, "FLOAT-LIVE-983-VELVET", "Voucher 983 Velvet", "دقة 983", "13934625", "0x999994"),
         (43, "FLOAT-LIVE-983-AL", "Voucher 983 Al", "دقة 983", "13934600", "0x999993"),
     ]
+    pos_noise = {
+        "GUID": "1D584F50-2E55-4119-A743-F09850C3E1B3",
+        "Cashed": "2488999.9999999995",
+        "SubTotal": "2488999.9999999995",
+    }
+    pos_exact = {
+        "GUID": pos_noise["GUID"],
+        "Cashed": "2489000.0",
+        "SubTotal": "2489000.0",
+    }
+    pos_noise_proof = fingerprint_row(
+        pos_noise,
+        columns=POS_INVENTORY_COLUMNS,
+        table="AmnDb048::POSOrder000",
+    )
+    pos_exact_proof = fingerprint_row(
+        pos_exact,
+        columns=POS_INVENTORY_COLUMNS,
+        table="dbo.POSOrder000",
+    )
+    if pos_noise_proof["tableChecksum"] != pos_exact_proof["tableChecksum"]:
+        raise AssertionError(
+            f"One-ULP POS inventory noise did not normalize: {pos_noise_proof} / {pos_exact_proof}"
+        )
+    if pos_noise_proof["rowHash"] == pos_exact_proof["rowHash"]:
+        raise AssertionError(
+            "POS semantic inventory normalization altered exact canonical row hashing"
+        )
+
     live_float_proofs = {}
     for id_, code, name, arabic, expected, payload in float_cases:
         captured_float, captured_real = capture_float_transport_values(DATABASES[0], id_)
@@ -2222,6 +2257,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
             "framed-hex-control-character-row-transport",
             "lossless-float-real-9999999-capture-roundtrip",
+            "pos-one-ulp-inventory-normalization-keeps-exact-row-hash",
             "empty-delta-fresh-inventory-repairs-historical-float-drift",
             "initial-three-client-primary-key-union-bootstrap",
             "configured-primary-source-three-client-automatic-repair",

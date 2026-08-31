@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 309)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 313)}
         observed_ids = set()
 
         for row in rows:
@@ -52,6 +52,49 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("manualPendingTables", probe)
         self.assertIn("'snapshotting'", probe)
         self.assertNotIn("replicationPassword", probe)
+
+    def test_pos_inventory_normalization_is_narrow_and_exact_transport_remains(self):
+        fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        control_plane = read_text("business/control_plane.tru")
+        docker_scenarios = read_text("tests/docker-sync/run_scenarios.py")
+
+        self.assertIn("kSqlSyncTableFingerprintVersion = 'v3'", fingerprint)
+        self.assertIn("kSqlSyncRangeFingerprintVersion = 'v3'", fingerprint)
+        self.assertIn("normalizedTable == 'posorder000'", fingerprint)
+        self.assertIn("normalizedColumn == 'cashed'", fingerprint)
+        self.assertIn("normalizedColumn == 'subtotal'", fingerprint)
+        self.assertIn("_sqlSyncDoubleUlp(number)", fingerprint)
+        row_hash_body = fingerprint.split("String canonicalSqlSyncRowSha256(", 1)[1]
+        self.assertNotIn("canonicalSqlSyncInventoryValue", row_hash_body)
+        self.assertIn("SqlSyncFingerprintAccumulator(table: job.table)", agent)
+        self.assertIn("const int kSyncProtocolVersion = 5", api)
+        self.assertIn("function sync_protocol_version(): int {\n  return 5;", control_plane)
+        self.assertIn(
+            "pos-one-ulp-inventory-normalization-keeps-exact-row-hash",
+            docker_scenarios,
+        )
+
+    def test_package_scoped_analyzer_and_declared_protocol_selector_are_pinned(self):
+        contracts = read_text("tests/test_control_plane_contracts.py")
+        verification = read_text("tests/run_sync_verification.ps1")
+
+        self.assertIn(
+            "def test_protocol_v5_unions_full_snapshots_for_multi_client_anti_entropy(self):",
+            contracts,
+        )
+        self.assertIn(
+            "-WorkingDirectory (Join-Path $repoRoot 'sync_windows_agent')",
+            verification,
+        )
+
+    def test_verification_runner_checks_native_exit_codes(self):
+        verification = read_text("tests/run_sync_verification.ps1")
+
+        self.assertIn("function Invoke-NativeChecked", verification)
+        self.assertIn("if ($LASTEXITCODE -ne 0)", verification)
+        self.assertIn("throw", verification)
 
     def test_production_release_verifier_uses_stable_public_and_namespaced_probes(self):
         verifier = read_text("scripts/verify_production_release.ps1")
@@ -1552,12 +1595,12 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
         dart_tests = read_text("sync_windows_agent/test/sql_sync_fingerprint_test.dart")
 
-        self.assertIn("kSqlSyncTableFingerprintVersion = 'v2'", fingerprint)
+        self.assertIn("kSqlSyncTableFingerprintVersion = 'v3'", fingerprint)
         self.assertIn("sha256.startChunkedConversion", fingerprint)
         self.assertIn("utf8.encode(value)", fingerprint)
         self.assertNotIn("_fnv64OffsetBasis", fingerprint)
-        self.assertIn("kSqlSyncRangeFingerprintVersion = 'v2'", fingerprint)
-        self.assertIn("string.from(parts[0]) != 'v2'", backend)
+        self.assertIn("kSqlSyncRangeFingerprintVersion = 'v3'", fingerprint)
+        self.assertIn("string.from(parts[0]) != 'v3'", backend)
         self.assertIn(
             "fingerprint distinguishes close lossless SQL float values",
             dart_tests,

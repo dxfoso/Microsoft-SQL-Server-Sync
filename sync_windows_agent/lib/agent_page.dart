@@ -5885,7 +5885,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       return;
     }
     logStartupEvent(
-      'Sync protocol changed from ${_syncState.protocolVersion} to ${job.protocolVersion} or epoch changed from ${_syncState.syncEpoch.isEmpty ? '(none)' : _syncState.syncEpoch} to ${job.syncEpoch}; preparing protocol-v4 processing.',
+      'Sync protocol changed from ${_syncState.protocolVersion} to ${job.protocolVersion} or epoch changed from ${_syncState.syncEpoch.isEmpty ? '(none)' : _syncState.syncEpoch} to ${job.syncEpoch}; preparing protocol-v5 processing.',
     );
     final epochChanged =
         _syncState.syncEpoch.isEmpty || _syncState.syncEpoch != job.syncEpoch;
@@ -6713,6 +6713,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     if (completeSnapshot) {
       if (primaryKeyColumns.isNotEmpty) {
         final manifest = buildSqlSyncRangeFingerprintManifest(
+          table: job.table,
           columns: syncColumns,
           keyColumns: primaryKeyColumns,
           rows: rows,
@@ -6720,7 +6721,7 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         snapshotChecksum = manifest.tableChecksum;
         rangeFingerprint = manifest.encode();
       } else {
-        final accumulator = SqlSyncFingerprintAccumulator();
+        final accumulator = SqlSyncFingerprintAccumulator(table: job.table);
         for (final row in rows) {
           accumulator.addRow(syncColumns, row);
         }
@@ -9200,10 +9201,11 @@ ORDER BY r.display_name;
     }
 
     const batchSize = 200;
-    final accumulator = SqlSyncFingerprintAccumulator();
+    final accumulator = SqlSyncFingerprintAccumulator(table: table);
     final rangeAccumulator = keyColumns.isEmpty
         ? null
         : SqlSyncRangeFingerprintAccumulator(
+            table: table,
             columns: writableColumns,
             keyColumns: keyColumns,
           );

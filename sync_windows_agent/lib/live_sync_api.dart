@@ -12,7 +12,7 @@ import 'sync_state.dart';
 import 'sync_transfer_cache.dart';
 import 'sync_transfer_policy.dart';
 
-const int kSyncProtocolVersion = 4;
+const int kSyncProtocolVersion = 5;
 const String _defaultControlPlaneUrl = String.fromEnvironment(
   'BACKEND_BASE_URL',
   defaultValue: 'https://sync.velvet-leaf.com/call',

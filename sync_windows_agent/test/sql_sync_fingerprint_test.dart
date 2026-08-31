@@ -44,7 +44,7 @@ void main() {
     }
 
     expect(single.build(), split.build());
-    expect(single.build(), startsWith('v2:3:'));
+    expect(single.build(), startsWith('v3:3:'));
     expect(single.build().split(':').last, hasLength(64));
   });
 
@@ -100,8 +100,8 @@ void main() {
         SqlSyncFingerprintAccumulator()
           ..addRow(columns, {'GUID': guid, 'Debit': velvetValue});
 
-    expect(rounded.build(), startsWith('v2:1:'));
-    expect(lossless.build(), startsWith('v2:1:'));
+    expect(rounded.build(), startsWith('v3:1:'));
+    expect(lossless.build(), startsWith('v3:1:'));
     expect(rounded.build(), isNot(lossless.build()));
     expect(
       canonicalSqlSyncRowSha256(columns, {'GUID': guid, 'Debit': alValue}),
@@ -111,6 +111,117 @@ void main() {
           'Debit': velvetValue,
         }),
       ),
+    );
+  });
+
+  test(
+    'POS inventory ignores only proven one-ULP integer representation noise',
+    () {
+      const columns = [
+        SqlSyncColumnDefinition(
+          name: 'GUID',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Cashed',
+          sqlType: 'float',
+          maxLength: 8,
+          precision: 53,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'SubTotal',
+          sqlType: 'float',
+          maxLength: 8,
+          precision: 53,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ];
+      const noisy = {
+        'GUID': '1D584F50-2E55-4119-A743-F09850C3E1B3',
+        'Cashed': '2488999.9999999995',
+        'SubTotal': '2488999.9999999995',
+      };
+      const exact = {
+        'GUID': '1D584F50-2E55-4119-A743-F09850C3E1B3',
+        'Cashed': '2489000.0',
+        'SubTotal': '2489000.0',
+      };
+
+      final noisyInventory = SqlSyncFingerprintAccumulator(
+        table: 'AmnDb048::POSOrder000',
+      )..addRow(columns, noisy);
+      final exactInventory = SqlSyncFingerprintAccumulator(
+        table: 'dbo.POSOrder000',
+      )..addRow(columns, exact);
+
+      expect(noisyInventory.build(), exactInventory.build());
+      expect(
+        canonicalSqlSyncRowSha256(columns, noisy),
+        isNot(canonicalSqlSyncRowSha256(columns, exact)),
+        reason: 'lossless transport and row conflict ordering stay exact',
+      );
+    },
+  );
+
+  test('inventory normalization remains table column and ULP bounded', () {
+    const debit = SqlSyncColumnDefinition(
+      name: 'Debit',
+      sqlType: 'float',
+      maxLength: 8,
+      precision: 53,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+    const cashed = SqlSyncColumnDefinition(
+      name: 'Cashed',
+      sqlType: 'float',
+      maxLength: 8,
+      precision: 53,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+
+    expect(
+      canonicalSqlSyncInventoryValue(
+        table: 'AmnDb048::ce000',
+        column: debit,
+        value: '1644965',
+      ),
+      isNot(
+        canonicalSqlSyncInventoryValue(
+          table: 'AmnDb048::ce000',
+          column: debit,
+          value: '1644970',
+        ),
+      ),
+    );
+    expect(
+      canonicalSqlSyncInventoryValue(
+        table: 'other_table',
+        column: cashed,
+        value: '2488999.9999999995',
+      ),
+      '2488999.9999999995',
+    );
+    expect(
+      canonicalSqlSyncInventoryValue(
+        table: 'POSOrder000',
+        column: cashed,
+        value: '2488999.999999',
+      ),
+      '2488999.999999',
     );
   });
 
@@ -355,7 +466,7 @@ void main() {
         throwsFormatException,
       );
       expect(
-        SqlSyncRangeFingerprintManifest.tryParse('v2|16|1|checksum|too-short'),
+        SqlSyncRangeFingerprintManifest.tryParse('v3|16|1|checksum|too-short'),
         isNull,
       );
     },
@@ -368,12 +479,12 @@ void main() {
         payloadRowCount: 0,
         completeRowCount: 731,
         completeTableChecksum: '731:fresh-lossless-float-checksum',
-        completeRangeFingerprint: 'v2|16|731|fresh|buckets',
+        completeRangeFingerprint: 'v3|16|731|fresh|buckets',
       );
 
       expect(metadata.rowCount, 731);
       expect(metadata.tableChecksum, '731:fresh-lossless-float-checksum');
-      expect(metadata.rangeFingerprint, 'v2|16|731|fresh|buckets');
+      expect(metadata.rangeFingerprint, 'v3|16|731|fresh|buckets');
     },
   );
 

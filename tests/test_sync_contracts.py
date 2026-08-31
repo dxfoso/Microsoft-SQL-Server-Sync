@@ -899,7 +899,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("shouldApplyLocalRowCount", apply_state_body)
         self.assertNotIn("rowCount: job.rowCount,\n      message:", apply_state_body)
 
-    def test_protocol_v4_multi_writer_is_hashed_delta_only_and_fails_closed_without_baseline(self):
+    def test_protocol_v5_multi_writer_is_hashed_delta_only_and_fails_closed_without_baseline(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         sync_state = read_text("sync_windows_agent/lib/sync_state.dart")
@@ -921,9 +921,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("automaticBaselineMustWaitForUnion", agent_page)
         self.assertIn("probeStatus == 'baseline' && rowCount > 0", automatic_discovery)
         self.assertIn("previousVersion >= 0", snapshot_body)
-        self.assertIn("const int kSyncProtocolVersion = 4", client_api)
-        self.assertEqual(control_plane.count("field protocolVersion: int? min=3 max=4"), 2)
-        self.assertIn("field protocolVersion: int min=3 max=4", control_plane)
+        self.assertIn("const int kSyncProtocolVersion = 5", client_api)
+        self.assertEqual(control_plane.count("field protocolVersion: int? min=3 max=5"), 2)
+        self.assertIn("field protocolVersion: int min=3 max=5", control_plane)
         self.assertIn("__sync_row_hash", snapshot_body)
         self.assertIn("__sync_change_version", snapshot_body)
         self.assertIn("__sync_origin_client", snapshot_body)
@@ -970,7 +970,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn(
             "await _ensureChangeTrackingEnabledForDatabase(", download_body
         )
-        self.assertIn("SqlSyncFingerprintAccumulator()", snapshot_body)
+        self.assertIn("SqlSyncFingerprintAccumulator(table: job.table)", snapshot_body)
         self.assertIn("consistentSnapshot.rowCount", snapshot_body)
         self.assertIn("job.rowCount != consistentSnapshot.rowCount", snapshot_body)
         self.assertIn("sync.snapshot.inventory_refreshed", snapshot_body)

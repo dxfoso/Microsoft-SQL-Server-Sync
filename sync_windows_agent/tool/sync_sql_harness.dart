@@ -53,7 +53,9 @@ void main(List<String> arguments) {
         .map((column) => _column(Map<String, dynamic>.from(column as Map)))
         .toList(growable: false);
     final row = Map<String, dynamic>.from(request['row'] as Map);
-    final accumulator = SqlSyncFingerprintAccumulator()..addRow(columns, row);
+    final accumulator = SqlSyncFingerprintAccumulator(
+      table: request['table']?.toString() ?? '',
+    )..addRow(columns, row);
     stdout.write(
       jsonEncode({
         'tableChecksum': accumulator.build(),
