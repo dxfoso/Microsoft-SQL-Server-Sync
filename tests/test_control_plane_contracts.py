@@ -350,7 +350,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertEqual(live_state.count("live_state_manual_sync_rows_for_owner_ids"), 1)
         self.assertIn("lastChangeCheckAt: periodic_sync_last_checked_at_for_owner", source)
         self.assertIn("lastChangeCheckAt", models)
-        self.assertIn("DataColumn(label: Text('Last activity'))", frontend)
+        self.assertIn("ValueKey('sync-last-activity-${agent.clientName}')", frontend)
         self.assertIn("Widget _buildLastActivityCell(AdminAgent agent)", frontend)
         self.assertIn("Last change check: ${_formatTimestamp(agent.lastChangeCheckAt)}", frontend)
 
@@ -941,6 +941,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("db.atomicTransaction(() =>", selector)
         self.assertIn("conflictPolicy: 'latest_change_wins'", selector)
         self.assertIn("conflictPolicy: 'primary_source'", selector)
+        self.assertIn("release_primary_source_automatable_issues(ownerUserId)", selector)
+        self.assertIn("releasedIssueCount", selector)
         self.assertLess(
             selector.index("conflictPolicy: 'latest_change_wins'"),
             selector.index("conflictPolicy: 'primary_source'"),
@@ -1155,7 +1157,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (string_array_contains(dueTables, table))", scheduler)
         self.assertIn("persistentUnionDivergenceTables.concat([table])", scheduler)
         self.assertIn("raise_persistent_union_divergence_issues(", scheduler)
-        self.assertIn("return [];", scheduler.split(
+        self.assertIn("return automaticRepairJobs;", scheduler.split(
             "raise_persistent_union_divergence_issues(", 1
         )[1].split("dueTables = order_owner_due_table_candidates", 1)[0])
         self.assertIn("reason: 'persistent_union_divergence'", escalation)
@@ -1165,6 +1167,55 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("save_sync_table_issues_for_owner", escalation.split(
             "for (const table", 1
         )[1].split("if (!changed)", 1)[0])
+
+    def test_persistent_divergence_uses_configured_primary_source_automatically(self):
+        source = read_text("business/control_plane.tru")
+        escalation = source.split(
+            "function raise_persistent_union_divergence_issues(", 1
+        )[1].split("function sync_table_reported_fingerprint(", 1)[0]
+        refresh = source.split(
+            "function refresh_owner_baseline_table_issues(", 1
+        )[1].split("function sync_gate_payload_for_owners(", 1)[0]
+
+        self.assertIn("conflict_source_client_for_owner(ownerUserId)", escalation)
+        self.assertIn("everyOwnerAgentOnline", escalation)
+        self.assertIn("sync_agents_enabled_for_table(", escalation)
+        self.assertIn("create_authoritative_reconcile_batch(", escalation)
+        self.assertIn("action: 'automatic_primary_source_reconcile'", escalation)
+        self.assertIn("status: 'resolving'", escalation)
+        self.assertIn("Target-only rows remain preserved", escalation)
+        self.assertIn("deletes still require explicit durable tombstones", escalation)
+        self.assertIn("if (createdJobs.length == 0)", escalation)
+        self.assertIn("return createdJobs;", escalation)
+        self.assertIn("automatic_primary_source_nonconvergence", refresh)
+        self.assertIn("No target-only row was deleted", refresh)
+        self.assertNotIn("authoritativeReplace", escalation)
+
+    def test_primary_source_releases_old_divergence_gate_and_repairs_ambiguous_baseline(self):
+        source = read_text("business/control_plane.tru")
+        release = source.split(
+            "function release_primary_source_automatable_issues(", 1
+        )[1].split("function sync_owner_has_resolving_table_issues(", 1)[0]
+        planner = source.split("function sync_table_baseline_plan(", 1)[1].split(
+            "function enabled_sync_policy_tables_for_agent(", 1
+        )[0]
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+
+        self.assertIn("reason == 'persistent_union_divergence'", release)
+        self.assertIn("status: 'ready'", release)
+        self.assertIn("reason: 'primary_source_selected'", release)
+        self.assertIn("automatic non-destructive repair", release)
+        self.assertIn(
+            "release_primary_source_automatable_issues(normalizedOwnerUserId)",
+            scheduler,
+        )
+        self.assertIn("configuredConflictSource", planner)
+        self.assertIn("mode: 'reconcile'", planner)
+        self.assertIn("configuredSourceAgent", planner)
+        self.assertIn("Target-only rows remain preserved", planner)
+        self.assertIn("explicit durable tombstones", planner)
 
     def test_failed_union_download_gets_one_bounded_automatic_retry(self):
         source = read_text("business/control_plane.tru")
@@ -2192,7 +2243,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
 
         self.assertNotIn("Use as source", row_body)
         self.assertNotIn("initialSourceName: agent.clientName", row_body)
-        self.assertIn("wins only when synchronized changes conflict", row_body)
+        self.assertIn(
+            "wins row conflicts and automatically repairs persistent same-row divergence",
+            row_body,
+        )
+        self.assertIn("target-only rows are preserved", source)
+        self.assertIn("explicit deletes still require tombstones", source)
         self.assertIn("Normal non-conflicting changes still upload from every active client", source)
         self.assertNotIn("Replace Target Data", row_body)
 

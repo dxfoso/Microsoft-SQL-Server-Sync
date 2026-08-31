@@ -2666,7 +2666,7 @@ class _ClientsPageState extends State<ClientsPage> {
     return Tooltip(
       message:
           selected
-              ? 'This client wins only when synchronized changes conflict'
+              ? 'This client wins row conflicts and automatically repairs persistent same-row divergence'
               : 'Select this client as the exclusive conflict source',
       child: Checkbox(
         key: ValueKey('client-conflict-source-${agent.clientName}'),
@@ -2725,7 +2725,7 @@ class _ClientsPageState extends State<ClientsPage> {
       ),
       child: Text(
         hasSingleSource
-            ? 'Conflict policy: ${selectedSources.single} is the source of truth only when the same row or unique business key conflicts. Normal non-conflicting changes still upload from every active client.'
+            ? 'Conflict policy: ${selectedSources.single} is the source of truth when the same row or unique business key conflicts. Persistent same-row fingerprint divergence is repaired automatically from this source; target-only rows are preserved and explicit deletes still require tombstones. Normal non-conflicting changes still upload from every active client.'
             : 'Conflict policy: no source client is selected. The server accepts the most recent committed change; exact timestamp ties use deterministic server receipt order.',
         style: TextStyle(
           color: AppTokens.of(context).ink2,
@@ -4103,14 +4103,14 @@ class _ClientsPageState extends State<ClientsPage> {
       agent != null
           ? _tableStateFor(agent, issue.table)
           : AdminTableState(
-              table: issue.table,
-              enabled: true,
-              status: '',
-              lastSync: '',
-              progress: 0,
-              rowCount: 0,
-              message: '',
-            ),
+            table: issue.table,
+            enabled: true,
+            status: '',
+            lastSync: '',
+            progress: 0,
+            rowCount: 0,
+            message: '',
+          ),
       issue,
       action,
     );

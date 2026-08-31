@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 300)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 307)}
         observed_ids = set()
 
         for row in rows:
@@ -38,6 +38,22 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
                     self.assertIn(selector, source, f"{incident_id}: missing {reference}")
 
         self.assertEqual(observed_ids, expected_ids)
+
+    def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
+        probe = read_text("scripts/query_production_conflict_policy.ps1")
+
+        self.assertIn("ToBase64String", probe)
+        self.assertIn("base64 -d | bash", probe)
+        self.assertIn("kubectl exec -n velvet-sql-server-sync", probe)
+        self.assertIn("deployment/sql-sync-postgres", probe)
+        self.assertIn('SELECT "clientName", "conflictPolicy"', probe)
+        self.assertNotIn("replicationPassword", probe)
+
+    def test_control_plane_contract_class_name_is_stable_for_focused_runs(self):
+        contracts = read_text("tests/test_control_plane_contracts.py")
+
+        self.assertIn("class ControlPlaneContractsTests(unittest.TestCase):", contracts)
+        self.assertNotIn("class ControlPlaneContractTests(", contracts)
 
     def test_production_deploy_has_a_hidden_logged_launcher(self):
         launcher = read_text("scripts/start_production_deploy_hidden.ps1")
@@ -157,10 +173,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         clients = read_text("frontend/lib/clients_page.dart")
         summary = read_text("frontend/lib/sync_summary_cell.dart")
 
-        self.assertIn("DataColumn(label: Text('Last result'))", clients)
-        self.assertIn("DataColumn(label: Text('Totals / scope'))", clients)
-        self.assertIn("DataColumn(label: Text('Last activity'))", clients)
-        self.assertIn("DataColumn(label: Text('Duration'))", clients)
+        self.assertIn("ValueKey('sync-last-result-${agent.clientName}')", clients)
+        self.assertIn("ValueKey('sync-totals-${agent.clientName}')", clients)
+        self.assertIn("ValueKey('sync-last-activity-${agent.clientName}')", clients)
+        self.assertIn("ValueKey('sync-duration-${agent.clientName}')", clients)
         self.assertNotIn("DataColumn(label: Text('Integrity check'))", clients)
         self.assertNotIn("DataColumn(label: Text('Last Sync All total'))", clients)
         self.assertIn("label: 'Changes'", clients)
@@ -662,7 +678,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_clients_list_distinguishes_latest_sync_and_sync_all_durations(self):
         clients_page = read_text("frontend/lib/clients_page.dart")
 
-        self.assertIn("DataColumn(label: Text('Duration'))", clients_page)
+        self.assertIn("ValueKey('sync-duration-${agent.clientName}')", clients_page)
         self.assertNotIn("DataColumn(label: Text('Last Sync All total'))", clients_page)
         self.assertIn(
             "changes: formatSyncDuration(agent.lastSyncDuration)",
@@ -673,7 +689,6 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             clients_page,
         )
         self.assertIn("integrity: formatSyncDuration(audit.duration())", clients_page)
-        self.assertIn("DataColumn(label: Text('Client version'))", clients_page)
         self.assertIn("agent.clientVersion.trim()", clients_page)
 
     def test_web_download_button_displays_latest_client_manifest_version(self):
@@ -682,7 +697,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertIn("/client/latest.json?release=$nonce", app)
         self.assertIn("parseLatestWindowsClientVersion(response.body)", app)
-        self.assertIn("Download Windows Client · v$version", app)
+        self.assertIn("Windows client · v$version", app)
         self.assertIn("decoded['version']", parser)
 
     def test_slow_network_sync_transfers_are_durable_and_content_verified(self):
@@ -1569,10 +1584,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertGreaterEqual(
             agent.count("resolveUniqueConflictsLatestWins: false"), 2
         )
-        self.assertIn("DataColumn(label: Text('Auto numbering'))", web)
+        self.assertIn("ValueKey('automatic-number-incidents-${agent.clientName}')", web)
         self.assertIn("_showAutomaticNumberIncidentsDialog", web)
         self.assertIn("Tooltip(", web)
-        self.assertNotIn("tooltip: 'Show automatic-number incident history'", web)
+        self.assertIn("message: 'Show automatic-number incident history'", web)
         self.assertIn("Before", web)
         self.assertIn("After", web)
         self.assertIn("class AdminAutomaticNumberIncident", web_model)

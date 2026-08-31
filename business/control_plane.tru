@@ -4213,6 +4213,34 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       message: 'Clients report different pre-existing data; every client will upload a complete snapshot and receive the primary-key union.'
     };
   }
+  // An exclusive Primary data source is a durable user decision, so an
+  // otherwise ambiguous mixed-baseline repair does not need to ask again.
+  // Reconcile remains insert/update-only and explicit tombstones remain the
+  // only legal source of deletes on target clients.
+  const configuredConflictSource = conflict_source_client_for_owner(
+    string.from(participants[0].ownerUserId)
+  );
+  if (configuredConflictSource.length != 0) {
+    let configuredSourceAgent = null;
+    let configuredTargetAgents = [];
+    for (const participant of participants) {
+      if (normalize_user_name(string.from(participant.clientName)) == configuredConflictSource) {
+        configuredSourceAgent = participant;
+      } else {
+        configuredTargetAgents = configuredTargetAgents.concat([participant]);
+      }
+    }
+    if (configuredSourceAgent != null && configuredTargetAgents.length > 0) {
+      return {
+        mode: 'reconcile',
+        table,
+        participants,
+        sourceAgent: configuredSourceAgent,
+        targetAgents: configuredTargetAgents,
+        message: 'The configured Primary data source will establish the missing baseline automatically. Target-only rows remain preserved and deletes still require explicit durable tombstones.'
+      };
+    }
+  }
   return {
     mode: 'needs_input',
     table,
@@ -4548,6 +4576,7 @@ function order_owner_due_table_candidates(dueTables: array<string>, ownerAgents:
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  release_primary_source_automatable_issues(normalizedOwnerUserId);
   // A genuine Needs input issue can only continue after a user decision.
   // Resolving issues must still refresh fingerprints so a completed automatic
   // repair can reopen the gate without waiting for an offline client.
@@ -4691,11 +4720,13 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       }
     }
     if (persistentUnionDivergenceTables.length > 0) {
-      raise_persistent_union_divergence_issues(
+      const automaticRepairJobs = raise_persistent_union_divergence_issues(
         normalizedOwnerUserId,
-        persistentUnionDivergenceTables
+        persistentUnionDivergenceTables,
+        allOwnerAgents,
+        ownerPolicies
       );
-      return [];
+      return automaticRepairJobs;
     }
     dueTables = order_owner_due_table_candidates(
       dueTables,
@@ -5151,6 +5182,47 @@ function sync_owner_has_needs_input_table_issues(ownerUserId: string? = null): b
   return false;
 }
 
+function release_primary_source_automatable_issues(ownerUserId: string): int {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  const conflictSourceClient = conflict_source_client_for_owner(normalizedOwnerUserId);
+  if (conflictSourceClient.length == 0) {
+    return 0;
+  }
+  const existingIssues = sync_table_issues_for_owner(normalizedOwnerUserId);
+  let nextIssues = [];
+  let releasedCount = 0;
+  for (const issue of existingIssues) {
+    const status = string.from(issue.status ?? '').trim().toLowerCase();
+    const reason = string.from(issue.reason ?? '').trim().toLowerCase();
+    if (status == 'needs_input' && reason == 'persistent_union_divergence') {
+      nextIssues = nextIssues.concat([{
+        table: issue.table,
+        status: 'ready',
+        reason: 'primary_source_selected',
+        message: string.concat(
+          'Primary data source ',
+          conflictSourceClient,
+          ' is configured; automatic non-destructive repair will run on the next scheduler pass.'
+        ),
+        clientName: '',
+        action: 'automatic_primary_source_reconcile',
+        sourceClientName: conflictSourceClient,
+        targetClientNames: [],
+        detectedAt: issue.detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: now_iso()
+      }]);
+      releasedCount += 1;
+    } else {
+      nextIssues = nextIssues.concat([issue]);
+    }
+  }
+  if (releasedCount > 0) {
+    save_sync_table_issues_for_owner(normalizedOwnerUserId, nextIssues);
+  }
+  return releasedCount;
+}
+
 function sync_owner_has_resolving_table_issues(ownerUserId: string? = null): bool {
   for (const issue of sync_table_issues_for_owner(ownerUserId)) {
     if (string.from(issue.status ?? '').trim().toLowerCase() == 'resolving') {
@@ -5296,10 +5368,32 @@ function raise_sync_table_issue(ownerUserId: string? = null, table: string, reas
   return issue;
 }
 
-function raise_persistent_union_divergence_issues(ownerUserId: string, tables: array<string>): void {
+function raise_persistent_union_divergence_issues(ownerUserId: string, tables: array<string>, agents: array<json>? = null, policies: array<json>? = null): array<json> {
   const detectedAt = now_iso();
   let nextIssues = sync_table_issues_for_owner(ownerUserId);
   let changed = false;
+  let createdJobs = [];
+  let automaticRepairTableCount = 0;
+  const conflictSourceClient = conflict_source_client_for_owner(ownerUserId);
+  const sourceAgents = agents ?? list_scheduler_agent_rows();
+  let ownerAgents = [];
+  for (const agent of sourceAgents) {
+    if (string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)) {
+      ownerAgents = ownerAgents.concat([agent]);
+    }
+  }
+  let conflictSourceAgent = null;
+  for (const agent of ownerAgents) {
+    if (normalize_user_name(string.from(agent.clientName)) == conflictSourceClient) {
+      conflictSourceAgent = agent;
+    }
+  }
+  let everyOwnerAgentOnline = ownerAgents.length >= 2;
+  for (const agent of ownerAgents) {
+    if (!effective_agent_online(agent)) {
+      everyOwnerAgentOnline = false;
+    }
+  }
   for (const table of unique_string_values(tables)) {
     const existing = sync_table_issue_from_values(nextIssues, table);
     if (existing != null && sync_table_issue_is_blocking(existing)) {
@@ -5309,11 +5403,82 @@ function raise_persistent_union_divergence_issues(ownerUserId: string, tables: a
     if (existing != null && existing.detectedAt != null) {
       originalDetectedAt = existing.detectedAt;
     }
+    // A Primary data source is an explicit, durable owner policy. Use it to
+    // repair same-primary-key content automatically after the guarded union
+    // has proved stable divergence. The complete source snapshot remains
+    // insert/update-only: target-only rows survive and deletes still require
+    // an existing durable tombstone.
+    if (conflictSourceClient.length != 0 &&
+        conflictSourceAgent != null &&
+        everyOwnerAgentOnline &&
+        automaticRepairTableCount < periodic_sync_scheduler_table_limit()) {
+      const participants = sync_agents_enabled_for_table(
+        ownerAgents,
+        table,
+        policies
+      );
+      let sourceParticipates = false;
+      let participantsIdle = participants.length >= 2;
+      const tableHasActiveJobs = sync_owner_table_has_active_jobs(ownerUserId, table);
+      let targetAgents = [];
+      let targetClientNames = [];
+      for (const participant of participants) {
+        const participantName = normalize_user_name(participant.clientName);
+        if (participantName == conflictSourceClient) {
+          sourceParticipates = true;
+        } else {
+          targetAgents = targetAgents.concat([participant]);
+          targetClientNames = targetClientNames.concat([participantName]);
+        }
+        if (!effective_agent_online(participant) || tableHasActiveJobs) {
+          participantsIdle = false;
+        }
+      }
+      if (sourceParticipates && participantsIdle && targetAgents.length > 0) {
+        const jobs = create_authoritative_reconcile_batch(
+          ownerUserId,
+          table,
+          conflictSourceAgent,
+          targetAgents
+        );
+        if (jobs.length > 0) {
+          createdJobs = createdJobs.concat(jobs);
+          automaticRepairTableCount += 1;
+          nextIssues = replace_sync_table_issue_in_values(nextIssues, {
+            table,
+            status: 'resolving',
+            reason: 'persistent_union_divergence',
+            message: string.concat(
+              'Persistent same-row divergence is being repaired automatically from the configured Primary data source ',
+              conflictSourceClient,
+              '. Target-only rows remain preserved and deletes still require explicit durable tombstones.'
+            ),
+            clientName: '',
+            action: 'automatic_primary_source_reconcile',
+            sourceClientName: conflictSourceClient,
+            targetClientNames,
+            detectedAt: originalDetectedAt,
+            updatedAt: detectedAt,
+            resolvedAt: null
+          });
+          changed = true;
+          continue;
+        }
+      }
+    }
+    // A configured source that is temporarily offline is not a data decision.
+    // Leave the table retryable so the next scheduler pass can repair it after
+    // all enabled participants reconnect.
+    if (conflictSourceClient.length != 0 && !everyOwnerAgentOnline) {
+      continue;
+    }
     nextIssues = replace_sync_table_issue_in_values(nextIssues, {
       table,
       status: 'needs_input',
       reason: 'persistent_union_divergence',
-      message: 'Every client completed the guarded insert/update union, but fresh complete fingerprints still differ after the retry interval and no local Change Tracking row is pending. Automatic replay stopped instead of guessing between conflicting current values. Compare this table and choose the authoritative client.',
+      message: conflictSourceClient.length == 0
+        ? 'Every client completed the guarded insert/update union, but fresh complete fingerprints still differ after the retry interval and no local Change Tracking row is pending. Select one exclusive Primary data source once to make future same-row repairs automatic, or compare this table and choose the authoritative client.'
+        : 'The configured Primary data source cannot safely repair this table because it is not an online enabled participant with at least one target. Compare the rows and correct the client/table configuration; synchronization stopped instead of guessing.',
       clientName: '',
       action: '',
       sourceClientName: '',
@@ -5325,13 +5490,16 @@ function raise_persistent_union_divergence_issues(ownerUserId: string, tables: a
     changed = true;
   }
   if (!changed) {
-    return;
+    return createdJobs;
   }
   save_sync_table_issues_for_owner(ownerUserId, nextIssues);
-  cancel_owner_sync_jobs_for_input(
-    ownerUserId,
-    'Sync stopped: a completed union left conflicting current values and needs a user decision.'
-  );
+  if (createdJobs.length == 0) {
+    cancel_owner_sync_jobs_for_input(
+      ownerUserId,
+      'Sync stopped: a completed union left conflicting current values and needs a user decision.'
+    );
+  }
+  return createdJobs;
 }
 
 function sync_table_reported_fingerprint(tableState: map<json>? = null): string {
@@ -5464,6 +5632,31 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         resolvedAt: now_iso()
       });
       issuesChanged = true;
+      continue;
+    }
+    if (existing != null &&
+        string.from(existing.status ?? '').trim() == 'resolving' &&
+        string.from(existing.action ?? '').trim() == 'automatic_primary_source_reconcile' &&
+        !string_array_contains(activeOwnerTables, table) &&
+        resolutionClientNames.length > 1 &&
+        resolutionParticipantCount == resolutionClientNames.length &&
+        resolutionReportedClientCount == resolutionClientNames.length &&
+        resolutionFingerprints.length > 1) {
+      nextIssues = replace_sync_table_issue_in_values(nextIssues, {
+        table,
+        status: 'needs_input',
+        reason: 'automatic_primary_source_nonconvergence',
+        message: 'The configured Primary data source repair completed atomically, but fresh fingerprints still differ. No target-only row was deleted and no value was guessed; compare the remaining rows before retrying.',
+        clientName: existing.clientName,
+        action: '',
+        sourceClientName: existing.sourceClientName,
+        targetClientNames: existing.targetClientNames,
+        detectedAt: existing.detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: null
+      });
+      issuesChanged = true;
+      introducedBlockingIssue = true;
       continue;
     }
     if ((existing == null || string.from(existing.status ?? '').trim() == 'ready') &&
@@ -7700,11 +7893,15 @@ function agent_conflict_source_set(clientName: string, selected: bool, token: st
   if (applied != true) {
     return raw_json_error(409, 'conflict source selection changed concurrently; retry');
   }
+  const releasedIssueCount = selected
+    ? release_primary_source_automatable_issues(ownerUserId)
+    : 0;
   return {
     ok: true,
     selectedClientName: selected ? normalizedClientName : '',
     conflictPolicy: selected ? 'primary_source' : 'latest_change_wins',
-    updatedClients: ownerClientNames
+    updatedClients: ownerClientNames,
+    releasedIssueCount
   };
 }
 

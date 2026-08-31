@@ -1695,6 +1695,41 @@ def run_scenarios():
         apply(database, rows=winners)
     assert_equal(*DATABASES)
 
+    # configured-primary-source-three-client-automatic-repair: after a safe
+    # union proves one same-primary-key value remains different, the owner's
+    # persisted Primary data source supplies the automatic insert/update-only
+    # repair. Snapshot absence must not delete an unrelated target-only row,
+    # and retrying the repair must remain idempotent.
+    primary_source_rows = [
+        row(3501, "PRIMARY-SOURCE", "Trusted client 1 value", float_value=2489000.0),
+        row(3501, "PRIMARY-SOURCE", "Conflicting client 2 value", float_value=2488999.9999999995),
+        row(3501, "PRIMARY-SOURCE", "Conflicting client 3 value", float_value=2488999.5),
+    ]
+    for database, conflicting_row in zip(DATABASES, primary_source_rows):
+        apply(database, rows=[conflicting_row])
+    primary_target_only = row(3502, "PRIMARY-TARGET-ONLY", "Must survive source repair")
+    apply(DATABASES[1], rows=[primary_target_only])
+    trusted_primary_row = primary_source_rows[0]
+    for database in DATABASES[1:]:
+        apply(database, rows=[trusted_primary_row])
+        if scalar_int(
+            database,
+            "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = 3501 AND Name = N'Trusted client 1 value';",
+        ) != 1:
+            raise AssertionError(
+                f"Configured Primary data source did not repair {database}."
+            )
+    if scalar_int(
+        DATABASES[1],
+        "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = 3502;",
+    ) != 1:
+        raise AssertionError("Automatic source repair deleted a target-only row.")
+    for database in (DATABASES[0], DATABASES[2]):
+        apply(database, rows=[primary_target_only])
+    for database in DATABASES[1:]:
+        apply(database, rows=[trusted_primary_row])
+    assert_equal(*DATABASES)
+
     # Ameen edits an invoice line by deleting its GUID and inserting a new GUID.
     # Standard SQL identity is the primary key, so concurrent new GUIDs remain
     # independent unless a later explicit tombstone names one of them.
@@ -2189,6 +2224,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "lossless-float-real-9999999-capture-roundtrip",
             "empty-delta-fresh-inventory-repairs-historical-float-drift",
             "initial-three-client-primary-key-union-bootstrap",
+            "configured-primary-source-three-client-automatic-repair",
             "selective-range-three-client-convergence",
             "accepted-winner-chunk-pruning-three-client-safety",
             "full-union-does-not-resurrect-durable-delete",
