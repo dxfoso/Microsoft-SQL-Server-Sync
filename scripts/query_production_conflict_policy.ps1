@@ -8,9 +8,22 @@ $namespace = 'velvet-sql-server-sync'
 # and psql never reinterpret nested SQL quoting at different parser layers.
 $remoteScript = @'
 set -euo pipefail
-kubectl exec -n velvet-sql-server-sync deployment/sql-sync-postgres -- \
-  psql -U tru -d sqlsync -AtF '|' -c \
-  'SELECT "clientName", "conflictPolicy", "clientVersion", "isOnline", "sqlConnected" FROM agents ORDER BY "ownerUserId", "clientName";'
+kubectl exec -i -n velvet-sql-server-sync deployment/sql-sync-postgres -- \
+  psql -U tru -d sqlsync -AtF '|' <<'SQL'
+SELECT 'client', "clientName", "conflictPolicy", "clientVersion", "isOnline", "sqlConnected"
+FROM agents ORDER BY "ownerUserId", "clientName";
+SELECT 'scheduler', "ownerUserId", "manualPendingTables",
+  (SELECT count(*) FROM sync_jobs j WHERE j."ownerUserId"=s."ownerUserId"
+    AND j.status IN ('queued','waiting','running','snapshotting','uploading','downloading','applying'))
+FROM periodic_sync_states s
+WHERE "ownerUserId" IN (SELECT DISTINCT "ownerUserId" FROM agents WHERE "conflictPolicy"='primary_source');
+SELECT 'authoritative_history', issue->>'table', issue->>'sourceClientName',
+  issue->>'targetClientNames', issue->>'updatedAt'
+FROM periodic_sync_states s
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(NULLIF(s."tableIssues", ''), '[]')::jsonb) issue
+WHERE issue->>'action'='authoritative_reconcile' AND issue->>'status'='ready'
+ORDER BY issue->>'updatedAt' DESC LIMIT 20;
+SQL
 '@
 $encodedScript = [Convert]::ToBase64String(
     [Text.Encoding]::UTF8.GetBytes($remoteScript)

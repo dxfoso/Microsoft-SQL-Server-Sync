@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 308)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 309)}
         observed_ids = set()
 
         for row in rows:
@@ -44,9 +44,13 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertIn("ToBase64String", probe)
         self.assertIn("base64 -d | bash", probe)
-        self.assertIn("kubectl exec -n velvet-sql-server-sync", probe)
+        self.assertIn("kubectl exec -i -n velvet-sql-server-sync", probe)
         self.assertIn("deployment/sql-sync-postgres", probe)
-        self.assertIn('SELECT "clientName", "conflictPolicy"', probe)
+        self.assertIn('"clientName", "conflictPolicy"', probe)
+        self.assertIn("authoritative_history", probe)
+        self.assertIn("issue->>'sourceClientName'", probe)
+        self.assertIn("manualPendingTables", probe)
+        self.assertIn("'snapshotting'", probe)
         self.assertNotIn("replicationPassword", probe)
 
     def test_production_release_verifier_uses_stable_public_and_namespaced_probes(self):
