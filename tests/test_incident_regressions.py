@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 307)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 308)}
         observed_ids = set()
 
         for row in rows:
@@ -48,6 +48,16 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("deployment/sql-sync-postgres", probe)
         self.assertIn('SELECT "clientName", "conflictPolicy"', probe)
         self.assertNotIn("replicationPassword", probe)
+
+    def test_production_release_verifier_uses_stable_public_and_namespaced_probes(self):
+        verifier = read_text("scripts/verify_production_release.ps1")
+
+        self.assertIn("curl.exe --fail --silent --show-error", verifier)
+        self.assertNotIn("Invoke-WebRequest", verifier)
+        self.assertIn("kubectl get deployment sql-sync-back sql-sync-front -n $Namespace -o json", verifier)
+        self.assertIn("$health.build.git_commit -ne $Commit", verifier)
+        self.assertIn("[int]$health.compile_errors -ne 0", verifier)
+        self.assertIn("Start-Sleep -Seconds $StabilitySeconds", verifier)
 
     def test_control_plane_contract_class_name_is_stable_for_focused_runs(self):
         contracts = read_text("tests/test_control_plane_contracts.py")
