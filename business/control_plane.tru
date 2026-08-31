@@ -4576,6 +4576,7 @@ function order_owner_due_table_candidates(dueTables: array<string>, ownerAgents:
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
+  release_durable_origin_automatable_issues(normalizedOwnerUserId);
   release_primary_source_automatable_issues(normalizedOwnerUserId);
   // A genuine Needs input issue can only continue after a user decision.
   // Resolving issues must still refresh fingerprints so a completed automatic
@@ -5182,6 +5183,42 @@ function sync_owner_has_needs_input_table_issues(ownerUserId: string? = null): b
   return false;
 }
 
+function release_durable_origin_automatable_issues(ownerUserId: string): int {
+  const normalizedOwnerUserId = ownerUserId.trim();
+  const existingIssues = sync_table_issues_for_owner(normalizedOwnerUserId);
+  let nextIssues = [];
+  let releasedCount = 0;
+  for (const issue of existingIssues) {
+    const status = string.from(issue.status ?? '').trim().toLowerCase();
+    const reason = string.from(issue.reason ?? '').trim().toLowerCase();
+    const action = string.from(issue.action ?? '').trim().toLowerCase();
+    if (status == 'needs_input' &&
+        reason == 'persistent_union_divergence' &&
+        action.length == 0) {
+      nextIssues = nextIssues.concat([{
+        table: issue.table,
+        status: 'ready',
+        reason: 'durable_origin_reconcile_pending',
+        message: 'The durable latest-change origin can reconstruct this historical same-row value automatically; a bounded insert/update-only repair will run on the next scheduler pass.',
+        clientName: '',
+        action: 'automatic_durable_origin_reconcile',
+        sourceClientName: '',
+        targetClientNames: [],
+        detectedAt: issue.detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: now_iso()
+      }]);
+      releasedCount += 1;
+    } else {
+      nextIssues = nextIssues.concat([issue]);
+    }
+  }
+  if (releasedCount > 0) {
+    save_sync_table_issues_for_owner(normalizedOwnerUserId, nextIssues);
+  }
+  return releasedCount;
+}
+
 function release_primary_source_automatable_issues(ownerUserId: string): int {
   const normalizedOwnerUserId = ownerUserId.trim();
   const conflictSourceClient = conflict_source_client_for_owner(normalizedOwnerUserId);
@@ -5403,6 +5440,67 @@ function raise_persistent_union_divergence_issues(ownerUserId: string, tables: a
     if (existing != null && existing.detectedAt != null) {
       originalDetectedAt = existing.detectedAt;
     }
+    // The durable winner register preserves the last accepted origin even
+    // after its old payload expires. A bounded complete union can therefore
+    // rehydrate a same-primary-key value only from that exact origin. Rows
+    // without causal evidence remain untouched and keep the gate closed.
+    if (conflictSourceClient.length == 0 &&
+        everyOwnerAgentOnline &&
+        automaticRepairTableCount < periodic_sync_scheduler_table_limit()) {
+      const participants = sync_agents_enabled_for_table(
+        ownerAgents,
+        table,
+        policies
+      );
+      let participantsIdle = participants.length >= 2;
+      const tableHasActiveJobs = sync_owner_table_has_active_jobs(ownerUserId, table);
+      let resolutionSourceClientName = '';
+      let resolutionTargetClientNames = [];
+      for (const participant of participants) {
+        const participantName = normalize_user_name(participant.clientName);
+        if (resolutionSourceClientName.length == 0) {
+          resolutionSourceClientName = participantName;
+        } else {
+          resolutionTargetClientNames = resolutionTargetClientNames.concat([
+            participantName
+          ]);
+        }
+        if (!effective_agent_online(participant) || tableHasActiveJobs) {
+          participantsIdle = false;
+        }
+      }
+      if (participantsIdle) {
+        const jobs = create_multi_writer_batch(
+          ownerUserId,
+          table,
+          participants,
+          '',
+          false,
+          true,
+          policies,
+          'durable-origin-reconcile'
+        );
+        if (jobs.length > 0) {
+          createdJobs = createdJobs.concat(jobs);
+          automaticRepairTableCount += 1;
+          nextIssues = replace_sync_table_issue_in_values(nextIssues, {
+            table,
+            status: 'resolving',
+            reason: 'persistent_union_divergence',
+            message: "Persistent same-row divergence is being repaired from each row's durable latest-change origin. Rows without causal evidence remain untouched; target-only rows and explicit-delete-only semantics are preserved.",
+            clientName: '',
+            action: 'automatic_durable_origin_reconcile',
+            sourceClientName: resolutionSourceClientName,
+            targetClientNames: resolutionTargetClientNames,
+            detectedAt: originalDetectedAt,
+            updatedAt: detectedAt,
+            resolvedAt: null
+          });
+          changed = true;
+          continue;
+        }
+      }
+    }
     // A Primary data source is an explicit, durable owner policy. Use it to
     // repair same-primary-key content automatically after the guarded union
     // has proved stable divergence. The complete source snapshot remains
@@ -5622,7 +5720,9 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         table,
         status: 'ready',
         reason: '',
-        message: 'Authoritative repair completed and every online repair participant reports the same table fingerprint. Offline clients will catch up automatically after reconnecting.',
+        message: string.from(existing.action ?? '').trim() == 'automatic_durable_origin_reconcile'
+          ? 'Durable latest-origin repair completed and every enabled online participant reports the same table fingerprint.'
+          : 'Authoritative repair completed and every online repair participant reports the same table fingerprint. Offline clients will catch up automatically after reconnecting.',
         clientName: existing.clientName,
         action: existing.action,
         sourceClientName: existing.sourceClientName,
@@ -5632,6 +5732,31 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         resolvedAt: now_iso()
       });
       issuesChanged = true;
+      continue;
+    }
+    if (existing != null &&
+        string.from(existing.status ?? '').trim() == 'resolving' &&
+        string.from(existing.action ?? '').trim() == 'automatic_durable_origin_reconcile' &&
+        !string_array_contains(activeOwnerTables, table) &&
+        resolutionClientNames.length > 1 &&
+        resolutionParticipantCount == resolutionClientNames.length &&
+        resolutionReportedClientCount == resolutionClientNames.length &&
+        resolutionFingerprints.length > 1) {
+      nextIssues = replace_sync_table_issue_in_values(nextIssues, {
+        table,
+        status: 'needs_input',
+        reason: 'durable_origin_nonconvergence',
+        message: 'The bounded durable latest-origin repair completed atomically, but fresh fingerprints still differ. At least one conflicting row lacks sufficient causal history or was rewritten locally; no value was guessed and no target-only row was deleted.',
+        clientName: existing.clientName,
+        action: '',
+        sourceClientName: existing.sourceClientName,
+        targetClientNames: existing.targetClientNames,
+        detectedAt: existing.detectedAt,
+        updatedAt: now_iso(),
+        resolvedAt: null
+      });
+      issuesChanged = true;
+      introducedBlockingIssue = true;
       continue;
     }
     if (existing != null &&
@@ -9374,6 +9499,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   const completeMultiClientUnionBootstrap =
     sync_source_is_complete_union_bootstrap(string.from(job.sourceClientName)) &&
     batch.expectedClients.length >= 2;
+  const durableOriginRepair =
+    completeMultiClientUnionBootstrap &&
+    string.from(job.automaticRetryKind ?? '').trim() == 'durable-origin-reconcile';
   if (!payloadIsDelta &&
       !explicitSingleClientBootstrap &&
       !comparisonPreview &&
@@ -9844,6 +9972,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       let accepted = true;
       let currentWinner = null;
       let matchesDurableWinnerContent = false;
+      let reconstructsDurableWinnerContent = false;
       let reassertsDurableTombstone = false;
       let durableTombstoneWinner = null;
       let automaticNumberDirective = null;
@@ -10197,8 +10326,28 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           incomingRowHash == string.from(currentWinner.rowHash).trim() &&
           operation != 'D' &&
           string.from(currentWinner.operation).trim().toUpperCase() != 'D';
+        reconstructsDurableWinnerContent =
+          durableOriginRepair &&
+          currentWinner != null &&
+          normalize_user_name(string.from(currentWinner.originClient)) ==
+            normalize_user_name(normalizedClientName) &&
+          incomingRowHash.length != 0 &&
+          incomingRowHash != string.from(currentWinner.rowHash).trim() &&
+          operation != 'D' &&
+          string.from(currentWinner.operation).trim().toUpperCase() != 'D';
+        if (durableOriginRepair &&
+            currentWinner == null &&
+            !reassertsDurableTombstone) {
+          // This repair snapshot is not new change evidence. Without a
+          // durable winner there is no safe last origin, so preserve all
+          // current copies and let post-repair fingerprints fail closed.
+          accepted = false;
+        }
         let relevantWinnerRefs = [{ id: winnerId, identityKey }].concat(logicalWinnerRefs);
-        if (accepted && !matchesDurableWinnerContent && !reassertsDurableTombstone) {
+        if (accepted &&
+            !matchesDurableWinnerContent &&
+            !reconstructsDurableWinnerContent &&
+            !reassertsDurableTombstone) {
           for (const winnerRef of relevantWinnerRefs) {
             let relevantWinner = sync_row_winner_find_by_id(
               pendingWinners,
@@ -10226,6 +10375,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         }
         if (accepted &&
             !matchesDurableWinnerContent &&
+            !reconstructsDurableWinnerContent &&
             !reassertsDurableTombstone &&
             (currentWinner == null || string.from(currentWinner.operationId) != operationId)) {
           const logicalWinnerIds = logicalWinnerRefs.map((value) => string.from(value.id));
@@ -10298,7 +10448,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             );
           }
         }
-        if (accepted && matchesDurableWinnerContent && currentWinner != null) {
+        if (accepted &&
+            (matchesDurableWinnerContent || reconstructsDurableWinnerContent) &&
+            currentWinner != null) {
           // Identical full-union retries can arrive from several clients and
           // pages. Advance only the relay operation id while preserving the
           // durable winner's ordering metadata. The final durable id then
@@ -10318,7 +10470,9 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             originClient: currentWinner.originClient,
             changeVersion: currentWinner.changeVersion,
             operationId,
-            rowHash: currentWinner.rowHash,
+            rowHash: reconstructsDurableWinnerContent
+              ? incomingRowHash
+              : currentWinner.rowHash,
             operation: currentWinner.operation,
             revision: int.from(currentWinner.revision) + 1,
             updatedAt: serverReceivedAt

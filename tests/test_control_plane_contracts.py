@@ -1191,6 +1191,33 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("No target-only row was deleted", refresh)
         self.assertNotIn("authoritativeReplace", escalation)
 
+    def test_persistent_divergence_rehydrates_only_the_durable_latest_origin(self):
+        source = read_text("business/control_plane.tru")
+        escalation = source.split(
+            "function raise_persistent_union_divergence_issues(", 1
+        )[1].split("function sync_table_reported_fingerprint(", 1)[0]
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+        release = source.split(
+            "function release_durable_origin_automatable_issues(", 1
+        )[1].split("function release_primary_source_automatable_issues(", 1)[0]
+        refresh = source.split(
+            "function refresh_owner_baseline_table_issues(", 1
+        )[1].split("function sync_gate_payload_for_owners(", 1)[0]
+
+        self.assertIn("'durable-origin-reconcile'", escalation)
+        self.assertIn("action: 'automatic_durable_origin_reconcile'", escalation)
+        self.assertIn("currentWinner.originClient", upload)
+        self.assertIn("reconstructsDurableWinnerContent", upload)
+        self.assertIn("currentWinner == null", upload)
+        self.assertIn("accepted = false", upload)
+        self.assertIn("rowHash: reconstructsDurableWinnerContent", upload)
+        self.assertIn("reason == 'persistent_union_divergence'", release)
+        self.assertIn("action.length == 0", release)
+        self.assertIn("durable_origin_nonconvergence", refresh)
+        self.assertIn("no value was guessed", refresh)
+
     def test_primary_source_releases_old_divergence_gate_and_repairs_ambiguous_baseline(self):
         source = read_text("business/control_plane.tru")
         release = source.split(

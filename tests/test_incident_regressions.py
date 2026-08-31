@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 317)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 325)}
         observed_ids = set()
 
         for row in rows:
@@ -54,6 +54,14 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("RequirePausedOwnerUserId", probe)
         self.assertIn("'[\"__automatic_sync_paused__\"]'", probe)
         self.assertIn('SELECT DISTINCT "ownerUserId" FROM agents', probe)
+        self.assertIn('"syncEnabled"', probe)
+        self.assertIn('"lastHeartbeat"', probe)
+        self.assertIn("'table_issue'", probe)
+        self.assertIn("issue->>'status' IN ('needs_input', 'resolving')", probe)
+        self.assertIn("'recent_failed_job'", probe)
+        self.assertIn("CURRENT_TIMESTAMP - INTERVAL '24 hours'", probe)
+        self.assertIn("psql -v ON_ERROR_STOP=1", probe)
+        self.assertIn('NULLIF("updatedAt", \'\')::timestamptz', probe)
         self.assertNotIn('WHERE "ownerUserId" IN (SELECT DISTINCT "ownerUserId" FROM agents WHERE "conflictPolicy"=', probe)
         self.assertNotIn("replicationPassword", probe)
 

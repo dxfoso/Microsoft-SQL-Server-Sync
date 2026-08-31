@@ -29,7 +29,18 @@ function Read-UpdateLogWithRetry {
     for ($attempt = 1; $attempt -le 10; $attempt++) {
         if (-not (Test-Path -LiteralPath $Path)) { return '' }
         try {
-            return Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+            $stream = [System.IO.File]::Open(
+                $Path,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+            )
+            try {
+                $reader = [System.IO.StreamReader]::new($stream)
+                try { return $reader.ReadToEnd() }
+                finally { $reader.Dispose() }
+            }
+            finally { $stream.Dispose() }
         }
         catch [System.IO.IOException] {
             if ($attempt -eq 10) { throw }

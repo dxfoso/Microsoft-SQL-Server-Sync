@@ -1736,6 +1736,46 @@ def run_scenarios():
         apply(database, rows=[trusted_primary_row])
     assert_equal(*DATABASES)
 
+    # durable-latest-origin-three-client-automatic-repair: no client is a
+    # permanent Primary. The durable row register names the client that made
+    # the latest accepted change, so only that client's current same-key row
+    # may reconstruct an expired winner payload. A row with no durable origin
+    # remains untouched instead of being selected by upload arrival order.
+    durable_origin_rows = [
+        row(3503, "DURABLE-ORIGIN", "Older client 1 value", float_value=101.0),
+        row(3503, "DURABLE-ORIGIN", "Latest client 2 value", float_value=102.0),
+        row(3503, "DURABLE-ORIGIN", "Older client 3 value", float_value=103.0),
+    ]
+    no_history_rows = [
+        row(3505, "NO-HISTORY", "Unordered client 1 value", arabic="no-history-1"),
+        row(3505, "NO-HISTORY", "Unordered client 2 value", arabic="no-history-2"),
+        row(3505, "NO-HISTORY", "Unordered client 3 value", arabic="no-history-3"),
+    ]
+    for database, durable_row, no_history_row in zip(
+        DATABASES, durable_origin_rows, no_history_rows
+    ):
+        apply(database, rows=[durable_row, no_history_row])
+    durable_origin_target_only = row(
+        3504, "DURABLE-TARGET-ONLY", "Must survive latest-origin repair"
+    )
+    apply(DATABASES[2], rows=[durable_origin_target_only])
+    durable_winner_origin = 1
+    reconstructed_row = durable_origin_rows[durable_winner_origin]
+    for database in DATABASES:
+        apply(database, rows=[reconstructed_row])
+    for database, no_history_row in zip(DATABASES, no_history_rows):
+        assert_text_value(database, 3505, no_history_row["ArabicText"])
+    if scalar_int(
+        DATABASES[2],
+        "SELECT COUNT(*) FROM dbo.SyncItems WHERE Id = 3504;",
+    ) != 1:
+        raise AssertionError("Durable latest-origin repair deleted a target-only row.")
+    # Finish the isolated fixture only after proving the no-history row was
+    # preserved on every client; this cleanup is not part of the repair rule.
+    for database in DATABASES:
+        apply(database, rows=[no_history_rows[0], durable_origin_target_only])
+    assert_equal(*DATABASES)
+
     # Ameen edits an invoice line by deleting its GUID and inserting a new GUID.
     # Standard SQL identity is the primary key, so concurrent new GUIDs remain
     # independent unless a later explicit tombstone names one of them.
@@ -2261,6 +2301,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "empty-delta-fresh-inventory-repairs-historical-float-drift",
             "initial-three-client-primary-key-union-bootstrap",
             "configured-primary-source-three-client-automatic-repair",
+            "durable-latest-origin-three-client-automatic-repair",
             "selective-range-three-client-convergence",
             "accepted-winner-chunk-pruning-three-client-safety",
             "full-union-does-not-resurrect-durable-delete",
