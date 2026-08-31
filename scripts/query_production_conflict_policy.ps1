@@ -1,4 +1,6 @@
-param()
+param(
+    [string] $RequirePausedOwnerUserId = ''
+)
 
 $ErrorActionPreference = 'Stop'
 $sshAlias = 'velvet-leaf-1'
@@ -16,7 +18,7 @@ SELECT 'scheduler', "ownerUserId", "manualPendingTables",
   (SELECT count(*) FROM sync_jobs j WHERE j."ownerUserId"=s."ownerUserId"
     AND j.status IN ('queued','waiting','running','snapshotting','uploading','downloading','applying'))
 FROM periodic_sync_states s
-WHERE "ownerUserId" IN (SELECT DISTINCT "ownerUserId" FROM agents WHERE "conflictPolicy"='primary_source');
+WHERE "ownerUserId" IN (SELECT DISTINCT "ownerUserId" FROM agents);
 SELECT 'authoritative_history', issue->>'table', issue->>'sourceClientName',
   issue->>'targetClientNames', issue->>'updatedAt'
 FROM periodic_sync_states s
@@ -32,5 +34,18 @@ $encodedScript = [Convert]::ToBase64String(
 $output = & ssh $sshAlias "echo '$encodedScript' | base64 -d | bash"
 if ($LASTEXITCODE -ne 0) {
     throw "Production conflict-policy query failed through $sshAlias in namespace $namespace."
+}
+$requiredOwner = $RequirePausedOwnerUserId.Trim()
+if (-not [string]::IsNullOrWhiteSpace($requiredOwner)) {
+    $schedulerRows = @($output | Where-Object { $_ -like "scheduler|$requiredOwner|*" })
+    if ($schedulerRows.Count -ne 1) {
+        throw "Expected exactly one scheduler row for paused owner $requiredOwner, found $($schedulerRows.Count)."
+    }
+    $fields = @($schedulerRows[0] -split '\|', 4)
+    if ($fields.Count -ne 4 -or
+        $fields[2] -ne '["__automatic_sync_paused__"]' -or
+        $fields[3] -ne '0') {
+        throw "Owner $requiredOwner is not safely paused with zero active jobs: $($schedulerRows[0])"
+    }
 }
 $output
