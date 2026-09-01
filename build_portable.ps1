@@ -1093,7 +1093,8 @@ try {
         }
         Write-Host "Portable backend URL: $BackendBaseUrl"
         Remove-WindowsAgentBuildArtifacts `
-            -ProjectPath $ProjectPath
+            -ProjectPath $ProjectPath `
+            -FullClean
         if (Test-Path -LiteralPath $releaseDir -PathType Container) {
             Write-Host "Removing stale release output: $releaseDir"
             Remove-WindowsAgentBuildPath -Path $releaseDir -ProjectPath $ProjectPath
@@ -1105,6 +1106,14 @@ try {
             -FlutterCommand $flutterCommand `
             -Arguments $buildArguments `
             -WorkingDirectory $ProjectPath
+
+        $releasePayloadComplete =
+            (Test-Path -LiteralPath $exePath -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so') -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path -Path $releaseDir -ChildPath 'data\flutter_assets') -PathType Container)
+        if ($LASTEXITCODE -eq 0 -and -not $releasePayloadComplete) {
+            throw 'Flutter reported a successful Windows release command but left an incomplete release payload. Refusing stale or partial packaging.'
+        }
 
         if ($LASTEXITCODE -ne 0) {
             $canRecoverReleaseInstall = (Test-Path -LiteralPath $exePath -PathType Leaf) -and

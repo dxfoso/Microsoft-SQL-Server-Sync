@@ -2430,6 +2430,8 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_windows_client_build_clears_stale_flutter_aot_cache(self):
         build_helpers = read_text("scripts/windows_agent_build.ps1")
+        build_script = read_text("build_portable.ps1")
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
 
         self.assertIn(
             "(Join-Path -Path $ProjectPath -ChildPath '.dart_tool\\flutter_build')",
@@ -2441,6 +2443,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn(".dart_tool\\flutter_build", cleanup_function)
         self.assertIn("Remove-WindowsAgentBuildPath -Path $path", cleanup_function)
         self.assertIn("Restore-WindowsAgentAotLibrary", build_helpers)
+        self.assertIn("[switch] $FullClean", cleanup_function)
+        self.assertIn("-FullClean", build_script)
+        self.assertIn("Flutter reported a successful Windows release command", build_script)
+        self.assertIn("OutputRoot = $BuildOutputRoot", publisher)
+        self.assertIn("$PortableZip = Join-Path -Path $BuildOutputRoot", publisher)
 
     def test_auto_sync_interval_is_web_owned_not_heartbeat_owned(self):
         control_plane = read_text("business/control_plane.tru")

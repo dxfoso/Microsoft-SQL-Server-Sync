@@ -20,7 +20,8 @@ Set-StrictMode -Version Latest
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path -Path $PSScriptRoot -ChildPath '..'))
 $ProjectPath = Join-Path -Path $RepoRoot -ChildPath 'sync_windows_agent'
 $PortableName = 'sync_windows_agent-windows-portable'
-$PortableZip = Join-Path -Path $RepoRoot -ChildPath "$PortableName.zip"
+$BuildOutputRoot = [System.IO.Path]::GetFullPath($OutputDir)
+$PortableZip = Join-Path -Path $BuildOutputRoot -ChildPath "$PortableName.zip"
 $UpdaterScript = Join-Path -Path $RepoRoot -ChildPath 'update.ps1'
 $BootstrapUpdaterScript = Join-Path -Path $PSScriptRoot -ChildPath 'client_update_bootstrap.ps1'
 
@@ -384,6 +385,7 @@ if ([string]::IsNullOrWhiteSpace($Namespace)) {
 if (-not $SkipBuild) {
     $buildArgs = @{
         BackendBaseUrl = $BackendBaseUrl
+        OutputRoot = $BuildOutputRoot
     }
     if (-not [string]::IsNullOrWhiteSpace($ClientUpdateBaseUrl)) {
         $buildArgs.ClientUpdateBaseUrl = $ClientUpdateBaseUrl

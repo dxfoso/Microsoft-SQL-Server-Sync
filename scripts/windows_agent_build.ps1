@@ -682,15 +682,19 @@ function Remove-WindowsAgentBuildArtifacts {
     param(
         [Parameter(Mandatory = $true)][string] $ProjectPath,
         [switch] $PreserveFlutterEphemeral,
-        [switch] $PreserveWindowsBuildTree
+        [switch] $PreserveWindowsBuildTree,
+        [switch] $FullClean
     )
 
-    $paths = @(
-        (Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so'),
-        (Join-Path -Path $ProjectPath -ChildPath '.dart_tool\flutter_build')
-    )
+    $paths = @((Join-Path -Path $ProjectPath -ChildPath '.dart_tool\flutter_build'))
 
-    if (-not $PreserveWindowsBuildTree) {
+    if ($FullClean) {
+        $paths += (Join-Path -Path $ProjectPath -ChildPath 'build')
+    } else {
+        $paths += (Join-Path -Path $ProjectPath -ChildPath 'build\windows\app.so')
+    }
+
+    if (-not $FullClean -and -not $PreserveWindowsBuildTree) {
         $paths += (Join-Path -Path $ProjectPath -ChildPath 'build\windows\x64')
     }
 
