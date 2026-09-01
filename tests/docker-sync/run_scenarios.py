@@ -386,6 +386,67 @@ END;
         )
 
 
+def assert_full_database_backup_restore():
+    source = DATABASES[0]
+    restored = "SyncClientBackupRestoreRegression"
+    backup_path = "/var/opt/mssql/data/sync_client_backup_restore_regression.bak"
+    data_path = f"/var/opt/mssql/data/{restored}.mdf"
+    log_path = f"/var/opt/mssql/data/{restored}_log.ldf"
+    try:
+        sqlcmd(
+            f"""
+IF DB_ID(N'{restored}') IS NOT NULL
+BEGIN
+  ALTER DATABASE [{restored}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+  DROP DATABASE [{restored}];
+END;
+BACKUP DATABASE [{source}]
+TO DISK = N'{backup_path}'
+WITH COPY_ONLY, INIT, CHECKSUM, STATS = 5;
+RESTORE VERIFYONLY FROM DISK = N'{backup_path}' WITH CHECKSUM;
+RESTORE DATABASE [{restored}]
+FROM DISK = N'{backup_path}'
+WITH MOVE N'{source}' TO N'{data_path}',
+     MOVE N'{source}_log' TO N'{log_path}',
+     CHECKSUM, RECOVERY, STATS = 5;
+"""
+        )
+        result = sqlcmd(
+            f"""
+SET NOCOUNT ON;
+IF DB_ID(N'{restored}') IS NULL OR DATABASEPROPERTYEX(N'{restored}', N'Status') <> N'ONLINE'
+  THROW 51000, 'Restored database is not online.', 1;
+DECLARE @sourceRows int = (SELECT COUNT(*) FROM [{source}].dbo.SyncItems);
+DECLARE @restoredRows int = (SELECT COUNT(*) FROM [{restored}].dbo.SyncItems);
+DECLARE @sourceTables int = (SELECT COUNT(*) FROM [{source}].sys.tables WHERE is_ms_shipped = 0);
+DECLARE @restoredTables int = (SELECT COUNT(*) FROM [{restored}].sys.tables WHERE is_ms_shipped = 0);
+DECLARE @sourceTracked int = (SELECT COUNT(*) FROM [{source}].sys.change_tracking_tables);
+DECLARE @restoredTracked int = (SELECT COUNT(*) FROM [{restored}].sys.change_tracking_tables);
+IF @sourceRows <> @restoredRows OR @sourceTables <> @restoredTables OR @sourceTracked <> @restoredTracked
+  THROW 51001, 'Full database restore did not preserve rows, tables, and Change Tracking metadata.', 1;
+SELECT N'backup-restore-ok';
+"""
+        )
+        if "backup-restore-ok" not in result.stdout:
+            raise AssertionError("Full database backup/restore verification returned no success marker.")
+    finally:
+        sqlcmd(
+            f"""
+IF DB_ID(N'{restored}') IS NOT NULL
+BEGIN
+  ALTER DATABASE [{restored}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+  DROP DATABASE [{restored}];
+END;
+""",
+            check=False,
+        )
+        if DOCKER is not None:
+            run(
+                COMPOSE + ["exec", "-T", "sql", "rm", "-f", backup_path],
+                check=False,
+            )
+
+
 def generate_sql(
     database,
     *,
@@ -1443,8 +1504,10 @@ def run_robustness_scenarios(*, include_restart=True, fuzz_rounds=30, scale_rows
     print(json.dumps({"ok": True, "suite": "robustness", "scenarios": scenarios}))
 
 
-def run_scenarios():
+def run_scenarios(*, include_database_backup_restore=False):
     reset_databases()
+    if include_database_backup_restore:
+        assert_full_database_backup_restore()
     assert_hex_row_transport(DATABASES[0])
     for database in DATABASES:
         assert_business_trigger_enabled(database)
@@ -2291,7 +2354,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
     print(json.dumps({
         "ok": True,
         "clients": len(DATABASES),
-        "scenarios": [
+        "scenarios": (["full-database-copy-only-backup-verified-restore-as-new"] if include_database_backup_restore else []) + [
             "insert", "update", "primary-key-change", "delete",
             "explicit-delete-of-missing-key-is-idempotent", "empty-delta", "newest-commit-conflict",
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",
@@ -2360,7 +2423,7 @@ def main():
         if args.external:
             wait_for_sql()
         if args.suite in ("standard", "all"):
-            run_scenarios()
+            run_scenarios(include_database_backup_restore=not args.external)
             run_windows_bulk_stage_performance_regression()
         if args.suite in ("robustness", "all"):
             run_robustness_scenarios(

@@ -2806,6 +2806,34 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertEqual(heartbeat_body.count("db.updateMany(Agent"), 2)
 
+    def test_local_database_backup_restore_is_non_blocking_visible_and_non_destructive(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        policy = read_text("sync_windows_agent/lib/database_backup_restore.dart")
+        runner = read_text("tests/run_sync_verification.ps1")
+        docker_scenarios = read_text("tests/docker-sync/run_scenarios.py")
+
+        self.assertIn("getSaveLocation(", agent_page)
+        self.assertIn("openFile(", agent_page)
+        self.assertIn("unawaited(_runLocalDatabaseBackup", agent_page)
+        self.assertIn("unawaited(\n      _runLocalDatabaseRestore", agent_page)
+        self.assertIn("LinearProgressIndicator(", agent_page)
+        self.assertIn("_buildDatabaseFileOperationIndicator", agent_page)
+        self.assertIn("Creating backup", agent_page)
+        self.assertIn("Restoring database", agent_page)
+        self.assertIn("WITH COPY_ONLY, INIT", agent_page)
+        self.assertIn("RESTORE VERIFYONLY", agent_page)
+        self.assertIn("parseSqlServerPercentComplete", agent_page)
+        self.assertIn("Restore never overwrites an existing database", agent_page)
+        self.assertIn("IF DB_ID(N'$databaseLiteral') IS NOT NULL", policy)
+        self.assertIn("RESTORE DATABASE [$escapedDatabase]", policy)
+        self.assertIn("CHECKSUM, RECOVERY, STATS = 5", policy)
+        self.assertNotIn("WITH REPLACE", policy)
+        self.assertIn("test_sync_contracts.py", runner)
+        self.assertIn("def assert_full_database_backup_restore():", docker_scenarios)
+        self.assertIn("WITH COPY_ONLY, INIT, CHECKSUM", docker_scenarios)
+        self.assertIn("RESTORE VERIFYONLY", docker_scenarios)
+        self.assertIn("full-database-copy-only-backup-verified-restore-as-new", docker_scenarios)
+
     def test_live_copy_collector_restarts_after_frontend_pod_replacement(self):
         collector = read_text("scripts/collect_live_client_database_copies.ps1")
 

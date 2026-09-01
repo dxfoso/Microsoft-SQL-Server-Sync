@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
@@ -16,6 +17,7 @@ import 'client_version.dart';
 import 'database_access.dart';
 import 'data_export_cancellation.dart';
 import 'data_export_policy.dart';
+import 'database_backup_restore.dart';
 import 'delta_package.dart';
 import 'live_sync_api.dart';
 import 'resilient_http_client.dart';
@@ -152,6 +154,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Timer? _clientUpdateCheckTimer;
   Timer? _clientUpdateApplyRetryTimer;
   Timer? _automaticChangeDiscoveryTimer;
+  Timer? _databaseFileOperationClearTimer;
 
   final bool _useWindowsAuth = true;
   bool _rowsLoading = false;
@@ -179,6 +182,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   String? _dataExportRequestId;
   DataExportCancellation? _activeDataExportCancellation;
   RemoteAgentDataExport? _queuedDataExportRequest;
+  _DatabaseFileOperation? _databaseFileOperation;
   bool _rowCountsRefreshing = false;
   bool _automaticChangeDiscoveryBusy = false;
   bool _databaseAccessGrantBusy = false;
@@ -278,6 +282,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     _clientUpdateCheckTimer?.cancel();
     _clientUpdateApplyRetryTimer?.cancel();
     _automaticChangeDiscoveryTimer?.cancel();
+    _databaseFileOperationClearTimer?.cancel();
     _controlPlaneClient.dispose();
     _serverController.dispose();
     _userController.dispose();
@@ -3409,6 +3414,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   }
 
   Widget _buildAgentActionButtons() {
+    final databaseFileOperationBusy = _databaseFileOperation?.busy == true;
     return Wrap(
       alignment: WrapAlignment.end,
       spacing: 2,
@@ -3424,6 +3430,24 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
               : () => unawaited(_refreshLocalRowCounts()),
         ),
         _buildDatabaseAccessNotificationButton(),
+        _buildSyncActionIconButton(
+          tooltip: databaseFileOperationBusy
+              ? 'A database backup or restore is already running'
+              : 'Back up the selected database to a .bak file',
+          icon: Icons.save_alt_rounded,
+          onPressed: _selectedDatabase == null || databaseFileOperationBusy
+              ? null
+              : () => unawaited(_startLocalDatabaseBackup()),
+        ),
+        _buildSyncActionIconButton(
+          tooltip: databaseFileOperationBusy
+              ? 'A database backup or restore is already running'
+              : 'Restore a .bak file as a new database',
+          icon: Icons.settings_backup_restore_rounded,
+          onPressed: databaseFileOperationBusy
+              ? null
+              : () => unawaited(_startLocalDatabaseRestore()),
+        ),
         _buildSyncActionIconButton(
           tooltip: 'Settings',
           icon: Icons.settings_outlined,
@@ -4192,6 +4216,650 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     }
     return null;
+  }
+
+  void _setDatabaseFileOperation({
+    required String operation,
+    required String database,
+    required String stage,
+    required int progress,
+    required bool busy,
+    bool failed = false,
+  }) {
+    if (!mounted) return;
+    _databaseFileOperationClearTimer?.cancel();
+    setState(() {
+      _databaseFileOperation = _DatabaseFileOperation(
+        operation: operation,
+        database: database,
+        stage: stage,
+        progress: progress.clamp(0, 100),
+        busy: busy,
+        failed: failed,
+      );
+    });
+    _updateTraySyncIndicator();
+    if (!busy && !failed) {
+      _databaseFileOperationClearTimer = Timer(const Duration(seconds: 20), () {
+        if (!mounted || _databaseFileOperation?.busy == true) return;
+        setState(() {
+          _databaseFileOperation = null;
+        });
+        _updateTraySyncIndicator();
+      });
+    }
+  }
+
+  Future<void> _copyDatabaseFileWithProgress({
+    required File source,
+    required File destination,
+    required String operation,
+    required String database,
+    required String stage,
+    required int startProgress,
+    required int endProgress,
+  }) async {
+    final totalBytes = await source.length();
+    await destination.parent.create(recursive: true);
+    final sink = destination.openWrite(mode: FileMode.writeOnly);
+    var copiedBytes = 0;
+    try {
+      await for (final block in source.openRead()) {
+        sink.add(block);
+        copiedBytes += block.length;
+        final fraction = totalBytes <= 0 ? 1.0 : copiedBytes / totalBytes;
+        final progress = startProgress +
+            ((endProgress - startProgress) * fraction.clamp(0.0, 1.0)).round();
+        _setDatabaseFileOperation(
+          operation: operation,
+          database: database,
+          stage:
+              '$stage ${_formatByteCount(copiedBytes)} of ${_formatByteCount(totalBytes)}',
+          progress: progress,
+          busy: true,
+        );
+      }
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
+  }
+
+  String _formatByteCount(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '$bytes B';
+  }
+
+  Future<ProcessResult?> _runDatabaseSqlWithProgress({
+    required String operation,
+    required String database,
+    required String stage,
+    required String sqlCommand,
+    required int startProgress,
+    required int endProgress,
+    required Future<ProcessResult?> Function() run,
+  }) async {
+    var polling = false;
+    var active = true;
+    final timer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      if (!active || polling || !mounted) return;
+      polling = true;
+      try {
+        final profile = _activeProfile();
+        final filter = sqlCommand == 'BACKUP DATABASE'
+            ? "AND database_id = DB_ID(N'${_escapeSqlLiteral(database)}')"
+            : '';
+        final result = await _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query:
+              '''
+SET NOCOUNT ON;
+SELECT TOP (1) CONVERT(decimal(6,2), percent_complete)
+FROM sys.dm_exec_requests
+WHERE command = N'${_escapeSqlLiteral(sqlCommand)}' $filter
+ORDER BY start_time DESC;
+''',
+          timeout: const Duration(seconds: 15),
+          suppressHeaders: true,
+        );
+        if (!active || result == null || result.exitCode != 0) return;
+        final sqlPercent = parseSqlServerPercentComplete(
+          result.stdout.toString(),
+        );
+        if (sqlPercent == null) return;
+        final progress = startProgress +
+            (((endProgress - startProgress) * sqlPercent) / 100).round();
+        _setDatabaseFileOperation(
+          operation: operation,
+          database: database,
+          stage: '$stage $sqlPercent%',
+          progress: progress,
+          busy: true,
+        );
+      } finally {
+        polling = false;
+      }
+    });
+    try {
+      return await run();
+    } finally {
+      active = false;
+      timer.cancel();
+    }
+  }
+
+  Future<void> _startLocalDatabaseBackup() async {
+    final database = _selectedDatabase?.trim() ?? '';
+    if (database.isEmpty || _databaseFileOperation?.busy == true) return;
+    const backupTypes = <XTypeGroup>[
+      XTypeGroup(label: 'SQL Server backup', extensions: <String>['bak']),
+    ];
+    final timestamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(RegExp(r'[:.]'), '-')
+        .replaceAll('T', '_');
+    final location = await getSaveLocation(
+      acceptedTypeGroups: backupTypes,
+      suggestedName: '${safeDatabaseFileStem(database)}_$timestamp.bak',
+      confirmButtonText: 'Back up',
+    );
+    if (location == null) return;
+    final destination = normalizeBackupDestination(location.path);
+    unawaited(_runLocalDatabaseBackup(database, destination));
+  }
+
+  Future<void> _runLocalDatabaseBackup(
+    String database,
+    String destinationPath,
+  ) async {
+    File? stagingBackup;
+    final partialDestination = File('$destinationPath.partial');
+    try {
+      _setDatabaseFileOperation(
+        operation: 'Backup',
+        database: database,
+        stage: 'Preparing SQL Server backup',
+        progress: 2,
+        busy: true,
+      );
+      final sharedDirectory = await _prepareSharedDataExportDirectory();
+      if (sharedDirectory == null) {
+        throw StateError(
+          'Unable to prepare a folder shared with the SQL Server service account.',
+        );
+      }
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      stagingBackup = File(
+        path.join(
+          sharedDirectory.path,
+          'local_backup_${safeDatabaseFileStem(database)}_$stamp.bak',
+        ),
+      );
+      final backupLiteral = _escapeSqlLiteral(stagingBackup.path);
+      final profile = _activeProfile();
+      Future<ProcessResult?> runBackup({required bool compression}) {
+        return _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query:
+              '''
+BACKUP DATABASE ${_quoteIdentifier(database)}
+TO DISK = N'$backupLiteral'
+WITH COPY_ONLY, INIT, ${compression ? 'COMPRESSION, ' : ''}CHECKSUM, STATS = 5;
+''',
+          timeout: const Duration(hours: 4),
+        );
+      }
+
+      var backupResult = await _runDatabaseSqlWithProgress(
+        operation: 'Backup',
+        database: database,
+        stage: 'Creating backup',
+        sqlCommand: 'BACKUP DATABASE',
+        startProgress: 5,
+        endProgress: 78,
+        run: () => runBackup(compression: true),
+      );
+      if (backupResult != null &&
+          shouldRetryBackupWithoutCompression(
+            exitCode: backupResult.exitCode,
+            stdout: backupResult.stdout.toString(),
+            stderr: backupResult.stderr.toString(),
+          )) {
+        _setDatabaseFileOperation(
+          operation: 'Backup',
+          database: database,
+          stage: 'Retrying without SQL compression',
+          progress: 5,
+          busy: true,
+        );
+        backupResult = await _runDatabaseSqlWithProgress(
+          operation: 'Backup',
+          database: database,
+          stage: 'Creating backup',
+          sqlCommand: 'BACKUP DATABASE',
+          startProgress: 5,
+          endProgress: 78,
+          run: () => runBackup(compression: false),
+        );
+      }
+      if (backupResult == null || backupResult.exitCode != 0) {
+        throw StateError(
+          backupResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('COPY_ONLY backup', backupResult),
+        );
+      }
+      _setDatabaseFileOperation(
+        operation: 'Backup',
+        database: database,
+        stage: 'Verifying backup checksums',
+        progress: 82,
+        busy: true,
+      );
+      final verifyResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query:
+            "RESTORE VERIFYONLY FROM DISK = N'$backupLiteral' WITH CHECKSUM;",
+        timeout: const Duration(hours: 1),
+      );
+      if (verifyResult == null || verifyResult.exitCode != 0) {
+        throw StateError(
+          verifyResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('backup verification', verifyResult),
+        );
+      }
+      await _copyDatabaseFileWithProgress(
+        source: stagingBackup,
+        destination: partialDestination,
+        operation: 'Backup',
+        database: database,
+        stage: 'Saving file',
+        startProgress: 85,
+        endProgress: 98,
+      );
+      _setDatabaseFileOperation(
+        operation: 'Backup',
+        database: database,
+        stage: 'Finalizing verified file',
+        progress: 99,
+        busy: true,
+      );
+      final destination = File(destinationPath);
+      if (await destination.exists()) await destination.delete();
+      await partialDestination.rename(destination.path);
+      final bytes = await destination.length();
+      _setDatabaseFileOperation(
+        operation: 'Backup',
+        database: database,
+        stage: 'Completed (${_formatByteCount(bytes)})',
+        progress: 100,
+        busy: false,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: SelectableText('Backup saved to $destinationPath')),
+        );
+      }
+    } catch (error, stackTrace) {
+      logAgentDiagnostic(
+        'database.backup.failed',
+        level: AgentLogLevel.error,
+        context: {'database': database, 'destination': destinationPath},
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _setDatabaseFileOperation(
+        operation: 'Backup',
+        database: database,
+        stage: error.toString(),
+        progress: _databaseFileOperation?.progress ?? 0,
+        busy: false,
+        failed: true,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: SelectableText('Backup failed: $error')),
+        );
+      }
+    } finally {
+      if (await partialDestination.exists()) {
+        try {
+          await partialDestination.delete();
+        } catch (_) {}
+      }
+      if (stagingBackup != null && await stagingBackup.exists()) {
+        try {
+          await stagingBackup.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<String?> _promptRestoreDatabaseName(String suggestedName) async {
+    final controller = TextEditingController(text: suggestedName);
+    String? validationError;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Restore as a new database'),
+          content: SizedBox(
+            width: 440,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'The live selected database will not be replaced. Enter a new database name for the restored copy.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'New database name',
+                    errorText: validationError,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                final valid = value.isNotEmpty &&
+                    value.length <= 80 &&
+                    RegExp(r'^[A-Za-z0-9_ .-]+$').hasMatch(value) &&
+                    !const {'master', 'model', 'msdb', 'tempdb'}
+                        .contains(value.toLowerCase());
+                if (!valid) {
+                  setDialogState(() {
+                    validationError =
+                        'Use 1-80 letters, numbers, spaces, dots, dashes or underscores.';
+                  });
+                  return;
+                }
+                Navigator.of(context).pop(value);
+              },
+              child: const Text('Start restore'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _startLocalDatabaseRestore() async {
+    if (_databaseFileOperation?.busy == true) return;
+    const backupTypes = <XTypeGroup>[
+      XTypeGroup(label: 'SQL Server backup', extensions: <String>['bak']),
+    ];
+    final selected = await openFile(
+      acceptedTypeGroups: backupTypes,
+      confirmButtonText: 'Select backup',
+    );
+    if (selected == null || !mounted) return;
+    final sourceName = (_selectedDatabase?.trim().isNotEmpty == true
+            ? _selectedDatabase!.trim()
+            : path.basenameWithoutExtension(selected.path))
+        .replaceAll(RegExp(r'[^A-Za-z0-9_ .-]'), '_');
+    final suffix = DateTime.now()
+        .toIso8601String()
+        .substring(0, 16)
+        .replaceAll(RegExp(r'[-:T]'), '');
+    final targetDatabase = await _promptRestoreDatabaseName(
+      '${sourceName}_Restored_$suffix',
+    );
+    if (targetDatabase == null) return;
+    unawaited(
+      _runLocalDatabaseRestore(
+        sourcePath: selected.path,
+        targetDatabase: targetDatabase,
+      ),
+    );
+  }
+
+  Future<void> _runLocalDatabaseRestore({
+    required String sourcePath,
+    required String targetDatabase,
+  }) async {
+    File? stagingBackup;
+    try {
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: 'Checking restore target',
+        progress: 2,
+        busy: true,
+      );
+      final profile = _activeProfile();
+      final targetLiteral = _escapeSqlLiteral(targetDatabase);
+      final targetCheck = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query:
+            "SET NOCOUNT ON; SELECT CASE WHEN DB_ID(N'$targetLiteral') IS NULL THEN N'available' ELSE N'exists' END;",
+        suppressHeaders: true,
+      );
+      if (targetCheck == null || targetCheck.exitCode != 0) {
+        throw StateError(
+          targetCheck == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('restore target check', targetCheck),
+        );
+      }
+      if (!_parseSingleColumnOutput(
+        targetCheck.stdout.toString(),
+      ).contains('available')) {
+        throw StateError(
+          'Database $targetDatabase already exists. Restore never overwrites an existing database.',
+        );
+      }
+      final source = File(sourcePath);
+      if (!await source.exists()) {
+        throw StateError('Backup file no longer exists: $sourcePath');
+      }
+      final sharedDirectory = await _prepareSharedDataExportDirectory();
+      if (sharedDirectory == null) {
+        throw StateError(
+          'Unable to prepare a folder shared with the SQL Server service account.',
+        );
+      }
+      stagingBackup = File(
+        path.join(
+          sharedDirectory.path,
+          'local_restore_${DateTime.now().microsecondsSinceEpoch}.bak',
+        ),
+      );
+      await _copyDatabaseFileWithProgress(
+        source: source,
+        destination: stagingBackup,
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: 'Staging backup',
+        startProgress: 4,
+        endProgress: 30,
+      );
+      final backupLiteral = _escapeSqlLiteral(stagingBackup.path);
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: 'Verifying backup checksums',
+        progress: 34,
+        busy: true,
+      );
+      final verifyResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query:
+            "RESTORE VERIFYONLY FROM DISK = N'$backupLiteral' WITH CHECKSUM;",
+        timeout: const Duration(hours: 1),
+      );
+      if (verifyResult == null || verifyResult.exitCode != 0) {
+        throw StateError(
+          verifyResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('restore verification', verifyResult),
+        );
+      }
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: 'Reading backup file layout',
+        progress: 40,
+        busy: true,
+      );
+      final fileListResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query: "RESTORE FILELISTONLY FROM DISK = N'$backupLiteral';",
+        timeout: const Duration(minutes: 10),
+        suppressHeaders: true,
+      );
+      if (fileListResult == null || fileListResult.exitCode != 0) {
+        throw StateError(
+          fileListResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('restore file inventory', fileListResult),
+        );
+      }
+      final files = parseRestoreFileList(fileListResult.stdout.toString());
+      final pathsResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query: r'''
+SET NOCOUNT ON;
+DECLARE @data nvarchar(4000) = CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultDataPath'));
+DECLARE @logs nvarchar(4000) = CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultLogPath'));
+IF NULLIF(@data, N'') IS NULL
+  SELECT TOP (1) @data = LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'\', REVERSE(physical_name)) + 1)
+  FROM master.sys.master_files WHERE database_id = DB_ID(N'master') AND type = 0;
+IF NULLIF(@logs, N'') IS NULL
+  SELECT TOP (1) @logs = LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'\', REVERSE(physical_name)) + 1)
+  FROM master.sys.master_files WHERE database_id = DB_ID(N'master') AND type = 1;
+SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
+''',
+        suppressHeaders: true,
+      );
+      if (pathsResult == null || pathsResult.exitCode != 0) {
+        throw StateError(
+          pathsResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('restore path lookup', pathsResult),
+        );
+      }
+      final pathRows = _dataOutputLines(pathsResult.stdout.toString())
+          .map(_splitRowValues)
+          .where((row) => row.length >= 2)
+          .toList(growable: false);
+      if (pathRows.isEmpty ||
+          pathRows.first[0].isEmpty ||
+          pathRows.first[1].isEmpty) {
+        throw StateError('SQL Server did not report data and log directories.');
+      }
+      final restoreSql = buildRestoreAsNewDatabaseSql(
+        database: targetDatabase,
+        backupPath: stagingBackup.path,
+        dataDirectory: pathRows.first[0],
+        logDirectory: pathRows.first[1],
+        files: files,
+      );
+      final restoreResult = await _runDatabaseSqlWithProgress(
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: 'Restoring database',
+        sqlCommand: 'RESTORE DATABASE',
+        startProgress: 45,
+        endProgress: 96,
+        run: () => _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query: restoreSql,
+          timeout: const Duration(hours: 4),
+        ),
+      );
+      if (restoreResult == null || restoreResult.exitCode != 0) {
+        throw StateError(
+          restoreResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('database restore', restoreResult),
+        );
+      }
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: 'Refreshing database catalog',
+        progress: 98,
+        busy: true,
+      );
+      await _loadDatabases(
+        profile: profile,
+        loadTables: false,
+        preserveSelection: true,
+      );
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: 'Completed as a new database',
+        progress: 100,
+        busy: false,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: SelectableText(
+              'Restore completed as new database $targetDatabase. The live selected database was not replaced.',
+            ),
+          ),
+        );
+      }
+    } catch (error, stackTrace) {
+      logAgentDiagnostic(
+        'database.restore.failed',
+        level: AgentLogLevel.error,
+        context: {'database': targetDatabase, 'source': sourcePath},
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: targetDatabase,
+        stage: error.toString(),
+        progress: _databaseFileOperation?.progress ?? 0,
+        busy: false,
+        failed: true,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: SelectableText('Restore failed: $error')),
+        );
+      }
+    } finally {
+      if (stagingBackup != null && await stagingBackup.exists()) {
+        try {
+          await stagingBackup.delete();
+        } catch (_) {}
+      }
+    }
   }
 
   Future<void> _runRequestedDataExport(
@@ -12456,6 +13124,8 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
         label: 'Status',
         value: selectedSyncRow?.state.status ?? 'Idle',
       ),
+      if (_databaseFileOperation != null)
+        _buildDatabaseFileOperationIndicator(_databaseFileOperation!),
     ];
 
     return LayoutBuilder(
@@ -12531,6 +13201,86 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
           const SizedBox(width: 8),
           Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDatabaseFileOperationIndicator(
+    _DatabaseFileOperation operation,
+  ) {
+    final color = operation.failed
+        ? const Color(0xFFB42318)
+        : operation.busy
+        ? const Color(0xFF1D4ED8)
+        : const Color(0xFF0F766E);
+    return Tooltip(
+      message:
+          '${operation.operation} ${operation.database}: ${operation.stage}',
+      child: Container(
+        width: 280,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.09),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: color.withValues(alpha: 0.30)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  operation.operation == 'Backup'
+                      ? Icons.save_alt_rounded
+                      : Icons.settings_backup_restore_rounded,
+                  size: 15,
+                  color: color,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${operation.operation}: ${operation.database}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${operation.progress}%',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: operation.progress / 100,
+                minHeight: 4,
+                color: color,
+                backgroundColor: color.withValues(alpha: 0.15),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              operation.stage,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10.5, color: Color(0xFF475467)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -12808,6 +13558,24 @@ class _SyncTableRowData {
   final String table;
   final String syncKey;
   final SyncTableState state;
+}
+
+class _DatabaseFileOperation {
+  const _DatabaseFileOperation({
+    required this.operation,
+    required this.database,
+    required this.stage,
+    required this.progress,
+    required this.busy,
+    required this.failed,
+  });
+
+  final String operation;
+  final String database;
+  final String stage;
+  final int progress;
+  final bool busy;
+  final bool failed;
 }
 
 class _SqlConnectionProfile {
