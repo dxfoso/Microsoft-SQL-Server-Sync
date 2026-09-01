@@ -574,7 +574,10 @@ try {
 
     foreach ($pod in $pods) {
         Invoke-CheckedNative -Description "Publishing client update files to pod $pod..." -Command {
-            & ssh $SshTarget "kubectl exec -n '$Namespace' '$pod' -- mkdir -p '$RemoteUpdatesDir/packages/$packageDirName' '$RemoteUpdatesDir/packages/latest-package' && kubectl cp -n '$Namespace' '$remoteStage/latest.json' '$pod`:$RemoteUpdatesDir/latest.json' && kubectl cp -n '$Namespace' '$remoteStage/latest-files.json' '$pod`:$RemoteUpdatesDir/latest-files.json' && kubectl cp -n '$Namespace' '$remoteStage/$zipName' '$pod`:$RemoteUpdatesDir/$zipName' && kubectl cp -n '$Namespace' '$remoteStage/sync_windows_agent_latest.zip' '$pod`:$RemoteUpdatesDir/sync_windows_agent_latest.zip' && kubectl cp -n '$Namespace' '$remoteStage/update.ps1' '$pod`:$RemoteUpdatesDir/update.ps1' && kubectl cp -n '$Namespace' '$remoteStage/packages/$packageDirName/.' '$pod`:$RemoteUpdatesDir/packages/$packageDirName' && kubectl cp -n '$Namespace' '$remoteStage/packages/latest-package/.' '$pod`:$RemoteUpdatesDir/packages/latest-package'"
+            # Publish every referenced immutable dependency first. latest.json
+            # is the release pointer, so stage it under a temporary name and
+            # atomically rename it only after the package tree is readable.
+            & ssh $SshTarget "kubectl exec -n '$Namespace' '$pod' -- mkdir -p '$RemoteUpdatesDir/packages/$packageDirName' '$RemoteUpdatesDir/packages/latest-package' && kubectl cp -n '$Namespace' '$remoteStage/$zipName' '$pod`:$RemoteUpdatesDir/$zipName' && kubectl cp -n '$Namespace' '$remoteStage/sync_windows_agent_latest.zip' '$pod`:$RemoteUpdatesDir/sync_windows_agent_latest.zip' && kubectl cp -n '$Namespace' '$remoteStage/update.ps1' '$pod`:$RemoteUpdatesDir/update.ps1' && kubectl cp -n '$Namespace' '$remoteStage/packages/$packageDirName/.' '$pod`:$RemoteUpdatesDir/packages/$packageDirName' && kubectl cp -n '$Namespace' '$remoteStage/packages/latest-package/.' '$pod`:$RemoteUpdatesDir/packages/latest-package' && kubectl cp -n '$Namespace' '$remoteStage/latest-files.json' '$pod`:$RemoteUpdatesDir/latest-files.json' && kubectl cp -n '$Namespace' '$remoteStage/latest.json' '$pod`:$RemoteUpdatesDir/latest.json.next' && kubectl exec -n '$Namespace' '$pod' -- mv '$RemoteUpdatesDir/latest.json.next' '$RemoteUpdatesDir/latest.json'"
         }
     }
 

@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 333)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 336)}
         observed_ids = set()
 
         for row in rows:
@@ -76,6 +76,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("-o custom-columns=", probe)
         self.assertNotIn("jsonpath", probe)
         self.assertNotIn(".items[0]", probe)
+
+    def test_client_publisher_switches_manifest_only_after_dependencies(self):
+        publisher = read_text("scripts/publish_windows_client_update.ps1")
+        live_publish = publisher.split(
+            'Invoke-CheckedNative -Description "Publishing client update files to pod $pod..."',
+            1,
+        )[1].split("Write-Host \"Uploaded client update", 1)[0]
+
+        package_pos = live_publish.index("packages/$packageDirName/.")
+        staged_manifest_pos = live_publish.index("latest.json.next")
+        switch_pos = live_publish.index("mv '$RemoteUpdatesDir/latest.json.next'")
+        self.assertLess(package_pos, staged_manifest_pos)
+        self.assertLess(staged_manifest_pos, switch_pos)
+        self.assertNotIn("'$remoteStage/latest.json' '$pod`:$RemoteUpdatesDir/latest.json'", live_publish)
 
     def test_pos_inventory_normalization_is_narrow_and_exact_transport_remains(self):
         fingerprint = read_text("sync_windows_agent/lib/sql_sync_fingerprint.dart")
