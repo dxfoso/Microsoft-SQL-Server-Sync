@@ -4605,7 +4605,12 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   // Resolving issues must still refresh fingerprints so a completed automatic
   // repair can reopen the gate without waiting for an offline client.
   if (sync_owner_has_needs_input_table_issues(normalizedOwnerUserId)) {
-    return [];
+    if (sync_owner_has_repair_resolution_table_issues(normalizedOwnerUserId)) {
+      refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents);
+    }
+    if (sync_owner_has_needs_input_table_issues(normalizedOwnerUserId)) {
+      return [];
+    }
   }
   refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents);
   if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId)) {
@@ -5334,6 +5339,18 @@ function release_primary_source_automatable_issues(ownerUserId: string): int {
 function sync_owner_has_resolving_table_issues(ownerUserId: string? = null): bool {
   for (const issue of sync_table_issues_for_owner(ownerUserId)) {
     if (string.from(issue.status ?? '').trim().toLowerCase() == 'resolving') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sync_owner_has_repair_resolution_table_issues(ownerUserId: string? = null): bool {
+  for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    const status = string.from(issue.status ?? '').trim().toLowerCase();
+    const reason = string.from(issue.reason ?? '').trim().toLowerCase();
+    if (status == 'resolving' ||
+        (status == 'needs_input' && reason == 'durable_origin_nonconvergence_fresh')) {
       return true;
     }
   }
@@ -7744,7 +7761,7 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   // paused. Re-evaluate only when a heartbeat actually changed table
   // fingerprints, so the durable Needs input gate clears without adding work
   // to ordinary lightweight heartbeats.
-  if (tablesChanged && sync_owner_has_resolving_table_issues(ownerUserId)) {
+  if (tablesChanged && sync_owner_has_repair_resolution_table_issues(ownerUserId)) {
     refresh_owner_baseline_table_issues(ownerUserId);
   }
   // Administrative commands can be written while a heartbeat is processing

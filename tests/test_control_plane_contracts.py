@@ -999,7 +999,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("resolvingCount", gate)
         self.assertIn("No user decision is required", gate)
         self.assertIn("tablesChanged", heartbeat)
-        self.assertIn("sync_owner_has_resolving_table_issues(ownerUserId)", heartbeat)
+        self.assertIn(
+            "sync_owner_has_repair_resolution_table_issues(ownerUserId)", heartbeat
+        )
         self.assertIn("refresh_owner_baseline_table_issues(ownerUserId)", heartbeat)
         self.assertIn("'server-authoritative-reconcile'", complete)
         self.assertIn("sync_batch_all_jobs_completed(completedBatchId)", complete)
@@ -1276,6 +1278,21 @@ class ControlPlaneContractsTests(unittest.TestCase):
             refresh,
         )
         self.assertIn("message: (durableFreshNeedsInput ||", refresh)
+        self.assertIn(
+            "function sync_owner_has_repair_resolution_table_issues(", source
+        )
+        self.assertIn(
+            "(status == 'needs_input' && reason == 'durable_origin_nonconvergence_fresh')",
+            source,
+        )
+        self.assertIn(
+            "if (sync_owner_has_repair_resolution_table_issues(normalizedOwnerUserId))",
+            source,
+        )
+        self.assertIn(
+            "tablesChanged && sync_owner_has_repair_resolution_table_issues(ownerUserId)",
+            source,
+        )
         self.assertIn("reason == 'durable_origin_nonconvergence'", release)
         self.assertIn("durable_origin_repair_was_interrupted(", release)
         self.assertIn("canonicalFullMerge ||", download)
