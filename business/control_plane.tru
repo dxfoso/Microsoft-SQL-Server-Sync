@@ -5771,6 +5771,16 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   let introducedBlockingIssue = false;
   for (const table of unique_string_values(candidateTables)) {
     const existing = sync_table_issue_from_values(nextIssues, table);
+    const existingStatus = existing == null
+      ? ''
+      : string.from(existing.status ?? '').trim().toLowerCase();
+    const existingReason = existing == null
+      ? ''
+      : string.from(existing.reason ?? '').trim().toLowerCase();
+    const durableFreshNeedsInput = existingStatus == 'needs_input' &&
+      existingReason == 'durable_origin_nonconvergence_fresh';
+    const tracksRepairResolution = existingStatus == 'resolving' ||
+      durableFreshNeedsInput;
     const plan = sync_table_baseline_plan(
       table,
       ownerAgents,
@@ -5786,8 +5796,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
     let resolutionParticipantCount = 0;
     let resolutionReportedClientCount = 0;
     let resolutionFingerprints = [];
-    if (existing != null &&
-        string.from(existing.status ?? '').trim() == 'resolving') {
+    if (existing != null && tracksRepairResolution) {
       const sourceClientName = normalize_user_name(existing.sourceClientName);
       if (sourceClientName.length != 0) {
         resolutionClientNames = resolutionClientNames.concat([sourceClientName]);
@@ -5801,7 +5810,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       resolutionClientNames = unique_string_values(resolutionClientNames);
     }
     const resolutionFingerprintsFresh = existing != null &&
-      string.from(existing.status ?? '').trim() == 'resolving' &&
+      tracksRepairResolution &&
       repair_resolution_fingerprints_are_fresh(
         ownerUserId,
         table,
@@ -5854,7 +5863,8 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
         table,
         status: 'ready',
         reason: '',
-        message: string.from(existing.action ?? '').trim() == 'automatic_durable_origin_reconcile'
+        message: (durableFreshNeedsInput ||
+          string.from(existing.action ?? '').trim() == 'automatic_durable_origin_reconcile')
           ? 'Durable latest-origin repair completed and every enabled online participant reports the same table fingerprint.'
           : 'Authoritative repair completed and every online repair participant reports the same table fingerprint. Offline clients will catch up automatically after reconnecting.',
         clientName: existing.clientName,
@@ -5869,7 +5879,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       continue;
     }
     if (existing != null &&
-        string.from(existing.status ?? '').trim() == 'resolving' &&
+        tracksRepairResolution &&
         string.from(existing.action ?? '').trim() == 'automatic_durable_origin_reconcile' &&
         !string_array_contains(activeOwnerTables, table) &&
         resolutionClientNames.length > 1 &&
