@@ -5771,12 +5771,12 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   let introducedBlockingIssue = false;
   for (const table of unique_string_values(candidateTables)) {
     const existing = sync_table_issue_from_values(nextIssues, table);
-    const existingStatus = existing == null
-      ? ''
-      : string.from(existing.status ?? '').trim().toLowerCase();
-    const existingReason = existing == null
-      ? ''
-      : string.from(existing.reason ?? '').trim().toLowerCase();
+    let existingStatus = '';
+    let existingReason = '';
+    if (existing != null) {
+      existingStatus = string.from(existing.status ?? '').trim().toLowerCase();
+      existingReason = string.from(existing.reason ?? '').trim().toLowerCase();
+    }
     const durableFreshNeedsInput = existingStatus == 'needs_input' &&
       existingReason == 'durable_origin_nonconvergence_fresh';
     const tracksRepairResolution = existingStatus == 'resolving' ||
@@ -5852,7 +5852,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       }
     }
     if (existing != null &&
-        string.from(existing.status ?? '').trim() == 'resolving' &&
+        tracksRepairResolution &&
         !string_array_contains(activeOwnerTables, table) &&
         resolutionClientNames.length > 1 &&
         resolutionParticipantCount == resolutionClientNames.length &&
@@ -5905,7 +5905,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       continue;
     }
     if (existing != null &&
-        string.from(existing.status ?? '').trim() == 'resolving' &&
+        tracksRepairResolution &&
         string.from(existing.action ?? '').trim() == 'automatic_primary_source_reconcile' &&
         !string_array_contains(activeOwnerTables, table) &&
         resolutionClientNames.length > 1 &&

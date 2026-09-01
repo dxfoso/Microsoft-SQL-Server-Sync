@@ -1265,10 +1265,16 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("date.diff(heartbeatAt, latestCompletedAt, 'ms') <= 0", refresh)
         self.assertEqual(refresh.count("resolutionFingerprintsFresh &&"), 3)
         self.assertIn("durable_origin_nonconvergence_fresh", refresh)
+        self.assertIn("let existingStatus = '';", refresh)
+        self.assertIn("if (existing != null) {", refresh)
         self.assertIn("const durableFreshNeedsInput = existingStatus == 'needs_input'", refresh)
         self.assertIn("const tracksRepairResolution = existingStatus == 'resolving'", refresh)
         self.assertIn("existingReason == 'durable_origin_nonconvergence_fresh'", refresh)
         self.assertIn("if (existing != null && tracksRepairResolution)", refresh)
+        self.assertIn(
+            "if (existing != null &&\n        tracksRepairResolution &&\n        !string_array_contains(activeOwnerTables, table)",
+            refresh,
+        )
         self.assertIn("message: (durableFreshNeedsInput ||", refresh)
         self.assertIn("reason == 'durable_origin_nonconvergence'", release)
         self.assertIn("durable_origin_repair_was_interrupted(", release)
