@@ -102,8 +102,12 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("24,000 + 144,000 + 26,000 = 194,000", purchase)
         self.assertIn("Purchase line `Price`, not `PurchaseVal`", purchase)
         self.assertIn("Material `MaxPrice`, `AvgPrice`, and `LastPrice`", purchase)
-        self.assertIn("next bounded-delta baseline is `5793`", purchase)
+        self.assertIn("Purchase quantity edit (`SYS_CHANGE_VERSION = 5794`)", purchase)
+        self.assertIn("all 33 operations belong to version 5794", purchase)
+        self.assertIn("(2 - 1) * 24,000 = 24,000", purchase)
+        self.assertIn("next bounded-delta baseline is `5794`", purchase)
         self.assertIn("first controlled Purchase is captured", progress)
+        self.assertIn("one atomic version `5794`", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")

@@ -123,6 +123,50 @@ They must not be attributed to the Purchase or used to infer missing business re
 7. A complete Purchase graph must reconcile header total, line arithmetic, voucher balance, ledger balance, supplier term, inbound movements, material balances/prices, relation, and both account hierarchies before publication.
 8. These rules are proven only for the observed zero-tax, zero-discount, zero-extra, quantity-1 posted Purchase type. Unknown configurations must fail closed until separately observed.
 
+## Purchase quantity edit (`SYS_CHANGE_VERSION = 5794`)
+
+The user edited Purchase 111 line 0, changing only material 12666 quantity from 1 to 2. In this Purchase workflow Al-Ameen asked once and saved the edit; no second warehouse-quantity confirmation was presented. The complete database effect committed in one Change Tracking version.
+
+- Delta boundary: baseline `5793`, upper version `5794`; all 33 operations belong to version 5794.
+- Artifact: 6,030 compressed bytes, SHA-256 `76afbf5947b1a3120711ccc8089f36e82334d246eb2ada99309b348c8fa0baf8`.
+- Line 0: quantity 1 to 2; price remained 24,000. Lines 1 and 2 retained their numbers, quantities, prices, discounts, extras, and purchase values.
+- Header: Purchase 111 remained posted; total changed from 194,000 to 218,000, exactly +24,000.
+- Voucher: type 1 / number 2323 remained posted and balanced; debit and credit each changed from 194,000 to 218,000.
+- Ledger: line 1 debit changed from 24,000 to 48,000; balancing line 4 credit changed from 194,000 to 218,000. Four-entry debit and credit sums each remain 218,000.
+- Payment term: credit changed from 194,000 to 218,000; debit remained 0.
+- Stock: material-12666 `ms000.Qty` and `mt000.Qty` each changed from 1 to 2. Materials 20960 and 2374 remained quantity 1.
+- Material 12666 maximum, average, and last price remained 24,000; the other material prices also remained unchanged.
+
+### Exact operation and identity manifest
+
+| Table | Operation | Count | Verified effect |
+|---|---|---:|---|
+| `bu000` | update | 1 | Same header GUID; sets total to 218,000. |
+| `bi000` | delete + insert | 3 + 3 | Replaces all three line GUIDs; no deleted GUID was reused. |
+| `ce000` | delete + insert | 1 + 1 | Replaces voucher GUID while preserving business voucher 1/2323. |
+| `en000` | delete + insert | 4 + 4 | Replaces all four ledger GUIDs; final entries remain balanced. |
+| `er000` | delete + insert | 1 + 1 | Replaces relation GUID and still points to Purchase 111. |
+| `pt000` | delete + insert | 1 + 1 | Replaces payment-term GUID with credit 218,000. |
+| `ms000` | update | 3 | All movement GUIDs stayed stable and were touched; only material 12666 quantity changed. |
+| `mt000` | update | 3 | All material GUIDs stayed stable and were touched; only material 12666 quantity changed. |
+| `ac000` | update | 6 | Both account hierarchies increased by the exact 24,000 difference. |
+
+No `cp000` row changed. This reinforces the observed difference from Sales: Purchase edits do not maintain customer/material sale-price relations in this configuration.
+
+### Exact account changes
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 15 | `Debit` | 948,146,100 | 948,170,100 | +24,000 |
+| 6 | `Debit` | 961,856,100 | 961,880,100 | +24,000 |
+| 110 | `Credit` | 194,000 | 218,000 | +24,000 |
+| 26 | `Credit` | 40,216,500 | 40,240,500 | +24,000 |
+| 11 | `Credit` | 38,162,000 | 38,186,000 | +24,000 |
+| 4 | `Credit` | 1,744,442,000 | 1,744,466,000 | +24,000 |
+| 110 | `UseFlag` | 6 | 7 | +1 |
+
+Arithmetic checks: `(2 - 1) * 24,000 = 24,000`; `194,000 + 24,000 = 218,000`; `48,000 + 144,000 + 26,000 = 218,000`. Header, voucher, ledger, payment term, stock, material quantity, and every monetary account aggregate reconcile exactly.
+
 ## Current checkpoint and next observation
 
-The next bounded-delta baseline is `5793`. To expand Purchase behavior safely, edit Purchase 111 by changing only line 0 material 12666 quantity from 1 to 2, complete the save/warehouse confirmation, make no other change, and capture from baseline 5793. Synchronization must remain disabled.
+The next bounded-delta baseline is `5794`. To map Purchase price behavior, edit Purchase 111 line 1 material 20960 by changing only its price from 144,000 to 145,000, complete the single Save action, make no other change, and capture from baseline 5794. Synchronization must remain disabled.
