@@ -73,6 +73,22 @@ Al-Ameen implemented this one-field edit as a wider atomic object rewrite:
 
 This is a long-term synchronization requirement, not evidence of 172 independent user edits. Version `5767` must be transported and applied as one atomic ordered unit. The explicit deletes must be preserved as tombstones, the inserts must retain their new primary identities, and retries must be idempotent. The existing sync architecture's atomic transaction, explicit-delete, primary-key-change, relational-integrity, and interrupted-retry regression gates are designed for this pattern; snapshot absence must never be used to simplify it.
 
+## Existing-sale price edit (`SYS_CHANGE_VERSION = 5768`)
+
+The user next reported changing the price of another item in the same sale. The bounded delta from `5767` proves that Al-Ameen saved the following exact values on posted Sales number 110:
+
+- Delta boundary: baseline `5767`, upper version `5768`; every operation belongs to the single version `5768`.
+- Artifact: 15,889 compressed bytes, 172 operations, SHA-256 `1f3b1b39be3dc9fc79f73c764093943114b7c950a9f3fc7e39eb56ae695c96db`.
+- `bi000` line number 1 retained quantity 1 and changed price from 312,000 to **3,120,100**.
+- The exact difference is 2,808,100. `bu000.Total` changed from 9,626,000 to 12,434,100 by that same amount.
+- Voucher type 1 / number 2317 remained balanced; its debit and credit each changed from 9,626,000 to 12,434,100.
+- Two of the 27 regenerated ledger entries carried the monetary effect: one debit changed from 312,000 to 3,120,100, and the balancing credit changed from 9,626,000 to 12,434,100.
+- The payment/term credit changed from 9,626,000 to 12,434,100.
+- Six account aggregates moved by exactly 2,808,100 on their applicable debit or credit side, and one use counter advanced by one.
+- No `ms000` quantity value changed. Material `mt000` number 198293 retained its quantity but changed `MaxPrice`, `AvgPrice`, and `LastPrice` from 312,000 to 3,120,100.
+
+As with the quantity edit, Al-Ameen represented this single visible field edit as 172 Change Tracking operations across the same 10 tables: 26 Sales lines, 27 ledger lines, and the voucher, relation, and payment identities were deleted and recreated with new GUIDs; the header, movements, materials, accounts, and one custom-field row were tracked as updates. Only the price and its mathematically corresponding totals and aggregates changed in the compared business values. The entire version must therefore remain atomic and idempotent during synchronization.
+
 ## Next controlled observation
 
-Use `5767` as the next read-only baseline. A controlled delete, refund, payment, or a second-client concurrent edit can now be captured with another bounded delta. Do not run a new full backup unless Change Tracking reports that this baseline expired; expiration must fail closed.
+Use `5768` as the next read-only baseline. A controlled delete, refund, payment, or a second-client concurrent edit can now be captured with another bounded delta. Do not run a new full backup unless Change Tracking reports that this baseline expired; expiration must fail closed.

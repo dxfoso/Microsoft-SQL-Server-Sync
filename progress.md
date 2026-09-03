@@ -11,6 +11,7 @@ Overall: **98% complete - create and quantity-edit database effects captured**
 | Capture the user-opened Sales dialog without input | Done after delayed command delivery | 100% |
 | Record the first manual Sales operation and compare its database effects | Done | 100% |
 | Record the existing-sale quantity edit and compare its database effects | Done | 100% |
+| Record the same-sale item price edit and compare its database effects | Done | 100% |
 | Replace full-backup transfer with bounded Change Tracking delta export | Done | 100% |
 | Prove full database rollback | Not started | 0% |
 
@@ -46,3 +47,4 @@ The command-delivery blocker is cleared for this experiment. No automated Al-Ame
 - The controlled Sales save is documented in `docs/alameen-sales-observation-2026-09-03.md`. Its atomic commit was version `5755`, with 15 changes across 10 accounting, invoice, stock, and relation tables. Later UI/session commits are separated from the sale.
 - `ma000` was not reduced: Al-Ameen explicitly replaced 12 rows with 12 new-GUID rows at versions `5763`–`5764`; all non-primary business fields matched the restored baseline exactly. This explains equal-count/different-hash behavior without treating snapshot absence as deletion.
 - The user's quantity edit is captured and verified at Change Tracking version `5767`. The edited database object was posted Sales number 110: line 0 quantity changed 1 to 10 at unchanged unit price 430,000, and the total increased from 5,756,000 to 9,626,000. The 15,792-byte delta contains 172 operations because Al-Ameen regenerated all 26 Sales line GUIDs, all 27 ledger-line GUIDs, and related voucher/relation/payment identities in the same atomic commit. Inventory and account aggregates changed by the exact corresponding amounts. The next safe delta baseline is `5767`.
+- The next price edit is captured and verified at version `5768`: Sales 110 line 1 price changed from 312,000 to 3,120,100, increasing the total and balanced accounting by exactly 2,808,100. Stock quantities did not change; material 198293's maximum, average, and last prices changed to the entered value. Al-Ameen again emitted the same 172-operation atomic identity-rewrite pattern. The next safe delta baseline is `5768`.
