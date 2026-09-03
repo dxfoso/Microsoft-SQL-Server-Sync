@@ -328,6 +328,20 @@ The complete bounded export ran from baseline 5770 through upper version 5781 an
 
 The durable pre-removal checkpoint is now upper version `5781`, not 5771, because all later observed maintenance commits are included in the sealed delta. For the next phase, reopen Sales 1616, remove only the middle line (line 1, material 77577, quantity 1, price 174,000), and **do not save or close the dialog**. Capture from baseline 5781 at that point. Only after that capture should the user save, followed by a second capture. This directly distinguishes a remove-time database commit from a final-save commit.
 
+## Three-item boundary experiment: removal before Save
+
+The user reopened Sales 1616, removed only the middle line (material 77577, quantity 1, price 174,000), and stopped before either of the two Save clicks normally required by this edit workflow.
+
+- Read-only delta baseline: `5781`.
+- Captured upper version: `5781`.
+- Change count: **0** rows across **0** tables.
+- Compressed artifact: 148 bytes, SHA-256 `5ff2a1d84ec5250aee7b4d00ce4c6010b115c7ff2b50b63d1848dbc8035a3af6`.
+- No Sales header, line, voucher, ledger, relation, payment, stock, material, account, option, or session row changed during this checkpoint.
+
+This directly proves that removing the line in the open Al-Ameen dialog changes only the UI's in-memory edit buffer. It does not commit any database mutation before Save. The earlier two-version removal is now strongly consistent with the user's newly reported two-click Save workflow, but the mapping of first click to the first SQL commit and second click to the final commit is not yet proven.
+
+Because the database did not advance, the next bounded-delta baseline remains `5781`.
+
 ## Next controlled observation
 
-Use `5781` as the next read-only baseline. Production automatic synchronization remains blocked by INC-403, and `alshallan2` must remain sync-disabled throughout this experiment.
+Click the first Save action exactly once, stop before the second click/confirmation, and capture again from baseline `5781`. Production automatic synchronization remains blocked by INC-403, and `alshallan2` must remain sync-disabled throughout this experiment.

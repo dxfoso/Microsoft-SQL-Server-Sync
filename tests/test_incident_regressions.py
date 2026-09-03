@@ -74,8 +74,12 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Sales 1616", observation)
         self.assertIn("7,700 + 174,000 + 54,000 = 235,700", observation)
         self.assertIn("upper version `5781`", observation)
+        self.assertIn("removal before Save", observation)
+        self.assertIn("Change count: **0** rows", observation)
+        self.assertIn("UI's in-memory edit buffer", observation)
+        self.assertIn("first Save action exactly once", observation)
         self.assertIn("version `5770`", progress)
-        self.assertIn("middle line without saving or closing", progress)
+        self.assertIn("zero changed rows/tables", progress)
         self.assertIn("multi-commit", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
