@@ -1,0 +1,20 @@
+{{- if and .Values.postgres.enabled .Values.postgresBackup.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sync-admin-web.postgresBackupPvcName" . }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgresBackup.persistence.size | quote }}
+  {{- if .Values.postgresBackup.persistence.storageClassName }}
+  storageClassName: {{ .Values.postgresBackup.persistence.storageClassName | quote }}
+  {{- end }}
+{{- end }}

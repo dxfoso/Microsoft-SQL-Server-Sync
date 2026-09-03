@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 425)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 433)}
         observed_ids = set()
 
         for row in rows:
@@ -172,14 +172,37 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("--patch-file=/dev/stdin", rotation)
         self.assertIn("Set-SecretText -SecretName $PostgresSecretName", rotation)
         self.assertIn("Set-SecretText -SecretName $BackendSecretName", rotation)
-        self.assertIn("Restart-And-Wait -Deployment $PostgresDeployment", rotation)
+        self.assertNotIn("Restart-And-Wait -Deployment $PostgresDeployment", rotation)
         self.assertIn("Restart-And-Wait -Deployment $BackendDeployment", rotation)
         self.assertIn("Set-DatabaseRolePassword -Role $role -Database $database -Password $oldPassword", rotation)
         self.assertIn("[bool]$health.db_available", rotation)
-        self.assertIn("[string]$health.build.git_commit -ne $ExpectedCommit", rotation)
+        self.assertIn("[string]$health.build.git_commit -eq $ExpectedCommit", rotation)
+        self.assertIn("function Wait-ProductionHealth", rotation)
+        self.assertIn("[DateTime]::UtcNow.AddSeconds(90)", rotation)
         self.assertNotIn("Write-Host $oldPassword", rotation)
         self.assertNotIn("Write-Host $newPassword", rotation)
         self.assertNotIn("--from-literal", rotation)
+
+    def test_postgres_wal_recovery_preserves_physical_and_logical_backups(self):
+        physical = read_text("scripts/backup_production_postgres_volume.ps1")
+        candidate = read_text("scripts/prepare_production_postgres_recovery_candidate.ps1")
+        verification = read_text("scripts/verify_production_postgres_recovery_candidate.ps1")
+        inspection = read_text("scripts/inspect_production_postgres_backup.ps1")
+
+        self.assertIn("test ! -e \"`$backup_path\"", physical)
+        self.assertIn("cp -a --reflink=auto", physical)
+        self.assertIn("test \"`$source_bytes\" = \"`$backup_bytes\"", physical)
+        self.assertNotIn("pg_resetwal", physical)
+        self.assertIn("test ! -e \"`$candidate_path\"", candidate)
+        self.assertIn("cp -a --reflink=auto", candidate)
+        self.assertIn("pg_amcheck", verification)
+        self.assertIn("pg_dump", verification)
+        self.assertIn("pg_restore --list", verification)
+        self.assertIn("kubectl exec -i", verification)
+        self.assertIn("sudo stat -c '%u %g'", inspection)
+        self.assertIn("readOnly = $true", inspection)
+        self.assertIn("$phase -in @('Succeeded', 'Failed')", inspection)
+        self.assertNotIn("--for=condition=Ready", inspection)
 
     def test_tls_rotation_requires_one_known_owner_and_new_ready_revision(self):
         rotation = read_text("scripts/rotate_production_tls_certificate.ps1")

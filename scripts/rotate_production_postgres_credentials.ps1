@@ -97,6 +97,25 @@ function Restart-And-Wait {
     if ($LASTEXITCODE -ne 0) { throw "deployment/$Deployment did not become Ready." }
 }
 
+function Wait-ProductionHealth {
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    do {
+        try {
+            $health = Invoke-RestMethod -Method Get -Uri $HealthUrl -TimeoutSec 15
+            if ([bool]$health.ready -and [bool]$health.db_available -and
+                [int]$health.compile_errors -eq 0 -and
+                [string]$health.build.git_commit -eq $ExpectedCommit) {
+                return
+            }
+        }
+        catch {
+            # A bounded 502/503 is expected while the restarted backend endpoint changes.
+        }
+        Start-Sleep -Seconds 5
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Production health did not recover to the required database and immutable build state.'
+}
+
 $oldPassword = Get-SecretText -SecretName $PostgresSecretName -Key 'POSTGRES_PASSWORD'
 $oldUrl = Get-SecretText -SecretName $BackendSecretName -Key 'TRU_POSTGRESQL_URL'
 $urlBuilder = [UriBuilder]$oldUrl
@@ -141,14 +160,8 @@ try {
     Set-SecretText -SecretName $BackendSecretName -Key 'TRU_POSTGRESQL_URL' -Value $newUrl | Out-Null
     $backendSecretChanged = $true
 
-    Restart-And-Wait -Deployment $PostgresDeployment
     Restart-And-Wait -Deployment $BackendDeployment
-    $health = Invoke-RestMethod -Method Get -Uri $HealthUrl -TimeoutSec 30
-    if (-not [bool]$health.ready -or -not [bool]$health.db_available -or
-        [int]$health.compile_errors -ne 0 -or
-        [string]$health.build.git_commit -ne $ExpectedCommit) {
-        throw 'Production health did not match the required ready database and immutable build state.'
-    }
+    Wait-ProductionHealth
 }
 catch {
     $originalError = $_.Exception.Message
@@ -166,8 +179,6 @@ catch {
         catch { $recoveryErrors.Add('backend Secret rollback failed') }
     }
     if ($passwordChanged) {
-        try { Restart-And-Wait -Deployment $PostgresDeployment }
-        catch { $recoveryErrors.Add('PostgreSQL recovery rollout failed') }
         try { Restart-And-Wait -Deployment $BackendDeployment }
         catch { $recoveryErrors.Add('backend recovery rollout failed') }
     }

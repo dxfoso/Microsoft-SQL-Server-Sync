@@ -191,6 +191,26 @@ class ChartContractsTests(unittest.TestCase):
         self.assertIn("VACUUM (ANALYZE, PARALLEL 0) tru_history", maintenance)
         self.assertNotIn("TRUNCATE", maintenance)
 
+    def test_postgres_has_validated_retained_logical_backups_on_separate_pvc(self):
+        values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
+        backup = (ROOT / "templates" / "postgres-backup-cronjob.yaml").read_text(
+            encoding="utf-8"
+        )
+        backup_pvc = (ROOT / "templates" / "postgres-backup-pvc.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('schedule: "43 2 * * *"', values_yaml)
+        self.assertIn("retentionDays: 14", values_yaml)
+        self.assertIn("concurrencyPolicy: Forbid", backup)
+        self.assertIn("POSTGRES_PASSWORD", backup)
+        self.assertIn("pg_dump --format=custom", backup)
+        self.assertIn("pg_restore --list", backup)
+        self.assertIn("sha256sum", backup)
+        self.assertIn("-mtime +{{ .Values.postgresBackup.retentionDays }} -delete", backup)
+        self.assertIn("helm.sh/resource-policy: keep", backup_pvc)
+        self.assertIn("sync-admin-web.postgresBackupPvcName", backup_pvc)
+
     def test_chart_removes_legacy_postgres_compat_job(self):
         self.assertFalse(
             (ROOT / "templates" / "postgres-compat-migration-job.yaml").exists()

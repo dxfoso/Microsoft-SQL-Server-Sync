@@ -1,0 +1,77 @@
+{{- if and .Values.postgres.enabled .Values.postgresBackup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "sync-admin-web.componentFullname" (list . "postgres-backup") }}
+  namespace: {{ include "sync-admin-web.resourceNamespace" . }}
+  labels:
+    {{- include "sync-admin-web.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.postgresBackup.schedule | quote }}
+  suspend: false
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.postgresBackup.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.postgresBackup.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.postgresBackup.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.postgresBackup.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "sync-admin-web.labels" . | nindent 12 }}
+            app.kubernetes.io/component: postgres-backup
+        spec:
+          restartPolicy: Never
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: pg-dump
+              image: {{ .Values.postgres.image | quote }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: {{ include "sync-admin-web.postgresFullname" . | quote }}
+                - name: PGPORT
+                  value: {{ .Values.postgres.service.port | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.postgres.database | quote }}
+                - name: PGUSER
+                  value: {{ .Values.postgres.username | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "sync-admin-web.postgresSecretName" . }}
+                      key: POSTGRES_PASSWORD
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  umask 077
+                  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+                  temporary="/backups/sqlsync-${stamp}.dump.tmp"
+                  completed="/backups/sqlsync-${stamp}.dump"
+                  trap 'rm -f -- "$temporary"' EXIT
+                  pg_dump --format=custom --file="$temporary"
+                  pg_restore --list "$temporary" >/dev/null
+                  mv -- "$temporary" "$completed"
+                  sha256sum "$completed" >"${completed}.sha256"
+                  find /backups -xdev -type f \( -name 'sqlsync-*.dump' -o -name 'sqlsync-*.dump.sha256' \) \
+                    -mtime +{{ .Values.postgresBackup.retentionDays }} -delete
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ include "sync-admin-web.postgresBackupPvcName" . }}
+{{- end }}

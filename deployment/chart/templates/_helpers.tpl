@@ -40,6 +40,10 @@ sql-sync
 {{- include "sync-admin-web.componentFullname" (list . "postgres-data") -}}
 {{- end -}}
 
+{{- define "sync-admin-web.postgresBackupPvcName" -}}
+{{- include "sync-admin-web.componentFullname" (list . "postgres-backups") -}}
+{{- end -}}
+
 {{- define "sync-admin-web.postgresSecretName" -}}
 {{ .Values.postgres.secretName | default (printf "%s-postgres" (include "sync-admin-web.fullname" .)) }}
 {{- end -}}

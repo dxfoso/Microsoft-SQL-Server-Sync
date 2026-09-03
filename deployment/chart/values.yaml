@@ -99,6 +99,18 @@ historyMaintenance:
   failedJobsHistoryLimit: 3
   backoffLimit: 1
 
+postgresBackup:
+  enabled: true
+  schedule: "43 2 * * *"
+  retentionDays: 14
+  activeDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 1
+  persistence:
+    size: 5Gi
+    storageClassName: ""
+
 postgres:
   enabled: true
   image: docker.io/library/postgres:16-alpine
