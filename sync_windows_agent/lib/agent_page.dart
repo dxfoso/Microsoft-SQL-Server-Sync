@@ -4171,6 +4171,52 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     );
   }
 
+  Future<void> _reportDataExportUploadProgress(
+    RemoteAgentDataExport request, {
+    required String database,
+    required int totalBytes,
+    required int uploadedBytes,
+    required int chunkCount,
+  }) async {
+    final safeTotal = math.max(0, totalBytes);
+    final safeUploaded = math.max(0, math.min(uploadedBytes, safeTotal));
+    final uploadPercent =
+        safeTotal == 0
+            ? 0
+            : ((safeUploaded * 100) / safeTotal).floor().clamp(0, 100);
+    final operationPercent = 15 + ((uploadPercent * 80) ~/ 100);
+    final message =
+        'Uploading verified COPY_ONLY backup: $safeUploaded of $safeTotal bytes ($uploadPercent%).';
+    _setDatabaseFileOperation(
+      operation: 'Backup',
+      database: database,
+      stage: message,
+      progress: operationPercent,
+      busy: true,
+    );
+    try {
+      await _acknowledgeDataExport(
+        request,
+        status: 'running',
+        message: message,
+        bytes: safeUploaded,
+        chunkCount: chunkCount,
+      );
+    } catch (error) {
+      logAgentDiagnostic(
+        'data_export.progress_ack_failed',
+        level: AgentLogLevel.warning,
+        context: {
+          'requestId': request.requestId,
+          'uploadedBytes': safeUploaded,
+          'totalBytes': safeTotal,
+          'chunkCount': chunkCount,
+        },
+        error: error,
+      );
+    }
+  }
+
   Future<void> _uploadPrivateExportArtifact({
     required Uri uri,
     required String token,
@@ -4932,6 +4978,13 @@ SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
       status: 'running',
       message: 'Creating a COPY_ONLY SQL Server backup.',
     );
+    _setDatabaseFileOperation(
+      operation: 'Backup',
+      database: database,
+      stage: 'Creating and verifying COPY_ONLY rollback backup',
+      progress: 5,
+      busy: true,
+    );
     cancellation.throwIfCancelled();
 
     final profile = _activeProfile();
@@ -5032,6 +5085,13 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
       var chunkCount = 0;
       if (await backupFile.exists()) {
         fileBytes = await backupFile.length();
+        await _reportDataExportUploadProgress(
+          request,
+          database: database,
+          totalBytes: fileBytes,
+          uploadedBytes: 0,
+          chunkCount: 0,
+        );
         fileSha256 =
             (await sha256.bind(backupFile.openRead()).first).toString();
         final reader = backupFile.openRead();
@@ -5053,6 +5113,18 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
               cancellation: cancellation,
             );
             chunkCount += 1;
+            if (chunkCount % 16 == 0) {
+              await _reportDataExportUploadProgress(
+                request,
+                database: database,
+                totalBytes: fileBytes,
+                uploadedBytes: math.min(
+                  chunkCount * kPrivateExportArtifactBytes,
+                  fileBytes,
+                ),
+                chunkCount: chunkCount,
+              );
+            }
           }
         }
         final finalChunk = pending.takeBytes();
@@ -5066,6 +5138,13 @@ RESTORE VERIFYONLY FROM DISK = N'$backupPathLiteral' WITH CHECKSUM;
           );
           chunkCount += 1;
         }
+        await _reportDataExportUploadProgress(
+          request,
+          database: database,
+          totalBytes: fileBytes,
+          uploadedBytes: fileBytes,
+          chunkCount: chunkCount,
+        );
       } else {
         final lengthResult = await _runSqlCmd(
           cancellation: cancellation,
@@ -5086,6 +5165,13 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           );
         }
         fileBytes = parseSqlServerBlobLength(lengthResult.stdout.toString());
+        await _reportDataExportUploadProgress(
+          request,
+          database: database,
+          totalBytes: fileBytes,
+          uploadedBytes: 0,
+          chunkCount: 0,
+        );
         final digestValues = <Digest>[];
         final digestInput = sha256.startChunkedConversion(
           ChunkedConversionSink.withCallback(digestValues.addAll),
@@ -5133,6 +5219,15 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           );
           chunkCount += 1;
           offset += expectedBytes;
+          if (chunkCount % 16 == 0 || offset > fileBytes) {
+            await _reportDataExportUploadProgress(
+              request,
+              database: database,
+              totalBytes: fileBytes,
+              uploadedBytes: math.min(offset - 1, fileBytes),
+              chunkCount: chunkCount,
+            );
+          }
         }
         digestInput.close();
         if (digestValues.length != 1) {
@@ -5167,6 +5262,13 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         bytes: fileBytes,
         sha256: fileSha256,
         chunkCount: chunkCount,
+      );
+      _setDatabaseFileOperation(
+        operation: 'Backup',
+        database: database,
+        stage: 'Rollback backup uploaded and verified',
+        progress: 100,
+        busy: false,
       );
     } finally {
       if (await backupFile.exists()) {
@@ -5234,6 +5336,14 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
           stackTrace: stackTrace,
         );
         try {
+          _setDatabaseFileOperation(
+            operation: 'Backup',
+            database: request.database?.trim() ?? '',
+            stage: error.toString(),
+            progress: _databaseFileOperation?.progress ?? 0,
+            busy: false,
+            failed: true,
+          );
           await _acknowledgeDataExport(
             request,
             status: 'failed',
@@ -5316,6 +5426,34 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
               'captureWidth': capture['captureWidth'],
               'captureHeight': capture['captureHeight'],
               'imageSha256': capture['imageSha256'],
+            }),
+          );
+          return;
+        case alameenLabInvoiceMenuProbeAction:
+          logStartupEvent(
+            'Server requested screenshot-guarded Al-Ameen invoice-menu probe $requestId for ${widget.clientName}.',
+          );
+          final capture = await _probeAlameenInvoiceMenu();
+          await _controlPlaneClient.uploadDiagnostics(
+            clientName: widget.clientName,
+            summary:
+                'Screenshot-guarded Al-Ameen invoice-menu probe; the menu was closed after capture.',
+            payload: jsonEncode(capture),
+            stage: 'alameen_lab_invoice_menu_probe',
+          );
+          await _queueWindowActionAck(
+            requestId: requestId,
+            action: action,
+            status: 'completed',
+            message: jsonEncode({
+              'processId': capture['processId'],
+              'windowTitle': capture['windowTitle'],
+              'sourceWidth': capture['sourceWidth'],
+              'sourceHeight': capture['sourceHeight'],
+              'imageSha256': capture['imageSha256'],
+              'probe': capture['probe'],
+              'changedSamples': capture['changedSamples'],
+              'ownedWindows': capture['ownedWindows'],
             }),
           );
           return;
@@ -5478,6 +5616,72 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       } catch (error) {
         logAgentDiagnostic(
           'alameen_lab.capture_temp_cleanup_failed',
+          level: AgentLogLevel.warning,
+          error: error,
+        );
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _probeAlameenInvoiceMenu() async {
+    if (!Platform.isWindows) {
+      throw StateError('Al-Ameen invoice-menu probe requires Windows.');
+    }
+    if (_activeJobs.any((job) => job.isActive) ||
+        _processingJobIds.isNotEmpty ||
+        _processingPendingJobsBusy ||
+        _dataExportBusy) {
+      throw StateError(
+        'Al-Ameen invoice-menu probe requires an idle client with no backup/export in progress.',
+      );
+    }
+    final directory = await Directory.systemTemp.createTemp(
+      'sync_agent_alameen_invoice_menu_',
+    );
+    try {
+      final script = File(
+        '${directory.path}${Platform.pathSeparator}probe.ps1',
+      );
+      await script.writeAsString(
+        buildAlameenInvoiceMenuProbePowerShell(),
+        encoding: utf8,
+        flush: true,
+      );
+      final result = await Process.run(
+        'powershell.exe',
+        <String>[
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          script.path,
+        ],
+        runInShell: false,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ).timeout(const Duration(seconds: 30));
+      if (result.exitCode != 0) {
+        final details = <String>[
+          result.stdout.toString().trim(),
+          result.stderr.toString().trim(),
+        ].where((part) => part.isNotEmpty).join('\n');
+        throw StateError(
+          details.isEmpty
+              ? 'Al-Ameen invoice-menu probe failed with exit ${result.exitCode}.'
+              : details,
+        );
+      }
+      return parseAlameenWindowCapture(result.stdout.toString());
+    } finally {
+      try {
+        await directory.delete(recursive: true);
+      } catch (error) {
+        logAgentDiagnostic(
+          'alameen_lab.invoice_menu_temp_cleanup_failed',
           level: AgentLogLevel.warning,
           error: error,
         );

@@ -2822,6 +2822,28 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertEqual(heartbeat_body.count("db.updateMany(Agent"), 2)
 
+    def test_remote_backup_reports_bounded_upload_progress_without_blocking_the_ui(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+
+        progress = agent_page.split(
+            "Future<void> _reportDataExportUploadProgress(", 1
+        )[1].split("Future<void> _uploadPrivateExportArtifact(", 1)[0]
+        export = agent_page.split("Future<void> _runRequestedDataExport(", 1)[1].split(
+            "void _scheduleRequestedDataExport(", 1
+        )[0]
+        self.assertIn("math.min(uploadedBytes, safeTotal)", progress)
+        self.assertIn("floor().clamp(0, 100)", progress)
+        self.assertIn("_setDatabaseFileOperation(", progress)
+        self.assertIn("status: 'running'", progress)
+        self.assertIn("bytes: safeUploaded", progress)
+        self.assertIn("chunkCount: chunkCount", progress)
+        self.assertIn("data_export.progress_ack_failed", progress)
+        self.assertIn("level: AgentLogLevel.warning", progress)
+        self.assertGreaterEqual(export.count("_reportDataExportUploadProgress("), 4)
+        self.assertIn("chunkCount % 16 == 0", export)
+        self.assertIn("Rollback backup uploaded and verified", export)
+        self.assertIn("unawaited(() async", agent_page)
+
     def test_local_database_backup_restore_is_non_blocking_visible_and_non_destructive(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         policy = read_text("sync_windows_agent/lib/database_backup_restore.dart")

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sync_windows_agent/alameen_lab_automation.dart';
@@ -7,9 +8,51 @@ void main() {
   test('laboratory action catalogue does not allow arbitrary commands', () {
     expect(isAlameenLabAction('alameen_lab_inspect'), isTrue);
     expect(isAlameenLabAction('alameen_lab_capture'), isTrue);
+    expect(isAlameenLabAction('alameen_lab_invoice_menu_probe'), isTrue);
     expect(isAlameenLabAction(' ALAMEEN_LAB_INSPECT '), isTrue);
     expect(isAlameenLabAction('powershell'), isFalse);
     expect(isAlameenLabAction('alameen_lab_click'), isFalse);
+  });
+
+  test('invoice menu probe is fixed screenshot guarded and self closing', () {
+    final script = buildAlameenInvoiceMenuProbePowerShell();
+    expect(script, contains(r'$width -ne 1382 -or $height -ne 744'));
+    expect(
+      script,
+      contains(r"$path -notmatch '(?i)\\Al-Ameen\\81\\Bin\\Amn32\.exe$'"),
+    );
+    expect(script, contains(r"$classText.ToString() -notmatch '^Afx:'"));
+    expect(script, contains('invoice-menu visual anchor did not match'));
+    expect(script, contains(r'$rect.Left + 1295, $rect.Top + 48'));
+    expect(script, contains('GetWindowThreadProcessId'));
+    expect(script, contains('PrintWindow'));
+    expect(script, contains('changedSamples'));
+    expect(script, contains('keybd_event(0x1B'));
+    expect(script, contains(r'SetCursorPos($cursor.X, $cursor.Y)'));
+    expect(script, isNot(contains('Invoke-Expression')));
+    expect(script, isNot(contains('CopyFromScreen')));
+    expect(script, isNot(contains('SendKeys')));
+  });
+
+  test('invoice menu probe is valid Windows PowerShell syntax', () async {
+    if (!Platform.isWindows) return;
+    final directory = await Directory.systemTemp.createTemp(
+      'alameen_probe_parser_',
+    );
+    try {
+      final script = File('${directory.path}\\probe.ps1');
+      await script.writeAsString(buildAlameenInvoiceMenuProbePowerShell());
+      final escapedPath = script.path.replaceAll("'", "''");
+      final result = await Process.run('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "\$tokens=\$null;\$errors=\$null;[System.Management.Automation.Language.Parser]::ParseFile('$escapedPath',[ref]\$tokens,[ref]\$errors)|Out-Null;if(\$errors.Count -gt 0){\$errors|ForEach-Object{[Console]::Error.WriteLine(\$_.Message)};exit 1}",
+      ]);
+      expect(result.exitCode, 0, reason: result.stderr.toString());
+    } finally {
+      await directory.delete(recursive: true);
+    }
   });
 
   test('capture script is read only window-scoped and payload bounded', () {

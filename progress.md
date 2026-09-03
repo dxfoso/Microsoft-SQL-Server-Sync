@@ -12,7 +12,7 @@ Overall: **75% complete — screenshot capture deployed; guarded input not start
 | Publish the Windows client and deploy the server/web changes | Done | 100% |
 | Read-only inspect Al-Ameen on `alshallan2` | Done | 100% |
 | Capture the verified Al-Ameen window for visual calibration | Done | 100% |
-| Build stable visual anchors and a menu-only probe | In progress | 20% |
+| Build stable visual anchors and a menu-only probe | Implemented; verification and deployment pending | 55% |
 | Create and verify the pre-input `AmnDb048` rollback backup | In progress | 45% |
 | Record business operations and prove `AmnDb048` rollback | Waiting for visual calibration | 0% |
 

@@ -8721,10 +8721,13 @@ function agent_window_action_request(clientName: string, action: string, token: 
   const normalizedAction = truncate_text(action.trim().toLowerCase(), 32);
   if (normalizedAction != 'minimize' &&
       normalizedAction != 'alameen_lab_inspect' &&
-      normalizedAction != 'alameen_lab_capture') {
+      normalizedAction != 'alameen_lab_capture' &&
+      normalizedAction != 'alameen_lab_invoice_menu_probe') {
     return raw_json_error(400, 'unsupported window action');
   }
-  if ((normalizedAction == 'alameen_lab_inspect' || normalizedAction == 'alameen_lab_capture') &&
+  if ((normalizedAction == 'alameen_lab_inspect' ||
+       normalizedAction == 'alameen_lab_capture' ||
+       normalizedAction == 'alameen_lab_invoice_menu_probe') &&
       agent_sync_enabled(targetAgent)) {
     return raw_json_error(409, 'disable synchronization for this client before laboratory inspection');
   }
