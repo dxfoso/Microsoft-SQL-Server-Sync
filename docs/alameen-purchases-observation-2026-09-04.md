@@ -215,6 +215,54 @@ Every delete identity in `bi000`, `ce000`, `en000`, `er000`, and `pt000` exactly
 
 Arithmetic checks: `(145,000 - 144,000) * 1 = 1,000`; `218,000 + 1,000 = 219,000`; `48,000 + 145,000 + 26,000 = 219,000`. Header, voucher, ledger, payment term, cost-price fields, and every monetary account aggregate reconcile exactly, while all stock quantities remain unchanged.
 
-## Current checkpoint and next observation
+At this sealed price-edit checkpoint, the next bounded-delta baseline is `5795`; the subsequent removal experiment below advances it to 5796.
 
-The next bounded-delta baseline is `5795`. To map Purchase line removal, remove only line 2 (material 2374, quantity 1, price 26,000) from Purchase 111, complete the single Purchase Save action, make no other change, and then request a capture from baseline 5795. Synchronization must remain disabled.
+## Purchase line removal (`SYS_CHANGE_VERSION = 5796`)
+
+The user removed only line 2, material 2374 at quantity 1 and price 26,000, from Purchase 111 and completed the single Purchase save action. The complete database effect committed atomically at Change Tracking version 5796.
+
+- Delta boundary: baseline `5795`, upper version `5796`; all 31 operations belong to version 5796.
+- Artifact: 5,917 compressed bytes, SHA-256 `9a7d7f1302c09f4949542e48a4cf6d05b1b9df75ca0fe02d13104506f76e6d4e`.
+- Final lines: line 0 remains material 12666, quantity 2 at 24,000; line 1 remains material 20960, quantity 1 at 145,000. Material 2374 has no final `bi000` line.
+- Header total changed from 219,000 to 193,000, exactly -26,000.
+- Voucher type 1 / number 2323 remained posted and balanced; debit and credit changed from 219,000 to 193,000.
+- Ledger was rebuilt from four entries to three: debits 48,000 and 145,000 plus the balancing supplier credit 193,000. The removed 26,000 material debit has no final entry.
+- Payment-term credit changed from 219,000 to 193,000; debit remained zero.
+- The stable material-2374 `ms000` movement quantity changed from 1 to 0, rather than deleting the movement. Its stable `mt000.Qty` likewise changed from 1 to 0.
+- Material 2374 retained `MaxPrice`, `AvgPrice`, and `LastPrice` at 26,000 after removal. Materials 12666 and 20960 retained their quantities and cost fields.
+- No `cp000` row changed.
+
+### Exact operation and identity manifest
+
+| Table | Operation | Count | Verified effect |
+|---|---|---:|---|
+| `bu000` | update | 1 | Same header GUID; total becomes 193,000. |
+| `bi000` | delete + insert | 3 + 2 | Deletes the prior three-line generation and inserts two new line identities. |
+| `ce000` | delete + insert | 1 + 1 | Replaces the voucher identity while preserving business voucher 1/2323. |
+| `en000` | delete + insert | 4 + 3 | Replaces four prior ledger identities with the final balanced three-entry ledger. |
+| `er000` | delete + insert | 1 + 1 | Replaces the relation identity and still points to Purchase 111. |
+| `pt000` | delete + insert | 1 + 1 | Replaces the payment identity with supplier credit 193,000. |
+| `ms000` | update | 3 | Stable movement identities; removed material quantity becomes zero and retained quantities remain 2 and 1. |
+| `mt000` | update | 3 | Stable material identities; material 2374 quantity becomes zero while historical cost fields remain. |
+| `ac000` | update | 6 | Both account hierarchies decrease by the exact removed value of 26,000. |
+
+Every deleted child identity exactly matched the version-5795 final generation, and none of the new child identities reused a deleted GUID. The header, movement, material, and account GUIDs remained stable.
+
+### Exact account changes
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 15 | `Debit` | 948,171,100 | 948,145,100 | -26,000 |
+| 6 | `Debit` | 961,881,100 | 961,855,100 | -26,000 |
+| 110 | `Credit` | 219,000 | 193,000 | -26,000 |
+| 26 | `Credit` | 40,241,500 | 40,215,500 | -26,000 |
+| 11 | `Credit` | 38,187,000 | 38,161,000 | -26,000 |
+| 4 | `Credit` | 1,744,467,000 | 1,744,441,000 | -26,000 |
+| 15 | `UseFlag` | 27,508 | 27,507 | -1 |
+| 110 | `UseFlag` | 8 | 8 | 0 |
+
+Arithmetic checks: `219,000 - (1 * 26,000) = 193,000`; `48,000 + 145,000 = 193,000`. Header, voucher, ledger, payment term, stock movement, material quantity, and both account hierarchies reconcile exactly in the same committed version.
+
+## Current checkpoint
+
+The next bounded-delta baseline is `5796`. The controlled create, quantity edit, price edit, and line-removal sequence for this zero-tax Purchase is complete. Synchronization remains disabled while INC-403's general Al-Ameen multi-commit completion boundary is unresolved.

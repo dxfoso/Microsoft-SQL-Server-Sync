@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 409)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 414)}
         observed_ids = set()
 
         for row in rows:
@@ -112,9 +112,25 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("(145,000 - 144,000) * 1 = 1,000", purchase)
         self.assertIn("stock quantities remain unchanged", purchase)
         self.assertIn("next bounded-delta baseline is `5795`", purchase)
+        self.assertIn("Purchase line removal (`SYS_CHANGE_VERSION = 5796`)", purchase)
+        self.assertIn("all 31 operations belong to version 5796", purchase)
+        self.assertIn("5,917 compressed bytes", purchase)
+        self.assertIn("219,000 - (1 * 26,000) = 193,000", purchase)
+        self.assertIn("next bounded-delta baseline is `5796`", purchase)
         self.assertIn("first controlled Purchase is captured", progress)
         self.assertIn("one atomic version `5794`", progress)
         self.assertIn("one atomic version `5795`", progress)
+        self.assertIn("one atomic version `5796`", progress)
+
+    def test_production_secret_metadata_helper_never_prints_secret_values(self):
+        helper = read_text("scripts/list_production_secret_metadata.ps1")
+
+        self.assertIn("kubectl get secrets -n", helper)
+        self.assertIn("go-template", helper)
+        self.assertIn(".metadata.name", helper)
+        self.assertIn("range $key, $_ := .data", helper)
+        self.assertNotIn("custom-columns=NAME:.metadata.name,KEYS:.data", helper)
+        self.assertNotIn("ConvertFrom-Json", helper)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")
