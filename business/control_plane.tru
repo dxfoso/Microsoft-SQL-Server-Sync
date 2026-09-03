@@ -2419,7 +2419,7 @@ function agent_data_export_payload(agent: map<json>, includeUploadCredentials: b
     requestedAt: agent.dataExportRequestedAt,
     requestedByUserId: agent.dataExportRequestedByUserId,
     database: agent.dataExportDatabase,
-    mode: agent.dataExportMode == null ? 'full_backup' : agent.dataExportMode,
+    mode: agent.dataExportMode == null ? 'full_backup' : string.from(agent.dataExportMode),
     baselineVersion: agent.dataExportBaselineVersion,
     uploadUrl,
     uploadToken,
@@ -8860,6 +8860,10 @@ function agent_data_export_request(clientName: string, database: string, uploadU
   if (normalizedMode == 'change_tracking_delta' && (baselineVersion == null || baselineVersion < 0)) {
     return raw_json_error(400, 'change tracking delta baseline version is required');
   }
+  let requestedBaselineVersion: int? = null;
+  if (normalizedMode == 'change_tracking_delta') {
+    requestedBaselineVersion = baselineVersion;
+  }
   const requestedAt = now_iso();
   const nextRequestId = uuid.v4();
   const updatedCount = db.updateMany(Agent, { clientName: normalizedClientName }, {
@@ -8868,7 +8872,7 @@ function agent_data_export_request(clientName: string, database: string, uploadU
     dataExportRequestedByUserId: current.id,
     dataExportDatabase: normalizedDatabase,
     dataExportMode: normalizedMode,
-    dataExportBaselineVersion: normalizedMode == 'change_tracking_delta' ? baselineVersion : null,
+    dataExportBaselineVersion: requestedBaselineVersion,
     dataExportUploadUrl: normalizedUploadUrl,
     dataExportUploadToken: normalizedUploadToken,
     dataExportStatus: 'requested',

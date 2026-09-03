@@ -2963,6 +2963,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("dataExportBaselineVersion", source)
         self.assertIn("change_tracking_delta", request)
         self.assertIn("change tracking delta baseline version is required", request)
+        self.assertIn(
+            "agent.dataExportMode == null ? 'full_backup' : string.from(agent.dataExportMode)",
+            source,
+        )
+        self.assertIn("let requestedBaselineVersion: int? = null", request)
+        self.assertNotIn(
+            "normalizedMode == 'change_tracking_delta' ? baselineVersion : null",
+            request,
+        )
         self.assertIn("terminalStatus", source)
 
     def test_read_only_change_tracking_delta_is_version_bounded_and_fail_closed(self):
