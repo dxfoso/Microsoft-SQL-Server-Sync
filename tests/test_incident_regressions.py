@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 354)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 358)}
         observed_ids = set()
 
         for row in rows:
@@ -38,6 +38,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
                     self.assertIn(selector, source, f"{incident_id}: missing {reference}")
 
         self.assertEqual(observed_ids, expected_ids)
+
+    def test_alameen_lab_progress_records_exact_identity_and_discovery_blocker(self):
+        progress = read_text("progress.md")
+
+        self.assertIn("DESKTOP-ALDNHIH\\SQLEXPRESS", progress)
+        self.assertNotIn("DESKTOP-ALDNIHI\\SQLEXPRESS", progress)
+        self.assertIn("Confirmed blocker: **yes", progress)
+        self.assertIn("Afx:00400000:0", progress)
+        self.assertIn("stopped before input or database mutation", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")
