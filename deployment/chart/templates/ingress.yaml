@@ -12,7 +12,6 @@ metadata:
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{ include "sync-admin-web.certManagerAnnotationKey" . }}: {{ .Values.certManager.issuerName | quote }}
 spec:
   ingressClassName: {{ .Values.ingress.className | quote }}
   rules:

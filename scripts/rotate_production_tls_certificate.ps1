@@ -56,7 +56,7 @@ $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
 do {
     Start-Sleep -Seconds 5
     $newSecretUid = (& ssh $SshTarget kubectl get secret $SecretName -n $Namespace `
-        -o 'jsonpath={.metadata.uid}' 2>$null).Trim()
+        --ignore-not-found -o 'jsonpath={.metadata.uid}').Trim()
     $certificateRows = @(Get-CertificateRows)
     $current = @($certificateRows | Where-Object { [string]$_.metadata.name -eq $CertificateName })
     $currentReady = @($current.status.conditions | Where-Object {

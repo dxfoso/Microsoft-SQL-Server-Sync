@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 420)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 423)}
         observed_ids = set()
 
         for row in rows:
@@ -161,14 +161,21 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
     def test_tls_rotation_requires_one_known_owner_and_new_ready_revision(self):
         rotation = read_text("scripts/rotate_production_tls_certificate.ps1")
+        ingress = read_text("deployment/chart/templates/ingress.yaml")
+        certificate = read_text("deployment/chart/templates/certificate.yaml")
 
         self.assertIn("expected one $CertificateName owner and no unknown owner", rotation)
         self.assertIn("kubectl delete certificate $LegacyCertificateName -n $Namespace", rotation)
         self.assertIn("kubectl delete secret $SecretName -n $Namespace", rotation)
+        self.assertIn("--ignore-not-found -o 'jsonpath={.metadata.uid}'", rotation)
+        self.assertIn("ConvertFrom-Json", rotation)
         self.assertIn("$newSecretUid -ne $oldSecretUid", rotation)
         self.assertIn("$newRevision -gt $oldRevision", rotation)
         self.assertIn("$currentReady.Count -eq 1", rotation)
         self.assertNotIn("tls.key", rotation)
+        self.assertNotIn("sync-admin-web.certManagerAnnotationKey", ingress)
+        self.assertIn("kind: Certificate", certificate)
+        self.assertIn("secretName: {{ .Values.ingress.tls.frontendSecretName", certificate)
 
     def test_incident_regressions_are_discoverable_without_a_hard_coded_class_name(self):
         test_source = read_text("tests/test_incident_regressions.py")
