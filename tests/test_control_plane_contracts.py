@@ -1556,6 +1556,43 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("windowActionName: normalizedAction,", body)
         self.assertIn("windowActionStatus: 'requested',", body)
 
+    def test_alameen_lab_inspection_is_targeted_restricted_and_sync_isolated(self):
+        source = read_text("business/control_plane.tru")
+        match = re.search(
+            r"function agent_window_action_request\(.*?\): map<json> \{(?P<body>.*?)\n\}",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+
+        self.assertIn("const targetAgent = db.selectOne(Agent", body)
+        self.assertIn("!can_read_agent(current", body)
+        self.assertIn("!effective_agent_online(targetAgent)", body)
+        self.assertIn("normalizedAction != 'alameen_lab_inspect'", body)
+        self.assertIn("agent_sync_enabled(targetAgent)", body)
+        self.assertIn("disable synchronization for this client", body)
+        self.assertIn("windowActionRequestId: requestId", body)
+
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        laboratory = read_text(
+            "sync_windows_agent/lib/alameen_lab_automation.dart"
+        )
+        dart_test = read_text(
+            "sync_windows_agent/test/alameen_lab_automation_test.dart"
+        )
+        self.assertIn("case alameenLabInspectAction:", agent)
+        self.assertIn("-WindowStyle", agent)
+        self.assertIn("_activeJobs.any((job) => job.isActive)", agent)
+        self.assertIn("_processingPendingJobsBusy", agent)
+        self.assertIn("UIAutomationClient", laboratory)
+        self.assertNotIn("Invoke-Expression", laboratory)
+        self.assertNotIn("SendKeys", laboratory)
+        self.assertIn(
+            "laboratory action catalogue does not allow arbitrary commands",
+            dart_test,
+        )
+
     def test_window_action_payload_and_ack_track_pending_and_last_ack_state(self):
         source = read_text("business/control_plane.tru")
 

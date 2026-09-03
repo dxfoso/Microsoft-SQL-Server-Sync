@@ -8699,6 +8699,57 @@ function agent_window_action_request_all(action: string = 'minimize', token: str
   };
 }
 
+function agent_window_action_request(clientName: string, action: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  if (!is_admin_user(current) && !is_owner_user(current)) {
+    return raw_json_error(403, 'permission denied');
+  }
+  const normalizedClientName = normalize_user_name(clientName);
+  if (normalizedClientName.length == 0) {
+    return raw_json_error(400, 'client name is required');
+  }
+  const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
+  if (targetAgent == null || !can_read_agent(current, targetAgent.ownerUserId, targetAgent.clientUserId)) {
+    return raw_json_error(404, 'client not found');
+  }
+  if (!effective_agent_online(targetAgent)) {
+    return raw_json_error(409, 'client must be online');
+  }
+  const normalizedAction = truncate_text(action.trim().toLowerCase(), 32);
+  if (normalizedAction != 'minimize' && normalizedAction != 'alameen_lab_inspect') {
+    return raw_json_error(400, 'unsupported window action');
+  }
+  if (normalizedAction == 'alameen_lab_inspect' && agent_sync_enabled(targetAgent)) {
+    return raw_json_error(409, 'disable synchronization for this client before laboratory inspection');
+  }
+  const requestId = uuid.v4();
+  const requestedAt = now_iso();
+  const updated = db.update(Agent, { clientName: normalizedClientName }, {
+    windowActionRequestId: requestId,
+    windowActionRequestedAt: requestedAt,
+    windowActionRequestedByUserId: current.id,
+    windowActionName: normalizedAction,
+    windowActionStatus: 'requested',
+    windowActionMessage: '',
+    updatedAt: requestedAt
+  });
+  if (updated == null) {
+    return raw_json_error(404, 'client not found');
+  }
+  return {
+    ok: true,
+    clientName: normalizedClientName,
+    action: normalizedAction,
+    requestId,
+    requestedAt,
+    requestedByUserId: current.id,
+    windowAction: agent_window_action_payload(updated)
+  };
+}
+
 function agent_window_action_ack(clientName: string? = null, requestId: string? = null, action: string = '', status: string = 'completed', message: string = '', token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {

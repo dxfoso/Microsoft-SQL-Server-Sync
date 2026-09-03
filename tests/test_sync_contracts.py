@@ -743,8 +743,14 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("_checkingServerConnection = false;", heartbeat_body)
         self.assertIn("_lastServerCheck = DateTime.now();", heartbeat_body)
-        self.assertIn("_errorMessage = temporaryControlPlaneUnavailable", heartbeat_body)
-        self.assertIn("? null\n            : error.toString();", heartbeat_body)
+        self.assertRegex(
+            heartbeat_body,
+            r"_errorMessage\s*=\s*temporaryControlPlaneUnavailable",
+        )
+        self.assertRegex(
+            heartbeat_body,
+            r"temporaryControlPlaneUnavailable\s*\?\s*null\s*:\s*error\.toString\(\);",
+        )
 
     def test_sync_loop_always_clears_busy_flag_and_retries_deferred_client_updates(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
@@ -1763,7 +1769,10 @@ class SyncContractsTests(unittest.TestCase):
         )[1].split("Future<", 1)[0]
 
         self.assertIn("final targetVersion = clientUpdate.targetVersion", handler)
-        self.assertIn("final updateInfo = targetVersion.isNotEmpty", handler)
+        self.assertRegex(
+            handler,
+            r"final updateInfo\s*=\s*targetVersion\.isNotEmpty",
+        )
         self.assertIn("? ClientUpdateInfo(", handler)
         self.assertIn(": await _controlPlaneClient.fetchClientUpdateInfo(", handler)
         self.assertIn("(!force && !_hasClientUpdate)", agent)
