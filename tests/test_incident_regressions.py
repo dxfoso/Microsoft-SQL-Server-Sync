@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 378)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 383)}
         observed_ids = set()
 
         for row in rows:
@@ -46,7 +46,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertNotIn("DESKTOP-ALDNIHI\\SQLEXPRESS", progress)
         self.assertIn("Prior semantic-accessibility blocker: **confirmed", progress)
         self.assertIn("Afx:00400000:0", progress)
-        self.assertIn("without input or database mutation", progress)
+        self.assertIn("closed it with Escape, and changed no database record", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")

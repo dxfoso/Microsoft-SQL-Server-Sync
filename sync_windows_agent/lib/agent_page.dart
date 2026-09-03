@@ -5453,7 +5453,10 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
               'imageSha256': capture['imageSha256'],
               'probe': capture['probe'],
               'changedSamples': capture['changedSamples'],
-              'ownedWindows': capture['ownedWindows'],
+              'ownedWindowCount':
+                  (capture['ownedWindows'] as List<dynamic>?)?.length ?? 0,
+              'menuControlCount':
+                  (capture['menuControls'] as List<dynamic>?)?.length ?? 0,
             }),
           );
           return;

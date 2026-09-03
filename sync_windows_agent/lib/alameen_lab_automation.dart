@@ -254,6 +254,7 @@ String buildAlameenInvoiceMenuProbePowerShell() => r'''
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName UIAutomationClient
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -341,6 +342,7 @@ $previousForeground = [AlameenProbeNative]::GetForegroundWindow()
 $cursor = New-Object AlameenProbeNative+POINT
 [void][AlameenProbeNative]::GetCursorPos([ref]$cursor)
 $ownedWindows = New-Object System.Collections.ArrayList
+$menuControls = New-Object System.Collections.ArrayList
 try {
   if (-not [AlameenProbeNative]::SetForegroundWindow($process.MainWindowHandle)) {
     throw 'Could not focus the verified Al-Ameen window for the menu-only probe.'
@@ -379,6 +381,35 @@ try {
             width = $popupWidth
             height = $popupHeight
           })
+          try {
+            $popupRoot = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+            if ($null -ne $popupRoot) {
+              $elements = $popupRoot.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition
+              )
+              $controlLimit = [Math]::Min($elements.Count, 80)
+              for ($controlIndex = 0; $controlIndex -lt $controlLimit; $controlIndex++) {
+                $current = $elements.Item($controlIndex).Current
+                if (-not [string]::IsNullOrWhiteSpace($current.Name)) {
+                  [void]$menuControls.Add([ordered]@{
+                    name = $current.Name
+                    automationId = $current.AutomationId
+                    className = $current.ClassName
+                    controlType = $current.ControlType.ProgrammaticName
+                    enabled = $current.IsEnabled
+                    left = [int][Math]::Round($current.BoundingRectangle.Left - $rect.Left)
+                    top = [int][Math]::Round($current.BoundingRectangle.Top - $rect.Top)
+                    width = [int][Math]::Round($current.BoundingRectangle.Width)
+                    height = [int][Math]::Round($current.BoundingRectangle.Height)
+                  })
+                }
+              }
+            }
+          } catch {
+            # The bounded screenshot remains authoritative when this legacy
+            # Codejock popup does not expose UI Automation descendants.
+          }
           $popup = Capture-VerifiedWindow $handle $popupWidth $popupHeight
           $draw = [System.Drawing.Graphics]::FromImage($after)
           $draw.DrawImage($popup, $popupRect.Left - $rect.Left, $popupRect.Top - $rect.Top)
@@ -443,6 +474,7 @@ try {
     visualAnchorBrightPixels = $brightPixels
     changedSamples = $changedSamples
     ownedWindows = $ownedWindows
+    menuControls = $menuControls
   } | ConvertTo-Json -Depth 5 -Compress
 } finally {
   [AlameenProbeNative]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)

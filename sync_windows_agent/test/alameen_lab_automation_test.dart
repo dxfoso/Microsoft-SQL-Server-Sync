@@ -25,6 +25,10 @@ void main() {
     expect(script, contains('invoice-menu visual anchor did not match'));
     expect(script, contains(r'$rect.Left + 1295, $rect.Top + 48'));
     expect(script, contains('GetWindowThreadProcessId'));
+    expect(script, contains('UIAutomationClient'));
+    expect(script, contains(r'$menuControls.Add'));
+    expect(script, contains('BoundingRectangle'));
+    expect(script, contains('controlLimit = [Math]::Min'));
     expect(script, contains('PrintWindow'));
     expect(script, contains('changedSamples'));
     expect(script, contains(r'if ($changedSamples -lt 25)'));
