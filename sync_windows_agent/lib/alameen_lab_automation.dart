@@ -4,11 +4,13 @@ const String alameenLabInspectAction = 'alameen_lab_inspect';
 const String alameenLabCaptureAction = 'alameen_lab_capture';
 const String alameenLabInvoiceMenuProbeAction =
     'alameen_lab_invoice_menu_probe';
+const String alameenLabSalesFormProbeAction = 'alameen_lab_sales_form_probe';
 
 bool isAlameenLabAction(String action) => <String>{
   alameenLabInspectAction,
   alameenLabCaptureAction,
   alameenLabInvoiceMenuProbeAction,
+  alameenLabSalesFormProbeAction,
 }.contains(action.trim().toLowerCase());
 
 String buildAlameenWindowInspectionPowerShell() => r'''
@@ -487,3 +489,113 @@ try {
   $before.Dispose()
 }
 ''';
+
+String buildAlameenSalesFormProbePowerShell() {
+  const visualSalesSelection = r'''
+  if ($ownedWindows.Count -ne 1) {
+    $after.Dispose()
+    throw "Expected exactly one process-owned invoice popup; found $($ownedWindows.Count)."
+  }
+  $popupInfo = $ownedWindows[0]
+  if ($popupInfo.className -ne 'XTPPopupBar' -or
+      $popupInfo.left -ne 1099 -or $popupInfo.top -ne 56 -or
+      $popupInfo.width -ne 234 -or $popupInfo.height -ne 299) {
+    $after.Dispose()
+    throw 'The invoice popup geometry no longer matches the calibrated visual target.'
+  }
+  $salesRowDarkPixels = 0
+  $salesRowBrightPixels = 0
+  for ($sampleX = 1110; $sampleX -le 1365; $sampleX += 1) {
+    for ($sampleY = 58; $sampleY -le 80; $sampleY += 1) {
+      $samplePixel = $after.GetPixel($sampleX, $sampleY)
+      $sampleLuma = ($samplePixel.R + $samplePixel.G + $samplePixel.B) / 3
+      if ($sampleLuma -lt 170) { $salesRowDarkPixels += 1 }
+      if ($sampleLuma -gt 205) { $salesRowBrightPixels += 1 }
+    }
+  }
+  if ($salesRowDarkPixels -lt 5 -or $salesRowBrightPixels -lt 2500) {
+    $after.Dispose()
+    throw "The calibrated Sales-row visual anchor did not match (dark=$salesRowDarkPixels bright=$salesRowBrightPixels)."
+  }
+  if (-not [AlameenProbeNative]::SetCursorPos($rect.Left + 1216, $rect.Top + 70)) {
+    $after.Dispose()
+    throw 'Could not position the pointer on the calibrated Sales row.'
+  }
+  [AlameenProbeNative]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+  [AlameenProbeNative]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 900
+  $sales = Capture-VerifiedWindow $process.MainWindowHandle $width $height
+  $salesChangedSamples = 0
+  for ($sampleX = 80; $sampleX -lt 1360; $sampleX += 2) {
+    for ($sampleY = 70; $sampleY -lt 710; $sampleY += 2) {
+      if ($before.GetPixel($sampleX, $sampleY).ToArgb() -ne $sales.GetPixel($sampleX, $sampleY).ToArgb()) {
+        $salesChangedSamples += 1
+      }
+    }
+  }
+  if ($salesChangedSamples -lt 1000) {
+    $sales.Dispose()
+    $after.Dispose()
+    throw 'The calibrated Sales selection did not produce a verified form-level visual change.'
+  }
+  $after.Dispose()
+  $after = $sales
+''';
+  const cleanupAndProof = r'''
+  [AlameenProbeNative]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+  [AlameenProbeNative]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 700
+  $restored = Capture-VerifiedWindow $process.MainWindowHandle $width $height
+  $restorationChangedSamples = 0
+  for ($sampleX = 80; $sampleX -lt 1360; $sampleX += 2) {
+    for ($sampleY = 70; $sampleY -lt 710; $sampleY += 2) {
+      if ($before.GetPixel($sampleX, $sampleY).ToArgb() -ne $restored.GetPixel($sampleX, $sampleY).ToArgb()) {
+        $restorationChangedSamples += 1
+      }
+    }
+  }
+  $restored.Dispose()
+  if ($restorationChangedSamples -gt 1500) {
+    throw "Escape did not restore the calibrated dashboard (changed=$restorationChangedSamples)."
+  }
+  $cleanupPerformed = $true
+''';
+
+  return buildAlameenInvoiceMenuProbePowerShell()
+      .replaceFirst(
+        r'$menuControls = New-Object System.Collections.ArrayList',
+        r'''$menuControls = New-Object System.Collections.ArrayList
+$cleanupPerformed = $false''',
+      )
+      .replaceFirst(
+        r'$targetWidth = 800',
+        '$visualSalesSelection\n  \$targetWidth = 800',
+      )
+      .replaceFirst(
+        r'''  [ordered]@{
+    processId = $process.Id''',
+        '''$cleanupAndProof\n  [ordered]@{\n    processId = \$process.Id''',
+      )
+      .replaceFirst(
+        "probe = 'invoice-menu-only'",
+        "probe = 'sales-form-open-only'",
+      )
+      .replaceFirst(
+        r'changedSamples = $changedSamples',
+        r'''menuChangedSamples = $changedSamples
+    salesRowDarkPixels = $salesRowDarkPixels
+    salesRowBrightPixels = $salesRowBrightPixels
+    salesChangedSamples = $salesChangedSamples
+    restorationChangedSamples = $restorationChangedSamples''',
+      )
+      .replaceFirst(
+        r'''} finally {
+  [AlameenProbeNative]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+  [AlameenProbeNative]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)''',
+        r'''} finally {
+  if (-not $cleanupPerformed) {
+    [AlameenProbeNative]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+    [AlameenProbeNative]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+  }''',
+      );
+}

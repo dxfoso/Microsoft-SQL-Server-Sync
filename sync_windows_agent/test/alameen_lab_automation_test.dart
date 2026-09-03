@@ -9,9 +9,30 @@ void main() {
     expect(isAlameenLabAction('alameen_lab_inspect'), isTrue);
     expect(isAlameenLabAction('alameen_lab_capture'), isTrue);
     expect(isAlameenLabAction('alameen_lab_invoice_menu_probe'), isTrue);
+    expect(isAlameenLabAction('alameen_lab_sales_form_probe'), isTrue);
     expect(isAlameenLabAction(' ALAMEEN_LAB_INSPECT '), isTrue);
     expect(isAlameenLabAction('powershell'), isFalse);
     expect(isAlameenLabAction('alameen_lab_click'), isFalse);
+  });
+
+  test('sales form probe is visual fixed bounded and self restoring', () {
+    final script = buildAlameenSalesFormProbePowerShell();
+    expect(script, contains("className -ne 'XTPPopupBar'"));
+    expect(script, contains(r'$popupInfo.left -ne 1099'));
+    expect(script, contains(r'$popupInfo.top -ne 56'));
+    expect(script, contains(r'$popupInfo.width -ne 234'));
+    expect(script, contains(r'$popupInfo.height -ne 299'));
+    expect(script, contains('Sales-row visual anchor did not match'));
+    expect(script, contains(r'$rect.Left + 1216, $rect.Top + 70'));
+    expect(script, contains(r'if ($salesChangedSamples -lt 1000)'));
+    expect(script, contains(r'if ($restorationChangedSamples -gt 1500)'));
+    expect(script, contains("probe = 'sales-form-open-only'"));
+    expect(script, contains(r'$cleanupPerformed = $true'));
+    expect(script, contains(r'if (-not $cleanupPerformed)'));
+    expect(RegExp(r'keybd_event\(0x1B, 0, 0,').allMatches(script).length, 2);
+    expect(script, isNot(contains('Invoke-Expression')));
+    expect(script, isNot(contains('CopyFromScreen')));
+    expect(script, isNot(contains('SendKeys')));
   });
 
   test('invoice menu probe is fixed screenshot guarded and self closing', () {
@@ -51,6 +72,27 @@ void main() {
     try {
       final script = File('${directory.path}\\probe.ps1');
       await script.writeAsString(buildAlameenInvoiceMenuProbePowerShell());
+      final escapedPath = script.path.replaceAll("'", "''");
+      final result = await Process.run('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "\$tokens=\$null;\$errors=\$null;[System.Management.Automation.Language.Parser]::ParseFile('$escapedPath',[ref]\$tokens,[ref]\$errors)|Out-Null;if(\$errors.Count -gt 0){\$errors|ForEach-Object{[Console]::Error.WriteLine(\$_.Message)};exit 1}",
+      ]);
+      expect(result.exitCode, 0, reason: result.stderr.toString());
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('sales form probe is valid Windows PowerShell syntax', () async {
+    if (!Platform.isWindows) return;
+    final directory = await Directory.systemTemp.createTemp(
+      'alameen_sales_probe_parser_',
+    );
+    try {
+      final script = File('${directory.path}\\probe.ps1');
+      await script.writeAsString(buildAlameenSalesFormProbePowerShell());
       final escapedPath = script.path.replaceAll("'", "''");
       final result = await Process.run('powershell.exe', [
         '-NoProfile',

@@ -5460,6 +5460,35 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             }),
           );
           return;
+        case alameenLabSalesFormProbeAction:
+          logStartupEvent(
+            'Server requested screenshot-guarded Al-Ameen Sales-form probe $requestId for ${widget.clientName}.',
+          );
+          final capture = await _probeAlameenInvoiceMenu(openSales: true);
+          await _controlPlaneClient.uploadDiagnostics(
+            clientName: widget.clientName,
+            summary:
+                'Screenshot-guarded Al-Ameen Sales-form probe; the form was closed with Escape after capture.',
+            payload: jsonEncode(capture),
+            stage: 'alameen_lab_sales_form_probe',
+          );
+          await _queueWindowActionAck(
+            requestId: requestId,
+            action: action,
+            status: 'completed',
+            message: jsonEncode({
+              'processId': capture['processId'],
+              'windowTitle': capture['windowTitle'],
+              'sourceWidth': capture['sourceWidth'],
+              'sourceHeight': capture['sourceHeight'],
+              'imageSha256': capture['imageSha256'],
+              'probe': capture['probe'],
+              'menuChangedSamples': capture['menuChangedSamples'],
+              'salesChangedSamples': capture['salesChangedSamples'],
+              'restorationChangedSamples': capture['restorationChangedSamples'],
+            }),
+          );
+          return;
         default:
           await _queueWindowActionAck(
             requestId: requestId,
@@ -5626,7 +5655,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
     }
   }
 
-  Future<Map<String, dynamic>> _probeAlameenInvoiceMenu() async {
+  Future<Map<String, dynamic>> _probeAlameenInvoiceMenu({
+    bool openSales = false,
+  }) async {
     if (!Platform.isWindows) {
       throw StateError('Al-Ameen invoice-menu probe requires Windows.');
     }
@@ -5646,7 +5677,9 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         '${directory.path}${Platform.pathSeparator}probe.ps1',
       );
       await script.writeAsString(
-        buildAlameenInvoiceMenuProbePowerShell(),
+        openSales
+            ? buildAlameenSalesFormProbePowerShell()
+            : buildAlameenInvoiceMenuProbePowerShell(),
         encoding: utf8,
         flush: true,
       );
