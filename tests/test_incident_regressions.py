@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 423)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 424)}
         observed_ids = set()
 
         for row in rows:
@@ -158,6 +158,26 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertNotIn("RandomNumberGenerator]::Fill", rotation)
         self.assertNotIn("Write-Host $oldPassword", rotation)
         self.assertNotIn("Write-Host $newPassword", rotation)
+
+    def test_postgres_credential_rotation_is_coordinated_and_rollback_capable(self):
+        rotation = read_text("scripts/rotate_production_postgres_credentials.ps1")
+
+        self.assertIn("RandomNumberGenerator]::Create()", rotation)
+        self.assertIn("Set-CronSuspended -Name $cronName -Suspended $true", rotation)
+        self.assertIn("$cron.status.PSObject.Properties['active']", rotation)
+        self.assertIn("if ($null -eq $activeProperty) { 0 }", rotation)
+        self.assertIn("ALTER ROLE", rotation)
+        self.assertIn("--patch-file=/dev/stdin", rotation)
+        self.assertIn("Set-SecretText -SecretName $PostgresSecretName", rotation)
+        self.assertIn("Set-SecretText -SecretName $BackendSecretName", rotation)
+        self.assertIn("Restart-And-Wait -Deployment $PostgresDeployment", rotation)
+        self.assertIn("Restart-And-Wait -Deployment $BackendDeployment", rotation)
+        self.assertIn("Set-DatabaseRolePassword -Role $role -Database $database -Password $oldPassword", rotation)
+        self.assertIn("[bool]$health.db_available", rotation)
+        self.assertIn("[string]$health.build.git_commit -ne $ExpectedCommit", rotation)
+        self.assertNotIn("Write-Host $oldPassword", rotation)
+        self.assertNotIn("Write-Host $newPassword", rotation)
+        self.assertNotIn("--from-literal", rotation)
 
     def test_tls_rotation_requires_one_known_owner_and_new_ready_revision(self):
         rotation = read_text("scripts/rotate_production_tls_certificate.ps1")
