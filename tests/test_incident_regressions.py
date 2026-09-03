@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 434)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 437)}
         observed_ids = set()
 
         for row in rows:
@@ -129,8 +129,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("go-template", helper)
         self.assertIn(".metadata.name", helper)
         self.assertIn("range $key, $_ := .data", helper)
+        self.assertIn(".type", helper)
+        self.assertIn('index .metadata.annotations "kubernetes.io/service-account.name"', helper)
         self.assertNotIn("custom-columns=NAME:.metadata.name,KEYS:.data", helper)
         self.assertNotIn("ConvertFrom-Json", helper)
+
+        revoker = read_text("scripts/revoke_unused_production_service_account_token.ps1")
+        self.assertIn("kubernetes.io/service-account-token|$ServiceAccountName", revoker)
+        self.assertIn("kubectl delete secret $SecretName -n $Namespace", revoker)
+        self.assertIn("--ignore-not-found -o 'jsonpath={.metadata.name}'", revoker)
+        self.assertIn("[string]($absentLines -join '')", revoker)
+        self.assertNotIn(".Trim()", revoker)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")
