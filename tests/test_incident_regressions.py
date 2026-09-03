@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 404)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 406)}
         observed_ids = set()
 
         for row in rows:
@@ -70,7 +70,12 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("multi-commit completion rule", observation)
         self.assertIn("A fixed delay", observation)
         self.assertIn("production automatic synchronization is blocked", observation)
+        self.assertIn("Three-item boundary experiment: saved state", observation)
+        self.assertIn("Sales 1616", observation)
+        self.assertIn("7,700 + 174,000 + 54,000 = 235,700", observation)
+        self.assertIn("upper version `5781`", observation)
         self.assertIn("version `5770`", progress)
+        self.assertIn("middle line without saving or closing", progress)
         self.assertIn("multi-commit", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):

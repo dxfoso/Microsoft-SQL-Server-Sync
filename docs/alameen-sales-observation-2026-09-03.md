@@ -249,6 +249,10 @@ The long-term automatic solution requires one of the following to be proven befo
 
 Until that completion rule is implemented and regression-tested, `alshallan2` synchronization must remain disabled for these experiments. This is tracked as INC-403. No production data was synchronized during this observation.
 
+The phrase **multi-commit completion rule** refers to this exact required proof and must remain present in later checkpoint updates so the production blocker is not accidentally weakened or lost.
+
+Until that rule is proven and implemented, **production automatic synchronization is blocked** for this Al-Ameen workflow.
+
 ## Cumulative verified state after version 5770
 
 - Sales 110 remains posted, dated 2026-08-25, with 25 lines and total 12,276,100.
@@ -260,6 +264,70 @@ Until that completion rule is implemented and regression-tested, `alshallan2` sy
 - Material 197190 has observed quantity 0 and last price 198,000.
 - `5770` is the only valid next bounded-delta baseline for this sequence.
 
+## Three-item boundary experiment: saved state (`SYS_CHANGE_VERSION = 5771`)
+
+To determine when Al-Ameen commits a line removal relative to the final Save action, the user created and saved a new controlled sale with exactly three items. The sale itself is isolated to one database transaction at version 5771.
+
+- Sale: posted Sales number 1616, dated 2026-09-03.
+- Header total: 235,700, with zero header discount, extra, item discount, bonus discount, first payment, and VAT.
+- Voucher: posted type 1 / number 2322, debit 235,700 and credit 235,700.
+- Relation: `er000.ParentType=2`, `ParentNumber=1616`.
+- Payment term: debit 235,700, credit 0, currency value 1, due 2026-09-03.
+
+### Exact line, ledger, and inventory state
+
+| Line | Material number | Quantity | Price | Discount | Extra | VAT | Ledger effect | Movement | Material quantity after save |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|
+| 0 | 9 | 1 | 7,700 | 0 | 0 | 0 | credit 7,700 | `ms000.Qty=-1` | -1 |
+| 1 | 77577 | 1 | 174,000 | 0 | 0 | 0 | credit 174,000 | `ms000.Qty=-1` | -1 |
+| 2 | 11162 | 1 | 54,000 | 0 | 0 | 0 | credit 54,000 | `ms000.Qty=-1` | -1 |
+
+The fourth ledger entry is the balancing debit of 235,700. All three `mt000` materials changed quantity from 0 to -1; their observed `MaxPrice`, `AvgPrice`, and `LastPrice` remained 0. Three `cp000` customer/material price rows were inserted at exactly 7,700, 174,000, and 54,000 with currency value 1.
+
+### Exact version-5771 operation manifest
+
+| Table | Operation | Count | Verified effect |
+|---|---|---:|---|
+| `bu000` | insert | 1 | Posted Sales 1616 header. |
+| `bi000` | insert | 3 | The three lines listed above. |
+| `ce000` | insert | 1 | Balanced voucher 2322. |
+| `en000` | insert | 4 | One balancing debit plus three material credits. |
+| `er000` | insert | 1 | Voucher/document relation to Sales 1616. |
+| `ms000` | insert | 3 | Three outbound stock movements of -1. |
+| `mt000` | update | 3 | Each material quantity changed from 0 to -1. |
+| `ac000` | update | 5 | Three debit-side and two credit-side account aggregates changed by 235,700. |
+| `cp000` | insert | 3 | Three customer/material price relations. |
+| `pt000` | insert | 1 | Debit-side payment term for 235,700. |
+
+### Exact account aggregate changes
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 4 | `Debit` | 2,043,295,000 | 2,043,530,700 | +235,700 |
+| 12 | `Debit` | 1,785,995,000 | 1,786,230,700 | +235,700 |
+| 28 | `Debit` | 892,786,000 | 893,021,700 | +235,700 |
+| 7 | `Credit` | 938,824,000 | 939,059,700 | +235,700 |
+| 19 | `Credit` | 937,707,000 | 937,942,700 | +235,700 |
+| 19 | `UseFlag` | 30,423 | 30,427 | +4 |
+| 28 | `UseFlag` | 9,448 | 9,453 | +5 |
+
+Arithmetic checks: `7,700 + 174,000 + 54,000 = 235,700`; the header, voucher debit, voucher credit, ledger debit sum, ledger credit sum, payment term, and every monetary account change equal 235,700.
+
+### Later activity excluded from the sale
+
+The complete bounded export ran from baseline 5770 through upper version 5781 and contained 536 operations in 20,352 compressed bytes, SHA-256 `a7f5c541ddf2f7837e7124b78e14137f8ffb2db4c99a18058f00fb3bd5781baf`. Only 25 operations at version 5771 belong to Sales 1616. The other 511 operations repeat the previously observed application-maintenance shape and are not attributed to the sale:
+
+| Versions | Operations |
+|---|---|
+| 5772–5773 | Delete/reinsert one `BPOptions000` header and 240 `BPOptionsDetails000` rows. |
+| 5774 | Update one `op000` row. |
+| 5775–5776, 5781 | Delete three and insert one `Connections` rows. |
+| 5778–5779 | Delete and reinsert all 12 `ma000` identities. |
+
+## Boundary experiment checkpoint
+
+The durable pre-removal checkpoint is now upper version `5781`, not 5771, because all later observed maintenance commits are included in the sealed delta. For the next phase, reopen Sales 1616, remove only the middle line (line 1, material 77577, quantity 1, price 174,000), and **do not save or close the dialog**. Capture from baseline 5781 at that point. Only after that capture should the user save, followed by a second capture. This directly distinguishes a remove-time database commit from a final-save commit.
+
 ## Next controlled observation
 
-Use `5770` as the next read-only baseline. Further controlled observations may continue while sync stays disabled, but production automatic synchronization is blocked on the multi-commit completion rule above. Do not use a full backup unless Change Tracking reports baseline expiration; expiration must fail closed.
+Use `5781` as the next read-only baseline. Production automatic synchronization remains blocked by INC-403, and `alshallan2` must remain sync-disabled throughout this experiment.
