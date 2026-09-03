@@ -8,7 +8,8 @@ param(
     [string] $BackendDeployment = 'sql-sync-back',
     [string[]] $CronJobs = @('sql-sync-auto-tick', 'sql-sync-history-maintenance'),
     [string] $HealthUrl = 'https://sync.velvet-leaf.com/admin/health',
-    [string] $ExpectedCommit = '96dd9579fd3f17236aada1d6af600e5059c51994'
+    [string] $ExpectedCommit = '96dd9579fd3f17236aada1d6af600e5059c51994',
+    [int] $DrainTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = 'Stop'
@@ -123,11 +124,15 @@ try {
         $cronStates[$cronName] = Get-CronState -Name $cronName
         Set-CronSuspended -Name $cronName -Suspended $true | Out-Null
     }
-    foreach ($cronName in $CronJobs) {
-        if ((Get-CronState -Name $cronName).active -ne 0) {
-            throw "CronJob $cronName still has an active Job; no credential was changed."
+    $drainDeadline = [DateTime]::UtcNow.AddSeconds($DrainTimeoutSeconds)
+    do {
+        $activeCronJobs = @($CronJobs | Where-Object { (Get-CronState -Name $_).active -ne 0 })
+        if ($activeCronJobs.Count -eq 0) { break }
+        if ([DateTime]::UtcNow -ge $drainDeadline) {
+            throw "CronJobs did not drain before timeout; no credential was changed."
         }
-    }
+        Start-Sleep -Seconds 5
+    } while ($true)
 
     Set-DatabaseRolePassword -Role $role -Database $database -Password $newPassword | Out-Null
     $passwordChanged = $true
