@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 418)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 420)}
         observed_ids = set()
 
         for row in rows:
@@ -158,6 +158,24 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertNotIn("RandomNumberGenerator]::Fill", rotation)
         self.assertNotIn("Write-Host $oldPassword", rotation)
         self.assertNotIn("Write-Host $newPassword", rotation)
+
+    def test_tls_rotation_requires_one_known_owner_and_new_ready_revision(self):
+        rotation = read_text("scripts/rotate_production_tls_certificate.ps1")
+
+        self.assertIn("expected one $CertificateName owner and no unknown owner", rotation)
+        self.assertIn("kubectl delete certificate $LegacyCertificateName -n $Namespace", rotation)
+        self.assertIn("kubectl delete secret $SecretName -n $Namespace", rotation)
+        self.assertIn("$newSecretUid -ne $oldSecretUid", rotation)
+        self.assertIn("$newRevision -gt $oldRevision", rotation)
+        self.assertIn("$currentReady.Count -eq 1", rotation)
+        self.assertNotIn("tls.key", rotation)
+
+    def test_incident_regressions_are_discoverable_without_a_hard_coded_class_name(self):
+        test_source = read_text("tests/test_incident_regressions.py")
+
+        self.assertIn("class IncidentRegressionCatalogTests(unittest.TestCase):", test_source)
+        self.assertIn("if __name__ == \"__main__\":", test_source)
+        self.assertIn("unittest.main()", test_source)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")
