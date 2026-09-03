@@ -356,6 +356,66 @@ This proves the first Save click performs validation and opens the warehouse-qua
 
 The next bounded-delta baseline remains `5781`.
 
+## Three-item boundary experiment: warehouse confirmation accepted (`SYS_CHANGE_VERSION = 5782`)
+
+The user accepted the warehouse-quantity confirmation exactly once and then performed no other Al-Ameen action. The complete logical removal committed as one SQL Server Change Tracking version.
+
+- Delta boundary: baseline `5781`, upper version `5782`; every operation belongs to version `5782`.
+- Artifact: 6,064 compressed bytes, 35 operations, SHA-256 `8e7d366c5894819952385a1bba2db36ce26f6b243e555d840284fe6e1278e806`.
+- Removed line: line 1, material 77577, quantity 1, price 174,000.
+- Final lines: line 0 remains material 9, quantity 1, price 7,700; prior line 2 becomes line 1, material 11162, quantity 1, price 54,000.
+- Header: Sales 1616 remains posted; total changed from 235,700 to 61,700, exactly -174,000.
+- Voucher: type 1 / number 2322 remains posted and balanced; debit and credit each changed from 235,700 to 61,700.
+- Ledger: four entries became three. The removed line's prior ledger entry was number 3, debit 0 and credit 174,000. Final debit and credit sums are each 61,700.
+- Payment term: debit changed from 235,700 to 61,700; credit remained 0.
+- Stock: the material-77577 movement quantity changed from -1 to 0; its `mt000.Qty` also changed from -1 to 0. The two retained quantities did not change.
+- Customer prices: all three prior `cp000` identities were deleted and two replacement identities were inserted for the retained items.
+
+### Exact operation manifest
+
+| Table | Operation | Count | Verified effect |
+|---|---|---:|---|
+| `bu000` | update | 1 | Sets final Sales 1616 total to 61,700. |
+| `bi000` | delete + insert | 3 + 2 | Replaces the full three-line collection with the final two-line collection. |
+| `ce000` | delete + insert | 1 + 1 | Replaces voucher identity while retaining type 1 / number 2322 and the new balanced amount. |
+| `en000` | delete + insert | 4 + 3 | Replaces the full ledger collection with three balanced entries. |
+| `er000` | delete + insert | 1 + 1 | Replaces the relation identity and still points to Sales 1616. |
+| `pt000` | delete + insert | 1 + 1 | Replaces the payment-term identity with debit 61,700. |
+| `cp000` | delete + insert | 3 + 2 | Replaces the customer/material price collection for the retained items. |
+| `ms000` | update | 3 | All three movements were touched; only material 77577 changed quantity, from -1 to 0. |
+| `mt000` | update | 3 | All three materials were touched; only material 77577 changed observed values, quantity -1 to 0. |
+| `ac000` | update | 5 | Reduces every applicable monetary aggregate by 174,000 and one use counter by one. |
+
+Every deleted `bi000`, `ce000`, `en000`, `er000`, `pt000`, and `cp000` identity was from the version-5771 saved graph. None of the final inserted rows reused an old GUID. The `bu000`, `ms000`, `mt000`, and `ac000` primary identities remained stable and were updated in place.
+
+### Exact account aggregate changes
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 4 | `Debit` | 2,043,530,700 | 2,043,356,700 | -174,000 |
+| 12 | `Debit` | 1,786,230,700 | 1,786,056,700 | -174,000 |
+| 28 | `Debit` | 893,021,700 | 892,847,700 | -174,000 |
+| 7 | `Credit` | 939,059,700 | 938,885,700 | -174,000 |
+| 19 | `Credit` | 937,942,700 | 937,768,700 | -174,000 |
+| 19 | `UseFlag` | 30,427 | 30,426 | -1 |
+
+Arithmetic checks: `7,700 + 54,000 = 61,700`; `235,700 - 174,000 = 61,700`. The final header, voucher debit, voucher credit, ledger debit sum, ledger credit sum, payment term, inventory effect, and five account monetary changes reconcile exactly.
+
+### Refined save-boundary conclusion
+
+For this controlled three-line sale, removing a line and the first Save click both produced zero database changes at version 5781. Accepting the warehouse-quantity confirmation triggered all 35 database operations in the single version 5782. The warehouse confirmation is therefore the observed commit trigger for this exact workflow.
+
+This does not erase INC-403: the earlier 26-line Sales 110 removal demonstrably spanned versions 5769 and 5770. The difference may depend on document size, history, configuration, or another unobserved application path. A generic sync implementation must validate the completed document graph rather than assume every warehouse confirmation produces one commit.
+
+## Cumulative verified state after version 5782
+
+- Sales 1616 remains posted with two lines and total 61,700.
+- Material 9 remains line 0, quantity 1, price 7,700, with stock movement/material quantity -1.
+- Material 11162 is now line 1, quantity 1, price 54,000, with stock movement/material quantity -1.
+- Material 77577 is absent from the sale; its movement and material quantities are 0.
+- Voucher 2322 and its three ledger entries remain balanced at 61,700.
+- `5782` is the next valid bounded-delta baseline.
+
 ## Next controlled observation
 
-Confirm the warehouse-quantity prompt exactly once, then perform no other action and capture again from baseline `5781`. Production automatic synchronization remains blocked by INC-403, and `alshallan2` must remain sync-disabled throughout this experiment.
+Use baseline `5782`. The next engineering step is to implement and test the business-aware complete-Sales-graph validator described by INC-403 before enabling production automatic synchronization. `alshallan2` must remain sync-disabled.

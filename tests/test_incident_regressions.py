@@ -81,9 +81,14 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("warehouse-quantity confirmation", observation)
         self.assertIn("first Save click performs validation", observation)
         self.assertIn("internal Al-Ameen save sequence", observation)
+        self.assertIn("warehouse confirmation accepted", observation)
+        self.assertIn("35 operations", observation)
+        self.assertIn("7,700 + 54,000 = 61,700", observation)
+        self.assertIn("complete-Sales-graph validator", observation)
         self.assertIn("version `5770`", progress)
         self.assertIn("zero changed rows/tables", progress)
         self.assertIn("first click is pre-commit validation", progress)
+        self.assertIn("one atomic version `5782`", progress)
         self.assertIn("multi-commit", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
