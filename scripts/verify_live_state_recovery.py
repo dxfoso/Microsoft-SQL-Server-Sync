@@ -107,7 +107,6 @@ def login(base_url: str, username: str, password: str) -> tuple[str, dict]:
         "auth_login",
         {
             "name": username,
-            "email": username,
             "password": password,
             "app": "web",
         },

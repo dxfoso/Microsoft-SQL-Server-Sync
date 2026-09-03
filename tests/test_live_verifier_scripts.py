@@ -93,6 +93,25 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         self.assertIn("app = 'web'", login)
         self.assertNotIn("email", login)
 
+    def test_all_live_verifiers_exclude_obsolete_email_login_argument(self):
+        script_names = (
+            "verify_live_client_update.py",
+            "verify_live_clients_state.py",
+            "verify_live_sync_state.py",
+            "verify_live_bulk_diagnostics.py",
+            "verify_live_window_action.py",
+            "verify_live_state_recovery.py",
+            "verify_live_scheduler_stress.py",
+        )
+        for script_name in script_names:
+            with self.subTest(script_name=script_name):
+                source = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+                login = source.split('"auth_login",', 1)[1].split("}", 1)[0]
+                self.assertIn('"name": username', login)
+                self.assertIn('"password": password', login)
+                self.assertIn('"app": "web"', login)
+                self.assertNotIn('"email"', login)
+
     def test_bulk_diagnostics_request_includes_batch_size_when_provided(self):
         verifier = load_script_module(
             "verify_live_bulk_diagnostics_script",
