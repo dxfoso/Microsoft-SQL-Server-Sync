@@ -180,6 +180,86 @@ Arithmetic checks: `3,120,100 - 312,000 = 2,808,100`; `9,626,000 + 2,808,100 = 1
 
 The values above are a sanitized durable fact record derived from SHA-256-verified, version-bounded exports and comparisons against the restored pre-input backup or the immediately preceding complete delta. GUIDs, names, free-text notes, credentials, and customer-identifying values are intentionally excluded because they are database-instance-specific or sensitive and are not needed to reproduce the synchronization rules. Table roles are marked as observed interpretations because SyrianSoft vendor documentation for this schema was not available. Exact operations, keys, numeric values, version boundaries, hashes, and arithmetic checks are direct database evidence.
 
+## Existing-sale line removal (`SYS_CHANGE_VERSION = 5769..5770`)
+
+The user next removed one item from the same posted Sales number 110. Unlike the quantity and price edits, Al-Ameen committed this logical action across **two database Change Tracking versions**.
+
+- Delta boundary: baseline `5768`, upper version `5770`.
+- Artifact: 17,512 compressed bytes, 224 net Change Tracking operations, SHA-256 `051297320e3f4adf1f6d7251d2a6e6deef52c39b2db1c0b6c32288dab48d2823`.
+- Removed row: prior `bi000` line number 5, quantity 1, price 158,000, linked material number 197190.
+- Final line count: 25, down from 26. Prior line numbers 0 through 4 remained unchanged; the 20 retained items previously numbered 6 through 25 were renumbered to 5 through 24. Their quantities, prices, discounts, and extras did not change.
+- `bu000.Total` changed from 12,434,100 to 12,276,100, exactly -158,000.
+- Voucher type 1 / number 2317 remained posted and balanced; debit and credit each changed from 12,434,100 to 12,276,100.
+- Ledger entry count changed from 27 to 26. The removed line's linked old ledger entry was number 6 with debit 158,000 and credit 0. Final ledger sums remained balanced at debit 12,276,100 and credit 12,276,100.
+- `pt000.Credit` changed from 12,434,100 to 12,276,100.
+- The affected `ms000.Qty` changed from 1 to 0 at version 5769.
+- Material `mt000` number 197190 changed quantity from 1 to 0 and changed `LastPrice` from 158,000 to 198,000 at version 5769. The latter is an observed Al-Ameen recalculation; the experiment does not prove which historical price source supplied 198,000.
+- The custom row `mc000` with composite key `Type=24, Number=100, Item=0` was tracked as updated at version 5770, but its compared exported business values remained unchanged.
+
+### Exact version and operation manifest
+
+| Version | Table | Operation | Count | Interpretation |
+|---:|---|---|---:|---|
+| 5769 | `bi000` | delete | 26 | Deletes all 26 line identities that existed at version 5768. |
+| 5769 | `ce000` | delete | 1 | Deletes the version-5768 voucher identity. |
+| 5769 | `en000` | delete | 27 | Deletes all version-5768 ledger identities. |
+| 5769 | `er000` | delete | 1 | Deletes the version-5768 document relation identity. |
+| 5769 | `pt000` | delete | 1 | Deletes the version-5768 payment/term identity. |
+| 5769 | `ms000` | update | 1 | Sets the removed material's movement quantity from 1 to 0. |
+| 5769 | `mt000` | update | 1 | Sets material 197190 quantity to 0 and last price to 198,000. |
+| 5770 | `bi000` | delete | 25 | Deletes 25 intermediate identities created after the baseline and superseded before export. |
+| 5770 | `bi000` | insert | 25 | Inserts the final retained and renumbered line collection. |
+| 5770 | `ce000` | delete + insert | 1 + 1 | Replaces an intermediate voucher with the final voucher identity. |
+| 5770 | `en000` | delete + insert | 26 + 26 | Replaces the intermediate 26-entry ledger collection with the final collection. |
+| 5770 | `er000` | delete + insert | 1 + 1 | Replaces the intermediate relation with the final relation to Sales 110. |
+| 5770 | `pt000` | delete + insert | 1 + 1 | Replaces the intermediate payment/term row with the final amount. |
+| 5770 | `bu000` | update | 1 | Sets the final header total to 12,276,100. |
+| 5770 | `ac000` | update | 6 | Applies the final account aggregate reductions. |
+| 5770 | `ms000` | update | 25 | Touches the 25 retained movements; their compared quantity/book values did not change. |
+| 5770 | `mt000` | update | 25 | Touches the 25 retained materials; their compared quantity/price values did not change. |
+| 5770 | `mc000` | update | 1 | Semantic no-op in the exported business values. |
+
+Change Tracking returns the latest net operation for each primary key since the supplied baseline. The version-5770 deletes for 25 previously unseen line identities prove those identities existed after baseline 5768 and were removed by 5770; their creation at version 5769 is therefore a SQL Change Tracking inference rather than a row image retained in the final bounded export. No final version-5770 insert reused an old or intermediate GUID.
+
+### Exact account aggregate reductions
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 14 | `Credit` | 1,132,248,100 | 1,132,090,100 | -158,000 |
+| 32 | `Credit` | 1,132,248,100 | 1,132,090,100 | -158,000 |
+| 6 | `Debit` | 961,820,100 | 961,662,100 | -158,000 |
+| 15 | `Debit` | 948,110,100 | 947,952,100 | -158,000 |
+| 15 | `UseFlag` | 27,505 | 27,504 | -1 |
+| 5 | `Credit` | 1,389,298,596 | 1,389,140,596 | -158,000 |
+| 46 | `Credit` | 1,132,248,100 | 1,132,090,100 | -158,000 |
+| 46 | `UseFlag` | 39,369 | 39,370 | +1 |
+
+Arithmetic checks: `1 * 158,000 = 158,000`; `12,434,100 - 158,000 = 12,276,100`. The header, voucher, ledger totals, payment term, and all six monetary account aggregates match that exact reduction.
+
+## Multi-commit logical-operation safety blocker
+
+Versions 5769 and 5770 are separate committed SQL Server transactions for one user-visible Al-Ameen action. A generic Change Tracking reader is allowed to observe 5769 before 5770 exists. The current client can bind an upload to `CHANGE_TRACKING_CURRENT_VERSION()` immediately and has no vendor-provided Al-Ameen marker that says the complete logical save has finished. Therefore it cannot prove that upper version 5769 is a safe cross-table business boundary.
+
+A fixed delay or a moment with no active SQL transaction is not a proof: Al-Ameen may commit version 5769, wait for further UI/application work, and commit version 5770 later. Uploading the first committed phase could temporarily propagate deletion of the prior invoice graph while the old header/account totals remain. A later pass should eventually converge to 5770, but temporary inconsistency is not acceptable as a production safety guarantee for accounting data.
+
+The long-term automatic solution requires one of the following to be proven before enabling this workflow in production:
+
+1. A reliable Al-Ameen completion signal or database state invariant that identifies the final posted document graph; or
+2. A business-aware assembler that groups the related `bu000`/`bi000`/`ce000`/`en000`/`er000`/`pt000`/`ms000`/`mt000`/`ac000` changes and validates header total, line total, voucher balance, ledger balance, relation count, and inventory effects before publishing one server batch.
+
+Until that completion rule is implemented and regression-tested, `alshallan2` synchronization must remain disabled for these experiments. This is tracked as INC-403. No production data was synchronized during this observation.
+
+## Cumulative verified state after version 5770
+
+- Sales 110 remains posted, dated 2026-08-25, with 25 lines and total 12,276,100.
+- The prior material-197190 line (old line 5, quantity 1, price 158,000) is absent.
+- Retained line 0 remains quantity 10 at price 430,000, linked to material 207987.
+- Retained line 1 remains quantity 1 at price 3,120,100, linked to material 198293.
+- Voucher type 1 / number 2317 remains posted and balanced at 12,276,100 debit and credit.
+- The final 26 ledger entries sum independently to 12,276,100 debit and 12,276,100 credit.
+- Material 197190 has observed quantity 0 and last price 198,000.
+- `5770` is the only valid next bounded-delta baseline for this sequence.
+
 ## Next controlled observation
 
-Use `5768` as the next read-only baseline. A controlled delete, refund, payment, or a second-client concurrent edit can now be captured with another bounded delta. Do not run a new full backup unless Change Tracking reports that this baseline expired; expiration must fail closed.
+Use `5770` as the next read-only baseline. Further controlled observations may continue while sync stays disabled, but production automatic synchronization is blocked on the multi-commit completion rule above. Do not use a full backup unless Change Tracking reports baseline expiration; expiration must fail closed.

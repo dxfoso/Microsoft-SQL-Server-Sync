@@ -1,6 +1,6 @@
 # Progress
 
-Overall: **98% complete - create and quantity-edit database effects captured**
+Overall: **98% laboratory mapping complete - production automatic sync blocked by an unproven Al-Ameen multi-commit boundary**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -12,6 +12,8 @@ Overall: **98% complete - create and quantity-edit database effects captured**
 | Record the first manual Sales operation and compare its database effects | Done | 100% |
 | Record the existing-sale quantity edit and compare its database effects | Done | 100% |
 | Record the same-sale item price edit and compare its database effects | Done | 100% |
+| Record the same-sale item removal and compare its database effects | Done | 100% |
+| Prove a safe Al-Ameen logical-operation completion boundary | Blocked - no vendor marker or proven invariant yet | 0% |
 | Replace full-backup transfer with bounded Change Tracking delta export | Done | 100% |
 | Prove full database rollback | Not started | 0% |
 
@@ -49,3 +51,5 @@ The command-delivery blocker is cleared for this experiment. No automated Al-Ame
 - The user's quantity edit is captured and verified at Change Tracking version `5767`. The edited database object was posted Sales number 110: line 0 quantity changed 1 to 10 at unchanged unit price 430,000, and the total increased from 5,756,000 to 9,626,000. The 15,792-byte delta contains 172 operations because Al-Ameen regenerated all 26 Sales line GUIDs, all 27 ledger-line GUIDs, and related voucher/relation/payment identities in the same atomic commit. Inventory and account aggregates changed by the exact corresponding amounts. The next safe delta baseline is `5767`.
 - The next price edit is captured and verified at version `5768`: Sales 110 line 1 price changed from 312,000 to 3,120,100, increasing the total and balanced accounting by exactly 2,808,100. Stock quantities did not change; material 198293's maximum, average, and last prices changed to the entered value. Al-Ameen again emitted the same 172-operation atomic identity-rewrite pattern. The next safe delta baseline is `5768`.
 - The durable Sales observation now includes the complete per-table identity/correlation model, exact delete/insert versus stable-update behavior, before/after account aggregates, ledger and voucher arithmetic, material effects, cumulative state, evidence hashes, confidence boundary, and future sync requirements. Later implementation work can use this sanitized fact record without repeating the live database comparison.
+- The one-line removal is captured from baseline `5768` through version `5770`: Sales 110 removed old line 5 (material 197190, quantity 1, price 158,000), renumbered the 20 later lines, reduced the final total and balanced accounting to 12,276,100, reduced the linked stock quantity to 0, and recalculated that material's last price to 198,000. The verified 17,512-byte artifact contains 224 net operations.
+- **Production blocker (INC-403):** the one visible removal spans separate committed versions `5769` and `5770`. The current generic reader has no Al-Ameen completion marker and could legally capture the intermediate version. A delay is not proof of completion. `alshallan2` sync remains disabled; further laboratory observations may continue, but production automatic synchronization for this workflow must stop until a business-aware complete-document invariant or reliable application completion signal is implemented and regression-tested. The next safe observation baseline is version `5770`.

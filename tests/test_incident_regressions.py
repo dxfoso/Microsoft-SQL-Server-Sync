@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 403)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 404)}
         observed_ids = set()
 
         for row in rows:
@@ -59,6 +59,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             "No automated Al-Ameen input, restore, or synchronization",
             progress,
         )
+
+    def test_alameen_multi_commit_removal_stays_blocked_until_business_boundary_is_proven(self):
+        progress = read_text("progress.md")
+        observation = read_text("docs/alameen-sales-observation-2026-09-03.md")
+
+        self.assertIn("INC-403", observation)
+        self.assertIn("SYS_CHANGE_VERSION = 5769..5770", observation)
+        self.assertIn("224 net Change Tracking operations", observation)
+        self.assertIn("multi-commit completion rule", observation)
+        self.assertIn("A fixed delay", observation)
+        self.assertIn("production automatic synchronization is blocked", observation)
+        self.assertIn("version `5770`", progress)
+        self.assertIn("multi-commit", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")
