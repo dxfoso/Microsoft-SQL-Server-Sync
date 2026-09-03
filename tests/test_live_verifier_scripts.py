@@ -52,6 +52,34 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         self.assertEqual(urlopen.call_count, 2)
 
+    def test_client_update_login_uses_exact_deployed_auth_contract(self):
+        verifier = load_script_module(
+            "verify_live_client_update_login_contract_script",
+            "scripts/verify_live_client_update.py",
+        )
+        captured = {}
+
+        def fake_invoke(base_url: str, name: str, args: dict) -> dict:
+            captured.update({"base_url": base_url, "name": name, "args": args})
+            return {
+                "token": "token-1",
+                "user": {"username": "admin", "role": "admin"},
+            }
+
+        verifier.invoke_function = fake_invoke
+
+        token, user = verifier.login(
+            "https://sync.velvet-leaf.com", "admin", "secret"
+        )
+
+        self.assertEqual(token, "token-1")
+        self.assertEqual(user["role"], "admin")
+        self.assertEqual(captured["name"], "auth_login")
+        self.assertEqual(
+            captured["args"],
+            {"name": "admin", "password": "secret", "app": "web"},
+        )
+
     def test_bulk_diagnostics_request_includes_batch_size_when_provided(self):
         verifier = load_script_module(
             "verify_live_bulk_diagnostics_script",
