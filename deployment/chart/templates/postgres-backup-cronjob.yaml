@@ -65,8 +65,11 @@ spec:
                   pg_restore --list "$temporary" >/dev/null
                   mv -- "$temporary" "$completed"
                   sha256sum "$completed" >"${completed}.sha256"
+                  sha256sum --check "${completed}.sha256" >/dev/null
                   find /backups -xdev -type f \( -name 'sqlsync-*.dump' -o -name 'sqlsync-*.dump.sha256' \) \
                     -mtime +{{ .Values.postgresBackup.retentionDays }} -delete
+                  bytes="$(stat -c %s "$completed")"
+                  printf '{"backupCreated":true,"dumpListed":true,"checksumVerified":true,"bytes":%s}\n' "$bytes"
               volumeMounts:
                 - name: backups
                   mountPath: /backups

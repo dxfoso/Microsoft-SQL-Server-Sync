@@ -207,6 +207,8 @@ class ChartContractsTests(unittest.TestCase):
         self.assertIn("pg_dump --format=custom", backup)
         self.assertIn("pg_restore --list", backup)
         self.assertIn("sha256sum", backup)
+        self.assertIn("sha256sum --check", backup)
+        self.assertIn('"checksumVerified":true', backup)
         self.assertIn("-mtime +{{ .Values.postgresBackup.retentionDays }} -delete", backup)
         self.assertIn("helm.sh/resource-policy: keep", backup_pvc)
         self.assertIn("sync-admin-web.postgresBackupPvcName", backup_pvc)

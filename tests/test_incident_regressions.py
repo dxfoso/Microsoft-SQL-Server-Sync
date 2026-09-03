@@ -203,6 +203,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("readOnly = $true", inspection)
         self.assertIn("$phase -in @('Succeeded', 'Failed')", inspection)
         self.assertNotIn("--for=condition=Ready", inspection)
+        backup_verifier = read_text("scripts/verify_production_postgres_backup_job.ps1")
+        self.assertIn("--from=cronjob/$CronJobName", backup_verifier)
+        self.assertIn("--for=condition=complete", backup_verifier)
+        self.assertIn('"checksumVerified":true', backup_verifier)
 
     def test_tls_rotation_requires_one_known_owner_and_new_ready_revision(self):
         rotation = read_text("scripts/rotate_production_tls_certificate.ps1")
