@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 406)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 407)}
         observed_ids = set()
 
         for row in rows:
@@ -90,6 +90,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("first click is pre-commit validation", progress)
         self.assertIn("one atomic version `5782`", progress)
         self.assertIn("multi-commit", progress)
+
+    def test_alameen_purchase_checkpoint_is_durable_and_business_typed(self):
+        purchase = read_text("docs/alameen-purchases-observation-2026-09-04.md")
+        progress = read_text("progress.md")
+
+        self.assertIn("SYS_CHANGE_VERSION = 5793", purchase)
+        self.assertIn("25,406 compressed bytes", purchase)
+        self.assertIn("23 operations across 9 tables", purchase)
+        self.assertIn("bu000.TypeGUID -> bt000.GUID", purchase)
+        self.assertIn("24,000 + 144,000 + 26,000 = 194,000", purchase)
+        self.assertIn("Purchase line `Price`, not `PurchaseVal`", purchase)
+        self.assertIn("Material `MaxPrice`, `AvgPrice`, and `LastPrice`", purchase)
+        self.assertIn("next bounded-delta baseline is `5793`", purchase)
+        self.assertIn("first controlled Purchase is captured", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")
