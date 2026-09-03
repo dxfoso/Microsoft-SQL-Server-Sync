@@ -95,7 +95,7 @@ try {
     $login = Invoke-ControlPlaneFunction 'auth_login' @{
         name = $oldName
         password = $oldPassword
-        app = 'credential-rotation'
+        app = 'web'
     }
     $token = [string]$login.token
     if ([string]::IsNullOrWhiteSpace($token)) { throw 'Administrator login returned no token.' }
@@ -117,7 +117,7 @@ try {
     $verification = Invoke-ControlPlaneFunction 'auth_login' @{
         name = $oldName
         password = $newPassword
-        app = 'credential-rotation-verification'
+        app = 'web'
     }
     $verificationToken = [string]$verification.token
     if ([string]::IsNullOrWhiteSpace($verificationToken)) {
