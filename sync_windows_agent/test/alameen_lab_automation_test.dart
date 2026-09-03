@@ -27,6 +27,11 @@ void main() {
     expect(script, contains('GetWindowThreadProcessId'));
     expect(script, contains('PrintWindow'));
     expect(script, contains('changedSamples'));
+    expect(script, contains(r'if ($changedSamples -lt 25)'));
+    expect(
+      script,
+      isNot(contains(r'$changedSamples -lt 25 -and $ownedWindows.Count')),
+    );
     expect(script, contains('keybd_event(0x1B'));
     expect(script, contains(r'SetCursorPos($cursor.X, $cursor.Y)'));
     expect(script, isNot(contains('Invoke-Expression')));

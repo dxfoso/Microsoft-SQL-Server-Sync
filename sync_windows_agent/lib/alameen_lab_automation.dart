@@ -399,7 +399,7 @@ try {
       }
     }
   }
-  if ($changedSamples -lt 25 -and $ownedWindows.Count -eq 0) {
+  if ($changedSamples -lt 25) {
     $after.Dispose()
     throw 'The invoice menu did not produce a verified visual change.'
   }
