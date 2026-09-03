@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 394)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 395)}
         observed_ids = set()
 
         for row in rows:
@@ -47,6 +47,18 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Prior semantic-accessibility blocker: **confirmed", progress)
         self.assertIn("Afx:00400000:0", progress)
         self.assertIn("closed it with Escape, and changed no database record", progress)
+
+    def test_alameen_lab_progress_records_command_delivery_blocker(self):
+        progress = read_text("progress.md")
+
+        self.assertIn("1.0.313+317", progress)
+        self.assertIn("f2dee5f9-750e-441d-bf5f-25b426fa0d66", progress)
+        self.assertIn("d3116b6a-c565-4958-a4c1-c98dbcfaba20", progress)
+        self.assertIn("not consuming commands", progress)
+        self.assertIn(
+            "No Al-Ameen input, database mutation, restore, or synchronization",
+            progress,
+        )
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")
