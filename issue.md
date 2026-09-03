@@ -490,4 +490,8 @@ The Coverage column is enforced by `tests/test_incident_regressions.py`. A refer
 
 ## Coverage limits
 
+### INC-349 follow-up evidence (2026-09-03)
+
+A controlled read-only delta on `alshallan2` resolved one concrete source of `ma000` equal-count fingerprint divergence. Al-Ameen emitted 12 explicit deletes at Change Tracking version `5763` and 12 inserts at `5764`. Comparison with the verified restored baseline proved that every non-primary business field was identical while all physical GUID identities changed; the row count remained 12 and SQL Server declares no foreign key referencing `ma000`. This is identity churn, not evidence that rows went missing. The existing long-term safety rule remains correct: preserve explicit operations and causal ordering, never infer deletes from a snapshot, and never coalesce or pick an authority for `ma000` until a table-specific business identity is proven. Evidence and the next experimental baseline are recorded in `docs/alameen-sales-observation-2026-09-03.md`.
+
 Local Docker tests validate the synchronization architecture and SQL transaction semantics. They cannot perfectly simulate Windows UAC, every SQL Server installation permission model, native GPU/window behavior, physical power removal, or arbitrary WAN failure. Those boundaries require isolated Windows virtual machines or explicitly isolated fake live clients; they never justify testing against active production databases.

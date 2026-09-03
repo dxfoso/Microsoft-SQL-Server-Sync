@@ -1,6 +1,6 @@
 # Progress
 
-Overall: **94% complete - safe low-bandwidth Sales delta export implementation in progress**
+Overall: **98% complete - low-bandwidth Sales capture deployed and verified**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -9,11 +9,11 @@ Overall: **94% complete - safe low-bandwidth Sales delta export implementation i
 | Build, test, publish, and deploy owned-window capture release `1.0.313+317` / `88cc3026c94d3026c77e9bbbcd9b9bb7bec27105` | Done | 100% |
 | Update and reconnect `alshallan2` with synchronization disabled | Done | 100% |
 | Capture the user-opened Sales dialog without input | Done after delayed command delivery | 100% |
-| Record the first manual Sales operation and compare its database effects | In progress | 35% |
-| Replace full-backup transfer with bounded Change Tracking delta export | In progress | 82% |
+| Record the first manual Sales operation and compare its database effects | Done | 100% |
+| Replace full-backup transfer with bounded Change Tracking delta export | Done | 100% |
 | Prove full database rollback | Not started | 0% |
 
-Current state: `alshallan2` is online on `DESKTOP-ALDNHIH`, connected to `DESKTOP-ALDNHIH\SQLEXPRESS` / `AmnDb048`, running `1.0.313+317`, synchronization disabled, and zero active sync jobs. `velvet home` remains ignored while disabled. The verified rollback backup remains 140,455,424 bytes with SHA-256 `e78b94ecef63b07b2687f423deb7b03fe6bdb2caeaaa330f08db8de3c4a82091`.
+Current state: `alshallan2` is online on `DESKTOP-ALDNHIH`, connected to `DESKTOP-ALDNHIH\SQLEXPRESS` / `AmnDb048`, running `1.0.314+318`, synchronization disabled, and zero active sync jobs. `velvet factory` is also online/current on `1.0.314+318`; `velvet home` remains ignored and unchanged while disabled. The verified rollback backup remains 140,455,424 bytes with SHA-256 `e78b94ecef63b07b2687f423deb7b03fe6bdb2caeaaa330f08db8de3c4a82091`.
 
 ## Resolved command delay and safety evidence
 
@@ -40,3 +40,7 @@ The command-delivery blocker is cleared for this experiment. No automated Al-Ame
 - The first no-push retry removed the type errors but exposed unsupported annotated local-variable syntax (INC-400). It was replaced with TRU's native inferred `let requestedBaselineVersion = null` form; no image or client update reached production.
 - The corrected control plane passed the immutable backend/frontend no-push build. A later exact-commit Standard rerun exposed a pre-existing rollback-test observer bound (INC-401): it allowed one bounded supervisor launch although rollback may require two. The isolated retry passed; the observer now covers both launches without weakening rollback, hash, or restart assertions.
 - The first catalog check after that test-only change found and corrected its stale 75-second meta-assertion (INC-402); it now enforces the 150-second complete two-launch bound.
+- Final release: Standard verification passed all nine stages on commit `be128bacfe30fd17768bb106a9c15fac5857f97c`; immutable backend/frontend images are deployed, public health is stable with `ready=true` and `compile_errors=0`, UI is HTTP 200, and Windows client `1.0.314+318` is published and verified.
+- The first live bounded delta completed on attempt 1: baseline `5754`, upper version `5766`, 526 exact operations, 19,678 bytes, SHA-256 `266d66cdf766b28dfda1e0021535529190842cf27b30e2d199d8b4891e7c1fea`. This is 99.985996% smaller than the 140,520,960-byte full after-backup.
+- The controlled Sales save is documented in `docs/alameen-sales-observation-2026-09-03.md`. Its atomic commit was version `5755`, with 15 changes across 10 accounting, invoice, stock, and relation tables. Later UI/session commits are separated from the sale.
+- `ma000` was not reduced: Al-Ameen explicitly replaced 12 rows with 12 new-GUID rows at versions `5763`–`5764`; all non-primary business fields matched the restored baseline exactly. This explains equal-count/different-hash behavior without treating snapshot absence as deletion.
