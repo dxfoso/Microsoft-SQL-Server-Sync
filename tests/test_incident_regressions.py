@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 414)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 416)}
         observed_ids = set()
 
         for row in rows:
@@ -131,6 +131,28 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("range $key, $_ := .data", helper)
         self.assertNotIn("custom-columns=NAME:.metadata.name,KEYS:.data", helper)
         self.assertNotIn("ConvertFrom-Json", helper)
+
+    def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
+        source = read_text("business/control_plane.tru")
+        rotation = read_text("scripts/rotate_production_scheduler_admin.ps1")
+
+        self.assertIn("crypto.passwordHash(password)", source)
+        self.assertIn("crypto.passwordVerify(password, storedPassword)", source)
+        self.assertIn("password: password_hash_for_storage(password)", source)
+        self.assertIn(
+            "db.updateMany(Session, { userId }, { revokedAt: now_iso() })",
+            source,
+        )
+        self.assertNotIn("function default_admin_password", source)
+        self.assertNotIn("function seed_admin_user", source)
+        self.assertNotIn("Admin@123", source)
+        self.assertIn("Set-SchedulerSuspended -Suspended $true", rotation)
+        self.assertIn("Set-SchedulerSecret -AdminName $oldName -AdminPassword $newPassword", rotation)
+        self.assertIn("'user_reset_password'", rotation)
+        self.assertIn("Set-SchedulerSuspended -Suspended $false", rotation)
+        self.assertIn("RandomNumberGenerator", rotation)
+        self.assertNotIn("Write-Host $oldPassword", rotation)
+        self.assertNotIn("Write-Host $newPassword", rotation)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")

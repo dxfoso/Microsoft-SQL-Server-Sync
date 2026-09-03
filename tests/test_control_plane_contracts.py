@@ -1778,6 +1778,23 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("Future<void> _processSnapshotRelayDownloadJob(", agent_page)
         self.assertNotIn("_runDirectQueuedTableSync(", agent_page)
 
+    def test_credentials_are_argon2_hashed_and_admin_is_not_source_seeded(self):
+        source = read_text("business/control_plane.tru")
+
+        self.assertIn("function password_hash_for_storage", source)
+        self.assertIn("crypto.passwordHash(password)", source)
+        self.assertIn("function password_matches_storage", source)
+        self.assertIn("crypto.passwordVerify(password, storedPassword)", source)
+        self.assertIn("password: password_hash_for_storage(password)", source)
+        self.assertIn(
+            "db.updateMany(Session, { userId }, { revokedAt: now_iso() })",
+            source,
+        )
+        self.assertNotIn("function default_admin_password", source)
+        self.assertNotIn("function default_admin_username", source)
+        self.assertNotIn("function seed_admin_user", source)
+        self.assertNotIn("Admin@123", source)
+
     def test_change_tracking_transport_and_table_apply_are_atomic(self):
         source = read_text("business/control_plane.tru")
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

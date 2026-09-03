@@ -695,20 +695,25 @@ function agent_command_delivery_online(agent: map<json>): bool {
   return ageMs != null && ageMs <= agent_online_timeout_ms(agent);
 }
 
-function default_admin_username(): string {
-  return 'dxfoso@gmail.com';
-}
-
-function default_admin_password(): string {
-  return 'Admin@123';
-}
-
 function normalize_user_name(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length == 0) {
     return string.concat('user-', uuid.v4().slice(0, 8));
   }
   return trimmed.toLowerCase();
+}
+
+function password_hash_for_storage(password: string): string {
+  return crypto.passwordHash(password);
+}
+
+function password_matches_storage(password: string, storedPassword: string): bool {
+  if (crypto.passwordVerify(password, storedPassword)) {
+    return true;
+  }
+  // Temporary compatibility for existing plaintext rows. A successful login
+  // immediately upgrades the row to Argon2id below.
+  return storedPassword == password;
 }
 
 function authenticated_user_client_name(current: map<json>): string {
@@ -1410,24 +1415,6 @@ function bounded_agent_tables(tables: array<json>? = null, selectedTable: string
     }
   }
   return result;
-}
-
-function seed_admin_user(): map<json> {
-  const existing = db.selectOne(User, { username: default_admin_username() });
-  if (existing != null) {
-    return existing;
-  }
-  return db.insert(User, {
-    id: uuid.v4(),
-    username: default_admin_username(),
-    email: default_admin_username(),
-    name: default_admin_username(),
-    role: 'admin',
-    ownerUserId: null,
-    createdByUserId: null,
-    password: default_admin_password(),
-    createdAt: now_iso()
-  });
 }
 
 function find_user_by_identity(name: string): map<json>? {
@@ -7305,18 +7292,17 @@ function multi_writer_batch_stale(batch: map<json>): bool {
 }
 
 function auth_login(name: string, password: string, app: string = 'web'): map<json> {
-  const normalizedName = normalize_user_name(name);
-  let user = null;
-  if (normalizedName == default_admin_username()) {
-    user = seed_admin_user();
-  } else {
-    user = find_user_by_identity(name);
-  }
+  const user = find_user_by_identity(name);
   if (user == null) {
     return raw_json_error(401, 'user not found');
   }
-  if (user.password != password) {
+  if (!password_matches_storage(password, user.password)) {
     return raw_json_error(401, 'invalid password');
+  }
+  if (!crypto.passwordVerify(password, user.password)) {
+    db.update(User, { id: user.id }, {
+      password: password_hash_for_storage(password)
+    });
   }
   // The CronJob authenticates once per tick. Keep that internal session class
   // bounded so minute-level scheduling cannot grow the durable session table.
@@ -7405,7 +7391,7 @@ function users_create(name: string, email: string = '', password: string, role: 
     role: resolvedRole,
     ownerUserId: resolvedOwnerUserId,
     createdByUserId: current.id,
-    password,
+    password: password_hash_for_storage(password),
     createdAt: now_iso()
   });
   return raw_json_success({ user: public_user_payload(user) }, 201);
@@ -7420,10 +7406,13 @@ function user_reset_password(userId: string, password: string, token: string? = 
   if (!can_manage_user(current, target)) {
     return raw_json_error(403, 'permission denied');
   }
-  const user = db.update(User, { id: userId }, { password });
+  const user = db.update(User, { id: userId }, {
+    password: password_hash_for_storage(password)
+  });
   if (user == null) {
     return raw_json_error(404, 'user not found');
   }
+  db.updateMany(Session, { userId }, { revokedAt: now_iso() });
   return { ok: true };
 }
 
