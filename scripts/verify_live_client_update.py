@@ -226,7 +226,13 @@ def main() -> int:
                 **summary
             )
         )
-        if summary["version"] == args.target_version and not summary["pending"]:
+        if (
+            summary["version"] == args.target_version
+            and not summary["pending"]
+            and summary["online"]
+            and summary["serverConnected"]
+            and summary["sqlConnected"]
+        ):
             return 0
         time.sleep(max(args.poll_seconds, 1))
 

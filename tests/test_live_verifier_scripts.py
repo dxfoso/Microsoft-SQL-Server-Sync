@@ -519,6 +519,72 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         self.assertIn("request=", stdout.getvalue())
         self.assertIn("client=c1 machine=DESKTOP-1", stdout.getvalue())
 
+    def test_client_update_waits_for_connected_heartbeat_after_restart(self):
+        verifier = load_script_module(
+            "verify_live_client_update_restart_health_script",
+            "scripts/verify_live_client_update.py",
+        )
+        verifier.fetch_health = lambda base_url: {
+            "ready": True,
+            "compile_errors": 0,
+            "build": {"git_commit": "commit-1"},
+        }
+        verifier.login = lambda base_url, username, password: (
+            "token-1",
+            {"username": username, "role": "admin"},
+        )
+        verifier.request_client_update = lambda *args: {"requestId": "req-1"}
+        observations = iter(
+            [
+                {
+                    "isOnline": False,
+                    "serverConnected": False,
+                    "sqlConnected": True,
+                },
+                {
+                    "isOnline": True,
+                    "serverConnected": True,
+                    "sqlConnected": True,
+                },
+            ]
+        )
+        calls = {"count": 0}
+
+        def fake_live_state(base_url, token):
+            calls["count"] += 1
+            connection = next(observations)
+            return {
+                "agents": [
+                    {
+                        "clientName": "c1",
+                        "machineName": "DESKTOP-1",
+                        "clientVersion": "1.0.311+315",
+                        "lastHeartbeat": "2026-09-03T03:43:20+00:00",
+                        "clientUpdate": {"pending": False, "status": "current"},
+                        **connection,
+                    }
+                ]
+            }
+
+        verifier.live_state = fake_live_state
+        verifier.time.sleep = lambda seconds: None
+        verifier.time.time = lambda: 1000.0
+        argv = sys.argv
+        sys.argv = [
+            "verify_live_client_update.py",
+            "c1",
+            "1.0.311+315",
+            "--wait-seconds",
+            "1",
+        ]
+        try:
+            exit_code = verifier.main()
+        finally:
+            sys.argv = argv
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls["count"], 2)
+
     def test_client_update_main_returns_stale_timeout_code(self):
         verifier = load_script_module(
             "verify_live_client_update_script",
