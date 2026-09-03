@@ -1,6 +1,6 @@
 # Progress
 
-Overall: **68% complete — screenshot fallback resumed**
+Overall: **75% complete — screenshot capture deployed; guarded input not started**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -11,10 +11,11 @@ Overall: **68% complete — screenshot fallback resumed**
 | Run required Flutter, contract, Docker and Standard verification | Done | 100% |
 | Publish the Windows client and deploy the server/web changes | Done | 100% |
 | Read-only inspect Al-Ameen on `alshallan2` | Done | 100% |
-| Capture the verified Al-Ameen window for visual calibration | In progress | 35% |
+| Capture the verified Al-Ameen window for visual calibration | Done | 100% |
+| Build stable visual anchors and a menu-only probe | In progress | 20% |
 | Record business operations and prove `AmnDb048` rollback | Waiting for visual calibration | 0% |
 
-Current result: Windows client `1.0.308+312` and production commit `21c592d87aeb9f2c0004f06d6174a519efb0776d` are deployed and healthy. `alshallan2` is online on `DESKTOP-ALDNHIH`, is connected to `.\SQLEXPRESS` / `AmnDb048`, has zero active jobs, and is disabled from synchronization. `velvet home` remains offline and disabled. The read-only Al-Ameen inspection completed without clicking, typing, or changing the database.
+Current result: Windows client `1.0.309+313` and production commit `ff1a11791038593fb5b753cd68ad67c66733dc32` are deployed and healthy. `alshallan2` is online on `DESKTOP-ALDNHIH`, is connected to `.\SQLEXPRESS` / `AmnDb048`, has zero active jobs, and is disabled from synchronization. `velvet home` remains offline and disabled. The client captured only the verified `Amn32` window at 1382×744 through `PrintWindow`, uploaded a bounded 800×431 JPEG with SHA-256 `574de4292f115254a7e526278b9e8ba8bfb4a3770dd63ff2fb35812be1542ae2`, and performed no input or database mutation.
 
 ## Blockers and stop conditions
 
