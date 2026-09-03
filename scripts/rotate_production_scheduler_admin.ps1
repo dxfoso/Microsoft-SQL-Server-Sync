@@ -70,7 +70,13 @@ function Set-SchedulerSuspended {
 
 function New-StrongPassword {
     $bytes = [byte[]]::new(36)
-    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    }
+    finally {
+        $rng.Dispose()
+    }
     $token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
     return "Aa9!$token"
 }

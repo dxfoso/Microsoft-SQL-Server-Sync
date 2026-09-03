@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 416)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 417)}
         observed_ids = set()
 
         for row in rows:
@@ -150,7 +150,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Set-SchedulerSecret -AdminName $oldName -AdminPassword $newPassword", rotation)
         self.assertIn("'user_reset_password'", rotation)
         self.assertIn("Set-SchedulerSuspended -Suspended $false", rotation)
-        self.assertIn("RandomNumberGenerator", rotation)
+        self.assertIn("RandomNumberGenerator]::Create()", rotation)
+        self.assertIn("$rng.GetBytes($bytes)", rotation)
+        self.assertIn("$rng.Dispose()", rotation)
+        self.assertNotIn("RandomNumberGenerator]::Fill", rotation)
         self.assertNotIn("Write-Host $oldPassword", rotation)
         self.assertNotIn("Write-Host $newPassword", rotation)
 
