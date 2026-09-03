@@ -85,10 +85,11 @@ public static class FailingProgram {
 
     Start-DeferredInstall -PayloadDir $payloadDir -TargetInstallDir $installDir -WorkRoot $workRoot -ParentProcessId ([int]::MaxValue) -Version 'rollback-test'
     $logPath = Join-Path $installDir 'update.log'
-    # The independent supervisor deliberately retries an immediately failing
-    # executable for up to 45 seconds before the finalizer can begin rollback.
-    # Keep this observer outside that product bound plus rollback verification.
-    $deadline = [DateTime]::UtcNow.AddSeconds(75)
+    # A cold Windows host can consume the full 45-second supervisor-launch
+    # bound both before rollback and while restarting the restored client, in
+    # addition to both startup-stability windows. Keep the test observer beyond
+    # the complete two-launch product bound without weakening any assertion.
+    $deadline = [DateTime]::UtcNow.AddSeconds(150)
     do {
         Start-Sleep -Milliseconds 200
         $logText = Read-UpdateLogWithRetry -Path $logPath
