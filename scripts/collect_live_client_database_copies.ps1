@@ -137,7 +137,6 @@ function Remove-VerifiedRemoteExport {
 
 $login = Invoke-ControlPlaneFunction 'auth_login' @{
     name = $AdminUsername
-    email = $AdminUsername
     password = $AdminPassword
     app = 'web'
 }

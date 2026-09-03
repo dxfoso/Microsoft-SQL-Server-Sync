@@ -80,6 +80,19 @@ class LiveVerifierScriptsTests(unittest.TestCase):
             {"name": "admin", "password": "secret", "app": "web"},
         )
 
+    def test_database_copy_collector_uses_exact_deployed_auth_contract(self):
+        source = (ROOT / "scripts/collect_live_client_database_copies.ps1").read_text(
+            encoding="utf-8"
+        )
+        login = source.split(
+            "$login = Invoke-ControlPlaneFunction 'auth_login' @{", 1
+        )[1].split("}", 1)[0]
+
+        self.assertIn("name = $AdminUsername", login)
+        self.assertIn("password = $AdminPassword", login)
+        self.assertIn("app = 'web'", login)
+        self.assertNotIn("email", login)
+
     def test_bulk_diagnostics_request_includes_batch_size_when_provided(self):
         verifier = load_script_module(
             "verify_live_bulk_diagnostics_script",
