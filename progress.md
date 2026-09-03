@@ -13,6 +13,7 @@ Overall: **75% complete — screenshot capture deployed; guarded input not start
 | Read-only inspect Al-Ameen on `alshallan2` | Done | 100% |
 | Capture the verified Al-Ameen window for visual calibration | Done | 100% |
 | Build stable visual anchors and a menu-only probe | In progress | 20% |
+| Create and verify the pre-input `AmnDb048` rollback backup | In progress | 45% |
 | Record business operations and prove `AmnDb048` rollback | Waiting for visual calibration | 0% |
 
 Current result: Windows client `1.0.309+313` and production commit `ff1a11791038593fb5b753cd68ad67c66733dc32` are deployed and healthy. `alshallan2` is online on `DESKTOP-ALDNHIH`, is connected to `.\SQLEXPRESS` / `AmnDb048`, has zero active jobs, and is disabled from synchronization. `velvet home` remains offline and disabled. The client captured only the verified `Amn32` window at 1382×744 through `PrintWindow`, uploaded a bounded 800×431 JPEG with SHA-256 `574de4292f115254a7e526278b9e8ba8bfb4a3770dd63ff2fb35812be1542ae2`, and performed no input or database mutation.
