@@ -342,6 +342,20 @@ This directly proves that removing the line in the open Al-Ameen dialog changes 
 
 Because the database did not advance, the next bounded-delta baseline remains `5781`.
 
+## Three-item boundary experiment: after first Save click
+
+The user clicked the first Save action exactly once. Al-Ameen then displayed its warehouse-quantity confirmation, and the user stopped without confirming or closing it.
+
+- Read-only delta baseline: `5781`.
+- Captured upper version: `5781`.
+- Change count: **0** rows across **0** tables.
+- Compressed artifact: 148 bytes, SHA-256 `5ff2a1d84ec5250aee7b4d00ce4c6010b115c7ff2b50b63d1848dbc8035a3af6`.
+- This empty artifact is byte-for-byte identical to the unsaved-removal checkpoint because the database state is identical.
+
+This proves the first Save click performs validation and opens the warehouse-quantity confirmation before committing any tracked database mutation. Both committed versions seen in the earlier completed removal therefore occur after the user accepts this confirmation, unless another later UI action is discovered. The two commits are an internal Al-Ameen save sequence, not one commit caused by line removal and one caused by the first Save click.
+
+The next bounded-delta baseline remains `5781`.
+
 ## Next controlled observation
 
-Click the first Save action exactly once, stop before the second click/confirmation, and capture again from baseline `5781`. Production automatic synchronization remains blocked by INC-403, and `alshallan2` must remain sync-disabled throughout this experiment.
+Confirm the warehouse-quantity prompt exactly once, then perform no other action and capture again from baseline `5781`. Production automatic synchronization remains blocked by INC-403, and `alshallan2` must remain sync-disabled throughout this experiment.

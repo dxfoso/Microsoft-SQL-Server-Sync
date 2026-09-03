@@ -15,8 +15,8 @@ Overall: **98% laboratory mapping complete - production automatic sync blocked b
 | Record the same-sale item removal and compare its database effects | Done | 100% |
 | Capture the saved three-item sale boundary-test checkpoint | Done | 100% |
 | Capture removal of the middle item before Save | Done - zero database changes | 100% |
-| Capture state after only the first Save click | Waiting for user action | 0% |
-| Capture state after the second/final Save click | Waiting on first-click checkpoint | 0% |
+| Capture state after only the first Save click | Done - zero database changes; warehouse confirmation open | 100% |
+| Capture state after warehouse-quantity confirmation | Waiting for user action | 0% |
 | Prove a safe Al-Ameen logical-operation completion boundary | Blocked - no vendor marker or proven invariant yet | 0% |
 | Replace full-backup transfer with bounded Change Tracking delta export | Done | 100% |
 | Prove full database rollback | Not started | 0% |
@@ -59,3 +59,4 @@ The command-delivery blocker is cleared for this experiment. No automated Al-Ame
 - **Production blocker (INC-403):** the one visible removal spans separate committed versions `5769` and `5770`. The current generic reader has no Al-Ameen completion marker and could legally capture the intermediate version. A delay is not proof of completion. `alshallan2` sync remains disabled; further laboratory observations may continue, but production automatic synchronization for this workflow must stop until a business-aware complete-document invariant or reliable application completion signal is implemented and regression-tested. The next safe observation baseline is version `5770`.
 - The new boundary-test checkpoint is sealed. Sales 1616 was created at version `5771` with three quantity-1 lines: material 9 at 7,700, material 77577 at 174,000, and material 11162 at 54,000. Its posted header, balanced voucher 2322, four ledger entries, three stock movements, three material balances, five accounts, three customer prices, relation, and payment term reconcile exactly to 235,700. Later print/session maintenance brings the complete safe delta baseline to `5781`. The next action is to remove only the middle line without saving or closing, then request a capture.
 - The unsaved-removal checkpoint is complete: after removing material 77577 from the open Sales 1616 dialog but before either Save click, Change Tracking remained `5781` with zero changed rows/tables. The UI deletion is therefore in-memory only. Baseline remains `5781`; the next action is exactly one first Save click followed by another capture before the second click.
+- The first-Save checkpoint is complete: clicking Save once opened the warehouse-quantity confirmation but still produced zero database changes; Change Tracking remained `5781`, and the 148-byte empty artifact was identical to the unsaved checkpoint. This proves the first click is pre-commit validation. The next action is to accept the warehouse confirmation once, stop immediately, and capture from the unchanged baseline `5781`.

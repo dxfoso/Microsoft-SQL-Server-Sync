@@ -78,8 +78,12 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Change count: **0** rows", observation)
         self.assertIn("UI's in-memory edit buffer", observation)
         self.assertIn("first Save action exactly once", observation)
+        self.assertIn("warehouse-quantity confirmation", observation)
+        self.assertIn("first Save click performs validation", observation)
+        self.assertIn("internal Al-Ameen save sequence", observation)
         self.assertIn("version `5770`", progress)
         self.assertIn("zero changed rows/tables", progress)
+        self.assertIn("first click is pre-commit validation", progress)
         self.assertIn("multi-commit", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
