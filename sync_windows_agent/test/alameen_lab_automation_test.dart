@@ -6,9 +6,32 @@ import 'package:sync_windows_agent/alameen_lab_automation.dart';
 void main() {
   test('laboratory action catalogue does not allow arbitrary commands', () {
     expect(isAlameenLabAction('alameen_lab_inspect'), isTrue);
+    expect(isAlameenLabAction('alameen_lab_capture'), isTrue);
     expect(isAlameenLabAction(' ALAMEEN_LAB_INSPECT '), isTrue);
     expect(isAlameenLabAction('powershell'), isFalse);
     expect(isAlameenLabAction('alameen_lab_click'), isFalse);
+  });
+
+  test('capture script is read only window-scoped and payload bounded', () {
+    final script = buildAlameenWindowCapturePowerShell();
+    expect(script, contains('PrintWindow'));
+    expect(script, contains('^amn32'));
+    expect(script, contains(r'$candidate.Length -le 58000'));
+    expect(script, isNot(contains('CopyFromScreen')));
+    expect(script, isNot(contains('SendKeys')));
+    expect(script, isNot(contains('mouse_event')));
+
+    final capture = parseAlameenWindowCapture(
+      jsonEncode({
+        'processId': 42,
+        'windowTitle': 'Al-Ameen test',
+        'captureWidth': 480,
+        'captureHeight': 270,
+        'imageMimeType': 'image/jpeg',
+        'imageBase64': base64Encode(<int>[0xff, 0xd8, 0xff, 0xd9]),
+      }),
+    );
+    expect(capture['captureWidth'], 480);
   });
 
   test('inspection script is read only and bounded to a visible window', () {

@@ -1570,6 +1570,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("!can_read_agent(current", body)
         self.assertIn("!effective_agent_online(targetAgent)", body)
         self.assertIn("normalizedAction != 'alameen_lab_inspect'", body)
+        self.assertIn("normalizedAction != 'alameen_lab_capture'", body)
         self.assertIn("agent_sync_enabled(targetAgent)", body)
         self.assertIn("disable synchronization for this client", body)
         self.assertIn("windowActionRequestId: requestId", body)
@@ -1586,6 +1587,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("_activeJobs.any((job) => job.isActive)", agent)
         self.assertIn("_processingPendingJobsBusy", agent)
         self.assertIn("UIAutomationClient", laboratory)
+        self.assertIn("PrintWindow", laboratory)
+        self.assertNotIn("CopyFromScreen", laboratory)
         self.assertNotIn("Invoke-Expression", laboratory)
         self.assertNotIn("SendKeys", laboratory)
         self.assertIn(

@@ -5292,6 +5292,33 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
             message: message,
           );
           return;
+        case alameenLabCaptureAction:
+          logStartupEvent(
+            'Server requested restricted Al-Ameen window capture $requestId for ${widget.clientName}.',
+          );
+          final capture = await _captureAlameenLaboratoryWindow();
+          await _controlPlaneClient.uploadDiagnostics(
+            clientName: widget.clientName,
+            summary:
+                'Restricted Al-Ameen window capture for visual automation calibration.',
+            payload: jsonEncode(capture),
+            stage: 'alameen_lab_capture',
+          );
+          await _queueWindowActionAck(
+            requestId: requestId,
+            action: action,
+            status: 'completed',
+            message: jsonEncode({
+              'processId': capture['processId'],
+              'windowTitle': capture['windowTitle'],
+              'sourceWidth': capture['sourceWidth'],
+              'sourceHeight': capture['sourceHeight'],
+              'captureWidth': capture['captureWidth'],
+              'captureHeight': capture['captureHeight'],
+              'imageSha256': capture['imageSha256'],
+            }),
+          );
+          return;
         default:
           await _queueWindowActionAck(
             requestId: requestId,
@@ -5386,6 +5413,71 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
       } catch (error) {
         logAgentDiagnostic(
           'alameen_lab.temp_cleanup_failed',
+          level: AgentLogLevel.warning,
+          error: error,
+        );
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _captureAlameenLaboratoryWindow() async {
+    if (!Platform.isWindows) {
+      throw StateError('Al-Ameen laboratory capture requires Windows.');
+    }
+    if (_activeJobs.any((job) => job.isActive) ||
+        _processingJobIds.isNotEmpty ||
+        _processingPendingJobsBusy) {
+      throw StateError(
+        'Al-Ameen laboratory capture requires an idle synchronization client.',
+      );
+    }
+    final directory = await Directory.systemTemp.createTemp(
+      'sync_agent_alameen_capture_',
+    );
+    try {
+      final script = File(
+        '${directory.path}${Platform.pathSeparator}capture.ps1',
+      );
+      await script.writeAsString(
+        buildAlameenWindowCapturePowerShell(),
+        encoding: utf8,
+        flush: true,
+      );
+      final result = await Process.run(
+        'powershell.exe',
+        <String>[
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          script.path,
+        ],
+        runInShell: false,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ).timeout(const Duration(seconds: 30));
+      if (result.exitCode != 0) {
+        final details = <String>[
+          result.stdout.toString().trim(),
+          result.stderr.toString().trim(),
+        ].where((part) => part.isNotEmpty).join('\n');
+        throw StateError(
+          details.isEmpty
+              ? 'Al-Ameen capture failed with exit ${result.exitCode}.'
+              : details,
+        );
+      }
+      return parseAlameenWindowCapture(result.stdout.toString());
+    } finally {
+      try {
+        await directory.delete(recursive: true);
+      } catch (error) {
+        logAgentDiagnostic(
+          'alameen_lab.capture_temp_cleanup_failed',
           level: AgentLogLevel.warning,
           error: error,
         );
