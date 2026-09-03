@@ -111,7 +111,12 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("task-status.json", launcher)
         self.assertIn("task-results.json", launcher)
         self.assertIn("task-step-results.json", launcher)
+        self.assertIn("task-summary.txt", launcher)
         self.assertIn("final-summary.txt", launcher)
+        self.assertLess(
+            launcher.index("task-summary.txt"),
+            launcher.index("final-summary.txt"),
+        )
         self.assertIn("CLOUD_CI_EVENT_NAME", launcher)
         self.assertIn('("history\\{0}" -f $runId)', launcher)
         self.assertIn("SQL Server 2017 compatibility", launcher)

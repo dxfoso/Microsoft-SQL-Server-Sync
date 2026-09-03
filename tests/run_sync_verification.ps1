@@ -316,7 +316,7 @@ $stepPayload = [ordered]@{
 $statusPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $resultsRoot 'task-status.json') -Encoding utf8
 $resultPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $resultsRoot 'task-results.json') -Encoding utf8
 $stepPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $resultsRoot 'task-step-results.json') -Encoding utf8
-@(
+$summaryLines = @(
     "Task: sync-verification"
     "Status: $status"
     "Trigger: $trigger"
@@ -329,7 +329,9 @@ $stepPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $re
     "Steps: $(@($steps | Where-Object status -eq 'passed').Count) passed, $(@($steps | Where-Object status -eq 'failed').Count) failed"
     ''
     ($steps | ForEach-Object { "- $($_.name): $($_.status) [$($_.durationSeconds)s] $($_.log)" })
-) | Set-Content -LiteralPath (Join-Path $resultsRoot 'final-summary.txt') -Encoding utf8
+)
+$summaryLines | Set-Content -LiteralPath (Join-Path $resultsRoot 'task-summary.txt') -Encoding utf8
+$summaryLines | Set-Content -LiteralPath (Join-Path $resultsRoot 'final-summary.txt') -Encoding utf8
 
 $historyRoot = Join-Path $resultsRoot ("history\{0}" -f $runId)
 New-Item -ItemType Directory -Path $historyRoot -Force | Out-Null
@@ -337,6 +339,7 @@ foreach ($artifactName in @(
     'task-status.json',
     'task-results.json',
     'task-step-results.json',
+    'task-summary.txt',
     'final-summary.txt'
 )) {
     Copy-Item -LiteralPath (Join-Path $resultsRoot $artifactName) `

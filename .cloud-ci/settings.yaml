@@ -7,14 +7,18 @@ favoriteArtifacts:
     - workspace/tests/nightly/task-status.json
     - workspace/tests/nightly/task-results.json
     - workspace/tests/nightly/task-step-results.json
+    - workspace/tests/nightly/task-summary.txt
     - workspace/tests/nightly/final-summary.txt
   sync-verification:
     - workspace/tests/sync-verification/task-status.json
     - workspace/tests/sync-verification/task-results.json
     - workspace/tests/sync-verification/task-step-results.json
+    - workspace/tests/sync-verification/task-summary.txt
     - workspace/tests/sync-verification/final-summary.txt
 favoriteTextOutputs:
   nightly:
+    - workspace/tests/nightly/task-summary.txt
     - workspace/tests/nightly/final-summary.txt
   sync-verification:
+    - workspace/tests/sync-verification/task-summary.txt
     - workspace/tests/sync-verification/final-summary.txt
