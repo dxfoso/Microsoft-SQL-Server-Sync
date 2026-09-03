@@ -623,6 +623,8 @@ void main() {
                     'pending': 'true',
                     'requestId': 101,
                     'database': 'AmnDb048',
+                    'mode': 'change_tracking_delta',
+                    'baselineVersion': 5754,
                     'uploadUrl': 'https://sync.velvet-leaf.com/private-export',
                     'uploadToken': '0123456789abcdef0123456789abcdef',
                     'status': 'requested',
@@ -677,6 +679,8 @@ void main() {
       expect(heartbeat.dataExport.pending, isTrue);
       expect(heartbeat.dataExport.requestId, '101');
       expect(heartbeat.dataExport.database, 'AmnDb048');
+      expect(heartbeat.dataExport.mode, 'change_tracking_delta');
+      expect(heartbeat.dataExport.baselineVersion, 5754);
       expect(heartbeat.dataExport.uploadToken, hasLength(32));
 
       final acknowledged = await api.acknowledgeDataExport(

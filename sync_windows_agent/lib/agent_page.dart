@@ -4973,6 +4973,13 @@ SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
         'The requested export database is not the selected database.',
       );
     }
+    if (request.mode == 'change_tracking_delta') {
+      await _runRequestedChangeTrackingDeltaExport(request, cancellation);
+      return;
+    }
+    if (request.mode != 'full_backup') {
+      throw StateError('The read-only export mode is unsupported.');
+    }
     await _acknowledgeDataExport(
       request,
       status: 'running',
@@ -5284,6 +5291,323 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
         }
       }
     }
+  }
+
+  Future<int> _queryDatabaseChangeTrackingVersion({
+    required _SqlConnectionProfile profile,
+    required String database,
+  }) async {
+    final result = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT COALESCE(CONVERT(bigint, CHANGE_TRACKING_CURRENT_VERSION()), -1);
+''',
+      suppressHeaders: true,
+    );
+    if (result == null || result.exitCode != 0) {
+      throw StateError(
+        result == null
+            ? _sqlCmdUnavailableMessage(profile)
+            : _sqlCmdFailed('Change Tracking version lookup', result),
+      );
+    }
+    final values = _parseSingleColumnOutput(result.stdout.toString());
+    final version = values.isEmpty ? null : int.tryParse(values.first);
+    if (version == null || version < 0) {
+      throw StateError('Change Tracking is not enabled for $database.');
+    }
+    return version;
+  }
+
+  Future<List<String>> _queryChangeTrackedTables({
+    required _SqlConnectionProfile profile,
+    required String database,
+  }) async {
+    final result = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: '''
+SET NOCOUNT ON;
+USE ${_quoteIdentifier(database)};
+SELECT CASE WHEN s.name = N'dbo' THEN t.name ELSE s.name + N'.' + t.name END
+FROM sys.change_tracking_tables AS ct
+INNER JOIN sys.tables AS t ON t.object_id = ct.object_id
+INNER JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+WHERE t.is_ms_shipped = 0
+ORDER BY s.name, t.name;
+''',
+      suppressHeaders: true,
+    );
+    if (result == null || result.exitCode != 0) {
+      throw StateError(
+        result == null
+            ? _sqlCmdUnavailableMessage(profile)
+            : _sqlCmdFailed('Change Tracking table discovery', result),
+      );
+    }
+    return _parseSingleColumnOutput(result.stdout.toString());
+  }
+
+  Future<void> _runRequestedChangeTrackingDeltaExport(
+    RemoteAgentDataExport request,
+    DataExportCancellation cancellation,
+  ) async {
+    final requestId = request.requestId?.trim() ?? '';
+    final database = request.database?.trim() ?? '';
+    final uploadBaseUrl = request.uploadUrl?.trim() ?? '';
+    final uploadToken = request.uploadToken?.trim() ?? '';
+    final baselineVersion = request.baselineVersion;
+    if (requestId.isEmpty ||
+        database.isEmpty ||
+        baselineVersion == null ||
+        baselineVersion < 0 ||
+        uploadBaseUrl != 'https://sync.velvet-leaf.com/private-export' ||
+        uploadToken.length < 32) {
+      throw StateError('The read-only Change Tracking export is incomplete.');
+    }
+    final profile = _activeProfile();
+    await _acknowledgeDataExport(
+      request,
+      status: 'running',
+      message:
+          'Reading a bounded Change Tracking delta without advancing sync state.',
+    );
+    _setDatabaseFileOperation(
+      operation: 'Delta export',
+      database: database,
+      stage: 'Reading Change Tracking metadata',
+      progress: 10,
+      busy: true,
+    );
+    cancellation.throwIfCancelled();
+
+    final trackedTables = await _queryChangeTrackedTables(
+      profile: profile,
+      database: database,
+    );
+    if (trackedTables.isEmpty) {
+      throw StateError('No Change Tracking tables are available in $database.');
+    }
+    final upperVersion = await _queryDatabaseChangeTrackingVersion(
+      profile: profile,
+      database: database,
+    );
+    final tableBaselines = <String, int?>{
+      for (final table in trackedTables) table: baselineVersion,
+    };
+    final probeResult = await _runSqlCmd(
+      profile: profile,
+      database: database,
+      query: buildAutomaticChangeDiscoveryQuery(
+        database: database,
+        tableBaselines: tableBaselines,
+      ),
+      timeout: _snapshotSqlCmdTimeout,
+    );
+    if (probeResult == null || probeResult.exitCode != 0) {
+      throw StateError(
+        probeResult == null
+            ? _sqlCmdUnavailableMessage(profile)
+            : _sqlCmdFailed('bounded Change Tracking discovery', probeResult),
+      );
+    }
+    final probes = parseAutomaticChangeDiscoveryOutput(
+      _dataOutputLines(probeResult.stdout.toString()).map(_splitRowValues),
+    );
+    final invalid = probes.where(
+      (probe) =>
+          probe.status == 'expired' ||
+          probe.status == 'missing' ||
+          probe.status == 'no_primary_key',
+    );
+    if (invalid.isNotEmpty) {
+      final details = invalid
+          .take(10)
+          .map((probe) => '${probe.table}:${probe.status}')
+          .join(', ');
+      throw StateError(
+        'The delta baseline is not valid for every tracked table: $details. No partial delta was uploaded.',
+      );
+    }
+    final unsupported = probes.where((probe) => probe.status == 'unsupported');
+    if (unsupported.isNotEmpty) {
+      throw StateError(
+        'The delta contains tables with unsupported lossless SQL types: ${unsupported.take(10).map((probe) => probe.table).join(', ')}. No partial delta was uploaded.',
+      );
+    }
+    final changed = probes.where((probe) => probe.hasChanges).toList();
+    final tables = <Map<String, dynamic>>[];
+    var changeCount = 0;
+    for (var index = 0; index < changed.length; index += 1) {
+      cancellation.throwIfCancelled();
+      final qualified = _splitQualifiedName(changed[index].table);
+      final columns = await _querySyncColumnDefinitions(
+        profile: profile,
+        database: database,
+        schema: qualified.schema,
+        table: qualified.table,
+      );
+      final primaryKeys = await _queryPrimaryKeyColumns(
+        profile: profile,
+        database: database,
+        schema: qualified.schema,
+        table: qualified.table,
+      );
+      if (columns.isEmpty || primaryKeys.isEmpty) {
+        throw StateError(
+          'Changed table ${changed[index].table} has no lossless column or primary-key metadata.',
+        );
+      }
+      final tracking = await _queryChangeTrackingState(
+        profile: profile,
+        database: database,
+        schema: qualified.schema,
+        table: qualified.table,
+      );
+      if (tracking == null || baselineVersion < tracking.minValidVersion) {
+        throw StateError(
+          'The Change Tracking baseline expired while reading ${changed[index].table}. No partial delta was uploaded.',
+        );
+      }
+      final rows = await _fetchChangeTrackingRows(
+        profile: profile,
+        database: database,
+        schema: qualified.schema,
+        table: qualified.table,
+        columns: columns,
+        primaryKeyColumns: primaryKeys,
+        previousVersion: baselineVersion,
+        snapshotVersion: upperVersion,
+      );
+      changeCount += rows.length;
+      if (changeCount > 10000) {
+        throw StateError(
+          'The Change Tracking delta exceeds the 10,000-row observation limit. No partial delta was uploaded.',
+        );
+      }
+      tables.add({
+        'table': '${qualified.schema}.${qualified.table}',
+        'primaryKeyColumns': primaryKeys,
+        'columns': [
+          for (final column in columns)
+            {
+              'name': column.name,
+              'sqlType': column.sqlType,
+              'maxLength': column.maxLength,
+              'precision': column.precision,
+              'scale': column.scale,
+              'identity': column.isIdentity,
+              'computed': column.isComputed,
+            },
+        ],
+        'changes': rows,
+      });
+      _setDatabaseFileOperation(
+        operation: 'Delta export',
+        database: database,
+        stage: 'Reading ${index + 1} of ${changed.length} changed tables',
+        progress: 10 + (((index + 1) * 55) ~/ math.max(1, changed.length)),
+        busy: true,
+      );
+    }
+    final endVersion = await _queryDatabaseChangeTrackingVersion(
+      profile: profile,
+      database: database,
+    );
+    if (endVersion != upperVersion) {
+      throw StateError(
+        'The database changed during delta capture ($upperVersion to $endVersion). No partial delta was uploaded; retry after the database is quiet.',
+      );
+    }
+    final encoded = utf8.encode(
+      jsonEncode({
+        'format': 'sql-server-change-tracking-delta-v1',
+        'clientName': widget.clientName,
+        'database': database,
+        'baselineVersion': baselineVersion,
+        'upperVersion': upperVersion,
+        'changeCount': changeCount,
+        'tables': tables,
+      }),
+    );
+    if (encoded.length > 128 * 1024 * 1024) {
+      throw StateError(
+        'The uncompressed Change Tracking delta exceeds 128 MiB. No data was uploaded.',
+      );
+    }
+    final bytes = gzip.encode(encoded);
+    if (bytes.length > 64 * 1024 * 1024) {
+      throw StateError(
+        'The compressed Change Tracking delta exceeds 64 MiB. No data was uploaded.',
+      );
+    }
+    final clientKey = base64Url
+        .encode(utf8.encode(widget.clientName))
+        .replaceAll('=', '');
+    final baseUri = Uri.parse(
+      uploadBaseUrl.endsWith('/') ? uploadBaseUrl : '$uploadBaseUrl/',
+    );
+    final digest = sha256.convert(bytes).toString();
+    var chunkCount = 0;
+    for (
+      var offset = 0;
+      offset < bytes.length;
+      offset += kPrivateExportArtifactBytes
+    ) {
+      cancellation.throwIfCancelled();
+      final end = math.min(offset + kPrivateExportArtifactBytes, bytes.length);
+      await _uploadPrivateExportArtifact(
+        uri: baseUri.resolve(
+          '$requestId/$clientKey/${chunkCount.toString().padLeft(8, '0')}.part',
+        ),
+        token: uploadToken,
+        bytes: bytes.sublist(offset, end),
+        cancellation: cancellation,
+      );
+      chunkCount += 1;
+    }
+    final manifest = utf8.encode(
+      jsonEncode({
+        'requestId': requestId,
+        'clientName': clientKey,
+        'displayClientName': widget.clientName,
+        'database': database,
+        'bytes': bytes.length,
+        'sha256': digest,
+        'chunkCount': chunkCount,
+        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+        'format': 'sql-server-change-tracking-delta-v1-gzip',
+        'baselineVersion': baselineVersion,
+        'upperVersion': upperVersion,
+        'changeCount': changeCount,
+      }),
+    );
+    await _uploadPrivateExportArtifact(
+      uri: baseUri.resolve('$requestId/$clientKey/manifest.json'),
+      token: uploadToken,
+      bytes: manifest,
+      cancellation: cancellation,
+    );
+    cancellation.throwIfCancelled();
+    await _acknowledgeDataExport(
+      request,
+      status: 'completed',
+      message:
+          'Read-only Change Tracking delta uploaded and checksum verified.',
+      bytes: bytes.length,
+      sha256: digest,
+      chunkCount: chunkCount,
+    );
+    _setDatabaseFileOperation(
+      operation: 'Delta export',
+      database: database,
+      stage: 'Change Tracking delta uploaded',
+      progress: 100,
+      busy: false,
+    );
   }
 
   void _scheduleRequestedDataExport(RemoteAgentDataExport request) {

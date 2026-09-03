@@ -2240,6 +2240,8 @@ class RemoteAgentDataExport {
     this.requestedAt,
     this.requestedByUserId,
     this.database,
+    this.mode = 'full_backup',
+    this.baselineVersion,
     this.uploadUrl,
     this.uploadToken,
     this.lastRequestId,
@@ -2256,6 +2258,8 @@ class RemoteAgentDataExport {
   final String? requestedAt;
   final String? requestedByUserId;
   final String? database;
+  final String mode;
+  final int? baselineVersion;
   final String? uploadUrl;
   final String? uploadToken;
   final String? lastRequestId;
@@ -2281,6 +2285,11 @@ class RemoteAgentDataExport {
       requestedAt: optionalString(json['requestedAt']),
       requestedByUserId: optionalString(json['requestedByUserId']),
       database: optionalString(json['database']),
+      mode: optionalString(json['mode']) ?? 'full_backup',
+      baselineVersion:
+          json['baselineVersion'] == null
+              ? null
+              : integerValue(json['baselineVersion']),
       uploadUrl: optionalString(json['uploadUrl']),
       uploadToken: optionalString(json['uploadToken']),
       lastRequestId: optionalString(json['lastRequestId']),

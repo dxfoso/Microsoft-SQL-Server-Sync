@@ -2959,7 +2959,38 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("export database must match the client selected database", request)
         self.assertIn("https://sync.velvet-leaf.com/private-export", request)
         self.assertIn("dataExportUploadToken", source)
+        self.assertIn("dataExportMode", source)
+        self.assertIn("dataExportBaselineVersion", source)
+        self.assertIn("change_tracking_delta", request)
+        self.assertIn("change tracking delta baseline version is required", request)
         self.assertIn("terminalStatus", source)
+
+    def test_read_only_change_tracking_delta_is_version_bounded_and_fail_closed(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        collector = read_text("scripts/collect_live_client_database_copies.ps1")
+        delta = agent.split(
+            "Future<void> _runRequestedChangeTrackingDeltaExport(", 1
+        )[1].split("void _scheduleRequestedDataExport(", 1)[0]
+
+        self.assertIn("buildAutomaticChangeDiscoveryQuery", delta)
+        self.assertLess(
+            delta.index("final upperVersion = await _queryDatabaseChangeTrackingVersion"),
+            delta.index("buildAutomaticChangeDiscoveryQuery"),
+        )
+        self.assertIn("baselineVersion < tracking.minValidVersion", delta)
+        self.assertIn("snapshotVersion: upperVersion", delta)
+        self.assertIn("endVersion != upperVersion", delta)
+        self.assertIn("SYS_CHANGE_CONTEXT", agent)
+        self.assertIn("No partial delta was uploaded", delta)
+        self.assertIn("changeCount > 10000", delta)
+        self.assertIn("gzip.encode(encoded)", delta)
+        self.assertIn("sha256.convert(bytes)", delta)
+        self.assertNotIn("UPDATE ", delta)
+        self.assertNotIn("DELETE ", delta)
+        self.assertNotIn("INSERT ", delta)
+        self.assertIn("[ValidateSet('full_backup', 'change_tracking_delta')]", collector)
+        self.assertIn("BaselineVersion is required for change_tracking_delta", collector)
+        self.assertIn(".delta.json.gz", collector)
 
 
 if __name__ == "__main__":

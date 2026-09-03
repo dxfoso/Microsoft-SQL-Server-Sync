@@ -10,11 +10,16 @@ param(
     [string] $OutputDirectory = '',
     [string[]] $OnlyClient = @(),
     [switch] $ForceFresh,
+    [ValidateSet('full_backup', 'change_tracking_delta')][string] $Mode = 'full_backup',
+    [Nullable[long]] $BaselineVersion = $null,
     [int] $TimeoutMinutes = 240,
     [ValidateRange(1, 5)][int] $MaxExportAttempts = 3
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Mode -eq 'change_tracking_delta' -and $null -eq $BaselineVersion) {
+    throw 'BaselineVersion is required for change_tracking_delta.'
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
@@ -207,6 +212,8 @@ foreach ($client in $clients) {
                 database = $Database
                 uploadUrl = "$($BaseUrl.TrimEnd('/'))/private-export"
                 uploadToken = $UploadToken
+                mode = $Mode
+                baselineVersion = $BaselineVersion
                 token = $sessionToken
             }
             $requestId = [string]$request.dataExport.requestId
@@ -259,18 +266,33 @@ foreach ($client in $clients) {
             if ($parts.Count -ne [int]$manifest.chunkCount) {
                 throw "FRONTEND_EXPORT_MISSING: $clientName export has $($parts.Count) of $($manifest.chunkCount) required chunks on $pod"
             }
-            $backupPath = Join-Path $OutputDirectory "$clientKey-$Database.bak"
-            $destination = [IO.File]::Open($backupPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $format = [string]$manifest.format
+            if ($Mode -eq 'change_tracking_delta' -and $format -ne 'sql-server-change-tracking-delta-v1-gzip') {
+                throw "$clientName delta export returned unexpected format $format."
+            }
+            if ($Mode -eq 'full_backup' -and $format -ne 'sql-server-copy-only-backup') {
+                throw "$clientName backup export returned unexpected format $format."
+            }
+            $suffix = if ($Mode -eq 'change_tracking_delta') { '.delta.json.gz' } else { '.bak' }
+            $artifactPath = Join-Path $OutputDirectory "$clientKey-$Database$suffix"
+            $destination = [IO.File]::Open($artifactPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
             try {
                 foreach ($part in $parts) {
                     $source = [IO.File]::OpenRead($part.FullName)
                     try { $source.CopyTo($destination) } finally { $source.Dispose() }
                 }
             } finally { $destination.Dispose() }
-            $backupHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $backupPath).Hash.ToLowerInvariant()
-            if ($backupHash -ne ([string]$manifest.sha256).ToLowerInvariant()) { throw "$clientName backup checksum mismatch." }
-            if ((Get-Item -LiteralPath $backupPath).Length -ne [long]$manifest.bytes) { throw "$clientName backup length mismatch." }
-            $summary += [pscustomobject]@{ clientName = $clientName; clientKey = $clientKey; database = $Database; backup = $backupPath; bytes = [long]$manifest.bytes; sha256 = $backupHash }
+            $artifactHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
+            if ($artifactHash -ne ([string]$manifest.sha256).ToLowerInvariant()) { throw "$clientName export checksum mismatch." }
+            if ((Get-Item -LiteralPath $artifactPath).Length -ne [long]$manifest.bytes) { throw "$clientName export length mismatch." }
+            $summaryEntry = [ordered]@{ clientName = $clientName; clientKey = $clientKey; database = $Database; artifact = $artifactPath; format = $format; bytes = [long]$manifest.bytes; sha256 = $artifactHash }
+            if ($Mode -eq 'full_backup') { $summaryEntry.backup = $artifactPath }
+            if ($Mode -eq 'change_tracking_delta') {
+                $summaryEntry.baselineVersion = [long]$manifest.baselineVersion
+                $summaryEntry.upperVersion = [long]$manifest.upperVersion
+                $summaryEntry.changeCount = [long]$manifest.changeCount
+            }
+            $summary += [pscustomobject]$summaryEntry
             Remove-VerifiedRemoteExport -Pod $pod -RequestId $requestId -ClientKey $clientKey
             $completedClient = $true
         } catch {

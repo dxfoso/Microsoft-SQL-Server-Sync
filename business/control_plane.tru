@@ -87,6 +87,8 @@ class Agent {
   field dataExportRequestedAt: datetime?
   field dataExportRequestedByUserId: string? min=0 max=64
   field dataExportDatabase: string? min=0 max=256
+  field dataExportMode: string? min=0 max=32
+  field dataExportBaselineVersion: int? min=0
   field dataExportUploadUrl: string? min=0 max=1000
   field dataExportUploadToken: string? min=0 max=256
   field dataExportLastRequestId: string? min=0 max=64
@@ -1782,7 +1784,7 @@ function list_agent_rows(): array<json> {
   const rows = db.selectMany(Agent, {
     where: { clientName: { gte: '' } },
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'fingerprintAudit', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'clientUpdateScriptPath', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'replicationUseWindowsAuth', 'replicationUser', 'replicationPassword', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'fingerprintAudit', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'clientUpdateScriptPath', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportMode', 'dataExportBaselineVersion', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: 1000
   });
   if (rows == null) {
@@ -2417,6 +2419,8 @@ function agent_data_export_payload(agent: map<json>, includeUploadCredentials: b
     requestedAt: agent.dataExportRequestedAt,
     requestedByUserId: agent.dataExportRequestedByUserId,
     database: agent.dataExportDatabase,
+    mode: agent.dataExportMode == null ? 'full_backup' : agent.dataExportMode,
+    baselineVersion: agent.dataExportBaselineVersion,
     uploadUrl,
     uploadToken,
     lastRequestId: agent.dataExportLastRequestId,
@@ -2747,7 +2751,7 @@ function live_state_agent_rows_for(current: map<json>, limit: int): array<json> 
   const rows = db.selectMany(Agent, {
     where,
     orderBy: { field: 'clientName', dir: 'asc' },
-    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'fingerprintAudit', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'clientUpdateScriptPath', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
+    fields: ['clientName', 'machineName', 'server', 'database', 'syncEnabled', 'isOnline', 'historyLimit', 'autoSyncIntervalMinutes', 'syncDataLimitMb', 'conflictPolicy', 'serverConnected', 'sqlConnected', 'clientVersion', 'lastHeartbeat', 'selectedTable', 'tables', 'fingerprintAudit', 'diagnosticRequestId', 'diagnosticRequestedAt', 'diagnosticRequestedByUserId', 'diagnosticLastRequestId', 'diagnosticLastUploadedAt', 'diagnosticStatus', 'diagnosticStage', 'diagnosticProgressPercent', 'diagnosticStartedAt', 'diagnosticCompletedAt', 'diagnosticSummary', 'clientUpdateRequestId', 'clientUpdateRequestedAt', 'clientUpdateRequestedByUserId', 'clientUpdateTargetVersion', 'clientUpdateLastRequestId', 'clientUpdateLastAcknowledgedAt', 'clientUpdateStatus', 'clientUpdateMessage', 'clientUpdateDownloadedBytes', 'clientUpdateTotalBytes', 'clientUpdateProgressPercent', 'clientUpdateScriptPath', 'windowActionRequestId', 'windowActionRequestedAt', 'windowActionRequestedByUserId', 'windowActionName', 'windowActionLastRequestId', 'windowActionLastAcknowledgedAt', 'windowActionStatus', 'windowActionMessage', 'dataExportRequestId', 'dataExportRequestedAt', 'dataExportRequestedByUserId', 'dataExportDatabase', 'dataExportMode', 'dataExportBaselineVersion', 'dataExportLastRequestId', 'dataExportLastAcknowledgedAt', 'dataExportStatus', 'dataExportMessage', 'dataExportBytes', 'dataExportSha256', 'dataExportChunkCount', 'clientUserId', 'ownerUserId', 'updatedAt'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -3061,6 +3065,8 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       dataExportRequestedAt: null,
       dataExportRequestedByUserId: null,
       dataExportDatabase: null,
+      dataExportMode: 'full_backup',
+      dataExportBaselineVersion: null,
       dataExportUploadUrl: null,
       dataExportUploadToken: null,
       dataExportLastRequestId: null,
@@ -3138,6 +3144,8 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     dataExportRequestedAt: null,
     dataExportRequestedByUserId: null,
     dataExportDatabase: null,
+    dataExportMode: 'full_backup',
+    dataExportBaselineVersion: null,
     dataExportUploadUrl: null,
     dataExportUploadToken: null,
     dataExportLastRequestId: null,
@@ -8820,7 +8828,7 @@ function agent_window_action_ack(clientName: string? = null, requestId: string? 
   };
 }
 
-function agent_data_export_request(clientName: string, database: string, uploadUrl: string, uploadToken: string, token: string? = null): map<json> {
+function agent_data_export_request(clientName: string, database: string, uploadUrl: string, uploadToken: string, mode: string = 'full_backup', baselineVersion: int? = null, token: string? = null): map<json> {
   const current = current_user_record(token);
   if (current == null) {
     return raw_json_error(401, 'permission denied');
@@ -8845,6 +8853,13 @@ function agent_data_export_request(clientName: string, database: string, uploadU
   if (normalizedUploadToken.length < 32) {
     return raw_json_error(400, 'export upload token is invalid');
   }
+  const normalizedMode = mode.trim().toLowerCase();
+  if (normalizedMode != 'full_backup' && normalizedMode != 'change_tracking_delta') {
+    return raw_json_error(400, 'export mode is invalid');
+  }
+  if (normalizedMode == 'change_tracking_delta' && (baselineVersion == null || baselineVersion < 0)) {
+    return raw_json_error(400, 'change tracking delta baseline version is required');
+  }
   const requestedAt = now_iso();
   const nextRequestId = uuid.v4();
   const updatedCount = db.updateMany(Agent, { clientName: normalizedClientName }, {
@@ -8852,6 +8867,8 @@ function agent_data_export_request(clientName: string, database: string, uploadU
     dataExportRequestedAt: requestedAt,
     dataExportRequestedByUserId: current.id,
     dataExportDatabase: normalizedDatabase,
+    dataExportMode: normalizedMode,
+    dataExportBaselineVersion: normalizedMode == 'change_tracking_delta' ? baselineVersion : null,
     dataExportUploadUrl: normalizedUploadUrl,
     dataExportUploadToken: normalizedUploadToken,
     dataExportStatus: 'requested',
@@ -9361,6 +9378,8 @@ function reset_all_agent_saved_state(): int {
     dataExportRequestedAt: null,
     dataExportRequestedByUserId: null,
     dataExportDatabase: null,
+    dataExportMode: 'full_backup',
+    dataExportBaselineVersion: null,
     dataExportUploadUrl: null,
     dataExportUploadToken: null,
     dataExportLastRequestId: null,

@@ -2889,7 +2889,7 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertIn("function Remove-VerifiedRemoteExport", collector)
         self.assertLess(
-            collector.index("backup length mismatch"),
+            collector.index("export length mismatch"),
             collector.index("Remove-VerifiedRemoteExport -Pod $pod"),
         )
         self.assertIn("of $($manifest.chunkCount) required chunks", collector)
@@ -2901,7 +2901,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("if (-not $manifestCopied)", collector)
         self.assertLess(
             collector.index("if (-not $manifestCopied)"),
-            collector.index("$destination = [IO.File]::Open($backupPath"),
+            collector.index("$destination = [IO.File]::Open($artifactPath"),
         )
 
     def test_live_copy_collector_can_select_one_named_client(self):
