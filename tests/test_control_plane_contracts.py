@@ -2967,7 +2967,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "agent.dataExportMode == null ? 'full_backup' : string.from(agent.dataExportMode)",
             source,
         )
-        self.assertIn("let requestedBaselineVersion: int? = null", request)
+        self.assertIn("let requestedBaselineVersion = null", request)
+        self.assertNotIn("let requestedBaselineVersion: int?", request)
         self.assertNotIn(
             "normalizedMode == 'change_tracking_delta' ? baselineVersion : null",
             request,

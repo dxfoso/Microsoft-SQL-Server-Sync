@@ -8860,7 +8860,7 @@ function agent_data_export_request(clientName: string, database: string, uploadU
   if (normalizedMode == 'change_tracking_delta' && (baselineVersion == null || baselineVersion < 0)) {
     return raw_json_error(400, 'change tracking delta baseline version is required');
   }
-  let requestedBaselineVersion: int? = null;
+  let requestedBaselineVersion = null;
   if (normalizedMode == 'change_tracking_delta') {
     requestedBaselineVersion = baselineVersion;
   }
