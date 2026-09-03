@@ -1,6 +1,6 @@
 # Progress
 
-Overall: **98% complete - low-bandwidth Sales capture deployed and verified**
+Overall: **98% complete - create and quantity-edit database effects captured**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -10,6 +10,7 @@ Overall: **98% complete - low-bandwidth Sales capture deployed and verified**
 | Update and reconnect `alshallan2` with synchronization disabled | Done | 100% |
 | Capture the user-opened Sales dialog without input | Done after delayed command delivery | 100% |
 | Record the first manual Sales operation and compare its database effects | Done | 100% |
+| Record the existing-sale quantity edit and compare its database effects | Done | 100% |
 | Replace full-backup transfer with bounded Change Tracking delta export | Done | 100% |
 | Prove full database rollback | Not started | 0% |
 
@@ -44,3 +45,4 @@ The command-delivery blocker is cleared for this experiment. No automated Al-Ame
 - The first live bounded delta completed on attempt 1: baseline `5754`, upper version `5766`, 526 exact operations, 19,678 bytes, SHA-256 `266d66cdf766b28dfda1e0021535529190842cf27b30e2d199d8b4891e7c1fea`. This is 99.985996% smaller than the 140,520,960-byte full after-backup.
 - The controlled Sales save is documented in `docs/alameen-sales-observation-2026-09-03.md`. Its atomic commit was version `5755`, with 15 changes across 10 accounting, invoice, stock, and relation tables. Later UI/session commits are separated from the sale.
 - `ma000` was not reduced: Al-Ameen explicitly replaced 12 rows with 12 new-GUID rows at versions `5763`–`5764`; all non-primary business fields matched the restored baseline exactly. This explains equal-count/different-hash behavior without treating snapshot absence as deletion.
+- The user's quantity edit is captured and verified at Change Tracking version `5767`. The edited database object was posted Sales number 110: line 0 quantity changed 1 to 10 at unchanged unit price 430,000, and the total increased from 5,756,000 to 9,626,000. The 15,792-byte delta contains 172 operations because Al-Ameen regenerated all 26 Sales line GUIDs, all 27 ledger-line GUIDs, and related voucher/relation/payment identities in the same atomic commit. Inventory and account aggregates changed by the exact corresponding amounts. The next safe delta baseline is `5767`.

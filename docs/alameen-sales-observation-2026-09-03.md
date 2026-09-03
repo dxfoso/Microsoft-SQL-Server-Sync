@@ -42,6 +42,37 @@ The remaining 511 operations were later Al-Ameen/UI/session activity and must no
 
 The `ma000` result explains an equal-row-count/different-hash symptom: Al-Ameen can churn physical GUID identities without changing the table's business configuration. It is not missing-row evidence. Sync must still preserve the explicit Change Tracking `D` and `I` operations unless a verified table-specific business identity is established; it must never infer deletion from snapshots or choose an arbitrary client.
 
+## Existing-sale quantity edit (`SYS_CHANGE_VERSION = 5767`)
+
+The user reported changing one value from quantity 1 to quantity 10 in the last sale shown by Al-Ameen. The bounded read-only delta proves that the edited database object was posted Sales number **110**, dated 2026-08-25, rather than the newly created Sales number 1615 described above.
+
+- Delta boundary: baseline `5766`, upper version `5767`; every operation belongs to the single version `5767`.
+- Artifact: 15,792 compressed bytes, 172 operations, SHA-256 `ca1d9088f10ce1dbf9b19b344438ef710fb3df71cd006b1fbc4c9bce620bfbd8`.
+- Exact user-visible change: `bi000` line number 0 changed quantity from 1 to 10. Its unit price remained 430,000.
+- Sales total: `bu000.Total` changed from 5,756,000 to 9,626,000, an exact increase of 3,870,000 (`9 * 430,000`).
+- The posted voucher retained business key type 1 / number 2317 and changed from balanced debit/credit 5,756,000 to balanced debit/credit 9,626,000.
+- The 27 ledger entries remained balanced: aggregate debit and credit each changed from 5,756,000 to 9,626,000.
+- The payment/term row changed its credit from 5,756,000 to 9,626,000.
+- The matching `ms000` quantity and material `mt000` number 207987 quantity each changed from 1 to 10.
+- Six `ac000` account aggregates each moved by exactly 3,870,000 on the applicable debit or credit side. One use counter also advanced by one.
+
+Al-Ameen implemented this one-field edit as a wider atomic object rewrite:
+
+| Table | Change Tracking operations | Verified meaning |
+|---|---:|---|
+| `bu000` | 1 update | Same Sales header identity; total increased by 3,870,000. |
+| `bi000` | 26 deletes + 26 inserts | All 26 line GUIDs were regenerated; only line 0's business quantity changed. |
+| `ce000` | 1 delete + 1 insert | Voucher GUID regenerated; business voucher number stayed 2317 and balanced amount increased. |
+| `en000` | 27 deletes + 27 inserts | All ledger-line GUIDs regenerated; total debit and credit stayed balanced. |
+| `er000` | 1 delete + 1 insert | Voucher-to-Sales relation regenerated and still points to Sales number 110. |
+| `pt000` | 1 delete + 1 insert | Payment/term identity regenerated and amount increased. |
+| `ms000` | 26 updates | All sale movement rows were touched; only one observed quantity value changed. |
+| `mt000` | 26 updates | All related material rows were touched; only material 207987's observed quantity changed. |
+| `ac000` | 6 updates | Six account aggregates changed by the exact sale-total difference. |
+| `mc000` | 1 update | Tracked as updated, but all exported business values matched the restored baseline. |
+
+This is a long-term synchronization requirement, not evidence of 172 independent user edits. Version `5767` must be transported and applied as one atomic ordered unit. The explicit deletes must be preserved as tombstones, the inserts must retain their new primary identities, and retries must be idempotent. The existing sync architecture's atomic transaction, explicit-delete, primary-key-change, relational-integrity, and interrupted-retry regression gates are designed for this pattern; snapshot absence must never be used to simplify it.
+
 ## Next controlled observation
 
-For editing the existing sale, use `5766` as the next read-only baseline. Capture only the next bounded delta, then separate the edit's single commit from later UI/session commits by `SYS_CHANGE_VERSION`. Do not run a new full backup unless Change Tracking reports that the baseline expired; expiration must fail closed.
+Use `5767` as the next read-only baseline. A controlled delete, refund, payment, or a second-client concurrent edit can now be captured with another bounded delta. Do not run a new full backup unless Change Tracking reports that this baseline expired; expiration must fail closed.
