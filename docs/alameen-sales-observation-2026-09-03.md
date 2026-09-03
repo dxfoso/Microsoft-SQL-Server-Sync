@@ -89,6 +89,97 @@ The user next reported changing the price of another item in the same sale. The 
 
 As with the quantity edit, Al-Ameen represented this single visible field edit as 172 Change Tracking operations across the same 10 tables: 26 Sales lines, 27 ledger lines, and the voucher, relation, and payment identities were deleted and recreated with new GUIDs; the header, movements, materials, accounts, and one custom-field row were tracked as updates. Only the price and its mathematically corresponding totals and aggregates changed in the compared business values. The entire version must therefore remain atomic and idempotent during synchronization.
 
+## Reusable identity and relationship findings
+
+These rules were verified by comparing the complete version `5767` output with version `5768`, not inferred from row counts:
+
+| Table | SQL primary identity | Stable correlation observed | Required synchronization interpretation |
+|---|---|---|---|
+| `bu000` | `GUID` | The same header GUID survived both edits; Sales `Number=110` also remained stable. | Treat as an in-place header update. Do not choose a different client's header merely from timestamp or row hash. |
+| `bi000` | `GUID` | `ParentGUID` links to `bu000`; line `Number` remained the line ordinal and `MatGUID` identified the material. | The application replaces the complete 26-line collection. Every prior line GUID was explicitly deleted and every replacement received a new GUID. |
+| `ce000` | `GUID` | Voucher business values `Type=1`, `Number=2317` remained stable. Production collision logic must use the complete configured business key, including branch/type context where applicable. | The voucher is delete-and-reinsert, not an in-place update. Preserve both the tombstone and replacement. |
+| `en000` | `GUID` | `ParentGUID` links entries to `ce000`; `BiGUID` links item-side entries to the regenerated `bi000` line identities. | All 27 entry GUIDs are replaced together. Apply only after the replacement parent/line mapping is available, inside the same transaction. |
+| `er000` | `GUID` | Replacement relation retained `ParentType=2`, `ParentNumber=110`; `EntryGUID`/`ParentGUID` carry physical links. | Relation identity is regenerated with the voucher graph. Do not preserve the stale relation GUID. |
+| `pt000` | `GUID` | `RefGUID`/type fields relate the payment term to its regenerated document graph. | Payment/term identity is regenerated and its amount follows the new sale total. |
+| `ms000` | `GUID` | All 26 GUIDs remained stable across the two edits; `StoreGUID` and `MatGUID` identify the stock dimension. | These are in-place tracked updates. A price-only save touched all rows even though none of their exported values changed. |
+| `mt000` | `GUID` | All 26 GUIDs remained stable; `Number` is the observed material number. | Quantity and material price aggregates are in-place updates. Do not interpret all touched rows as changed business values. |
+| `ac000` | `GUID` | The same six account GUIDs and account `Number` values appeared in both edits. | Apply aggregate changes in the same transaction as the sale/voucher rewrite. |
+| `mc000` | composite `Type, Number, Item` | Observed key was `24, 100, 0`. All exported business values matched before and after both edits. | A Change Tracking `U` can be a semantic no-op; canonical fingerprints should prevent a false conflict. |
+
+For each of `bi000`, `ce000`, `en000`, `er000`, and `pt000`, every identity inserted at version `5767` was exactly the identity deleted at version `5768`. None of those old identities was reused by the new version `5768` inserts, and no delete/insert pair reused the same primary key. Conversely, all 1 `bu000`, 26 `ms000`, 26 `mt000`, and 6 `ac000` GUIDs were shared between both edit versions. This proves the distinction between application-level collection replacement and ordinary SQL updates.
+
+## Exact monetary audit trail
+
+### Quantity edit, version 5767
+
+| Location | Before | After | Difference |
+|---|---:|---:|---:|
+| `bi000` line 0 quantity | 1 | 10 | +9 |
+| `bi000` line 0 price | 430,000 | 430,000 | 0 |
+| `bu000.Total` | 5,756,000 | 9,626,000 | +3,870,000 |
+| `ce000` debit and credit, each | 5,756,000 | 9,626,000 | +3,870,000 |
+| Sum of 27 `en000` debits, and separately credits | 5,756,000 | 9,626,000 | +3,870,000 |
+| `pt000.Credit` | 5,756,000 | 9,626,000 | +3,870,000 |
+| `ms000.Qty` for the affected movement | 1 | 10 | +9 |
+| `mt000.Qty`, material 207987 | 1 | 10 | +9 |
+
+The six account aggregate changes were:
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 14 | `Credit` | 1,125,570,000 | 1,129,440,000 | +3,870,000 |
+| 32 | `Credit` | 1,125,570,000 | 1,129,440,000 | +3,870,000 |
+| 6 | `Debit` | 955,142,000 | 959,012,000 | +3,870,000 |
+| 15 | `Debit` | 941,432,000 | 945,302,000 | +3,870,000 |
+| 5 | `Credit` | 1,382,620,496 | 1,386,490,496 | +3,870,000 |
+| 46 | `Credit` | 1,125,570,000 | 1,129,440,000 | +3,870,000 |
+| 46 | `UseFlag` | 39,367 | 39,368 | +1 |
+
+Arithmetic checks: `10 - 1 = 9`; `9 * 430,000 = 3,870,000`; `5,756,000 + 3,870,000 = 9,626,000`. All checks match the database exactly.
+
+### Price edit, version 5768
+
+| Location | Before | After | Difference |
+|---|---:|---:|---:|
+| `bi000` line 1 quantity | 1 | 1 | 0 |
+| `bi000` line 1 price | 312,000 | 3,120,100 | +2,808,100 |
+| `bu000.Total` | 9,626,000 | 12,434,100 | +2,808,100 |
+| `ce000` debit and credit, each | 9,626,000 | 12,434,100 | +2,808,100 |
+| `en000` line 2 debit | 312,000 | 3,120,100 | +2,808,100 |
+| `en000` line 27 credit | 9,626,000 | 12,434,100 | +2,808,100 |
+| `pt000.Credit` | 9,626,000 | 12,434,100 | +2,808,100 |
+| `mt000.MaxPrice`, material 198293 | 312,000 | 3,120,100 | +2,808,100 |
+| `mt000.AvgPrice`, material 198293 | 312,000 | 3,120,100 | +2,808,100 |
+| `mt000.LastPrice`, material 198293 | 312,000 | 3,120,100 | +2,808,100 |
+
+The six account aggregate changes were:
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 14 | `Credit` | 1,129,440,000 | 1,132,248,100 | +2,808,100 |
+| 32 | `Credit` | 1,129,440,000 | 1,132,248,100 | +2,808,100 |
+| 6 | `Debit` | 959,012,000 | 961,820,100 | +2,808,100 |
+| 15 | `Debit` | 945,302,000 | 948,110,100 | +2,808,100 |
+| 5 | `Credit` | 1,386,490,496 | 1,389,298,596 | +2,808,100 |
+| 46 | `Credit` | 1,129,440,000 | 1,132,248,100 | +2,808,100 |
+| 46 | `UseFlag` | 39,368 | 39,369 | +1 |
+
+Arithmetic checks: `3,120,100 - 312,000 = 2,808,100`; `9,626,000 + 2,808,100 = 12,434,100`. No `ms000.Qty` changed. All checks match the database exactly.
+
+## Cumulative verified state after version 5768
+
+- Sales 110 remains posted, dated 2026-08-25, with 26 lines and total 12,434,100.
+- Line 0 has quantity 10 and price 430,000; its linked material number is 207987.
+- Line 1 has quantity 1 and price 3,120,100; its linked material number is 198293.
+- Voucher type 1 / number 2317 is posted and balanced at debit 12,434,100 and credit 12,434,100.
+- The 27 ledger entries sum independently to debit 12,434,100 and credit 12,434,100.
+- Sales 1615 is a separate controlled record created at version 5755 and must not be confused with these edits to Sales 110.
+- `5768` is the only valid next delta baseline for subsequent observations in this sequence.
+
+## Evidence confidence and retention
+
+The values above are a sanitized durable fact record derived from SHA-256-verified, version-bounded exports and comparisons against the restored pre-input backup or the immediately preceding complete delta. GUIDs, names, free-text notes, credentials, and customer-identifying values are intentionally excluded because they are database-instance-specific or sensitive and are not needed to reproduce the synchronization rules. Table roles are marked as observed interpretations because SyrianSoft vendor documentation for this schema was not available. Exact operations, keys, numeric values, version boundaries, hashes, and arithmetic checks are direct database evidence.
+
 ## Next controlled observation
 
 Use `5768` as the next read-only baseline. A controlled delete, refund, payment, or a second-client concurrent edit can now be captured with another bounded delta. Do not run a new full backup unless Change Tracking reports that this baseline expired; expiration must fail closed.
