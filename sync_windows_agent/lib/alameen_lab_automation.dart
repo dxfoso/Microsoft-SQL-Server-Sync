@@ -137,11 +137,18 @@ Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class AlameenCaptureNative {
   [StructLayout(LayoutKind.Sequential)]
   public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
 }
 '@
 
@@ -175,6 +182,58 @@ try {
   $graphics.ReleaseHdc($hdc)
   $graphics.Dispose()
 }
+
+$ownedWindows = New-Object System.Collections.ArrayList
+$callback = [AlameenCaptureNative+EnumWindowsProc]{
+  param([IntPtr]$handle, [IntPtr]$state)
+  $windowProcessId = [uint32]0
+  [void][AlameenCaptureNative]::GetWindowThreadProcessId($handle, [ref]$windowProcessId)
+  if ($windowProcessId -eq [uint32]$process.Id -and
+      $handle -ne $process.MainWindowHandle -and
+      [AlameenCaptureNative]::IsWindowVisible($handle) -and
+      $ownedWindows.Count -lt 8) {
+    $ownedRect = New-Object AlameenCaptureNative+RECT
+    if ([AlameenCaptureNative]::GetWindowRect($handle, [ref]$ownedRect)) {
+      $ownedWidth = $ownedRect.Right - $ownedRect.Left
+      $ownedHeight = $ownedRect.Bottom - $ownedRect.Top
+      $insideMain = $ownedRect.Left -ge $rect.Left -and $ownedRect.Top -ge $rect.Top -and
+        $ownedRect.Right -le $rect.Right -and $ownedRect.Bottom -le $rect.Bottom
+      if ($insideMain -and $ownedWidth -gt 20 -and $ownedHeight -gt 20 -and
+          $ownedWidth -lt $width -and $ownedHeight -lt $height) {
+        $classText = New-Object System.Text.StringBuilder 256
+        $titleText = New-Object System.Text.StringBuilder 512
+        [void][AlameenCaptureNative]::GetClassName($handle, $classText, $classText.Capacity)
+        [void][AlameenCaptureNative]::GetWindowText($handle, $titleText, $titleText.Capacity)
+        $ownedBitmap = New-Object System.Drawing.Bitmap($ownedWidth, $ownedHeight, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        $ownedGraphics = [System.Drawing.Graphics]::FromImage($ownedBitmap)
+        $ownedHdc = $ownedGraphics.GetHdc()
+        $captured = $false
+        try { $captured = [AlameenCaptureNative]::PrintWindow($handle, $ownedHdc, 2) }
+        finally {
+          $ownedGraphics.ReleaseHdc($ownedHdc)
+          $ownedGraphics.Dispose()
+        }
+        if ($captured) {
+          $overlay = [System.Drawing.Graphics]::FromImage($source)
+          $overlay.DrawImage($ownedBitmap, $ownedRect.Left - $rect.Left, $ownedRect.Top - $rect.Top)
+          $overlay.Dispose()
+          [void]$ownedWindows.Add([ordered]@{
+            handle = [long]$handle
+            className = $classText.ToString()
+            title = $titleText.ToString()
+            left = $ownedRect.Left - $rect.Left
+            top = $ownedRect.Top - $rect.Top
+            width = $ownedWidth
+            height = $ownedHeight
+          })
+        }
+        $ownedBitmap.Dispose()
+      }
+    }
+  }
+  return $true
+}
+[void][AlameenCaptureNative]::EnumWindows($callback, [IntPtr]::Zero)
 
 $jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
   Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
@@ -227,7 +286,8 @@ finally { $sha.Dispose() }
   imageMimeType = 'image/jpeg'
   imageSha256 = $digest
   imageBase64 = $encoded
-} | ConvertTo-Json -Compress
+  ownedWindows = $ownedWindows
+} | ConvertTo-Json -Depth 5 -Compress
 ''';
 
 Map<String, dynamic> parseAlameenWindowCapture(String output) {

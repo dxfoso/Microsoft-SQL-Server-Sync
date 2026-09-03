@@ -110,6 +110,12 @@ void main() {
     final script = buildAlameenWindowCapturePowerShell();
     expect(script, contains('PrintWindow'));
     expect(script, contains('^amn32'));
+    expect(script, contains('EnumWindows'));
+    expect(script, contains('GetWindowThreadProcessId'));
+    expect(script, contains(r'$windowProcessId -eq [uint32]$process.Id'));
+    expect(script, contains(r'$ownedWindows.Count -lt 8'));
+    expect(script, contains(r'$insideMain'));
+    expect(script, contains(r'ownedWindows = $ownedWindows'));
     expect(script, contains(r'$candidate.Length -le 58000'));
     expect(script, isNot(contains('CopyFromScreen')));
     expect(script, isNot(contains('SendKeys')));
@@ -126,6 +132,27 @@ void main() {
       }),
     );
     expect(capture['captureWidth'], 480);
+  });
+
+  test('owned-window capture is valid Windows PowerShell syntax', () async {
+    if (!Platform.isWindows) return;
+    final directory = await Directory.systemTemp.createTemp(
+      'alameen_owned_capture_parser_',
+    );
+    try {
+      final script = File('${directory.path}\\capture.ps1');
+      await script.writeAsString(buildAlameenWindowCapturePowerShell());
+      final escapedPath = script.path.replaceAll("'", "''");
+      final result = await Process.run('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "\$tokens=\$null;\$errors=\$null;[System.Management.Automation.Language.Parser]::ParseFile('$escapedPath',[ref]\$tokens,[ref]\$errors)|Out-Null;if(\$errors.Count -gt 0){\$errors|ForEach-Object{[Console]::Error.WriteLine(\$_.Message)};exit 1}",
+      ]);
+      expect(result.exitCode, 0, reason: result.stderr.toString());
+    } finally {
+      await directory.delete(recursive: true);
+    }
   });
 
   test('inspection script is read only and bounded to a visible window', () {

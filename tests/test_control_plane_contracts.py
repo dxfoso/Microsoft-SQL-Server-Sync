@@ -1592,6 +1592,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("_processingPendingJobsBusy", agent)
         self.assertIn("UIAutomationClient", laboratory)
         self.assertIn("PrintWindow", laboratory)
+        self.assertIn("$ownedWindows.Count -lt 8", laboratory)
+        self.assertIn("$windowProcessId -eq [uint32]$process.Id", laboratory)
         self.assertIn("invoice-menu visual anchor did not match", laboratory)
         self.assertIn("GetWindowThreadProcessId", laboratory)
         self.assertIn("UIAutomationClient", laboratory)

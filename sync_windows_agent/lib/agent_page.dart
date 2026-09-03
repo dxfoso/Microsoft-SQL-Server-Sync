@@ -5426,6 +5426,8 @@ FROM OPENROWSET(BULK N'$backupPathLiteral', SINGLE_BLOB) AS backup_file;
               'captureWidth': capture['captureWidth'],
               'captureHeight': capture['captureHeight'],
               'imageSha256': capture['imageSha256'],
+              'ownedWindowCount':
+                  (capture['ownedWindows'] as List<dynamic>?)?.length ?? 0,
             }),
           );
           return;
