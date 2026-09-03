@@ -167,6 +167,54 @@ No `cp000` row changed. This reinforces the observed difference from Sales: Purc
 
 Arithmetic checks: `(2 - 1) * 24,000 = 24,000`; `194,000 + 24,000 = 218,000`; `48,000 + 144,000 + 26,000 = 218,000`. Header, voucher, ledger, payment term, stock, material quantity, and every monetary account aggregate reconcile exactly.
 
+At this sealed quantity-edit checkpoint, the next bounded-delta baseline is `5794`; the subsequent price experiment below advances it to 5795.
+
+## Purchase price edit (`SYS_CHANGE_VERSION = 5795`)
+
+The user edited Purchase 111 line 1, changing only material 20960's entered Purchase price from 144,000 to 145,000. Al-Ameen accepted the edit with its single Purchase save action. The entire database effect committed atomically at Change Tracking version 5795.
+
+- Delta boundary: baseline `5794`, upper version `5795`; all 33 operations belong to version 5795.
+- Artifact: 6,038 compressed bytes, SHA-256 `52ff5b0ec025b78b22195e4b6cd183343fd54230a70b599527c802ed33008f6b`.
+- Line 1: quantity remained 1; `bi000.Price` changed from 144,000 to 145,000. `PurchaseVal`, discount, extra, and all other line fields remained zero or unchanged.
+- Lines 0 and 2 remained quantity 2 at 24,000 and quantity 1 at 26,000 respectively.
+- Header: Purchase 111 remained posted; total changed from 218,000 to 219,000, exactly +1,000.
+- Voucher: type 1 / number 2323 remained posted and balanced; debit and credit each changed from 218,000 to 219,000.
+- Ledger: line 2 debit changed from 144,000 to 145,000 and balancing line 4 credit changed from 218,000 to 219,000. Lines 1 and 3 remained debit 48,000 and 26,000. Four-entry debit and credit sums each equal 219,000.
+- Payment term: credit changed from 218,000 to 219,000; debit remained zero.
+- Stock quantities did not change: the three stable `ms000` movements and `mt000` materials were touched, but materials 12666, 20960, and 2374 remained quantity 2, 1, and 1.
+- Material 20960 `MaxPrice`, `AvgPrice`, and `LastPrice` changed from 144,000 to 145,000. Its existing `Whole` selling-price field remained 144,000. Material 12666 retained 24,000 and material 2374 retained 26,000 for all three Purchase cost fields.
+- No `cp000` row changed.
+
+### Exact operation and identity manifest
+
+| Table | Operation | Count | Verified effect |
+|---|---|---:|---|
+| `bu000` | update | 1 | Same header GUID; sets total to 219,000. |
+| `bi000` | delete + insert | 3 + 3 | Replaces all three line GUIDs; no deleted GUID was reused. |
+| `ce000` | delete + insert | 1 + 1 | Replaces voucher GUID while preserving business voucher 1/2323. |
+| `en000` | delete + insert | 4 + 4 | Replaces all four ledger GUIDs; final entries remain balanced. |
+| `er000` | delete + insert | 1 + 1 | Replaces relation GUID and still points to Purchase 111. |
+| `pt000` | delete + insert | 1 + 1 | Replaces payment-term GUID with credit 219,000. |
+| `ms000` | update | 3 | All movement GUIDs stayed stable; every quantity remained unchanged. |
+| `mt000` | update | 3 | All material GUIDs stayed stable; only material 20960's three Purchase cost fields changed. |
+| `ac000` | update | 6 | Both account hierarchies increased by the exact 1,000 price difference. |
+
+Every delete identity in `bi000`, `ce000`, `en000`, `er000`, and `pt000` exactly matched the final identity created by the preceding quantity edit at version 5794. Every replacement identity is new. The header, movement, material, and account identities remained stable. A sync implementation therefore must correlate the graph by its header and business relationships, not assume child GUID stability across an edit.
+
+### Exact account changes
+
+| `ac000.Number` | Field | Before | After | Difference |
+|---:|---|---:|---:|---:|
+| 15 | `Debit` | 948,170,100 | 948,171,100 | +1,000 |
+| 6 | `Debit` | 961,880,100 | 961,881,100 | +1,000 |
+| 110 | `Credit` | 218,000 | 219,000 | +1,000 |
+| 26 | `Credit` | 40,240,500 | 40,241,500 | +1,000 |
+| 11 | `Credit` | 38,186,000 | 38,187,000 | +1,000 |
+| 4 | `Credit` | 1,744,466,000 | 1,744,467,000 | +1,000 |
+| 110 | `UseFlag` | 7 | 8 | +1 |
+
+Arithmetic checks: `(145,000 - 144,000) * 1 = 1,000`; `218,000 + 1,000 = 219,000`; `48,000 + 145,000 + 26,000 = 219,000`. Header, voucher, ledger, payment term, cost-price fields, and every monetary account aggregate reconcile exactly, while all stock quantities remain unchanged.
+
 ## Current checkpoint and next observation
 
-The next bounded-delta baseline is `5794`. To map Purchase price behavior, edit Purchase 111 line 1 material 20960 by changing only its price from 144,000 to 145,000, complete the single Save action, make no other change, and capture from baseline 5794. Synchronization must remain disabled.
+The next bounded-delta baseline is `5795`. To map Purchase line removal, remove only line 2 (material 2374, quantity 1, price 26,000) from Purchase 111, complete the single Purchase Save action, make no other change, and then request a capture from baseline 5795. Synchronization must remain disabled.

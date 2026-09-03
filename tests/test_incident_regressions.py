@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 407)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 409)}
         observed_ids = set()
 
         for row in rows:
@@ -106,8 +106,15 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("all 33 operations belong to version 5794", purchase)
         self.assertIn("(2 - 1) * 24,000 = 24,000", purchase)
         self.assertIn("next bounded-delta baseline is `5794`", purchase)
+        self.assertIn("Purchase price edit (`SYS_CHANGE_VERSION = 5795`)", purchase)
+        self.assertIn("all 33 operations belong to version 5795", purchase)
+        self.assertIn("6,038 compressed bytes", purchase)
+        self.assertIn("(145,000 - 144,000) * 1 = 1,000", purchase)
+        self.assertIn("stock quantities remain unchanged", purchase)
+        self.assertIn("next bounded-delta baseline is `5795`", purchase)
         self.assertIn("first controlled Purchase is captured", progress)
         self.assertIn("one atomic version `5794`", progress)
+        self.assertIn("one atomic version `5795`", progress)
 
     def test_production_conflict_policy_probe_uses_parse_stable_remote_script(self):
         probe = read_text("scripts/query_production_conflict_policy.ps1")
