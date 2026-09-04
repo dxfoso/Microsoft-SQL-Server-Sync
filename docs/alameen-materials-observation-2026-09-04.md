@@ -36,7 +36,7 @@ For every step, record the exact Change Tracking versions, affected tables, prim
 
 ## Current operator action
 
-Change only the material group/category of material number `209812` to a different **existing** group, save once, then stop and report `material group edited` together with the old and new group names shown by Al-Ameen. Do not create a group or change another material field.
+Delete only the controlled material number `209812` (`test 1 edited`) using Al-Ameen's normal Delete action, accept its standard confirmation once, then stop and report `material deleted`. Do not create, edit, or delete another material and do not use this material in a document first.
 
 ## Material creation capture
 
@@ -178,3 +178,29 @@ Conclusions:
 3. The child has its own physical GUID. This experiment does not yet prove whether later barcode edits update that child, replace it with a new GUID, or enforce barcode uniqueness.
 4. Snapshot absence must not delete barcode children; only explicit Change Tracking deletes may do so.
 5. The next safe bounded-delta baseline is `5801`.
+
+## Existing-group-only edit capture
+
+The user changed only the material's group/category to another existing group and saved once. The user did not provide the displayed old/new group labels, and the unchanged group-master rows are not present in a Change Tracking delta; therefore this observation records the exact identifiers without inventing labels.
+
+- Delta boundary: baseline `5801`, upper version `5802`.
+- Net operations: **3**, all at version `5802`.
+- Artifact size: **1,703 bytes**.
+- SHA-256: `82ae1a7c314ed66196dbb010395aa277f8563e6e68b90b13e56de989becbd3b1`.
+- Evidence directory: `artifacts/alameen-lab/material-group-edit-delta-20260904T192441Z`.
+
+The atomic graph is:
+
+| Table/operation | Exact change |
+|---|---|
+| `mt000` update | Stable material GUID and number; `GroupGUID` changed from `2D305758-5D51-4820-AF24-A23EF8161974` to `ACA0B3F8-A67A-4AB5-B147-AE4D8CE49EF0`. Every other business column was unchanged. |
+| `MatExBarcode000` delete | Explicit complete-key delete of prior child GUID `F336A6AC-2201-41E4-959A-524EAD5A2C72`. Change Tracking correctly provides only its primary key on the tombstone. |
+| `MatExBarcode000` insert | Replacement child GUID `48B21271-2FA8-4555-BF67-1912217E26CF`, with unchanged `Number=0`, material GUID, `MatUnit=1`, barcode `9900209812005`, and `IsDefault=1`. |
+
+Conclusions:
+
+1. Group reassignment is an in-place `mt000` update; the material GUID and number remain stable.
+2. Al-Ameen rewrites the complete barcode child identity even when the barcode itself was not edited. The old and new child business values are identical, but their physical GUIDs differ.
+3. All three operations share one version and must apply atomically. The exact old child tombstone must be applied, followed by the new child after its parent; retries must be idempotent and cannot resurrect the old child.
+4. Synchronization must not collapse this into only a `GroupGUID` patch or infer that the child delete is accidental.
+5. The next safe bounded-delta baseline is `5802`.

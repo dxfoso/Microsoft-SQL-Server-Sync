@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 452)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 453)}
         observed_ids = set()
 
         for row in rows:
@@ -224,6 +224,11 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("F336A6AC-2201-41E4-959A-524EAD5A2C72", observation)
         self.assertIn("must be captured and applied as one atomic material graph", observation)
         self.assertIn("The next safe bounded-delta baseline is `5801`", observation)
+        self.assertIn("Delta boundary: baseline `5801`, upper version `5802`", observation)
+        self.assertIn("ACA0B3F8-A67A-4AB5-B147-AE4D8CE49EF0", observation)
+        self.assertIn("48B21271-2FA8-4555-BF67-1912217E26CF", observation)
+        self.assertIn("must apply atomically", observation)
+        self.assertIn("The next safe bounded-delta baseline is `5802`", observation)
 
         schema_helper = read_text("scripts/inspect_isolated_alameen_table_schema.ps1")
         self.assertLess(
