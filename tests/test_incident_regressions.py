@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 442)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 444)}
         observed_ids = set()
 
         for row in rows:
@@ -169,12 +169,22 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("build_production_images.ps1", deployment)
         self.assertIn("helm upgrade --install", deployment)
         self.assertIn("--kubeconfig $kubeconfigPath", deployment)
-        self.assertIn("--reuse-values", deployment)
+        self.assertIn("--reset-then-reuse-values", deployment)
+        self.assertIn("--rollback-on-failure", deployment)
+        self.assertNotIn(" --reuse-values", deployment)
         self.assertIn("$_.spec.nodeName -ne $targetNodeName", deployment)
         self.assertEqual(deployment.count("Test-ProductionState -Commit $commit"), 2)
         self.assertIn("Start-Sleep -Seconds 60", deployment)
         self.assertNotIn("api_start_deployment_v1", deployment)
         self.assertNotIn("api_get_deployment_session_v1", deployment)
+
+    def test_background_log_tail_is_plain_text_before_json_serialization(self):
+        helper = read_text("scripts/read_background_task_log_tail.ps1")
+
+        self.assertIn("[string]((Get-Content -LiteralPath $Path -Tail $Count) -join", helper)
+        self.assertIn("Read-PlainTail -Path $StdoutPath", helper)
+        self.assertIn("Read-PlainTail -Path $StderrPath", helper)
+        self.assertNotIn("stdout = Get-Content", helper)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")

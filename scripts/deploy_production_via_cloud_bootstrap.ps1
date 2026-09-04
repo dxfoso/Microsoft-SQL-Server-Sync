@@ -129,10 +129,10 @@ try {
     & helm lint (Join-Path $repoRoot 'deployment\chart') | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Helm lint failed.' }
     & helm upgrade --install $ReleaseName (Join-Path $repoRoot 'deployment\chart') `
-        --namespace $namespace --kubeconfig $kubeconfigPath --reuse-values `
+        --namespace $namespace --kubeconfig $kubeconfigPath --reset-then-reuse-values `
         --set-string "backend.image=$registryRoot/backend:$commit" `
         --set-string "frontend.image=$registryRoot/frontend:$commit" `
-        --wait --timeout 10m
+        --rollback-on-failure --wait --timeout 10m
     if ($LASTEXITCODE -ne 0) { throw 'Helm deployment failed.' }
 
     Test-ProductionState -Commit $commit
