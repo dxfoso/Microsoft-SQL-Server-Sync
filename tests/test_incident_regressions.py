@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 448)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 452)}
         observed_ids = set()
 
         for row in rows:
@@ -220,6 +220,19 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("`Whole` changed from floating-point text `0.0` to `12345.0`", observation)
         self.assertIn("The next safe bounded-delta baseline is `5800`", observation)
         self.assertIn("9900209812005", observation)
+        self.assertIn("Delta boundary: baseline `5800`, upper version `5801`", observation)
+        self.assertIn("F336A6AC-2201-41E4-959A-524EAD5A2C72", observation)
+        self.assertIn("must be captured and applied as one atomic material graph", observation)
+        self.assertIn("The next safe bounded-delta baseline is `5801`", observation)
+
+        schema_helper = read_text("scripts/inspect_isolated_alameen_table_schema.ps1")
+        self.assertLess(
+            schema_helper.index("$dockerVersion = @(& docker info"),
+            schema_helper.index("$result = @($sql | & docker exec"),
+        )
+        self.assertIn("isolated schema was not inspected", schema_helper)
+        self.assertIn("Isolated schema query failed; output is not evidence", schema_helper)
+        self.assertNotIn("Write-Host $MSSQL_SA_PASSWORD", schema_helper)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")

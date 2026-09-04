@@ -36,7 +36,7 @@ For every step, record the exact Change Tracking versions, affected tables, prim
 
 ## Current operator action
 
-Change only the primary barcode (`BarCode`) of material number `209812` from empty to `9900209812005`, save once, then stop and report `material barcode edited`. Do not change another field.
+Change only the material group/category of material number `209812` to a different **existing** group, save once, then stop and report `material group edited` together with the old and new group names shown by Al-Ameen. Do not create a group or change another material field.
 
 ## Material creation capture
 
@@ -151,3 +151,30 @@ Conclusions:
 2. Al-Ameen did not derive or recalculate another selling or cost price from `Whole` for this material configuration.
 3. Numeric fingerprinting must canonicalize the SQL `float` value so equivalent textual representations do not become false conflicts, while preserving the actual value `12345.0`.
 4. The next safe bounded-delta baseline is `5800`.
+
+## Primary-barcode-only edit capture
+
+The user changed only the primary barcode from empty to `9900209812005` and saved once.
+
+- Delta boundary: baseline `5800`, upper version `5801`.
+- Net operations: **2**, both at version `5801`.
+- Artifact size: **1,646 bytes**.
+- SHA-256: `3d77e52320ec38dd718db1501ac1fc212422642a12360f0ae28cd4f603d9f1f7`.
+- Evidence directory: `artifacts/alameen-lab/material-barcode-edit-delta-20260904T191825Z`.
+
+The atomic graph is:
+
+| Table/operation | Identity and values |
+|---|---|
+| `mt000` update | Stable GUID `D626944E-674A-4D38-B4BF-0A921995D17D`, stable number `209812`; only `BarCode` changed from empty to `9900209812005`. |
+| `MatExBarcode000` insert | Primary `Guid F336A6AC-2201-41E4-959A-524EAD5A2C72`; `Number=0`; `MatGuid=D626944E-674A-4D38-B4BF-0A921995D17D`; `MatUnit=1`; `Barcode=9900209812005`; `IsDefault=1`. |
+
+The exact equality between `MatExBarcode000.MatGuid` and the stable `mt000.GUID` proves the application-level parent/child association in this captured operation. A declared SQL foreign key or unique barcode constraint was not proven: the attempted read-only check against the isolated Docker backup could not start because the local Docker Linux engine was unavailable, so no absent/present constraint conclusion is drawn from it.
+
+Conclusions:
+
+1. A primary barcode is duplicated in the material row and a dedicated barcode child row.
+2. Both changes share version `5801`, so they must be captured and applied as one atomic material graph; apply the `mt000` parent before its new child when the target lacks the material.
+3. The child has its own physical GUID. This experiment does not yet prove whether later barcode edits update that child, replace it with a new GUID, or enforce barcode uniqueness.
+4. Snapshot absence must not delete barcode children; only explicit Change Tracking deletes may do so.
+5. The next safe bounded-delta baseline is `5801`.
