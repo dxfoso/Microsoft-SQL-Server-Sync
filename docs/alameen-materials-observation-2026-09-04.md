@@ -36,7 +36,7 @@ For every step, record the exact Change Tracking versions, affected tables, prim
 
 ## Current operator action
 
-Change only the `Name` field of material number `209812` from `test 1` to `test 1 edited`, save once, then stop and report `material name edited`. Do not change its Latin name or any other field even if it differs from the originally proposed controlled name.
+Change only the wholesale selling-price field (`Whole`, normally shown as the wholesale/جملة price) of material number `209812` from `0` to `12345`, save once, then stop and report `material price edited`. Do not change another price or field.
 
 ## Material creation capture
 
@@ -104,3 +104,30 @@ The user created and saved one material. The captured values differ from the pro
 3. No stock movement, quantity aggregate, account, voucher, price-relation, barcode child, or transaction row was created.
 4. The next safe bounded-delta baseline is `5798`.
 5. Synchronization remains disabled. This one creation proves the insert shape only; update identity stability, group/currency dependencies, business-key behavior, and explicit deletion still require their separate experiments.
+
+## Name-only edit capture
+
+The user changed only the visible material name from `test 1` to `test 1 edited` and saved once.
+
+- Delta boundary: baseline `5798`, upper version `5799`.
+- Net operations: **1**—one `U` operation in `dbo.mt000` at version `5799`.
+- Artifact size: **1,512 bytes**.
+- SHA-256: `8a59049155175a0e8999de7cf5a15cf1426c9311915dc50ea55fdc46ee5b7d85`.
+- Evidence directory: `artifacts/alameen-lab/material-name-edit-delta-20260904T190602Z`.
+- Stable identity: `GUID D626944E-674A-4D38-B4BF-0A921995D17D` and material `Number 209812` were unchanged. `GroupGUID`, `CurrencyGUID`, and every other relationship identifier were also unchanged.
+
+Complete comparison against the version-5798 inserted row found exactly two database business-value differences:
+
+| Field | Before | After | Interpretation |
+|---|---:|---:|---|
+| `Name` | `test 1` | `test 1 edited` | The user's intended visible edit. |
+| `BonusOne` | `0.0` | `1.0` | An automatic Al-Ameen normalization/side effect; the user did not intentionally edit it. |
+
+The delta transport metadata also changed operation `I` to `U`, version `5798` to `5799`, and its capture clock offset; these are not `mt000` business columns. Every other saved `mt000` value—including `LatinName`, code, specification, group, currency, quantities, prices, barcodes, flags, dates, and classification text—matched the creation row exactly.
+
+Conclusions:
+
+1. A normal material edit preserves both the physical `GUID` and observed business number in this case; it is an in-place update, not delete/reinsert identity churn.
+2. UI intent cannot be converted into a name-only database patch: Al-Ameen also changed `BonusOne`. Synchronization must transport the complete causally captured final row and must not reconstruct it from the field the operator remembers changing.
+3. No related table changed, and the save completed in one atomic Change Tracking version.
+4. The next safe bounded-delta baseline is `5799`.

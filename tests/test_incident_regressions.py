@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 447)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 448)}
         observed_ids = set()
 
         for row in rows:
@@ -212,6 +212,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("D626944E-674A-4D38-B4BF-0A921995D17D", observation)
         self.assertIn("version `5797` contains only one local `op000`", read_text("progress.md"))
         self.assertIn("The next safe bounded-delta baseline is `5798`", observation)
+        self.assertIn("Delta boundary: baseline `5798`, upper version `5799`", observation)
+        self.assertIn("`BonusOne` | `0.0` | `1.0`", observation)
+        self.assertIn("transport the complete causally captured final row", observation)
+        self.assertIn("The next safe bounded-delta baseline is `5799`", observation)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")
