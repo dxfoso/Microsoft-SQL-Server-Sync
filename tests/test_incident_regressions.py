@@ -145,6 +145,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         rotation = read_text("scripts/rotate_production_registry_from_cloud_bootstrap.ps1")
 
         self.assertEqual(rotation.count("Invoke-RestMethod -Method Get -Uri $BootstrapUri"), 1)
+        self.assertIn("cloud.deployment.bootstrap.v1", rotation)
         self.assertIn("$CloudEnvPath = Join-Path $PSScriptRoot '..\\.cloud.env'", rotation)
         self.assertIn("$bootstrap.kubernetes.PSObject.Properties['namespaceName']", rotation)
         self.assertIn("--password-stdin", rotation)

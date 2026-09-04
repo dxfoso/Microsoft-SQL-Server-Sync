@@ -32,6 +32,9 @@ if ($null -eq $bootstrap.PSObject.Properties['registry'] -and
     $null -ne $bootstrap.PSObject.Properties['value']) {
     $bootstrap = $bootstrap.value
 }
+if ([string]$bootstrap.schemaVersion -ne 'cloud.deployment.bootstrap.v1') {
+    throw 'Cloud Bootstrap returned an unsupported schemaVersion.'
+}
 
 $registryHost = [string]$bootstrap.registry.host
 $registryUser = [string]$bootstrap.registry.username
@@ -39,12 +42,12 @@ $registryPassword = [string]$bootstrap.registry.password
 $imageRepository = [string]$bootstrap.registry.imageRepository
 $pullSecretName = [string]$bootstrap.registry.imagePullSecretName
 $namespace = ''
-if ($null -ne $bootstrap.kubernetes.PSObject.Properties['namespace']) {
-    $namespace = [string]$bootstrap.kubernetes.namespace
+if ($null -ne $bootstrap.kubernetes.PSObject.Properties['namespaceName']) {
+    $namespace = [string]$bootstrap.kubernetes.namespaceName
 }
 if ([string]::IsNullOrWhiteSpace($namespace) -and
-    $null -ne $bootstrap.kubernetes.PSObject.Properties['namespaceName']) {
-    $namespace = [string]$bootstrap.kubernetes.namespaceName
+    $null -ne $bootstrap.kubernetes.PSObject.Properties['namespace']) {
+    $namespace = [string]$bootstrap.kubernetes.namespace
 }
 $kubeconfigText = [string]$bootstrap.kubernetes.kubeconfig
 $required = @($registryHost, $registryUser, $registryPassword, $imageRepository,
