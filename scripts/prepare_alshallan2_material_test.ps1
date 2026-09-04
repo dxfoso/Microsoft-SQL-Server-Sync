@@ -5,14 +5,16 @@ param(
     [string] $Database = 'AmnDb048',
     [string] $Namespace = 'velvet-sql-server-sync',
     [string] $SshTarget = 'velvet-leaf-1',
-    [string] $BaseUrl = 'https://sync.velvet-leaf.com'
+    [string] $BaseUrl = 'https://sync.velvet-leaf.com',
+    [ValidatePattern('^[a-z0-9-]{1,64}$')]
+    [string] $CaptureLabel = 'material-prechange-baseline'
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-$outputDirectory = Join-Path $repoRoot "artifacts/alameen-lab/material-prechange-baseline-$stamp"
+$outputDirectory = Join-Path $repoRoot "artifacts/alameen-lab/$CaptureLabel-$stamp"
 
 function Read-SecretObject {
     param([string] $Name)
@@ -90,8 +92,8 @@ try {
         database = $Database
         syncEnabled = $false
         activeSyncJobs = 0
-        priorBaselineVersion = [long]$summary.baselineVersion
-        materialBaselineVersion = [long]$summary.upperVersion
+        baselineVersion = [long]$summary.baselineVersion
+        upperVersion = [long]$summary.upperVersion
         capturedChangeCount = [long]$summary.changeCount
         bytes = [long]$summary.bytes
         sha256 = [string]$summary.sha256

@@ -36,4 +36,71 @@ For every step, record the exact Change Tracking versions, affected tables, prim
 
 ## Current operator action
 
-Create only the new material in step 1, save it once, then stop and report `material created` together with the values entered. Do not edit it again until the post-create delta is captured.
+Change only the `Name` field of material number `209812` from `test 1` to `test 1 edited`, save once, then stop and report `material name edited`. Do not change its Latin name or any other field even if it differs from the originally proposed controlled name.
+
+## Material creation capture
+
+The user created and saved one material. The captured values differ from the proposed test name, so the database evidence below—not the proposed input—is authoritative.
+
+- Delta boundary: baseline `5796`, upper version `5798`.
+- Net operations: **2** across two tables.
+- Artifact size: **1,731 bytes**.
+- SHA-256: `8a4963bdd59be6e5327cd36638195729c894aec8a5d6ce56fcf9c19490a56c52`.
+- Evidence directory: `artifacts/alameen-lab/material-create-delta-20260904T092313Z`.
+- Version `5797`: one unrelated `op000` insert recording the local material-group sorting preference `AmnCfg_SortFields.class TGrpNoSonsSearchStruct = 1` for `DESKTOP-ALDNHIH`. This is UI configuration, not part of the material business row.
+- Version `5798`: one `mt000` insert. No second material table or relation row changed, so the observed creation itself is one atomic Change Tracking version.
+
+### Identity and relationships
+
+| Field | Saved value |
+|---|---|
+| `GUID` (declared primary key) | `D626944E-674A-4D38-B4BF-0A921995D17D` |
+| `Number` | `209812` |
+| `GroupGUID` | `2D305758-5D51-4820-AF24-A23EF8161974` |
+| `CurrencyGUID` | `BCBCD2F1-24DD-4F86-9746-2537D7351DFE` |
+| `PictureGUID` | zero GUID |
+| `OldGUID` / `NewGUID` | zero GUID / zero GUID |
+| `DefUnit` | `1` |
+
+`GUID` is the physical primary key exposed by the delta. `Number` is the observed stable human/business identifier candidate, but this single insert does not yet prove its database uniqueness or immutability. `GroupGUID` and `CurrencyGUID` are application relationships and must be synchronized before or atomically with a material when their referenced rows do not already exist.
+
+### Descriptive and classification values
+
+| Field | Saved value |
+|---|---|
+| `Name` | `test 1` |
+| `LatinName` | `test 1 en` |
+| `Code` | `symbol` |
+| `CodedCode` | empty |
+| `Spec` | `fwerfew` |
+| `Origin` | `gregerf` |
+| `Company` | `grewggrgr` |
+| `Pos` | `gregr` |
+| `Dim` | `2XL-3XL` |
+| `Color` | `grgrg,fef,fefe,` |
+| `Provenance`, `Quality`, `Model` | empty |
+| `Unity`, `Unit2`, `Unit3` | empty |
+| `BarCode`, `BarCode2`, `BarCode3` | empty |
+
+### Quantity, prices, and numeric configuration
+
+- `Qty`, `High`, `Low`, `Whole`, `Half`, `Retail`, `EndUser`, `Export`, `Vendor`, `MaxPrice`, `AvgPrice`, `LastPrice`, `BonusOne`, `Bonus`, `UseFlag`, `Flag`, `VAT`, and `OrderLimit` were all `0.0`.
+- Every secondary price field—`Whole2`, `Half2`, `Retail2`, `EndUser2`, `Export2`, `Vendor2`, `MaxPrice2`, `LastPrice2`, `Whole3`, `Half3`, `Retail3`, `EndUser3`, `Export3`, `Vendor3`, `MaxPrice3`, and `LastPrice3`—was `0.0`.
+- `Unit2Fact` and `Unit3Fact` were `0.0`.
+- `CurrencyVal` and `LastPriceCurVal` were `1.0`.
+- `PriceType = 15`, `SellType = 0`, `Type = 0`, `Security = 1`, and `branchMask = 0`.
+
+### Flags and dates
+
+- False/zero flags: `ExpireFlag`, `ProductionFlag`, `Unit2FactFlag`, `Unit3FactFlag`, `SNFlag`, `ForceInSN`, `ForceOutSN`, `bHide`, `Assemble`, `CalPriceFromDetail`, `ForceInExpire`, `ForceOutExpire`, `IsIntegerQuantity`, and `DisableLastPrice`.
+- `CreateDate = 2026-09-04T00:00:00`.
+- `LastPriceDate = 2026-09-04T00:00:00`.
+- `FirstCostDate = 1980-01-01T00:00:00`.
+
+### Current conclusions
+
+1. The observed material master row is `mt000`; creation inserted one complete row rather than a partial header followed by child rows.
+2. The creation was atomic at version `5798`; the preceding `op000` preference commit is causally separate and must not be grouped into the material operation.
+3. No stock movement, quantity aggregate, account, voucher, price-relation, barcode child, or transaction row was created.
+4. The next safe bounded-delta baseline is `5798`.
+5. Synchronization remains disabled. This one creation proves the insert shape only; update identity stability, group/currency dependencies, business-key behavior, and explicit deletion still require their separate experiments.

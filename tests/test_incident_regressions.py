@@ -197,6 +197,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("$activeJobs.Count -ne 0", helper)
         self.assertIn("-Mode change_tracking_delta", helper)
         self.assertIn("-ForceFresh", helper)
+        self.assertIn("[ValidatePattern('^[a-z0-9-]{1,64}$')]", helper)
+        self.assertIn('$CaptureLabel-$stamp', helper)
         self.assertNotIn("jsonpath", helper.lower())
         self.assertNotIn("Write-Host $adminPassword", helper)
         self.assertNotIn("Write-Host $uploadToken", helper)
@@ -206,6 +208,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Net operations between those versions: **0**", observation)
         self.assertIn("SQLSYNC مادة اختبار 20260904-01", observation)
         self.assertIn("must not be used in a Sale, Purchase", observation)
+        self.assertIn("Delta boundary: baseline `5796`, upper version `5798`", observation)
+        self.assertIn("D626944E-674A-4D38-B4BF-0A921995D17D", observation)
+        self.assertIn("version `5797` contains only one local `op000`", read_text("progress.md"))
+        self.assertIn("The next safe bounded-delta baseline is `5798`", observation)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")
