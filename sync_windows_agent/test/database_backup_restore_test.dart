@@ -44,6 +44,13 @@ AmnDb048_log|D:\\Data\\AmnDb048_log.ldf|L|NULL
       ],
     );
     expect(sql, contains("IF DB_ID(N'AmnDb048_Restored') IS NOT NULL"));
+    expect(
+      sql,
+      contains(
+        "RAISERROR('The restore target database already exists.', 16, 1)",
+      ),
+    );
+    expect(sql, isNot(contains('THROW')));
     expect(sql, contains('RESTORE DATABASE [AmnDb048_Restored]'));
     expect(
       sql,
@@ -79,6 +86,14 @@ AmnDb048_log|D:\\Data\\AmnDb048_log.ldf|L|NULL
         ],
       );
       expect(sql, contains("IF DB_ID(N'AmnDb048') IS NULL"));
+      expect(
+        sql,
+        contains(
+          "RAISERROR('The replacement target database does not exist.', 16, 1)",
+        ),
+      );
+      expect(sql, contains('RETURN;'));
+      expect(sql, isNot(contains('THROW')));
       expect(sql, contains('SET SINGLE_USER WITH ROLLBACK IMMEDIATE'));
       expect(sql, contains('RESTORE DATABASE [AmnDb048]'));
       expect(sql, contains('WITH REPLACE'));

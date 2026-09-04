@@ -7,6 +7,7 @@ param(
     [string] $SshTarget = 'velvet-leaf-1',
     [string] $Namespace = 'velvet-sql-server-sync',
     [ValidateRange(10, 1440)][int] $TimeoutMinutes = 360,
+    [switch] $ReuseCompletedSourceBackup,
     [string] $OutputDirectory = ''
 )
 
@@ -124,19 +125,34 @@ try {
     if ([string]::IsNullOrWhiteSpace($script:sessionToken)) { throw 'Login returned no token.' }
     $state = Invoke-ControlPlane 'live_state' @{ token = $script:sessionToken }
     Assert-ClonePreconditions $state
-
-    $sourceRequest = Invoke-ControlPlane 'agent_data_export_request' @{
-        clientName = $SourceClient
-        database = $Database
-        uploadUrl = "$($BaseUrl.TrimEnd('/'))/private-export"
-        uploadToken = $privateToken
-        mode = 'full_backup'
-        token = $script:sessionToken
-    }
-    $sourceRequestId = [string]$sourceRequest.dataExport.requestId
-    if ([string]::IsNullOrWhiteSpace($sourceRequestId)) { throw 'Source backup request returned no ID.' }
     $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
-    $sourceResult = Wait-ForExport $SourceClient $sourceRequestId $deadline
+
+    if ($ReuseCompletedSourceBackup) {
+        $sourceAgent = Find-Agent $state $SourceClient
+        $sourceResult = $sourceAgent.dataExport
+        $sourceRequestId = [string]$sourceResult.requestId
+        $sourceStatus = ([string]$sourceResult.status).Trim().ToLowerInvariant()
+        $sourceMode = ([string]$sourceResult.mode).Trim().ToLowerInvariant()
+        $sourceSha256 = [string]$sourceResult.sha256
+        if ($sourceStatus -ne 'completed' -or $sourceMode -ne 'full_backup' -or
+            [string]::IsNullOrWhiteSpace($sourceRequestId) -or [long]$sourceResult.bytes -le 0 -or
+            [int]$sourceResult.chunkCount -le 0 -or $sourceSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+            throw 'Source has no completed verified full backup export to reuse.'
+        }
+    }
+    else {
+        $sourceRequest = Invoke-ControlPlane 'agent_data_export_request' @{
+            clientName = $SourceClient
+            database = $Database
+            uploadUrl = "$($BaseUrl.TrimEnd('/'))/private-export"
+            uploadToken = $privateToken
+            mode = 'full_backup'
+            token = $script:sessionToken
+        }
+        $sourceRequestId = [string]$sourceRequest.dataExport.requestId
+        if ([string]::IsNullOrWhiteSpace($sourceRequestId)) { throw 'Source backup request returned no ID.' }
+        $sourceResult = Wait-ForExport $SourceClient $sourceRequestId $deadline
+    }
 
     $state = Invoke-ControlPlane 'live_state' @{ token = $script:sessionToken }
     Assert-ClonePreconditions $state

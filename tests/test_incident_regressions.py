@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 463)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 467)}
 
         observed_ids = set()
 
@@ -41,15 +41,33 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertEqual(observed_ids, expected_ids)
 
     def test_production_registry_wrapper_uses_only_namespace_secret_and_temporary_config(self):
-        wrapper = read_text("scripts/build_production_images_with_cluster_registry.ps1")
+        build_wrapper = read_text("scripts/build_production_images_with_cluster_registry.ps1")
+        deploy_wrapper = read_text("scripts/deploy_production_images_with_cluster_registry.ps1")
 
-        self.assertIn("kubectl get secret $PullSecretName -n $Namespace -o json", wrapper)
-        self.assertIn("$env:DOCKER_CONFIG = $dockerConfig", wrapper)
-        self.assertIn("--password-stdin", wrapper)
-        self.assertIn("build_production_images.ps1", wrapper)
-        self.assertIn("Remove-Item -LiteralPath $resolvedDockerConfig -Recurse -Force", wrapper)
-        self.assertNotIn("Write-Host $password", wrapper)
-        self.assertNotIn("cloud.divclouds.com/call", wrapper)
+        for wrapper in (build_wrapper, deploy_wrapper):
+            self.assertIn("kubectl get secret $PullSecretName -n $Namespace -o json", wrapper)
+            self.assertIn("$env:DOCKER_CONFIG = $dockerConfig", wrapper)
+            self.assertIn("--password-stdin", wrapper)
+            self.assertIn("Remove-Item -LiteralPath $resolvedDockerConfig -Recurse -Force", wrapper)
+            self.assertNotIn("Write-Host $password", wrapper)
+            self.assertNotIn("cloud.divclouds.com/call", wrapper)
+        self.assertIn("build_production_images.ps1", build_wrapper)
+        self.assertIn("deploy_production_images.ps1", deploy_wrapper)
+        self.assertIn("[ValidatePattern('^[0-9a-f]{40}$')]", deploy_wrapper)
+
+    def test_database_clone_hidden_launcher_preserves_spaced_client_names(self):
+        launcher = read_text("scripts/start_database_clone_hidden.ps1")
+        restore_sql = read_text("sync_windows_agent/lib/database_backup_restore.dart")
+
+        self.assertIn('-SourceClient "{1}" -TargetClient "{2}"', launcher)
+        self.assertIn("-WindowStyle Hidden", launcher)
+        self.assertIn("clone_live_client_database.ps1", launcher)
+        self.assertIn("$value.Contains('\"')", launcher)
+        self.assertIn("RedirectStandardOutput", launcher)
+        self.assertIn("RedirectStandardError", launcher)
+        self.assertIn("[switch] $ReuseCompletedSourceBackup", launcher)
+        self.assertIn("RAISERROR('The replacement target database does not exist.', 16, 1)", restore_sql)
+        self.assertNotIn("THROW 51002", restore_sql)
 
     def test_alameen_lab_progress_records_exact_identity_and_discovery_blocker(self):
         progress = read_text("progress.md")

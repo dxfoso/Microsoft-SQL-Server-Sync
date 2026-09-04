@@ -94,7 +94,10 @@ String buildRestoreAsNewDatabaseSql({
   return '''
 SET NOCOUNT ON;
 IF DB_ID(N'$databaseLiteral') IS NOT NULL
-  THROW 51000, 'The restore target database already exists.', 1;
+BEGIN
+  RAISERROR('The restore target database already exists.', 16, 1);
+  RETURN;
+END;
 RESTORE DATABASE [$escapedDatabase]
 FROM DISK = N'$backupLiteral'
 WITH ${moves.join(',\n     ')}, CHECKSUM, RECOVERY, STATS = 5;
@@ -138,7 +141,10 @@ String buildReplaceDatabaseFromBackupSql({
   return '''
 SET NOCOUNT ON;
 IF DB_ID(N'$databaseLiteral') IS NULL
-  THROW 51002, 'The replacement target database does not exist.', 1;
+BEGIN
+  RAISERROR('The replacement target database does not exist.', 16, 1);
+  RETURN;
+END;
 ALTER DATABASE [$escapedDatabase] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
 RESTORE DATABASE [$escapedDatabase]
 FROM DISK = N'$backupLiteral'
