@@ -229,6 +229,11 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("48B21271-2FA8-4555-BF67-1912217E26CF", observation)
         self.assertIn("must apply atomically", observation)
         self.assertIn("The next safe bounded-delta baseline is `5802`", observation)
+        self.assertIn("Delta boundary: baseline `5802`, upper version `5803`", observation)
+        self.assertIn("both explicit `D` operations at version `5803`", observation)
+        self.assertIn("every non-primary value is null in both tombstones", observation)
+        self.assertIn("The final safe bounded-delta baseline is `5803`", observation)
+        self.assertIn("controlled material-master observation sequence is complete", observation)
 
         schema_helper = read_text("scripts/inspect_isolated_alameen_table_schema.ps1")
         self.assertLess(
