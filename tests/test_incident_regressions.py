@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 467)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 468)}
 
         observed_ids = set()
 
@@ -52,6 +52,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
             self.assertNotIn("Write-Host $password", wrapper)
             self.assertNotIn("cloud.divclouds.com/call", wrapper)
         self.assertIn("build_production_images.ps1", build_wrapper)
+        self.assertIn("[ValidatePattern('^[0-9a-f]{40}$')]", build_wrapper)
+        self.assertIn("$headCommit -ne $Commit", build_wrapper)
         self.assertIn("deploy_production_images.ps1", deploy_wrapper)
         self.assertIn("[ValidatePattern('^[0-9a-f]{40}$')]", deploy_wrapper)
 

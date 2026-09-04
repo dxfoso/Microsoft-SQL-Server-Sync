@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string] $Commit,
     [string] $RegistryHost = 'registry.cloud.divclouds.com',
     [string] $SshAlias = 'velvet-leaf-1',
     [string] $Namespace = 'velvet-sql-server-sync',
@@ -9,6 +10,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$headCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $headCommit -ne $Commit) {
+    throw 'The requested immutable commit must equal the checked-out repository HEAD.'
+}
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
 $dockerConfig = Join-Path $temporaryRoot ("sql-sync-registry-{0}" -f ([guid]::NewGuid().ToString('N')))
 $previousDockerConfig = [Environment]::GetEnvironmentVariable('DOCKER_CONFIG', 'Process')
