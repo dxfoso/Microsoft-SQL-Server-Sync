@@ -162,6 +162,20 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertNotIn("Write-Host $registryPassword", rotation)
         self.assertNotIn("Write-Host $kubeconfigText", rotation)
 
+        deployment = read_text("scripts/deploy_production_via_cloud_bootstrap.ps1")
+        self.assertIn("cloud.deployment.bootstrap.v1", deployment)
+        self.assertIn("$bootstrap.kubernetes.namespaceName", deployment)
+        self.assertIn("--password-stdin", deployment)
+        self.assertIn("build_production_images.ps1", deployment)
+        self.assertIn("helm upgrade --install", deployment)
+        self.assertIn("--kubeconfig $kubeconfigPath", deployment)
+        self.assertIn("--reuse-values", deployment)
+        self.assertIn("$_.spec.nodeName -ne $targetNodeName", deployment)
+        self.assertEqual(deployment.count("Test-ProductionState -Commit $commit"), 2)
+        self.assertIn("Start-Sleep -Seconds 60", deployment)
+        self.assertNotIn("api_start_deployment_v1", deployment)
+        self.assertNotIn("api_get_deployment_session_v1", deployment)
+
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")
         rotation = read_text("scripts/rotate_production_scheduler_admin.ps1")
