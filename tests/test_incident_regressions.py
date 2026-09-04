@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 437)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 438)}
         observed_ids = set()
 
         for row in rows:
@@ -140,6 +140,22 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("--ignore-not-found -o 'jsonpath={.metadata.name}'", revoker)
         self.assertIn("[string]($absentLines -join '')", revoker)
         self.assertNotIn(".Trim()", revoker)
+
+    def test_cloud_bootstrap_registry_rotation_is_secret_safe_and_pull_verified(self):
+        rotation = read_text("scripts/rotate_production_registry_from_cloud_bootstrap.ps1")
+
+        self.assertEqual(rotation.count("Invoke-RestMethod -Method Get -Uri $BootstrapUri"), 1)
+        self.assertIn("--password-stdin", rotation)
+        self.assertIn('"https://$registryHost/v2/"', rotation)
+        self.assertIn("[int]$v2.StatusCode -ne 200", rotation)
+        self.assertIn("docker-config-$attempt", rotation)
+        self.assertIn("$manifest | & kubectl --kubeconfig $kubeconfigPath apply", rotation)
+        self.assertIn("imagePullPolicy = 'Always'", rotation)
+        self.assertIn("$phase -ne 'Succeeded'", rotation)
+        self.assertNotIn("api_start_deployment_v1", rotation)
+        self.assertNotIn("api_get_deployment_session_v1", rotation)
+        self.assertNotIn("Write-Host $registryPassword", rotation)
+        self.assertNotIn("Write-Host $kubeconfigText", rotation)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")
