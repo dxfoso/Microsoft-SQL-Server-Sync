@@ -13,6 +13,7 @@ class ChartContractsTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('suspend: false', cronjob)
+        self.assertIn('(list . "auto-tick")', cronjob)
 
     def test_auto_scheduler_does_not_retain_failed_history(self):
         values_yaml = (ROOT / "values.yaml").read_text(encoding="utf-8")
