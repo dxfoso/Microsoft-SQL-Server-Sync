@@ -71,7 +71,8 @@ function Get-ReadyFrontendPod {
     $podJsonLines = @(Invoke-SshText "kubectl get pods -n $Namespace -l app.kubernetes.io/component=frontend -o json" -RequireOutput)
     $podList = ($podJsonLines -join "`n") | ConvertFrom-Json
     $readyPods = @($podList.items | Where-Object {
-        $null -eq $_.metadata.deletionTimestamp -and
+        $deletionTimestamp = $_.metadata.PSObject.Properties['deletionTimestamp']
+        ($null -eq $deletionTimestamp -or $null -eq $deletionTimestamp.Value) -and
         $_.status.phase -eq 'Running' -and
         @($_.status.conditions | Where-Object { $_.type -eq 'Ready' -and $_.status -eq 'True' }).Count -gt 0
     } | Sort-Object { [DateTime]$_.metadata.creationTimestamp } -Descending)

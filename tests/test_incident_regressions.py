@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 445)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 447)}
         observed_ids = set()
 
         for row in rows:
@@ -185,6 +185,27 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("Read-PlainTail -Path $StdoutPath", helper)
         self.assertIn("Read-PlainTail -Path $StderrPath", helper)
         self.assertNotIn("stdout = Get-Content", helper)
+
+    def test_material_test_preparation_is_read_only_and_fail_closed(self):
+        helper = read_text("scripts/prepare_alshallan2_material_test.ps1")
+        collector = read_text("scripts/collect_live_client_database_copies.ps1")
+        observation = read_text("docs/alameen-materials-observation-2026-09-04.md")
+
+        self.assertIn("kubectl get secret $Name -n $Namespace -o json", helper)
+        self.assertIn("($lines -join", helper)
+        self.assertIn("$client.syncEnabled -ne $false", helper)
+        self.assertIn("$activeJobs.Count -ne 0", helper)
+        self.assertIn("-Mode change_tracking_delta", helper)
+        self.assertIn("-ForceFresh", helper)
+        self.assertNotIn("jsonpath", helper.lower())
+        self.assertNotIn("Write-Host $adminPassword", helper)
+        self.assertNotIn("Write-Host $uploadToken", helper)
+        self.assertIn("metadata.PSObject.Properties['deletionTimestamp']", collector)
+        self.assertNotIn("$null -eq $_.metadata.deletionTimestamp", collector)
+        self.assertIn("Fresh material pre-change upper version: `5796`", observation)
+        self.assertIn("Net operations between those versions: **0**", observation)
+        self.assertIn("SQLSYNC مادة اختبار 20260904-01", observation)
+        self.assertIn("must not be used in a Sale, Purchase", observation)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")
