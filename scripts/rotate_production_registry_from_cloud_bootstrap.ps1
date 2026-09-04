@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $CloudEnvPath = "$PSScriptRoot\..\.cloud.env",
+    [string] $CloudEnvPath = '',
     [string] $BootstrapUri = 'https://cloud.divclouds.com/call/repositories/ebbd5457-3253-46e0-b67d-5668ca1e5225/deployment-v1/bootstrap?namespaceName=velvet-sql-server-sync',
     [string] $ExpectedNamespace = 'velvet-sql-server-sync',
     [string] $ExpectedPullSecretName = 'regcred',
@@ -9,6 +9,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if ([string]::IsNullOrWhiteSpace($CloudEnvPath)) {
+    $CloudEnvPath = Join-Path $PSScriptRoot '..\.cloud.env'
+}
+$CloudEnvPath = [IO.Path]::GetFullPath($CloudEnvPath)
 
 $envLine = Get-Content -LiteralPath $CloudEnvPath | Where-Object {
     $_ -like 'CLOUD_AUTH_TOKEN=*'
