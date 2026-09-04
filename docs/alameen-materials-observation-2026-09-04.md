@@ -36,7 +36,7 @@ For every step, record the exact Change Tracking versions, affected tables, prim
 
 ## Current operator action
 
-Change only the wholesale selling-price field (`Whole`, normally shown as the wholesale/جملة price) of material number `209812` from `0` to `12345`, save once, then stop and report `material price edited`. Do not change another price or field.
+Change only the primary barcode (`BarCode`) of material number `209812` from empty to `9900209812005`, save once, then stop and report `material barcode edited`. Do not change another field.
 
 ## Material creation capture
 
@@ -131,3 +131,23 @@ Conclusions:
 2. UI intent cannot be converted into a name-only database patch: Al-Ameen also changed `BonusOne`. Synchronization must transport the complete causally captured final row and must not reconstruct it from the field the operator remembers changing.
 3. No related table changed, and the save completed in one atomic Change Tracking version.
 4. The next safe bounded-delta baseline is `5799`.
+
+## Wholesale-price-only edit capture
+
+The user changed only the wholesale selling-price field of material 209812 from zero to 12,345 and saved once.
+
+- Delta boundary: baseline `5799`, upper version `5800`.
+- Net operations: **1**—one `U` operation in `dbo.mt000` at version `5800`.
+- Artifact size: **1,522 bytes**.
+- SHA-256: `a7ae5448632e145085c3132c773685134ef81f5218a56bc285cd13ee8d3269b4`.
+- Evidence directory: `artifacts/alameen-lab/material-price-edit-delta-20260904T191048Z`.
+- Stable identity: GUID `D626944E-674A-4D38-B4BF-0A921995D17D` and material number `209812` were unchanged.
+
+Complete business-column comparison against the version-5799 final row found exactly one difference: `Whole` changed from floating-point text `0.0` to `12345.0`. All other prices—including `Half`, `Retail`, `EndUser`, secondary/tertiary price tiers, `MaxPrice`, `AvgPrice`, and `LastPrice`—remained unchanged. `Name`, `BonusOne`, quantity, relationships, barcodes, flags, and dates also remained unchanged. Delta metadata version and capture clock offset changed as expected and are not business columns.
+
+Conclusions:
+
+1. This price edit is one atomic in-place `mt000` update with stable physical and business identity.
+2. Al-Ameen did not derive or recalculate another selling or cost price from `Whole` for this material configuration.
+3. Numeric fingerprinting must canonicalize the SQL `float` value so equivalent textual representations do not become false conflicts, while preserving the actual value `12345.0`.
+4. The next safe bounded-delta baseline is `5800`.

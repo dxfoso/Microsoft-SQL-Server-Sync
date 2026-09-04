@@ -216,6 +216,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("`BonusOne` | `0.0` | `1.0`", observation)
         self.assertIn("transport the complete causally captured final row", observation)
         self.assertIn("The next safe bounded-delta baseline is `5799`", observation)
+        self.assertIn("Delta boundary: baseline `5799`, upper version `5800`", observation)
+        self.assertIn("`Whole` changed from floating-point text `0.0` to `12345.0`", observation)
+        self.assertIn("The next safe bounded-delta baseline is `5800`", observation)
+        self.assertIn("9900209812005", observation)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")
