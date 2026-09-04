@@ -98,6 +98,8 @@ class Agent {
   field dataExportBytes: int? min=0 max=1000000000000
   field dataExportSha256: string? min=0 max=64
   field dataExportChunkCount: int? min=0 max=1000000
+  field dataExportSourceRequestId: string? min=0 max=64
+  field dataExportSourceClientName: string? min=0 max=128
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field updatedAt: datetime
@@ -2416,7 +2418,9 @@ function agent_data_export_payload(agent: map<json>, includeUploadCredentials: b
     message: messageValue,
     bytes: agent.dataExportBytes ?? 0,
     sha256: agent.dataExportSha256 ?? '',
-    chunkCount: agent.dataExportChunkCount ?? 0
+    chunkCount: agent.dataExportChunkCount ?? 0,
+    sourceRequestId: agent.dataExportSourceRequestId,
+    sourceClientName: agent.dataExportSourceClientName
   };
 }
 
@@ -3063,6 +3067,8 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
       dataExportBytes: 0,
       dataExportSha256: '',
       dataExportChunkCount: 0,
+      dataExportSourceRequestId: null,
+      dataExportSourceClientName: null,
       clientVersion: '',
       clientUserId,
       ownerUserId,
@@ -3142,6 +3148,8 @@ function ensure_agent(clientName: string, clientUserId: string? = null, ownerUse
     dataExportBytes: 0,
     dataExportSha256: '',
     dataExportChunkCount: 0,
+    dataExportSourceRequestId: null,
+    dataExportSourceClientName: null,
     clientUserId,
     ownerUserId,
     updatedAt: now_iso()
@@ -8044,6 +8052,10 @@ function agent_sync_enabled_set(clientName: string, enabled: bool, token: string
     return raw_json_error(403, 'permission denied');
   }
   const agent = ensure_agent(clientName, user.id, user.ownerUserId);
+  if (enabled && data_export_request_pending(agent) &&
+      string.from(agent.dataExportMode ?? '').trim().toLowerCase() == 'full_restore') {
+    return raw_json_error(409, 'target synchronization cannot be enabled while database replacement is pending');
+  }
   const updated = db.update(Agent, { clientName: agent.clientName }, {
     syncEnabled: enabled,
     updatedAt: now_iso()
@@ -8869,6 +8881,8 @@ function agent_data_export_request(clientName: string, database: string, uploadU
     dataExportBytes: 0,
     dataExportSha256: '',
     dataExportChunkCount: 0,
+    dataExportSourceRequestId: null,
+    dataExportSourceClientName: null,
     updatedAt: requestedAt
   });
   if (updatedCount == 0) {
@@ -8881,6 +8895,127 @@ function agent_data_export_request(clientName: string, database: string, uploadU
   return {
     ok: true,
     clientName: normalizedClientName,
+    dataExport: agent_data_export_payload(updated)
+  };
+}
+
+function agent_database_clone_request(sourceClientName: string, targetClientName: string, database: string, downloadUrl: string, downloadToken: string, token: string? = null): map<json> {
+  const current = current_user_record(token);
+  if (current == null) {
+    return raw_json_error(401, 'permission denied');
+  }
+  // Replacing an existing database is intentionally administrator-only. An
+  // owner-level export permission must never imply destructive restore access.
+  if (!is_admin_user(current)) {
+    return raw_json_error(403, 'database replacement requires administrator permission');
+  }
+  const normalizedSource = normalize_user_name(sourceClientName);
+  const normalizedTarget = normalize_user_name(targetClientName);
+  if (normalizedSource.length == 0 || normalizedTarget.length == 0 || normalizedSource == normalizedTarget) {
+    return raw_json_error(400, 'source and target clients must be distinct');
+  }
+  const source = db.selectOne(Agent, { clientName: normalizedSource });
+  const target = db.selectOne(Agent, { clientName: normalizedTarget });
+  if (source == null || target == null ||
+      !can_read_agent(current, source.ownerUserId, source.clientUserId) ||
+      !can_read_agent(current, target.ownerUserId, target.clientUserId) ||
+      string.from(source.ownerUserId) != string.from(target.ownerUserId)) {
+    return raw_json_error(404, 'source or target client not found');
+  }
+  const normalizedDatabase = truncate_text(database.trim(), 256);
+  if (normalizedDatabase.length == 0 ||
+      normalizedDatabase.toLowerCase() != string.from(source.database).trim().toLowerCase() ||
+      normalizedDatabase.toLowerCase() != string.from(target.database).trim().toLowerCase()) {
+    return raw_json_error(400, 'clone database must match both selected client databases');
+  }
+  if (target.syncEnabled != false) {
+    return raw_json_error(409, 'target synchronization must be disabled before database replacement');
+  }
+  if (source.isOnline != true || source.sqlConnected != true) {
+    return raw_json_error(409, 'source client must be online and SQL-connected');
+  }
+  if (target.isOnline != true || target.sqlConnected != true) {
+    return raw_json_error(409, 'target client must be online and SQL-connected');
+  }
+  const sourceActiveJobs = db.selectMany(SyncJob, {
+    where: {
+      clientName: normalizedSource,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id'],
+    limit: 1
+  });
+  if (sourceActiveJobs.length != 0) {
+    return raw_json_error(409, 'source client still has active synchronization jobs');
+  }
+  const targetActiveJobs = db.selectMany(SyncJob, {
+    where: {
+      clientName: normalizedTarget,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['id'],
+    limit: 1
+  });
+  if (targetActiveJobs.length != 0) {
+    return raw_json_error(409, 'target client still has active synchronization jobs');
+  }
+  if (data_export_request_pending(target)) {
+    return raw_json_error(409, 'target client already has a backup or restore command');
+  }
+  const sourceRequestId = string.from(source.dataExportRequestId ?? '').trim();
+  const sourceStatus = string.from(source.dataExportStatus ?? '').trim().toLowerCase();
+  const sourceMode = string.from(source.dataExportMode ?? '').trim().toLowerCase();
+  const sourceSha256 = string.from(source.dataExportSha256 ?? '').trim().toLowerCase();
+  const sourceBytes = int.from(source.dataExportBytes ?? 0);
+  const sourceChunkCount = int.from(source.dataExportChunkCount ?? 0);
+  if (sourceRequestId.length == 0 || sourceStatus != 'completed' ||
+      sourceMode != 'full_backup' || sourceSha256.length != 64 ||
+      sourceBytes <= 0 || sourceChunkCount <= 0) {
+    return raw_json_error(409, 'source has no completed verified full backup export');
+  }
+  const normalizedDownloadUrl = truncate_text(downloadUrl.trim(), 1000);
+  if (normalizedDownloadUrl != 'https://sync.velvet-leaf.com/private-export') {
+    return raw_json_error(400, 'restore download URL must use the private sync endpoint');
+  }
+  const normalizedDownloadToken = truncate_text(downloadToken.trim(), 256);
+  if (normalizedDownloadToken.length < 32) {
+    return raw_json_error(400, 'restore download token is invalid');
+  }
+  const requestedAt = now_iso();
+  const nextRequestId = uuid.v4();
+  const updatedCount = db.updateMany(Agent, { clientName: normalizedTarget, syncEnabled: false }, {
+    dataExportRequestId: nextRequestId,
+    dataExportRequestedAt: requestedAt,
+    dataExportRequestedByUserId: current.id,
+    dataExportDatabase: normalizedDatabase,
+    dataExportMode: 'full_restore',
+    dataExportBaselineVersion: null,
+    dataExportUploadUrl: normalizedDownloadUrl,
+    dataExportUploadToken: normalizedDownloadToken,
+    dataExportLastRequestId: null,
+    dataExportLastAcknowledgedAt: null,
+    dataExportStatus: 'requested',
+    dataExportMessage: 'Waiting for the disabled target client to download and restore the verified backup.',
+    dataExportBytes: sourceBytes,
+    dataExportSha256: sourceSha256,
+    dataExportChunkCount: sourceChunkCount,
+    dataExportSourceRequestId: sourceRequestId,
+    dataExportSourceClientName: normalizedSource,
+    updatedAt: requestedAt
+  });
+  if (updatedCount == 0) {
+    return raw_json_error(409, 'target state changed before the restore command was recorded');
+  }
+  const updated = db.selectOne(Agent, { clientName: normalizedTarget, dataExportRequestId: nextRequestId });
+  if (updated == null) {
+    return raw_json_error(500, 'database restore request state unavailable');
+  }
+  return {
+    ok: true,
+    sourceClientName: normalizedSource,
+    targetClientName: normalizedTarget,
     dataExport: agent_data_export_payload(updated)
   };
 }
@@ -8973,6 +9108,17 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
   if (safeBytes < 0) { safeBytes = 0; }
   let safeChunkCount = chunkCount;
   if (safeChunkCount < 0) { safeChunkCount = 0; }
+  let nextBytes = safeBytes;
+  let nextSha256 = truncate_text(sha256.trim().toLowerCase(), 64);
+  let nextChunkCount = safeChunkCount;
+  // A restore command's size/hash/chunk tuple is its immutable integrity
+  // envelope. Progress acknowledgements must never replace it with partial
+  // download counters, or a restarted client could not safely resume/retry.
+  if (string.from(matchingAgent.dataExportMode ?? '').trim().toLowerCase() == 'full_restore') {
+    nextBytes = int.from(matchingAgent.dataExportBytes ?? 0);
+    nextSha256 = string.from(matchingAgent.dataExportSha256 ?? '');
+    nextChunkCount = int.from(matchingAgent.dataExportChunkCount ?? 0);
+  }
   let nextUploadUrl = matchingAgent.dataExportUploadUrl;
   let nextUploadToken = matchingAgent.dataExportUploadToken;
   if (terminalStatus) {
@@ -8986,9 +9132,9 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
     dataExportUploadToken: nextUploadToken,
     dataExportStatus: normalizedStatus,
     dataExportMessage: truncate_text(message, 4000),
-    dataExportBytes: safeBytes,
-    dataExportSha256: truncate_text(sha256.trim().toLowerCase(), 64),
-    dataExportChunkCount: safeChunkCount,
+    dataExportBytes: nextBytes,
+    dataExportSha256: nextSha256,
+    dataExportChunkCount: nextChunkCount,
     updatedAt: now_iso()
   });
   if (updatedCount == 0) {
@@ -9382,6 +9528,8 @@ function reset_all_agent_saved_state(): int {
     dataExportBytes: 0,
     dataExportSha256: '',
     dataExportChunkCount: 0,
+    dataExportSourceRequestId: null,
+    dataExportSourceClientName: null,
     updatedAt: now_iso()
   });
 }

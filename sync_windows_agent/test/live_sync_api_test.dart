@@ -627,6 +627,8 @@ void main() {
                     'baselineVersion': 5754,
                     'uploadUrl': 'https://sync.velvet-leaf.com/private-export',
                     'uploadToken': '0123456789abcdef0123456789abcdef',
+                    'sourceRequestId': 'source-export-1',
+                    'sourceClientName': 'velvet factory',
                     'status': 'requested',
                   },
                 },
@@ -682,6 +684,8 @@ void main() {
       expect(heartbeat.dataExport.mode, 'change_tracking_delta');
       expect(heartbeat.dataExport.baselineVersion, 5754);
       expect(heartbeat.dataExport.uploadToken, hasLength(32));
+      expect(heartbeat.dataExport.sourceRequestId, 'source-export-1');
+      expect(heartbeat.dataExport.sourceClientName, 'velvet factory');
 
       final acknowledged = await api.acknowledgeDataExport(
         clientName: 'c1',

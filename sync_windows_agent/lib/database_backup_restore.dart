@@ -103,6 +103,61 @@ SELECT state_desc FROM sys.databases WHERE name = N'$databaseLiteral';
 ''';
 }
 
+String buildReplaceDatabaseFromBackupSql({
+  required String database,
+  required String backupPath,
+  required String dataDirectory,
+  required String logDirectory,
+  required List<RestoreFileEntry> files,
+}) {
+  if (files.isEmpty) {
+    throw ArgumentError.value(files, 'files', 'must not be empty');
+  }
+  final escapedDatabase = database.replaceAll(']', ']]');
+  final databaseLiteral = database.replaceAll("'", "''");
+  final backupLiteral = backupPath.replaceAll("'", "''");
+  final stem = safeDatabaseFileStem(database);
+  var dataIndex = 0;
+  var logIndex = 0;
+  final moves = <String>[];
+  for (final file in files) {
+    final isLog = file.type == 'L';
+    final directory = isLog ? logDirectory : dataDirectory;
+    final separator =
+        directory.endsWith('\\') || directory.endsWith('/') ? '' : '\\';
+    final fileName =
+        isLog
+            ? '${stem}_recovery_log${++logIndex}.ldf'
+            : dataIndex++ == 0
+            ? '${stem}_recovery.mdf'
+            : '${stem}_recovery_data$dataIndex.ndf';
+    final targetPath = '$directory$separator$fileName'.replaceAll("'", "''");
+    final logicalName = file.logicalName.replaceAll("'", "''");
+    moves.add("MOVE N'$logicalName' TO N'$targetPath'");
+  }
+  return '''
+SET NOCOUNT ON;
+IF DB_ID(N'$databaseLiteral') IS NULL
+  THROW 51002, 'The replacement target database does not exist.', 1;
+ALTER DATABASE [$escapedDatabase] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+RESTORE DATABASE [$escapedDatabase]
+FROM DISK = N'$backupLiteral'
+WITH REPLACE, ${moves.join(',\n     ')}, CHECKSUM, RECOVERY, STATS = 5;
+ALTER DATABASE [$escapedDatabase] SET MULTI_USER;
+SELECT state_desc FROM sys.databases WHERE name = N'$databaseLiteral';
+''';
+}
+
+String buildReturnDatabaseToMultiUserSql(String database) {
+  final escapedDatabase = database.replaceAll(']', ']]');
+  final databaseLiteral = database.replaceAll("'", "''");
+  return '''
+SET NOCOUNT ON;
+IF DB_ID(N'$databaseLiteral') IS NOT NULL
+  ALTER DATABASE [$escapedDatabase] SET MULTI_USER WITH ROLLBACK IMMEDIATE;
+''';
+}
+
 int? parseSqlServerPercentComplete(String output) {
   for (final line in const LineSplitter().convert(output)) {
     final value = double.tryParse(line.trim().replaceFirst('\u{feff}', ''));

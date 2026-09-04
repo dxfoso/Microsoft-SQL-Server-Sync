@@ -390,6 +390,7 @@ def assert_full_database_backup_restore():
     source = DATABASES[0]
     restored = "SyncClientBackupRestoreRegression"
     backup_path = "/var/opt/mssql/data/sync_client_backup_restore_regression.bak"
+    rollback_path = "/var/opt/mssql/data/sync_client_backup_restore_rollback.bak"
     data_path = f"/var/opt/mssql/data/{restored}.mdf"
     log_path = f"/var/opt/mssql/data/{restored}_log.ldf"
     try:
@@ -400,6 +401,13 @@ BEGIN
   ALTER DATABASE [{restored}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
   DROP DATABASE [{restored}];
 END;
+CREATE DATABASE [{restored}];
+EXEC(N'CREATE TABLE [{restored}].dbo.TargetOnly (Id int NOT NULL PRIMARY KEY, Marker nvarchar(32) NOT NULL);');
+EXEC(N'INSERT INTO [{restored}].dbo.TargetOnly (Id, Marker) VALUES (1, N''pre-restore-target'');');
+BACKUP DATABASE [{restored}]
+TO DISK = N'{rollback_path}'
+WITH COPY_ONLY, INIT, CHECKSUM, STATS = 5;
+RESTORE VERIFYONLY FROM DISK = N'{rollback_path}' WITH CHECKSUM;
 BACKUP DATABASE [{source}]
 TO DISK = N'{backup_path}'
 WITH COPY_ONLY, INIT, CHECKSUM, STATS = 5;
@@ -408,7 +416,7 @@ RESTORE DATABASE [{restored}]
 FROM DISK = N'{backup_path}'
 WITH MOVE N'{source}' TO N'{data_path}',
      MOVE N'{source}_log' TO N'{log_path}',
-     CHECKSUM, RECOVERY, STATS = 5;
+     REPLACE, CHECKSUM, RECOVERY, STATS = 5;
 """
         )
         result = sqlcmd(
@@ -416,6 +424,8 @@ WITH MOVE N'{source}' TO N'{data_path}',
 SET NOCOUNT ON;
 IF DB_ID(N'{restored}') IS NULL OR DATABASEPROPERTYEX(N'{restored}', N'Status') <> N'ONLINE'
   THROW 51000, 'Restored database is not online.', 1;
+IF OBJECT_ID(N'[{restored}].dbo.TargetOnly', N'U') IS NOT NULL
+  THROW 51002, 'Target-only pre-restore data survived the replacement.', 1;
 DECLARE @sourceRows int = (SELECT COUNT(*) FROM [{source}].dbo.SyncItems);
 DECLARE @restoredRows int = (SELECT COUNT(*) FROM [{restored}].dbo.SyncItems);
 DECLARE @sourceTables int = (SELECT COUNT(*) FROM [{source}].sys.tables WHERE is_ms_shipped = 0);
@@ -442,7 +452,7 @@ END;
         )
         if DOCKER is not None:
             run(
-                COMPOSE + ["exec", "-T", "sql", "rm", "-f", backup_path],
+                COMPOSE + ["exec", "-T", "sql", "rm", "-f", backup_path, rollback_path],
                 check=False,
             )
 
@@ -2354,7 +2364,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
     print(json.dumps({
         "ok": True,
         "clients": len(DATABASES),
-        "scenarios": (["full-database-copy-only-backup-verified-restore-as-new"] if include_database_backup_restore else []) + [
+        "scenarios": (["full-database-copy-only-backup-verified-target-replacement-with-rollback"] if include_database_backup_restore else []) + [
             "insert", "update", "primary-key-change", "delete",
             "explicit-delete-of-missing-key-is-idempotent", "empty-delta", "newest-commit-conflict",
             "exact-unicode-arabic-emoji-cjk", "null-binary-decimal-datetime",

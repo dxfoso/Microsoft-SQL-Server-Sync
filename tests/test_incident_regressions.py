@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 453)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 462)}
         observed_ids = set()
 
         for row in rows:
@@ -243,6 +243,41 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("isolated schema was not inspected", schema_helper)
         self.assertIn("Isolated schema query failed; output is not evidence", schema_helper)
         self.assertNotIn("Write-Host $MSSQL_SA_PASSWORD", schema_helper)
+        self.assertNotIn('-s "|"', schema_helper)
+
+    def test_alameen_numbering_stays_fail_closed_until_cross_table_rules_are_proven(self):
+        backend = read_text("business/control_plane.tru")
+        audit = read_text("docs/alameen-numbering-schema-audit-2026-09-04.md")
+        progress = read_text("progress.md")
+
+        self.assertIn("localTable != 'ce000'", backend)
+        self.assertIn("`bu000` | `GUID` | `TypeGUID, Number, Branch`", audit)
+        self.assertIn("`mt000` | `GUID` | None", audit)
+        self.assertIn("`er000` stores both `ParentGUID` and `ParentNumber`", audit)
+        self.assertIn("Do not enroll `bu000` until the INC-403", audit)
+        self.assertIn("Do not enroll `mt000` until a controlled two-copy", audit)
+        self.assertIn("Number allocator readiness", progress)
+        self.assertIn("Blocked - `bu000` needs atomic graph rewrite", progress)
+
+    def test_unattended_database_replacement_requires_guarded_recovery_protocol(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        api = read_text("sync_windows_agent/lib/live_sync_api.dart")
+        backend = read_text("business/control_plane.tru")
+        orchestrator = read_text("scripts/clone_live_client_database.ps1")
+        progress = read_text("progress.md")
+
+        self.assertIn("Restore as a new database", agent)
+        self.assertIn("The live selected database will not be replaced", agent)
+        self.assertIn("buildRestoreAsNewDatabaseSql(", agent)
+        self.assertIn("RemoteAgentDataExport", api)
+        self.assertNotIn("RemoteAgentDatabaseRestore", api)
+        self.assertIn("_runRequestedFullDatabaseRestore", agent)
+        self.assertIn("buildReplaceDatabaseFromBackupSql", agent)
+        self.assertIn("function agent_database_clone_request", backend)
+        self.assertIn("target.syncEnabled != false", backend)
+        self.assertIn("SourceClient", orchestrator)
+        self.assertIn("TargetClient", orchestrator)
+        self.assertIn("leaves synchronization disabled", progress)
 
     def test_sync_credentials_are_hashed_and_source_bootstrap_is_removed(self):
         source = read_text("business/control_plane.tru")

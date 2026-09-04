@@ -4952,6 +4952,504 @@ SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
     }
   }
 
+  Future<List<int>> _downloadPrivateExportArtifact({
+    required Uri uri,
+    required String token,
+    required DataExportCancellation cancellation,
+  }) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= 5; attempt += 1) {
+      cancellation.throwIfCancelled();
+      final client = createResilientDartHttpClient();
+      try {
+        final request = await cancellation.race(client.getUrl(uri));
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+        final response = await cancellation.race(
+          request.close().timeout(const Duration(minutes: 5)),
+        );
+        if (response.statusCode != HttpStatus.ok) {
+          final detail = await cancellation.race(
+            utf8.decoder.bind(response).join(),
+          );
+          throw StateError(
+            'Private backup download returned HTTP ${response.statusCode}: $detail',
+          );
+        }
+        final bytes = BytesBuilder(copy: false);
+        await for (final block in response) {
+          cancellation.throwIfCancelled();
+          bytes.add(block);
+          if (bytes.length > kPrivateExportArtifactBytes) {
+            throw StateError('Private backup chunk exceeded its safe size.');
+          }
+        }
+        return bytes.takeBytes();
+      } catch (error) {
+        if (error is DataExportSupersededException) rethrow;
+        lastError = error;
+      } finally {
+        client.close(force: true);
+      }
+      if (attempt < 5) {
+        await cancellation.race(
+          Future<void>.delayed(Duration(seconds: attempt * 2)),
+        );
+      }
+    }
+    throw StateError(
+      'Private backup download failed after retries: $lastError',
+    );
+  }
+
+  void _resetSelectedDatabaseSyncBaselinesAfterReplacement(String database) {
+    final normalizedDatabase = database.trim().toLowerCase();
+    final tables = _syncState.tables.map((key, state) {
+      final tableDatabase = _databaseNameFromSyncKey(key).trim().toLowerCase();
+      if (tableDatabase.isNotEmpty && tableDatabase != normalizedDatabase) {
+        return MapEntry(key, state);
+      }
+      return MapEntry(
+        key,
+        state.copyWith(
+          status: 'Paused',
+          progress: 0,
+          savedRowCount: null,
+          tableChecksum: '',
+          rangeFingerprint: '',
+          changeTrackingVersion: null,
+          changeTrackingOwner: null,
+          changeTrackingStatus: 'unknown',
+          changeTrackingMessage:
+              'Database was replaced from a verified backup; a deliberate bootstrap is required.',
+          localChangesPending: false,
+          message:
+              'Database replacement completed while synchronization was disabled.',
+        ),
+      );
+    });
+    _replaceSyncState(
+      _syncState.copyWith(
+        tables: tables,
+        syncEpoch: '',
+        fingerprintRefreshCursor: 0,
+        fingerprintAudit: const <String, dynamic>{},
+      ),
+    );
+  }
+
+  Future<void> _recoverDatabaseFromRollback({
+    required _SqlConnectionProfile profile,
+    required String database,
+    required File rollbackBackup,
+    required String dataDirectory,
+    required String logDirectory,
+  }) async {
+    final rollbackLiteral = _escapeSqlLiteral(rollbackBackup.path);
+    final fileListResult = await _runSqlCmd(
+      profile: profile,
+      database: 'master',
+      query: "RESTORE FILELISTONLY FROM DISK = N'$rollbackLiteral';",
+      timeout: const Duration(minutes: 10),
+      suppressHeaders: true,
+    );
+    if (fileListResult == null || fileListResult.exitCode != 0) {
+      throw StateError(
+        fileListResult == null
+            ? _sqlCmdUnavailableMessage(profile)
+            : _sqlCmdFailed('rollback file inventory', fileListResult),
+      );
+    }
+    final rollbackSql = buildReplaceDatabaseFromBackupSql(
+      database: database,
+      backupPath: rollbackBackup.path,
+      dataDirectory: dataDirectory,
+      logDirectory: logDirectory,
+      files: parseRestoreFileList(fileListResult.stdout.toString()),
+    );
+    final rollbackResult = await _runSqlCmd(
+      profile: profile,
+      database: 'master',
+      query: rollbackSql,
+      timeout: const Duration(hours: 4),
+    );
+    if (rollbackResult == null || rollbackResult.exitCode != 0) {
+      throw StateError(
+        rollbackResult == null
+            ? _sqlCmdUnavailableMessage(profile)
+            : _sqlCmdFailed('automatic rollback restore', rollbackResult),
+      );
+    }
+    final rollbackIntegrity = await _runSqlCmd(
+      profile: profile,
+      database: 'master',
+      query:
+          'DBCC CHECKDB (${_quoteIdentifier(database)}) WITH NO_INFOMSGS, ALL_ERRORMSGS;',
+      timeout: const Duration(hours: 2),
+    );
+    if (rollbackIntegrity == null || rollbackIntegrity.exitCode != 0) {
+      throw StateError(
+        rollbackIntegrity == null
+            ? _sqlCmdUnavailableMessage(profile)
+            : _sqlCmdFailed(
+              'automatic rollback integrity check',
+              rollbackIntegrity,
+            ),
+      );
+    }
+  }
+
+  Future<void> _runRequestedFullDatabaseRestore(
+    RemoteAgentDataExport request,
+    DataExportCancellation cancellation,
+  ) async {
+    final database = request.database?.trim() ?? '';
+    final baseUrl = request.uploadUrl?.trim() ?? '';
+    final token = request.uploadToken?.trim() ?? '';
+    final sourceRequestId = request.sourceRequestId?.trim() ?? '';
+    final sourceClientName = request.sourceClientName?.trim() ?? '';
+    if (database.isEmpty ||
+        baseUrl != 'https://sync.velvet-leaf.com/private-export' ||
+        token.length < 32 ||
+        sourceRequestId.isEmpty ||
+        sourceClientName.isEmpty ||
+        request.bytes <= 0 ||
+        request.sha256.length != 64 ||
+        request.chunkCount <= 0) {
+      throw StateError('The database restore request is incomplete.');
+    }
+    if ((_selectedDatabase ?? '').trim().toLowerCase() !=
+        database.toLowerCase()) {
+      throw StateError('Restore target does not match the selected database.');
+    }
+    if (_activeJobs.any((job) => job.isActive) ||
+        _processingJobIds.isNotEmpty ||
+        _processingPendingJobsBusy) {
+      throw StateError(
+        'Database restore requires zero active synchronization jobs.',
+      );
+    }
+
+    final sourceClientKey = base64Url
+        .encode(utf8.encode(sourceClientName))
+        .replaceAll('=', '');
+    final root = Uri.parse(baseUrl.endsWith('/') ? baseUrl : '$baseUrl/');
+    final artifactRoot = root.resolve('$sourceRequestId/$sourceClientKey/');
+    await _acknowledgeDataExport(
+      request,
+      status: 'running',
+      message: 'Validating the source backup manifest.',
+    );
+    _setDatabaseFileOperation(
+      operation: 'Restore',
+      database: database,
+      stage: 'Validating source backup manifest',
+      progress: 2,
+      busy: true,
+    );
+    final manifestBytes = await _downloadPrivateExportArtifact(
+      uri: artifactRoot.resolve('manifest.json'),
+      token: token,
+      cancellation: cancellation,
+    );
+    final manifest = jsonDecode(utf8.decode(manifestBytes));
+    if (manifest is! Map ||
+        manifest['requestId']?.toString() != sourceRequestId ||
+        manifest['clientName']?.toString() != sourceClientKey ||
+        manifest['database']?.toString().toLowerCase() !=
+            database.toLowerCase() ||
+        manifest['format']?.toString() != 'sql-server-copy-only-backup' ||
+        (manifest['bytes'] as num?)?.toInt() != request.bytes ||
+        (manifest['chunkCount'] as num?)?.toInt() != request.chunkCount ||
+        manifest['sha256']?.toString().toLowerCase() !=
+            request.sha256.toLowerCase()) {
+      throw StateError(
+        'The source backup manifest does not match the restore command.',
+      );
+    }
+
+    final sharedDirectory = await _prepareSharedDataExportDirectory();
+    if (sharedDirectory == null) {
+      throw StateError(
+        'Unable to prepare a folder shared with the SQL Server service account.',
+      );
+    }
+    final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final stagingBackup = File(
+      path.join(
+        sharedDirectory.path,
+        'restore_${safeDatabaseFileStem(database)}_$stamp.bak',
+      ),
+    );
+    final rollbackBackup = File(
+      path.join(
+        sharedDirectory.path,
+        'rollback_${safeDatabaseFileStem(database)}_$stamp.bak',
+      ),
+    );
+    RandomAccessFile? output;
+    try {
+      output = await stagingBackup.open(mode: FileMode.write);
+      var downloaded = 0;
+      for (var index = 0; index < request.chunkCount; index += 1) {
+        cancellation.throwIfCancelled();
+        final artifact = '${index.toString().padLeft(8, '0')}.part';
+        final bytes = await _downloadPrivateExportArtifact(
+          uri: artifactRoot.resolve(artifact),
+          token: token,
+          cancellation: cancellation,
+        );
+        if (bytes.isEmpty || downloaded + bytes.length > request.bytes) {
+          throw StateError('The source backup chunk sequence is invalid.');
+        }
+        await output.writeFrom(bytes);
+        downloaded += bytes.length;
+        if (index % 16 == 0 || index + 1 == request.chunkCount) {
+          final percent = ((downloaded * 35) ~/ request.bytes).clamp(0, 35);
+          _setDatabaseFileOperation(
+            operation: 'Restore',
+            database: database,
+            stage: 'Downloading verified backup chunks',
+            progress: 5 + percent,
+            busy: true,
+          );
+          await _acknowledgeDataExport(
+            request,
+            status: 'running',
+            message: 'Downloaded $downloaded of ${request.bytes} backup bytes.',
+            bytes: downloaded,
+            chunkCount: index + 1,
+          );
+        }
+      }
+      await output.close();
+      output = null;
+      if (downloaded != request.bytes) {
+        throw StateError(
+          'The assembled backup length does not match its manifest.',
+        );
+      }
+      final downloadedHash =
+          (await sha256.bind(stagingBackup.openRead()).first).toString();
+      if (downloadedHash.toLowerCase() != request.sha256.toLowerCase()) {
+        throw StateError(
+          'The assembled backup checksum does not match its manifest.',
+        );
+      }
+
+      final profile = _activeProfile();
+      final rollbackLiteral = _escapeSqlLiteral(rollbackBackup.path);
+      Future<ProcessResult?> createRollback({required bool compression}) {
+        return _runSqlCmd(
+          profile: profile,
+          database: 'master',
+          query: '''
+BACKUP DATABASE ${_quoteIdentifier(database)}
+TO DISK = N'$rollbackLiteral'
+WITH COPY_ONLY, INIT, ${compression ? 'COMPRESSION, ' : ''}CHECKSUM, STATS = 5;
+RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
+''',
+          timeout: const Duration(hours: 4),
+        );
+      }
+
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: database,
+        stage: 'Creating verified rollback backup',
+        progress: 42,
+        busy: true,
+      );
+      var rollbackResult = await createRollback(compression: true);
+      if (rollbackResult != null &&
+          shouldRetryBackupWithoutCompression(
+            exitCode: rollbackResult.exitCode,
+            stdout: rollbackResult.stdout.toString(),
+            stderr: rollbackResult.stderr.toString(),
+          )) {
+        rollbackResult = await createRollback(compression: false);
+      }
+      if (rollbackResult == null || rollbackResult.exitCode != 0) {
+        throw StateError(
+          rollbackResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('rollback backup', rollbackResult),
+        );
+      }
+
+      final sourceLiteral = _escapeSqlLiteral(stagingBackup.path);
+      final verifyResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query:
+            "RESTORE VERIFYONLY FROM DISK = N'$sourceLiteral' WITH CHECKSUM;",
+        timeout: const Duration(hours: 1),
+      );
+      if (verifyResult == null || verifyResult.exitCode != 0) {
+        throw StateError(
+          verifyResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('source backup verification', verifyResult),
+        );
+      }
+      final fileListResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query: "RESTORE FILELISTONLY FROM DISK = N'$sourceLiteral';",
+        timeout: const Duration(minutes: 10),
+        suppressHeaders: true,
+      );
+      if (fileListResult == null || fileListResult.exitCode != 0) {
+        throw StateError(
+          fileListResult == null
+              ? _sqlCmdUnavailableMessage(profile)
+              : _sqlCmdFailed('source backup file inventory', fileListResult),
+        );
+      }
+      final files = parseRestoreFileList(fileListResult.stdout.toString());
+      final pathsResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query: r'''
+SET NOCOUNT ON;
+SELECT CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultDataPath')),
+       CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultLogPath'));
+''',
+        suppressHeaders: true,
+      );
+      final pathRows =
+          pathsResult == null
+              ? const <List<String>>[]
+              : _dataOutputLines(pathsResult.stdout.toString())
+                  .map(_splitRowValues)
+                  .where((row) => row.length >= 2)
+                  .toList(growable: false);
+      if (pathsResult == null ||
+          pathsResult.exitCode != 0 ||
+          pathRows.isEmpty ||
+          pathRows.first[0].isEmpty ||
+          pathRows.first[1].isEmpty) {
+        throw StateError('SQL Server did not report data and log directories.');
+      }
+      final restoreSql = buildReplaceDatabaseFromBackupSql(
+        database: database,
+        backupPath: stagingBackup.path,
+        dataDirectory: pathRows.first[0],
+        logDirectory: pathRows.first[1],
+        files: files,
+      );
+      ProcessResult? restoreResult;
+      try {
+        restoreResult = await _runDatabaseSqlWithProgress(
+          operation: 'Restore',
+          database: database,
+          stage: 'Replacing database from verified backup',
+          sqlCommand: 'RESTORE DATABASE',
+          startProgress: 55,
+          endProgress: 90,
+          run:
+              () => _runSqlCmd(
+                profile: profile,
+                database: 'master',
+                query: restoreSql,
+                timeout: const Duration(hours: 4),
+              ),
+        );
+      } finally {
+        if (restoreResult == null || restoreResult.exitCode != 0) {
+          await _runSqlCmd(
+            profile: profile,
+            database: 'master',
+            query: buildReturnDatabaseToMultiUserSql(database),
+            timeout: const Duration(minutes: 5),
+          );
+        }
+      }
+      if (restoreResult == null || restoreResult.exitCode != 0) {
+        final replacementFailure =
+            restoreResult == null
+                ? _sqlCmdUnavailableMessage(profile)
+                : _sqlCmdFailed('database replacement', restoreResult);
+        try {
+          await _recoverDatabaseFromRollback(
+            profile: profile,
+            database: database,
+            rollbackBackup: rollbackBackup,
+            dataDirectory: pathRows.first[0],
+            logDirectory: pathRows.first[1],
+          );
+        } catch (rollbackError) {
+          throw StateError(
+            '$replacementFailure Automatic rollback also failed: $rollbackError',
+          );
+        }
+        throw StateError(
+          '$replacementFailure The original target database was restored automatically and passed DBCC CHECKDB.',
+        );
+      }
+      final integrityResult = await _runSqlCmd(
+        profile: profile,
+        database: 'master',
+        query:
+            'DBCC CHECKDB (${_quoteIdentifier(database)}) WITH NO_INFOMSGS, ALL_ERRORMSGS;',
+        timeout: const Duration(hours: 2),
+      );
+      if (integrityResult == null || integrityResult.exitCode != 0) {
+        final integrityFailure =
+            integrityResult == null
+                ? _sqlCmdUnavailableMessage(profile)
+                : _sqlCmdFailed(
+                  'restored database integrity check',
+                  integrityResult,
+                );
+        try {
+          await _recoverDatabaseFromRollback(
+            profile: profile,
+            database: database,
+            rollbackBackup: rollbackBackup,
+            dataDirectory: pathRows.first[0],
+            logDirectory: pathRows.first[1],
+          );
+        } catch (rollbackError) {
+          throw StateError(
+            '$integrityFailure Automatic rollback also failed: $rollbackError',
+          );
+        }
+        throw StateError(
+          '$integrityFailure The original target database was restored automatically and passed DBCC CHECKDB.',
+        );
+      }
+      _resetSelectedDatabaseSyncBaselinesAfterReplacement(database);
+      await _loadDatabases(
+        profile: profile,
+        loadTables: true,
+        preserveSelection: true,
+      );
+      await _acknowledgeDataExport(
+        request,
+        status: 'completed',
+        message:
+            'Database replacement and DBCC CHECKDB completed. Rollback backup: ${rollbackBackup.path}',
+        bytes: request.bytes,
+        sha256: request.sha256,
+        chunkCount: request.chunkCount,
+      );
+      _setDatabaseFileOperation(
+        operation: 'Restore',
+        database: database,
+        stage: 'Replacement completed and integrity verified',
+        progress: 100,
+        busy: false,
+      );
+    } finally {
+      if (output != null) await output.close();
+      if (await stagingBackup.exists()) {
+        try {
+          await stagingBackup.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
   Future<void> _runRequestedDataExport(
     RemoteAgentDataExport request,
     DataExportCancellation cancellation,
@@ -4960,6 +5458,10 @@ SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
     final database = request.database?.trim() ?? '';
     final uploadBaseUrl = request.uploadUrl?.trim() ?? '';
     final uploadToken = request.uploadToken?.trim() ?? '';
+    if (request.mode == 'full_restore') {
+      await _runRequestedFullDatabaseRestore(request, cancellation);
+      return;
+    }
     if (requestId.isEmpty ||
         database.isEmpty ||
         uploadBaseUrl != 'https://sync.velvet-leaf.com/private-export' ||

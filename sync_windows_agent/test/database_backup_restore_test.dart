@@ -65,6 +65,32 @@ AmnDb048_log|D:\\Data\\AmnDb048_log.ldf|L|NULL
     expect(sql, contains('CHECKSUM, RECOVERY, STATS = 5'));
   });
 
+  test(
+    'remote replacement SQL is explicit, checksum verified, and recoverable',
+    () {
+      final sql = buildReplaceDatabaseFromBackupSql(
+        database: 'AmnDb048',
+        backupPath: r'C:\Shared\source.bak',
+        dataDirectory: r'D:\SQLData',
+        logDirectory: r'E:\SQLLogs',
+        files: const <RestoreFileEntry>[
+          RestoreFileEntry(logicalName: 'AmnDb048', type: 'D'),
+          RestoreFileEntry(logicalName: 'AmnDb048_log', type: 'L'),
+        ],
+      );
+      expect(sql, contains("IF DB_ID(N'AmnDb048') IS NULL"));
+      expect(sql, contains('SET SINGLE_USER WITH ROLLBACK IMMEDIATE'));
+      expect(sql, contains('RESTORE DATABASE [AmnDb048]'));
+      expect(sql, contains('WITH REPLACE'));
+      expect(sql, contains('CHECKSUM, RECOVERY, STATS = 5'));
+      expect(sql, contains('SET MULTI_USER'));
+
+      final recovery = buildReturnDatabaseToMultiUserSql('AmnDb048');
+      expect(recovery, contains("IF DB_ID(N'AmnDb048') IS NOT NULL"));
+      expect(recovery, contains('SET MULTI_USER WITH ROLLBACK IMMEDIATE'));
+    },
+  );
+
   test('parses bounded SQL Server operation progress', () {
     expect(parseSqlServerPercentComplete('\u{feff} 42.75\r\n'), 43);
     expect(parseSqlServerPercentComplete('101'), isNull);

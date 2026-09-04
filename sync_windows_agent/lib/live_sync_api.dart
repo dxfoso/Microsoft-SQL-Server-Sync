@@ -2251,6 +2251,8 @@ class RemoteAgentDataExport {
     this.bytes = 0,
     this.sha256 = '',
     this.chunkCount = 0,
+    this.sourceRequestId,
+    this.sourceClientName,
   });
 
   final bool pending;
@@ -2269,6 +2271,8 @@ class RemoteAgentDataExport {
   final int bytes;
   final String sha256;
   final int chunkCount;
+  final String? sourceRequestId;
+  final String? sourceClientName;
 
   factory RemoteAgentDataExport.fromJson(Map<String, dynamic> json) {
     String? optionalString(Object? value) => value?.toString();
@@ -2299,6 +2303,8 @@ class RemoteAgentDataExport {
       bytes: integerValue(json['bytes']),
       sha256: optionalString(json['sha256']) ?? '',
       chunkCount: integerValue(json['chunkCount']),
+      sourceRequestId: optionalString(json['sourceRequestId']),
+      sourceClientName: optionalString(json['sourceClientName']),
     );
   }
 }

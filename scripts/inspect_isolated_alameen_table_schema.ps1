@@ -39,7 +39,10 @@ ORDER BY i.index_id, ic.key_ordinal;
 "@
 
 $result = @($sql | & docker exec -i $Container bash -lc `
-    '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -d "$1" -W -s "|" -h -1' `
+    # Do not pass a pipe as sqlcmd's separator through bash -lc. PowerShell's
+    # native argument handling can expose it to the shell as a pipeline and
+    # prevent the catalog query from running at all.
+    '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -d "$1" -W -h -1' `
     -- $Database)
 if ($LASTEXITCODE -ne 0) { throw 'Isolated schema query failed; output is not evidence.' }
 [string]($result -join "`n")

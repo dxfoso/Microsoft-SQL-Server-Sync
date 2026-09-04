@@ -302,6 +302,7 @@ async function readBoundedBody(req, maxBytes) {
 async function tryStorePrivateExport(pathname, req, res) {
   if (!pathname.startsWith("/private-export/")) return false;
   if (req.method !== "PUT") {
+    if (req.method === "GET" || req.method === "HEAD") return false;
     sendJson(res, 405, { error: "method not allowed" });
     return true;
   }
@@ -370,6 +371,69 @@ async function tryStorePrivateExport(pathname, req, res) {
   return true;
 }
 
+async function tryServePrivateExport(pathname, req, res) {
+  if (!pathname.startsWith("/private-export/")) return false;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    sendJson(res, 405, { error: "method not allowed" });
+    return true;
+  }
+  if (!authorizedPrivateExport(req)) {
+    sendJson(res, 401, { error: "private export authorization failed" });
+    return true;
+  }
+  const segments = pathname.substring("/private-export/".length).split("/");
+  if (segments.length !== 3) {
+    sendJson(res, 400, { error: "invalid private export path" });
+    return true;
+  }
+  const requestId = privateExportName(segments[0]);
+  const clientName = privateExportName(segments[1]);
+  const artifactName = privateExportName(segments[2]);
+  if (
+    !requestId ||
+    !clientName ||
+    !artifactName ||
+    (artifactName !== "manifest.json" && !/^\d{8}\.part$/.test(artifactName))
+  ) {
+    sendJson(res, 400, { error: "invalid private export artifact" });
+    return true;
+  }
+  const artifactPath = resolveSafePath(
+    PRIVATE_EXPORTS_DIR,
+    `${requestId}/${clientName}/${artifactName}`,
+  );
+  if (!artifactPath) {
+    sendJson(res, 403, { error: "forbidden" });
+    return true;
+  }
+  try {
+    const stat = await fs.stat(artifactPath);
+    if (!stat.isFile() || stat.size > MAX_PRIVATE_EXPORT_BODY_BYTES) {
+      sendJson(res, 404, { error: "private export artifact not found" });
+      return true;
+    }
+    const headers = {
+      "Content-Type":
+        artifactName === "manifest.json"
+          ? "application/json; charset=utf-8"
+          : "application/octet-stream",
+      "Content-Length": stat.size,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    };
+    res.writeHead(200, headers);
+    if (req.method === "HEAD") {
+      res.end();
+      return true;
+    }
+    const body = await fs.readFile(artifactPath);
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: "private export artifact not found" });
+  }
+  return true;
+}
+
 async function tryServeStatic(pathname, res) {
   const requestedPath =
     pathname === "/" ? "/index.html" : decodeURIComponent(pathname);
@@ -415,6 +479,10 @@ async function handleRequest(req, res) {
   const pathname = url.pathname;
 
   if (await tryStorePrivateExport(pathname, req, res)) {
+    return;
+  }
+
+  if (await tryServePrivateExport(pathname, req, res)) {
     return;
   }
 
