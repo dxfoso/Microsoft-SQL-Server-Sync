@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 439)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 440)}
         observed_ids = set()
 
         for row in rows:
@@ -146,6 +146,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertEqual(rotation.count("Invoke-RestMethod -Method Get -Uri $BootstrapUri"), 1)
         self.assertIn("$CloudEnvPath = Join-Path $PSScriptRoot '..\\.cloud.env'", rotation)
+        self.assertIn("$bootstrap.kubernetes.PSObject.Properties['namespaceName']", rotation)
         self.assertIn("--password-stdin", rotation)
         self.assertIn('"https://$registryHost/v2/"', rotation)
         self.assertIn("[int]$v2.StatusCode -ne 200", rotation)

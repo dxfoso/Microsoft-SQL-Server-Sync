@@ -38,8 +38,12 @@ $registryUser = [string]$bootstrap.registry.username
 $registryPassword = [string]$bootstrap.registry.password
 $imageRepository = [string]$bootstrap.registry.imageRepository
 $pullSecretName = [string]$bootstrap.registry.imagePullSecretName
-$namespace = [string]$bootstrap.kubernetes.namespace
-if ([string]::IsNullOrWhiteSpace($namespace)) {
+$namespace = ''
+if ($null -ne $bootstrap.kubernetes.PSObject.Properties['namespace']) {
+    $namespace = [string]$bootstrap.kubernetes.namespace
+}
+if ([string]::IsNullOrWhiteSpace($namespace) -and
+    $null -ne $bootstrap.kubernetes.PSObject.Properties['namespaceName']) {
     $namespace = [string]$bootstrap.kubernetes.namespaceName
 }
 $kubeconfigText = [string]$bootstrap.kubernetes.kubeconfig
