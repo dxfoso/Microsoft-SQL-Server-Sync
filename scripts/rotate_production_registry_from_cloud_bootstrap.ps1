@@ -118,12 +118,20 @@ try {
     $oldUser = ''
     $oldPassword = ''
     if ($null -ne $oldAuthProperty) {
-        $oldUser = [string]$oldAuthProperty.Value.username
-        $oldPassword = [string]$oldAuthProperty.Value.password
+        if ($null -ne $oldAuthProperty.Value.PSObject.Properties['username']) {
+            $oldUser = [string]$oldAuthProperty.Value.username
+        }
+        if ($null -ne $oldAuthProperty.Value.PSObject.Properties['password']) {
+            $oldPassword = [string]$oldAuthProperty.Value.password
+        }
+        $oldAuthValue = ''
+        if ($null -ne $oldAuthProperty.Value.PSObject.Properties['auth']) {
+            $oldAuthValue = [string]$oldAuthProperty.Value.auth
+        }
         if ([string]::IsNullOrWhiteSpace($oldUser) -and
-            -not [string]::IsNullOrWhiteSpace([string]$oldAuthProperty.Value.auth)) {
+            -not [string]::IsNullOrWhiteSpace($oldAuthValue)) {
             $pair = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(
-                [string]$oldAuthProperty.Value.auth)) -split ':', 2
+                $oldAuthValue)) -split ':', 2
             $oldUser = $pair[0]
             $oldPassword = $pair[1]
         }
