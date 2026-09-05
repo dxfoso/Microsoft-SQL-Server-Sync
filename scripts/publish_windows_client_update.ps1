@@ -490,6 +490,7 @@ New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
 
 $commit = Get-GitCommit
 $releaseDate = [DateTime]::UtcNow.ToString('o')
+$releaseNonce = [DateTime]::UtcNow.Ticks
 $safeVersion = $version -replace '[^A-Za-z0-9._-]', '-'
 $zipName = "sync_windows_agent-$safeVersion-$commit.zip"
 $versionedZip = Join-Path -Path $OutputDir -ChildPath $zipName
@@ -557,7 +558,7 @@ $manifest = [ordered]@{
     # WebClient on older deployed agents may cache a transient 404. Keep the
     # immutable path and add a release-bound query so a republished pointer
     # cannot reuse a negative cache entry for the same package.
-    filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json?release=$commit"
+    filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json?release=$commit-$releaseNonce"
     zipUrl = "$publicRoot/$zipName"
     updateScriptUrl = "$publicRoot/packages/$packageDirName/bootstrap.ps1"
     sha256 = $zipHash

@@ -1816,7 +1816,7 @@ class SyncContractsTests(unittest.TestCase):
         server = read_text("frontend/server.js")
 
         self.assertIn(
-            'filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json?release=$commit"',
+            'filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json?release=$commit-$releaseNonce"',
             publisher,
         )
         self.assertIn("Immutable file manifest identity does not match", updater)

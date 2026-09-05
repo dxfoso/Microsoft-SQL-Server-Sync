@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 480)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 482)}
 
         observed_ids = set()
 
@@ -90,7 +90,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("function Assert-PublicClientUpdateReady", publisher)
         self.assertIn("-ExpectedVersion $version", publisher)
         self.assertIn("-ExpectedCommit $commit", publisher)
-        self.assertIn("files.json?release=$commit", publisher)
+        self.assertIn("files.json?release=$commit-$releaseNonce", publisher)
 
     def test_client_update_metadata_bypasses_windows_and_http_caches(self):
         updater = read_text("update.ps1")
