@@ -111,4 +111,16 @@ AmnDb048_log|D:\\Data\\AmnDb048_log.ldf|L|NULL
     expect(parseSqlServerPercentComplete('101'), isNull);
     expect(parseSqlServerPercentComplete(''), isNull);
   });
+
+  test('legacy SQL Server storage lookup falls back to target physical files', () {
+    final sql = buildDatabaseStorageDirectoriesSql("AmnDb'048");
+    expect(sql, contains("SERVERPROPERTY('InstanceDefaultDataPath')"));
+    expect(sql, contains("SERVERPROPERTY('InstanceDefaultLogPath')"));
+    expect(sql, contains("database_id = DB_ID(N'AmnDb''048') AND type = 0"));
+    expect(sql, contains("database_id = DB_ID(N'AmnDb''048') AND type = 1"));
+    expect(sql, contains('master.sys.master_files'));
+    expect(sql, contains("CHARINDEX(N'\\', REVERSE(physical_name))"));
+    expect(sql, contains("CHARINDEX(N'/', REVERSE(physical_name))"));
+    expect(sql, isNot(contains('THROW')));
+  });
 }

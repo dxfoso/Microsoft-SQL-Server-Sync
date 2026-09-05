@@ -5309,11 +5309,7 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
       final pathsResult = await _runSqlCmd(
         profile: profile,
         database: 'master',
-        query: r'''
-SET NOCOUNT ON;
-SELECT CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultDataPath')),
-       CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultLogPath'));
-''',
+        query: buildDatabaseStorageDirectoriesSql(database),
         suppressHeaders: true,
       );
       final pathRows =
@@ -5327,7 +5323,9 @@ SELECT CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultDataPath')),
           pathsResult.exitCode != 0 ||
           pathRows.isEmpty ||
           pathRows.first[0].isEmpty ||
-          pathRows.first[1].isEmpty) {
+          pathRows.first[1].isEmpty ||
+          pathRows.first[0].trim().toUpperCase() == 'NULL' ||
+          pathRows.first[1].trim().toUpperCase() == 'NULL') {
         throw StateError('SQL Server did not report data and log directories.');
       }
       final restoreSql = buildReplaceDatabaseFromBackupSql(

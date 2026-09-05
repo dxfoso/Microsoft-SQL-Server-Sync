@@ -164,6 +164,40 @@ IF DB_ID(N'$databaseLiteral') IS NOT NULL
 ''';
 }
 
+String buildDatabaseStorageDirectoriesSql(String database) {
+  final databaseLiteral = database.replaceAll("'", "''");
+  return '''
+SET NOCOUNT ON;
+DECLARE @data nvarchar(4000) = CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultDataPath'));
+DECLARE @logs nvarchar(4000) = CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultLogPath'));
+IF NULLIF(@data, N'') IS NULL
+  SELECT TOP (1) @data =
+    CASE
+      WHEN CHARINDEX(N'\\', REVERSE(physical_name)) > 0 THEN
+        LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'\\', REVERSE(physical_name)) + 1)
+      WHEN CHARINDEX(N'/', REVERSE(physical_name)) > 0 THEN
+        LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'/', REVERSE(physical_name)) + 1)
+      ELSE NULL
+    END
+  FROM master.sys.master_files
+  WHERE database_id = DB_ID(N'$databaseLiteral') AND type = 0
+  ORDER BY file_id;
+IF NULLIF(@logs, N'') IS NULL
+  SELECT TOP (1) @logs =
+    CASE
+      WHEN CHARINDEX(N'\\', REVERSE(physical_name)) > 0 THEN
+        LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'\\', REVERSE(physical_name)) + 1)
+      WHEN CHARINDEX(N'/', REVERSE(physical_name)) > 0 THEN
+        LEFT(physical_name, LEN(physical_name) - CHARINDEX(N'/', REVERSE(physical_name)) + 1)
+      ELSE NULL
+    END
+  FROM master.sys.master_files
+  WHERE database_id = DB_ID(N'$databaseLiteral') AND type = 1
+  ORDER BY file_id;
+SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
+''';
+}
+
 int? parseSqlServerPercentComplete(String output) {
   for (final line in const LineSplitter().convert(output)) {
     final value = double.tryParse(line.trim().replaceFirst('\u{feff}', ''));
