@@ -2,7 +2,7 @@
 
 ## Automatic Al-Ameen synchronization (2026-09-05)
 
-Overall: **70% complete - the isolated two-copy lab provisioner and transaction row-image audit are implemented and passed the complete SQL-version matrix; deployment and application observations remain**
+Overall: **80% complete - the isolated two-copy lab is deployed, integrity-checked, and ready; only the controlled Al-Ameen application observations and resulting collision proof remain**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -15,11 +15,11 @@ Overall: **70% complete - the isolated two-copy lab provisioner and transaction 
 | Provision identical isolated databases without replacing either live database | Implemented with fixed `_SyncLab` naming, disabled-client/zero-job guards, immutable source manifest, bounded chunks, SHA-256, restore-as-new, and DBCC CHECKDB | 100% |
 | Capture intermediate Al-Ameen row images by SQL transaction | Implemented in the isolated database with Change Tracking-versioned inserted/deleted XML for the mapped accounting, stock, and material tables | 100% |
 | Verify lab provisioning and audit across supported SQL versions | Done: All profile passed 12/12 stages in 1,264 seconds, including SQL Server 2017, 2019, and 2022 | 100% |
-| Deploy server/client `1.0.321+325` and provision both lab copies | In progress | 70% |
+| Deploy server/client `1.0.321+325` and provision both lab copies | Done on exact commit `d4bfe871a5dd485c2efba6580ef4eb9c2140cfab`; both lab restores passed SHA-256 verification and DBCC CHECKDB | 100% |
 | Run three-client collision/concurrency/recovery gates and publish | Waiting on the two evidence blockers above | 0% |
 | Enable production synchronization for these workflows | Stopped; `alshallan2` remains disabled | 0% |
 
-Current evidence boundary: the earlier delta cannot reconstruct the transient values after version `5769`, so production synchronization remains disabled. Release `1.0.321+325` adds the isolated evidence path needed to remove that blocker: two identical restore-as-new databases plus transaction-versioned row images. Both active clients are synchronization-disabled and have zero jobs while the release is prepared.
+Current evidence boundary: the earlier delta cannot reconstruct the transient values after version `5769`, so production synchronization remains disabled. Release `1.0.321+325` is deployed and current on `alshallan2` and `velvet factory`. Both machines now contain the restore-as-new database `AmnDb048_SyncLab`, created from the same 34,963,456-byte Velvet Factory backup (134 chunks; SHA-256 `05b660b47563fbf089e5f181736a3567f1feadb55cab7f76787b9368c1f7613a`), with the transaction-versioned row-image audit installed and DBCC CHECKDB completed. Both clients remain synchronization-disabled; Velvet Home remains disabled/offline and ignored. The next step requires the user only to select `AmnDb048_SyncLab` in Al-Ameen and the sync client on both PCs before the controlled two-copy application test begins.
 
 ## Current operation summary (2026-09-05)
 
