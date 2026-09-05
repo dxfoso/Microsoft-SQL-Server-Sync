@@ -242,6 +242,7 @@ async function tryServeClientUpdate(pathname, req, res) {
       };
       if (contentRange) headers["Content-Range"] = contentRange;
       if (
+        requestedPath === "latest.json" ||
         requestedPath === "update.ps1" ||
         requestedPath === "latest-files.json" ||
         requestedPath === "sync_windows_agent_latest.zip" ||

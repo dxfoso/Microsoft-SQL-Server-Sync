@@ -1673,6 +1673,11 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("class SqlSyncAgentUpdateWebClient : WebClient", update_script)
         self.assertIn("ConnectTimeoutMilliseconds = 45000", update_script)
         self.assertIn("ReadWriteTimeoutMilliseconds = 300000", update_script)
+        self.assertIn("using System.Net.Cache;", update_script)
+        self.assertIn(
+            "RequestCachePolicy(RequestCacheLevel.NoCacheNoStore)",
+            update_script,
+        )
         self.assertIn("failed after 3 bounded attempts", update_script)
         self.assertLess(
             update_script.index("$updateMutex = [System.Threading.Mutex]::new"),
@@ -1811,7 +1816,7 @@ class SyncContractsTests(unittest.TestCase):
         server = read_text("frontend/server.js")
 
         self.assertIn(
-            'filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json"',
+            'filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json?release=$commit"',
             publisher,
         )
         self.assertIn("Immutable file manifest identity does not match", updater)

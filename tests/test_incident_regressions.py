@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 477)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 480)}
 
         observed_ids = set()
 
@@ -91,6 +91,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("-ExpectedVersion $version", publisher)
         self.assertIn("-ExpectedCommit $commit", publisher)
         self.assertIn("files.json?release=$commit", publisher)
+
+    def test_client_update_metadata_bypasses_windows_and_http_caches(self):
+        updater = read_text("update.ps1")
+        server = read_text("frontend/server.js")
+
+        self.assertIn("using System.Net.Cache;", updater)
+        self.assertIn(
+            "RequestCachePolicy(RequestCacheLevel.NoCacheNoStore)", updater
+        )
+        no_store_block = server[server.index('if (\n        requestedPath === "latest.json"'):]
+        self.assertIn('headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"', no_store_block)
 
     def test_alameen_lab_progress_records_exact_identity_and_discovery_blocker(self):
         progress = read_text("progress.md")

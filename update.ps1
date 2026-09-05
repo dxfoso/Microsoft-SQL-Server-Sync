@@ -126,6 +126,7 @@ if (-not ('SqlSyncAgentUpdateWebClient' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Net;
+using System.Net.Cache;
 
 public sealed class SqlSyncAgentUpdateWebClient : WebClient
 {
@@ -146,6 +147,7 @@ public sealed class SqlSyncAgentUpdateWebClient : WebClient
         if (httpRequest != null)
         {
             httpRequest.ReadWriteTimeout = ReadWriteTimeoutMilliseconds;
+            httpRequest.CachePolicy = new RequestCachePolicy(RequestCacheLevel.NoCacheNoStore);
         }
         return request;
     }
