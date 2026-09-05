@@ -72,15 +72,45 @@ try {
 
     New-Item -ItemType Directory -Path $dockerConfig -Force | Out-Null
     $env:DOCKER_CONFIG = $dockerConfig
-    $password | & docker login $RegistryHost --username $username --password-stdin
+    $password | & docker --config $dockerConfig login $RegistryHost --username $username --password-stdin
     if ($LASTEXITCODE -ne 0) {
         throw 'Registry authentication failed with the exact namespace pull Secret credential.'
     }
     & (Join-Path $PSScriptRoot 'build_production_images.ps1') `
         -SshAlias $SshAlias `
-        -Namespace $Namespace
+        -Namespace $Namespace `
+        -SkipPush
     if ($LASTEXITCODE -ne 0) {
         throw "Production image build failed with exit code $LASTEXITCODE."
+    }
+
+    # Registry bearer credentials may expire while the two release images are
+    # compiling. Authenticate again immediately before upload and pass the
+    # isolated config explicitly so a child process cannot fall back to the
+    # workstation's default Docker credential store.
+    $password | & docker --config $dockerConfig login $RegistryHost --username $username --password-stdin
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Registry re-authentication failed immediately before image upload.'
+    }
+    foreach ($component in @('backend', 'frontend')) {
+        $image = "$RegistryHost/microsoft-sql-server-sync/${component}:$Commit"
+        $uploaded = $false
+        for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+            & docker --config $dockerConfig push $image
+            if ($LASTEXITCODE -eq 0) {
+                & docker --config $dockerConfig manifest inspect $image *> $null
+                if ($LASTEXITCODE -eq 0) {
+                    $uploaded = $true
+                    break
+                }
+            }
+            if ($attempt -lt 3) {
+                Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
+            }
+        }
+        if (-not $uploaded) {
+            throw "Immutable production image upload failed after 3 attempts: $image"
+        }
     }
 }
 finally {

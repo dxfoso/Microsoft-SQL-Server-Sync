@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 508)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 509)}
 
         observed_ids = set()
 
@@ -54,6 +54,10 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("build_production_images.ps1", build_wrapper)
         self.assertIn("[ValidatePattern('^[0-9a-f]{40}$')]", build_wrapper)
         self.assertIn("$headCommit -ne $Commit", build_wrapper)
+        self.assertIn("-SkipPush", build_wrapper)
+        self.assertGreaterEqual(build_wrapper.count("docker --config $dockerConfig login"), 2)
+        self.assertIn("docker --config $dockerConfig push $image", build_wrapper)
+        self.assertIn("docker --config $dockerConfig manifest inspect $image", build_wrapper)
         self.assertIn("deploy_production_images.ps1", deploy_wrapper)
         self.assertIn("[ValidatePattern('^[0-9a-f]{40}$')]", deploy_wrapper)
 
