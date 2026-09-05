@@ -152,6 +152,8 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("35 operations", observation)
         self.assertIn("7,700 + 54,000 = 61,700", observation)
         self.assertIn("complete-Sales-graph validator", observation)
+        self.assertIn("cannot reconstruct the transient row values", progress)
+        self.assertIn("could accept an intermediate accounting graph", progress)
         self.assertIn("version `5770`", progress)
         self.assertIn("zero changed rows/tables", progress)
         self.assertIn("first click is pre-commit validation", progress)
@@ -323,6 +325,9 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("`er000` stores both `ParentGUID` and `ParentNumber`", audit)
         self.assertIn("Do not enroll `bu000` until the INC-403", audit)
         self.assertIn("Do not enroll `mt000` until a controlled two-copy", audit)
+        self.assertIn("Implementation feasibility review (2026-09-05)", audit)
+        self.assertIn("does not retain the intermediate row images", audit)
+        self.assertIn("same-number material experiment in two isolated copies", audit)
         self.assertIn("Number allocator readiness", progress)
         self.assertIn("Blocked - `bu000` needs atomic graph rewrite", progress)
 

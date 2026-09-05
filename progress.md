@@ -1,5 +1,22 @@
 # Progress
 
+## Automatic Al-Ameen synchronization (2026-09-05)
+
+Overall: **60% complete - the generic sync engine and `ce000` voucher allocator are implemented, but automatic Sales/Purchase graph sync and material numbering are blocked by missing Al-Ameen business evidence**
+
+| Step | Status | Progress |
+|---|---|---:|
+| Map Sales, Purchase, voucher, ledger, stock, account, material, and barcode changes | Done from checksummed bounded Change Tracking observations | 100% |
+| Normalize SQL numeric values before row fingerprinting | Done, regression-tested, and released | 100% |
+| Resolve `ce000(Type, Number, Branch)` collisions automatically | Done with durable server reservations and retry coverage | 100% |
+| Prove a complete Sales/Purchase save boundary | Blocked: one real Sales save used versions `5769` and `5770`, and no vendor completion marker or captured intermediate row image proves which database invariant rejects phase one | 40% |
+| Renumber `bu000` Sales/Purchase graphs atomically | Blocked until the completion boundary and every duplicated number reference are proven | 30% |
+| Resolve `mt000.Number` collisions automatically | Blocked: SQL Server does not enforce uniqueness and Al-Ameen behavior with two same-number materials has not been observed in two isolated application copies | 20% |
+| Run three-client collision/concurrency/recovery gates and publish | Waiting on the two evidence blockers above | 0% |
+| Enable production synchronization for these workflows | Stopped; `alshallan2` remains disabled | 0% |
+
+Stop reason: the available delta records the final two-version result but cannot reconstruct the transient row values after version `5769`. A validator written from the final state alone could accept an intermediate accounting graph without proof. The official SyrianSoft public site exposes product, download, and support pages but no public database transaction marker, schema contract, or numbering API was found. Completing this safely requires either vendor documentation/support that identifies the save boundary, or a controlled two-copy Al-Ameen experiment that captures the intermediate Sales/Purchase graph and same-number material behavior. This is the existing INC-403 / INC-454 safety boundary; no production sync rule was weakened or guessed.
+
 ## Current operation summary (2026-09-05)
 
 Overall: **100% complete - self-refreshing client release is installed on both eligible clients and the guarded clone completed with verified restore, DBCC CHECKDB, and correct terminal status**

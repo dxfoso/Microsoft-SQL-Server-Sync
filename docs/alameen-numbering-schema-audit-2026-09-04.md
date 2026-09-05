@@ -31,3 +31,11 @@ Material dependents observed so far (`bi000`, `ms000`, `cp000`, and `MatExBarcod
 ## Exact next external evidence required
 
 Using two isolated database copies made from the same backup, create one new material independently in each copy so Al-Ameen assigns the same local number. Before any synchronization, inspect both final rows and reopen/search both materials in Al-Ameen. This determines whether duplicate visible numbers are rejected, silently ambiguous, or supported. Repeat the same-number Sales and Purchase creation only after the complete-document collector exists; those operations must not be tested through active production clients.
+
+## Implementation feasibility review (2026-09-05)
+
+The retained bounded delta proves the final Sales state across versions 5769 and 5770, but SQL Server Change Tracking does not retain the intermediate row images that existed after version 5769. Consequently, the final-state evidence cannot prove a validator that always rejects phase one of the multi-commit save. Implementing such a validator now would encode an assumption about accounting data.
+
+The official SyrianSoft public site was checked for an Al-Ameen 8.1 database transaction marker, schema contract, synchronization interface, or numbering API. Its public product, download, contact, and technical-support entry points do not publish that contract. Vendor support may still provide private documentation, but none is available in this repository or on the public vendor site.
+
+The safe next evidence remains unchanged: capture both phases of the known two-commit Sales workflow from an isolated Al-Ameen application/database copy, and run the same-number material experiment in two isolated copies. Until one of those experiments or a vendor contract supplies the missing invariant, `bu000` and `mt000` stay outside automatic-number allocation and production synchronization stays disabled for these workflows.
