@@ -5963,6 +5963,12 @@ ORDER BY s.name, t.name;
       profile: profile,
       database: database,
     );
+    if (baselineVersion > upperVersion) {
+      throw StateError(
+        'The delta baseline $baselineVersion is newer than the current '
+        'Change Tracking version $upperVersion. No partial delta was uploaded.',
+      );
+    }
     final tableBaselines = <String, int?>{
       for (final table in trackedTables) table: baselineVersion,
     };

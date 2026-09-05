@@ -3004,6 +3004,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
             delta.index("final upperVersion = await _queryDatabaseChangeTrackingVersion"),
             delta.index("buildAutomaticChangeDiscoveryQuery"),
         )
+        self.assertIn("if (baselineVersion > upperVersion)", delta)
+        self.assertIn("is newer than the current", delta)
+        self.assertLess(
+            delta.index("if (baselineVersion > upperVersion)"),
+            delta.index("buildAutomaticChangeDiscoveryQuery"),
+        )
         self.assertIn("baselineVersion < tracking.minValidVersion", delta)
         self.assertIn("snapshotVersion: upperVersion", delta)
         self.assertIn("endVersion != upperVersion", delta)

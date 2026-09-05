@@ -2,7 +2,7 @@
 
 ## Automatic Al-Ameen synchronization (2026-09-05)
 
-Overall: **80% complete - the isolated two-copy lab is deployed, integrity-checked, and ready; only the controlled Al-Ameen application observations and resulting collision proof remain**
+Overall: **80% complete - the isolated two-copy lab is deployed and integrity-checked; a future-baseline safety defect discovered during baseline sealing is being fixed before controlled application observations begin**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -19,7 +19,9 @@ Overall: **80% complete - the isolated two-copy lab is deployed, integrity-check
 | Run three-client collision/concurrency/recovery gates and publish | Waiting on the two evidence blockers above | 0% |
 | Enable production synchronization for these workflows | Stopped; `alshallan2` remains disabled | 0% |
 
-Current evidence boundary: the earlier delta cannot reconstruct the transient values after version `5769`, so production synchronization remains disabled. Release `1.0.321+325` is deployed and current on `alshallan2` and `velvet factory`. Both machines now contain the restore-as-new database `AmnDb048_SyncLab`, created from the same 34,963,456-byte Velvet Factory backup (134 chunks; SHA-256 `05b660b47563fbf089e5f181736a3567f1feadb55cab7f76787b9368c1f7613a`), with the transaction-versioned row-image audit installed and DBCC CHECKDB completed. Both clients remain synchronization-disabled; Velvet Home remains disabled/offline and ignored. The next step requires the user only to select `AmnDb048_SyncLab` in Al-Ameen and the sync client on both PCs before the controlled two-copy application test begins.
+Current evidence boundary: the earlier delta cannot reconstruct the transient row values after version `5769`, so a generic reader could accept an intermediate accounting graph and production synchronization remains disabled. Release `1.0.321+325` is deployed and current on `alshallan2` and `velvet factory`. Both machines now contain the restore-as-new database `AmnDb048_SyncLab`, created from the same 34,963,456-byte Velvet Factory backup (134 chunks; SHA-256 `05b660b47563fbf089e5f181736a3567f1feadb55cab7f76787b9368c1f7613a`), with the transaction-versioned row-image audit installed and DBCC CHECKDB completed. Both clients remain synchronization-disabled; Velvet Home remains disabled/offline and ignored. The next step requires the user only to select `AmnDb048_SyncLab` in Al-Ameen and the sync client on both PCs before the controlled two-copy application test begins.
+
+Baseline safety checkpoint: both selected lab databases independently reported current Change Tracking version `4492` and zero changes after opening Al-Ameen. The initial observation request used historical alshallan2 baseline `5803`; INC-504 records that the exporter incorrectly accepted this future baseline as an empty delta. No rows were modified and no sync job ran. Client `1.0.322+326` adds the required fail-closed comparison, and the exact `4492` baseline will be resealed only after that corrected release is installed.
 
 ## Current operation summary (2026-09-05)
 
