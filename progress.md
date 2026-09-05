@@ -1,5 +1,21 @@
 # Progress
 
+## Current operation summary (2026-09-05)
+
+Overall: **96% complete - stopped at an external Windows-client bootstrap blocker; no database action is running**
+
+| Step | Status | Progress |
+|---|---|---:|
+| Implement reusable chunked full-database backup/upload/download/restore with checksum, DBCC, rollback, and target binding | Done, tested, and deployed | 100% |
+| Copy Velvet Factory `AmnDb048` over test target `alshallan2` | Data replacement completed; 435 mutually reported physical table fingerprints have zero row-count/checksum differences | 100% data / 94% terminal workflow |
+| Fix terminal acknowledgement race and optional post-restore refresh ordering | Done in client `1.0.318+322`; complete All gate passed | 100% |
+| Fix Windows negative caching of mutable update metadata | Done in client `1.0.319+323` and frontend commit `bcb0efe9332e2eb7beb3f2692ba597825833cfd3`; Docker and Standard gates passed | 100% |
+| Deploy server and publish Windows release | Done; exact immutable backend/frontend images are ready, public health is Ready with zero compile errors, UI is HTTP 200, and the live manifest/dependency return HTTP 200 with no-store/unique publication metadata | 100% |
+| Update eligible live clients | Blocked on the already-installed old Windows updaters: Velvet Factory remains `1.0.318+322`; `alshallan2` remains `1.0.317+321` and has not acknowledged a new update request since 02:08 UTC despite healthy heartbeats | 50% |
+| Run one final clean artifact-reuse clone for a successful terminal status | Not started because the target does not yet run the terminal-ack fix; starting it would only repeat the already-verified restore with misleading status | 0% |
+
+Blocker: the fixed `NoCacheNoStore` updater is published, but code in a new package cannot change the old updater process before that package installs. The available control-plane protocol has no authenticated sync-agent restart or arbitrary OS-command action, and this environment has no RustDesk/desktop-control channel. One OS-level bootstrap on each old PC (manually run the published updater or replace/run its local `update.ps1`) is required; after `alshallan2` reports `1.0.319+323`, the retained 34,963,456-byte / 134-chunk Velvet Factory backup can be reused for the final clean clone without re-uploading it. Until then, `alshallan2` remains online, SQL-connected, idle, and synchronization-disabled; Velvet Home remains ignored while disabled.
+
 Security remediation: **operationally complete - production healthy; Cloud credential lifecycle remains Cloud-owned**
 
 | Security/recovery step | Status | Progress |

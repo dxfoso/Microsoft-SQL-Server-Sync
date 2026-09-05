@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 482)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 484)}
 
         observed_ids = set()
 
@@ -102,6 +102,9 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         )
         no_store_block = server[server.index('if (\n        requestedPath === "latest.json"'):]
         self.assertIn('headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"', no_store_block)
+        progress = read_text("progress.md")
+        self.assertIn("code in a new package cannot change the old updater process", progress)
+        self.assertIn("synchronization-disabled", progress)
 
     def test_alameen_lab_progress_records_exact_identity_and_discovery_blocker(self):
         progress = read_text("progress.md")
