@@ -2,7 +2,7 @@
 
 ## Automatic Al-Ameen synchronization (2026-09-05)
 
-Overall: **80% complete - the isolated two-copy lab is deployed and integrity-checked; a future-baseline safety defect discovered during baseline sealing is being fixed before controlled application observations begin**
+Overall: **82% complete - the isolated two-copy lab is deployed, integrity-checked, updated, and sealed at an exact zero-change baseline; it is ready for the controlled same-number application observations**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -15,13 +15,13 @@ Overall: **80% complete - the isolated two-copy lab is deployed and integrity-ch
 | Provision identical isolated databases without replacing either live database | Implemented with fixed `_SyncLab` naming, disabled-client/zero-job guards, immutable source manifest, bounded chunks, SHA-256, restore-as-new, and DBCC CHECKDB | 100% |
 | Capture intermediate Al-Ameen row images by SQL transaction | Implemented in the isolated database with Change Tracking-versioned inserted/deleted XML for the mapped accounting, stock, and material tables | 100% |
 | Verify lab provisioning and audit across supported SQL versions | Done: All profile passed 12/12 stages in 1,264 seconds, including SQL Server 2017, 2019, and 2022 | 100% |
-| Deploy server/client `1.0.321+325` and provision both lab copies | Done on exact commit `d4bfe871a5dd485c2efba6580ef4eb9c2140cfab`; both lab restores passed SHA-256 verification and DBCC CHECKDB | 100% |
+| Deploy corrected server/client `1.0.322+326` and provision both lab copies | Done: server commit `280f64adb9de883a205e61fe81aa0970e748947c` is stable with zero compile errors; both clients are current and both lab restores passed SHA-256 verification and DBCC CHECKDB | 100% |
 | Run three-client collision/concurrency/recovery gates and publish | Waiting on the two evidence blockers above | 0% |
 | Enable production synchronization for these workflows | Stopped; `alshallan2` remains disabled | 0% |
 
-Current evidence boundary: the earlier delta cannot reconstruct the transient row values after version `5769`, so a generic reader could accept an intermediate accounting graph and production synchronization remains disabled. Release `1.0.321+325` is deployed and current on `alshallan2` and `velvet factory`. Both machines now contain the restore-as-new database `AmnDb048_SyncLab`, created from the same 34,963,456-byte Velvet Factory backup (134 chunks; SHA-256 `05b660b47563fbf089e5f181736a3567f1feadb55cab7f76787b9368c1f7613a`), with the transaction-versioned row-image audit installed and DBCC CHECKDB completed. Both clients remain synchronization-disabled; Velvet Home remains disabled/offline and ignored. The next step requires the user only to select `AmnDb048_SyncLab` in Al-Ameen and the sync client on both PCs before the controlled two-copy application test begins.
+Current evidence boundary: the earlier delta cannot reconstruct the transient row values after version `5769`, so a generic reader could accept an intermediate accounting graph and production synchronization remains disabled. Server commit `280f64adb9de883a205e61fe81aa0970e748947c` is deployed and stable; Windows client `1.0.322+326` is current on `alshallan2` and `velvet factory`. Both machines contain the restore-as-new database `AmnDb048_SyncLab`, created from the same 34,963,456-byte Velvet Factory backup (134 chunks; SHA-256 `05b660b47563fbf089e5f181736a3567f1feadb55cab7f76787b9368c1f7613a`), with the transaction-versioned row-image audit installed and DBCC CHECKDB completed. Both clients remain synchronization-disabled; Velvet Home remains disabled/offline and ignored. The two-copy lab is ready for the user's controlled same-number Sales and material actions.
 
-Baseline safety checkpoint: both selected lab databases independently reported current Change Tracking version `4492` and zero changes after opening Al-Ameen. The initial observation request used historical alshallan2 baseline `5803`; INC-504 records that the exporter incorrectly accepted this future baseline as an empty delta. No rows were modified and no sync job ran. Client `1.0.322+326` adds the required fail-closed comparison, and the exact `4492` baseline will be resealed only after that corrected release is installed.
+Baseline safety checkpoint: both selected lab databases independently reported current Change Tracking version `4492` and zero changes after opening Al-Ameen. The initial observation request used historical alshallan2 baseline `5803`; INC-504 records that the exporter incorrectly accepted this future baseline as an empty delta. No rows were modified and no sync job ran. Client `1.0.322+326` adds the required fail-closed comparison. After both clients installed it, independent bounded exports sealed `alshallan2` and `velvet factory` from `4492` through `4492` with zero operations, synchronization disabled, and zero active sync jobs. The next observation baseline is exactly `4492` on each isolated copy.
 
 ## Current operation summary (2026-09-05)
 
