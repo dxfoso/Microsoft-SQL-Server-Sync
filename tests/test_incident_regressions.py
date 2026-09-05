@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 509)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 510)}
 
         observed_ids = set()
 
@@ -86,6 +86,9 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertIn("RedirectStandardError", launcher)
         self.assertIn("'\"{0}\" \"{1}\" \"{2}\" --expect-commit \"{3}\"", launcher)
         self.assertIn("SQL_SYNC_ADMIN_PASSWORD", launcher)
+        self.assertIn("[Alias('ExpectedCommit')]", launcher)
+        self.assertIn("$ExpectedClientCommit.Substring(0, 12)", launcher)
+        self.assertIn("$ExpectedServerCommit, $WaitSeconds", launcher)
         self.assertIn("Remove-Variable adminPassword, adminUser, secret", launcher)
         self.assertNotIn("Write-Host $adminPassword", launcher)
         self.assertIn("$publicReady = $false", launcher)

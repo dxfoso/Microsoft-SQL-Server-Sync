@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string] $ClientName,
     [Parameter(Mandatory = $true)][string] $TargetVersion,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string] $ExpectedCommit,
+    [Parameter(Mandatory = $true)][Alias('ExpectedCommit')][ValidatePattern('^[0-9a-f]{40}$')][string] $ExpectedClientCommit,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string] $ExpectedServerCommit,
     [ValidateRange(30, 1800)][int] $WaitSeconds = 300,
     [string] $LogPrefix = 'client-update',
     [string] $SshAlias = 'velvet-leaf-1',
@@ -32,7 +33,7 @@ try {
     for ($attempt = 1; $attempt -le 6; $attempt += 1) {
         try {
             $manifest = Invoke-RestMethod -Uri 'https://sync.velvet-leaf.com/client/latest.json' -Method Get -TimeoutSec 30
-            if ([string]$manifest.version -ne $TargetVersion -or [string]$manifest.commit -ne $ExpectedCommit.Substring(0, 12)) {
+            if ([string]$manifest.version -ne $TargetVersion -or [string]$manifest.commit -ne $ExpectedClientCommit.Substring(0, 12)) {
                 throw 'The public client manifest does not identify the requested release.'
             }
             $filesResponse = Invoke-WebRequest -Uri ([string]$manifest.filesManifestUrl) -Method Get -UseBasicParsing -TimeoutSec 30
@@ -63,7 +64,7 @@ try {
     $env:SQL_SYNC_ADMIN_USERNAME = $adminUser
     $env:SQL_SYNC_ADMIN_PASSWORD = $adminPassword
     $arguments = '"{0}" "{1}" "{2}" --expect-commit "{3}" --wait-seconds {4}' -f `
-        $verifier, $ClientName, $TargetVersion, $ExpectedCommit, $WaitSeconds
+        $verifier, $ClientName, $TargetVersion, $ExpectedServerCommit, $WaitSeconds
     $process = Start-Process `
         -FilePath $python `
         -ArgumentList $arguments `
