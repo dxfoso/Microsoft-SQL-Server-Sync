@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 510)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 517)}
 
         observed_ids = set()
 
@@ -323,20 +323,29 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
     def test_alameen_numbering_stays_fail_closed_until_cross_table_rules_are_proven(self):
         backend = read_text("business/control_plane.tru")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
         audit = read_text("docs/alameen-numbering-schema-audit-2026-09-04.md")
+        collision = read_text("docs/alameen-two-client-number-collision-observation-2026-09-06.md")
         progress = read_text("progress.md")
 
         self.assertIn("localTable != 'ce000'", backend)
+        self.assertIn("localTable != 'bu000'", backend)
+        self.assertIn("? 'TypeGUID' : 'Type'", backend)
+        self.assertIn("SET relation.[ParentNumber] = header.[Number]", merge)
+        self.assertIn("SET source.[ParentNumber] = header.[Number]", merge)
         self.assertIn("`bu000` | `GUID` | `TypeGUID, Number, Branch`", audit)
         self.assertIn("`mt000` | `GUID` | None", audit)
         self.assertIn("`er000` stores both `ParentGUID` and `ParentNumber`", audit)
-        self.assertIn("Do not enroll `bu000` until the INC-403", audit)
+        self.assertIn("Enroll `bu000` in automatic number reservation", audit)
         self.assertIn("Do not enroll `mt000` until a controlled two-copy", audit)
         self.assertIn("Implementation feasibility review (2026-09-05)", audit)
         self.assertIn("does not retain the intermediate row images", audit)
         self.assertIn("same-number material experiment in two isolated copies", audit)
+        self.assertIn("`bu000.Number` | `1614` | `1614`", collision)
+        self.assertIn("`ce000.Number` | `2320` | `2320`", collision)
+        self.assertIn("Selecting one client as authoritative would therefore destroy a real", collision)
         self.assertIn("Number allocator readiness", progress)
-        self.assertIn("Blocked - `bu000` needs atomic graph rewrite", progress)
+        self.assertIn("`bu000` graph renumber implemented", progress)
 
     def test_unattended_database_replacement_requires_guarded_recovery_protocol(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")

@@ -3868,7 +3868,8 @@ function sync_source_is_complete_union_bootstrap(sourceClientName: string): bool
 function automatic_number_inventory_required(ownerUserId: string, table: string): bool {
   const reference = sync_table_reference(table);
   const localTable = string.from(reference.table).trim().toLowerCase();
-  if (localTable != 'ce000' && localTable != 'dbo.ce000') {
+  if (localTable != 'ce000' && localTable != 'dbo.ce000' &&
+      localTable != 'bu000' && localTable != 'dbo.bu000') {
     return false;
   }
   const rows = db.selectMany(AutoNumberSequence, {
@@ -6204,11 +6205,15 @@ function resolve_sync_column(columns: array<string>, requested: string): string 
 function automatic_number_rule(table: string, columns: array<string>, keyColumns: array<string>, uniqueKeyColumnSets: array<json>): map<json>? {
   const reference = sync_table_reference(table);
   const localTable = string.from(reference.table).trim().toLowerCase();
-  if (localTable != 'ce000' && localTable != 'dbo.ce000') {
+  if (localTable != 'ce000' && localTable != 'dbo.ce000' &&
+      localTable != 'bu000' && localTable != 'dbo.bu000') {
     return null;
   }
   const guidColumn = resolve_sync_column(columns, 'GUID');
-  const typeColumn = resolve_sync_column(columns, 'Type');
+  const typeColumn = resolve_sync_column(
+    columns,
+    (localTable == 'bu000' || localTable == 'dbo.bu000') ? 'TypeGUID' : 'Type'
+  );
   const numberColumn = resolve_sync_column(columns, 'Number');
   const branchColumn = resolve_sync_column(columns, 'Branch');
   if (guidColumn.length == 0 || typeColumn.length == 0 ||

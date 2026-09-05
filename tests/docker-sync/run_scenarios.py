@@ -47,6 +47,19 @@ INVOICE_LINE_COLUMNS = [
     {"name": "Quantity", "sqlType": "decimal", "maxLength": 9, "precision": 18, "scale": 2, "isIdentity": False, "isComputed": False},
     {"name": "ArabicText", "sqlType": "nvarchar", "maxLength": 400, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
 ]
+ALAMEEN_HEADER_COLUMNS = [
+    {"name": "GUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "TypeGUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "Number", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "Branch", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+]
+ALAMEEN_RELATION_COLUMNS = [
+    {"name": "GUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "EntryGUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "ParentGUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "ParentType", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
+    {"name": "ParentNumber", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
+]
 PARENT_COLUMNS = [
     {"name": "ParentId", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
     {"name": "ExternalCode", "sqlType": "nvarchar", "maxLength": 80, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
@@ -2227,6 +2240,85 @@ VALUES
         apply(database, rows=multi_writer_rows)
     assert_equal(*DATABASES)
 
+    # The two isolated Al-Ameen copies proved that distinct Sales GUIDs can
+    # independently receive the same bu000 number. The server keeps the first
+    # identity at 1614 and reserves 1615 for the second. er000.ParentNumber is
+    # redundant and must follow ParentGUID regardless of table-job order.
+    alameen_type = "E69CCB78-C70D-47E3-B9BC-D366381A9384"
+    zero_guid = "00000000-0000-0000-0000-000000000000"
+    header_1 = "81C33C4E-0430-4AF9-8A25-C71115FF1F7F"
+    header_2 = "7D14C2A2-2F20-4146-8C71-D89A532EFE30"
+    relation_1 = "D1D03A8A-0AAA-4418-BBA7-1E7B7E80EF28"
+    relation_2 = "ADC51C4E-F42A-44BE-8713-A86FDC9CDBE7"
+    entry_1 = "01C26F04-24CD-4751-B8AF-047017482D35"
+    entry_2 = "9F001306-B522-4317-8241-936961249F3A"
+    for database in DATABASES:
+        sqlcmd(
+            """
+CREATE TABLE dbo.bu000 (
+  GUID uniqueidentifier NOT NULL PRIMARY KEY,
+  TypeGUID uniqueidentifier NOT NULL,
+  Number int NOT NULL,
+  Branch uniqueidentifier NOT NULL,
+  CONSTRAINT UQ_bu000_Type_Number_Branch UNIQUE (TypeGUID, Number, Branch)
+);
+CREATE TABLE dbo.er000 (
+  GUID uniqueidentifier NOT NULL PRIMARY KEY,
+  EntryGUID uniqueidentifier NOT NULL,
+  ParentGUID uniqueidentifier NOT NULL,
+  ParentType int NOT NULL,
+  ParentNumber int NOT NULL
+);
+ALTER TABLE dbo.bu000 ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON);
+ALTER TABLE dbo.er000 ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON);
+""",
+            database=database,
+        )
+    sqlcmd(
+        f"INSERT dbo.bu000 VALUES ('{header_1}','{alameen_type}',1614,'{zero_guid}'); "
+        f"INSERT dbo.er000 VALUES ('{relation_1}','{entry_1}','{header_1}',2,1614);",
+        database=DATABASES[0],
+    )
+    sqlcmd(
+        f"INSERT dbo.bu000 VALUES ('{header_2}','{alameen_type}',1614,'{zero_guid}'); "
+        f"INSERT dbo.er000 VALUES ('{relation_2}','{entry_2}','{header_2}',2,1614);",
+        database=DATABASES[1],
+    )
+    canonical_headers = [
+        {"GUID": header_1, "TypeGUID": alameen_type, "Number": 1614, "Branch": zero_guid},
+        {"GUID": header_2, "TypeGUID": alameen_type, "Number": 1615, "Branch": zero_guid},
+    ]
+    stale_relations = [
+        {"GUID": relation_1, "EntryGUID": entry_1, "ParentGUID": header_1, "ParentType": 2, "ParentNumber": 1614},
+        {"GUID": relation_2, "EntryGUID": entry_2, "ParentGUID": header_2, "ParentType": 2, "ParentNumber": 1614},
+    ]
+    # Exercise relation-before-header, header-before-relation, and correction
+    # of the later writer's already-present local graph.
+    apply(DATABASES[0], table="er000", columns=ALAMEEN_RELATION_COLUMNS, primary_key_columns=["GUID"], rows=stale_relations)
+    apply(DATABASES[0], table="bu000", columns=ALAMEEN_HEADER_COLUMNS, primary_key_columns=["GUID"], unique_index_column_sets=[["TypeGUID", "Number", "Branch"]], rows=canonical_headers)
+    apply(DATABASES[1], table="bu000", columns=ALAMEEN_HEADER_COLUMNS, primary_key_columns=["GUID"], unique_index_column_sets=[["TypeGUID", "Number", "Branch"]], rows=canonical_headers)
+    apply(DATABASES[1], table="er000", columns=ALAMEEN_RELATION_COLUMNS, primary_key_columns=["GUID"], rows=stale_relations)
+    apply(DATABASES[2], table="bu000", columns=ALAMEEN_HEADER_COLUMNS, primary_key_columns=["GUID"], unique_index_column_sets=[["TypeGUID", "Number", "Branch"]], rows=canonical_headers)
+    apply(DATABASES[2], table="er000", columns=ALAMEEN_RELATION_COLUMNS, primary_key_columns=["GUID"], rows=stale_relations)
+    expected_graph = sorted(
+        [
+            f"{header_1.lower()}|1614|1614",
+            f"{header_2.lower()}|1615|1615",
+        ]
+    )
+    for database in DATABASES:
+        graph = sqlcmd(
+            "SELECT CONCAT(CONVERT(nvarchar(36), h.GUID), N'|', h.Number, N'|', r.ParentNumber) FROM dbo.bu000 h INNER JOIN dbo.er000 r ON r.ParentGUID=h.GUID ORDER BY h.Number;",
+            database=database,
+        ).stdout
+        rows = sorted(
+            line.strip().replace(" ", "").lower()
+            for line in graph.splitlines()
+            if "|" in line
+        )
+        if rows != expected_graph:
+            raise AssertionError(f"Al-Ameen header/relation renumber graph did not converge in {database}: {rows}")
+
     # Different permanent IDs that collide on a SQL unique/business key are
     # different documents, not versions of one row. The client must roll the
     # whole batch back until the server supplies a reserved replacement key.
@@ -2434,6 +2526,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "independent-multi-writer",
             "offline-peer-online-continuity-and-reconnect-catch-up",
             "business-key-collision-fails-closed-then-reserved-key-applies",
+            "alameen-bu000-collision-renumbers-er000-by-parent-guid",
             "invoice-line-primary-key-union-explicit-delete-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",
             "complete-reconcile-preserves-target-only-unicode-retry",

@@ -2940,6 +2940,8 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("agent_database_lab_restore_request", provision)
         self.assertIn("Synchronization must be disabled", provision)
         self.assertIn("AmnDb048_SyncLab", provision)
+        self.assertIn("alameenDescriptorReady = $false", provision)
+        self.assertIn("requires a separate SDF descriptor", provision)
         self.assertIn("-WindowStyle Hidden", launcher)
         self.assertNotIn("Write-Host $adminPassword", provision)
         self.assertNotIn("Write-Host $privateToken", provision)

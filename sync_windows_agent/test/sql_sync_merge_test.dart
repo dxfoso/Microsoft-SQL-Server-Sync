@@ -1034,4 +1034,108 @@ void main() {
     expect(sql, contains('post-upload user change'));
     expect(sql, isNot(contains('DELETE FROM [Db].[dbo].[Rows];')));
   });
+
+  test('Al-Ameen bu000 renumber rewrites er000 in the same transaction', () {
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'AmnDb048_SyncLab',
+      schema: 'dbo',
+      table: 'bu000',
+      stageTableName: 'stage_bu',
+      columns: const [
+        SqlSyncColumnDefinition(
+          name: 'GUID',
+          sqlType: 'uniqueidentifier',
+          maxLength: 16,
+          precision: 0,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+        SqlSyncColumnDefinition(
+          name: 'Number',
+          sqlType: 'int',
+          maxLength: 4,
+          precision: 10,
+          scale: 0,
+          isIdentity: false,
+          isComputed: false,
+        ),
+      ],
+      primaryKeyColumns: const ['GUID'],
+    );
+
+    expect(sql, contains('Al-Ameen header renumbering requires dbo.er000'));
+    expect(
+      sql,
+      contains(
+        'ALTER TABLE [AmnDb048_SyncLab].[dbo].[er000] DISABLE TRIGGER ALL',
+      ),
+    );
+    expect(sql, contains('SET relation.[ParentNumber] = header.[Number]'));
+    expect(sql, contains('source.[GUID] = relation.[ParentGUID]'));
+    expect(sql, contains('WITH CHANGE_TRACKING_CONTEXT (0x53514C53594E43)'));
+    expect(
+      sql.indexOf('SET relation.[ParentNumber] = header.[Number]'),
+      lessThan(sql.indexOf('COMMIT TRANSACTION;')),
+    );
+    expect(
+      sql,
+      contains(
+        'ALTER TABLE [AmnDb048_SyncLab].[dbo].[er000] ENABLE TRIGGER ALL',
+      ),
+    );
+  });
+
+  test(
+    'Al-Ameen er000 derives redundant number from permanent parent GUID',
+    () {
+      final sql = buildTargetSnapshotStageApplySql(
+        database: 'AmnDb048_SyncLab',
+        schema: 'dbo',
+        table: 'er000',
+        stageTableName: 'stage_er',
+        columns: const [
+          SqlSyncColumnDefinition(
+            name: 'GUID',
+            sqlType: 'uniqueidentifier',
+            maxLength: 16,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'ParentGUID',
+            sqlType: 'uniqueidentifier',
+            maxLength: 16,
+            precision: 0,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+          SqlSyncColumnDefinition(
+            name: 'ParentNumber',
+            sqlType: 'int',
+            maxLength: 4,
+            precision: 10,
+            scale: 0,
+            isIdentity: false,
+            isComputed: false,
+          ),
+        ],
+        primaryKeyColumns: const ['GUID'],
+      );
+
+      expect(
+        sql,
+        contains('Al-Ameen relation normalization requires dbo.bu000'),
+      );
+      expect(sql, contains('SET source.[ParentNumber] = header.[Number]'));
+      expect(sql, contains('header.[GUID] = source.[ParentGUID]'));
+      expect(
+        sql.indexOf('SET source.[ParentNumber] = header.[Number]'),
+        lessThan(sql.indexOf('UPDATE target')),
+      );
+    },
+  );
 }

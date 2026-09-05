@@ -21,6 +21,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("class AutoNumberReservation", source)
         self.assertIn("function automatic_number_rule(", source)
         self.assertIn("localTable != 'ce000'", source)
+        self.assertIn("localTable != 'bu000'", source)
+        self.assertIn("? 'TypeGUID' : 'Type'", source)
         self.assertIn("columnSet.length == 3", source)
         self.assertIn("columnSet[1]).trim().toLowerCase() == numberColumn", source)
         self.assertIn("completeMultiClientUnionBootstrap && ready", upload)

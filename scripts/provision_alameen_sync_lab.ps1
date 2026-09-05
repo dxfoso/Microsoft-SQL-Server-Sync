@@ -156,6 +156,8 @@ try {
         bytes = [long]$sourceExport.bytes
         sha256 = [string]$sourceExport.sha256
         chunkCount = [int]$sourceExport.chunkCount
+        alameenDescriptorReady = $false
+        alameenDescriptorAction = "Al-Ameen 8.1 requires a separate SDF descriptor that points to $LabDatabase; do not open or test the lab until that descriptor is created and the footer shows the lab database."
         clients = $results
         completedAtUtc = [DateTime]::UtcNow.ToString('o')
     }

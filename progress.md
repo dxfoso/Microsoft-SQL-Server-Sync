@@ -2,7 +2,7 @@
 
 ## Automatic Al-Ameen synchronization (2026-09-05)
 
-Overall: **82% complete - the isolated two-copy lab is deployed, integrity-checked, updated, and sealed at an exact zero-change baseline; it is ready for the controlled same-number application observations**
+Overall: **90% complete - the isolated two-copy Sales collision and GUID-preserving voucher/header graph renumber pass every required regression; release is in progress, while production activation still waits for the complete-document boundary and material-number experiment**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -10,18 +10,20 @@ Overall: **82% complete - the isolated two-copy lab is deployed, integrity-check
 | Normalize SQL numeric values before row fingerprinting | Done, regression-tested, and released | 100% |
 | Resolve `ce000(Type, Number, Branch)` collisions automatically | Done with durable server reservations and retry coverage | 100% |
 | Prove a complete Sales/Purchase save boundary | Blocked: one real Sales save used versions `5769` and `5770`, and no vendor completion marker or captured intermediate row image proves which database invariant rejects phase one | 40% |
-| Renumber `bu000` Sales/Purchase graphs atomically | Blocked until the completion boundary and every duplicated number reference are proven | 30% |
+| Renumber `bu000` Sales/Purchase graphs atomically | `bu000` graph renumber implemented: server reservation plus atomic `er000.ParentNumber` rewrite/derivation passed exact-GUID three-client, fault, retry, concurrency, scale, and soak coverage | 95% |
 | Resolve `mt000.Number` collisions automatically | Blocked: SQL Server does not enforce uniqueness and Al-Ameen behavior with two same-number materials has not been observed in two isolated application copies | 20% |
 | Provision identical isolated databases without replacing either live database | Implemented with fixed `_SyncLab` naming, disabled-client/zero-job guards, immutable source manifest, bounded chunks, SHA-256, restore-as-new, and DBCC CHECKDB | 100% |
 | Capture intermediate Al-Ameen row images by SQL transaction | Implemented in the isolated database with Change Tracking-versioned inserted/deleted XML for the mapped accounting, stock, and material tables | 100% |
 | Verify lab provisioning and audit across supported SQL versions | Done: All profile passed 12/12 stages in 1,264 seconds, including SQL Server 2017, 2019, and 2022 | 100% |
 | Deploy corrected server/client `1.0.322+326` and provision both lab copies | Done: server commit `280f64adb9de883a205e61fe81aa0970e748947c` is stable with zero compile errors; both clients are current and both lab restores passed SHA-256 verification and DBCC CHECKDB | 100% |
-| Run three-client collision/concurrency/recovery gates and publish | Waiting on the two evidence blockers above | 0% |
+| Run three-client collision/concurrency/recovery gates and publish | Docker gate passed all 33 scenarios; Standard passed 9/9 stages in 655 seconds; immutable server/client publication is in progress | 70% |
 | Enable production synchronization for these workflows | Stopped; `alshallan2` remains disabled | 0% |
 
 Current evidence boundary: the earlier delta cannot reconstruct the transient row values after version `5769`, so a generic reader could accept an intermediate accounting graph and production synchronization remains disabled. Server commit `280f64adb9de883a205e61fe81aa0970e748947c` is deployed and stable; Windows client `1.0.322+326` is current on `alshallan2` and `velvet factory`. Both machines contain the restore-as-new database `AmnDb048_SyncLab`, created from the same 34,963,456-byte Velvet Factory backup (134 chunks; SHA-256 `05b660b47563fbf089e5f181736a3567f1feadb55cab7f76787b9368c1f7613a`), with the transaction-versioned row-image audit installed and DBCC CHECKDB completed. Both clients remain synchronization-disabled; Velvet Home remains disabled/offline and ignored. The two-copy lab is ready for the user's controlled same-number Sales and material actions.
 
 Baseline safety checkpoint: both selected lab databases independently reported current Change Tracking version `4492` and zero changes after opening Al-Ameen. The initial observation request used historical alshallan2 baseline `5803`; INC-504 records that the exporter incorrectly accepted this future baseline as an empty delta. No rows were modified and no sync job ran. Client `1.0.322+326` adds the required fail-closed comparison. After both clients installed it, independent bounded exports sealed `alshallan2` and `velvet factory` from `4492` through `4492` with zero operations, synchronization disabled, and zero active sync jobs. The next observation baseline is exactly `4492` on each isolated copy.
+
+Two-copy collision checkpoint (2026-09-06): after separate Al-Ameen 8.1 SDF descriptors opened the isolated databases, both copies were sealed at exact zero-change version `4500`. One independently saved Sales invoice on each copy committed its complete simple graph at version `4501`. Both received Sales number `1614` and voucher number `2320`, but their permanent header/voucher GUIDs, materials, quantities, totals, and children differ. Selecting either client or latest-change-wins would lose a real sale. The retained deltas prove that `er000.ParentNumber` is the only duplicated header-number reference in the observed graph. Client `1.0.323+327` therefore preserves both GUID graphs, reserves the next owner-wide `bu000(TypeGUID, Number, Branch)` and `ce000(Type, Number, Branch)` numbers, rewrites existing `er000` references atomically with the header, and derives later relation rows from `ParentGUID`. The exact-GUID Docker rerun passed all 33 scenarios, and Standard passed 9/9 stages in 655 seconds including injected faults, committed-response loss, concurrency, fuzz, scale, and 17 soak iterations. Production sync remains disabled during release and because INC-403's general multi-commit completion boundary is still unresolved.
 
 ## Current operation summary (2026-09-05)
 

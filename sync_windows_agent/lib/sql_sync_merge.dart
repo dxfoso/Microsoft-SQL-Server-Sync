@@ -321,12 +321,76 @@ String buildTargetSnapshotStageApplySql({
             uniqueIndexColumnSets: uniqueIndexColumnSets,
           )
           : '';
+  final normalizedSchema = schema.trim().toLowerCase();
+  final normalizedTable = table.trim().toLowerCase();
+  final alameenRelationStageNormalization =
+      normalizedSchema == 'dbo' && normalizedTable == 'er000'
+          ? '''
+  -- er000.ParentNumber is a redundant Al-Ameen reference. Always derive it
+  -- from the permanent parent GUID at apply time so a server-renumbered
+  -- Sales/Purchase header cannot be reverted by a later relation-table job.
+  IF OBJECT_ID(N'${quoteIdentifier(database)}.[dbo].[bu000]', N'U') IS NULL OR
+     COL_LENGTH(N'${quoteIdentifier(database)}.[dbo].[bu000]', N'GUID') IS NULL OR
+     COL_LENGTH(N'${quoteIdentifier(database)}.[dbo].[bu000]', N'Number') IS NULL
+  BEGIN
+    RAISERROR('Al-Ameen relation normalization requires dbo.bu000(GUID, Number).', 16, 1);
+  END;
+  UPDATE source
+  SET source.[ParentNumber] = header.[Number]
+  FROM $workingSource AS source
+  INNER JOIN ${quoteIdentifier(database)}.[dbo].[bu000] AS header
+    ON header.[GUID] = source.[ParentGUID]
+  WHERE source.[ParentNumber] <> header.[Number]
+     OR source.[ParentNumber] IS NULL;'''
+          : '';
+  final alameenHeaderGraphRewrite =
+      normalizedSchema == 'dbo' && normalizedTable == 'bu000'
+          ? '''
+  -- A bu000 number reservation keeps the permanent GUID. Rewrite the sole
+  -- proven duplicated reference in er000 inside this same transaction.
+  WITH CHANGE_TRACKING_CONTEXT ($sqlSyncChangeTrackingContextHex)
+  UPDATE relation
+  SET relation.[ParentNumber] = header.[Number]
+  FROM ${quoteIdentifier(database)}.[dbo].[er000] AS relation
+  INNER JOIN $workingSource AS source
+    ON source.[GUID] = relation.[ParentGUID]
+  INNER JOIN ${quoteIdentifier(database)}.[dbo].[bu000] AS header
+    ON header.[GUID] = relation.[ParentGUID]
+  WHERE relation.[ParentNumber] <> header.[Number]
+     OR relation.[ParentNumber] IS NULL;'''
+          : '';
+  final alameenRelationTriggerDisable =
+      normalizedSchema == 'dbo' && normalizedTable == 'bu000'
+          ? '''
+  IF OBJECT_ID(N'${quoteIdentifier(database)}.[dbo].[er000]', N'U') IS NULL OR
+     COL_LENGTH(N'${quoteIdentifier(database)}.[dbo].[er000]', N'ParentGUID') IS NULL OR
+     COL_LENGTH(N'${quoteIdentifier(database)}.[dbo].[er000]', N'ParentNumber') IS NULL
+  BEGIN
+    RAISERROR('Al-Ameen header renumbering requires dbo.er000(ParentGUID, ParentNumber).', 16, 1);
+  END;
+  ALTER TABLE ${quoteIdentifier(database)}.[dbo].[er000] DISABLE TRIGGER ALL;'''
+          : '';
+  final alameenRelationTriggerEnable =
+      normalizedSchema == 'dbo' && normalizedTable == 'bu000'
+          ? 'ALTER TABLE ${quoteIdentifier(database)}.[dbo].[er000] ENABLE TRIGGER ALL;'
+          : '';
+  final alameenRelationTriggerRestore =
+      normalizedSchema == 'dbo' && normalizedTable == 'bu000'
+          ? '''
+  BEGIN TRY
+    ALTER TABLE ${quoteIdentifier(database)}.[dbo].[er000] ENABLE TRIGGER ALL;
+  END TRY
+  BEGIN CATCH
+  END CATCH;'''
+          : '';
   final mergeStatements = '''
   $deltaDeleteStatements
   $latestUniqueConflictStatements
+  $alameenRelationStageNormalization
   ${insertOnly ? '' : _buildBatchedUpdateStatement(database: database, schema: schema, table: table, sourceTableReference: workingSource, sourceColumnList: sourceColumnList, joinClause: joinClause, updatableColumns: updatableColumns)}
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: workingSource, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
-  SET @SqlSyncInsertedRows += @@ROWCOUNT;''';
+  SET @SqlSyncInsertedRows += @@ROWCOUNT;
+  $alameenHeaderGraphRewrite''';
 
   return '''
 SET NOCOUNT ON;
@@ -343,10 +407,12 @@ BEGIN TRY
   DECLARE @SqlSyncProtectedDeleteRows INT = 0;
   $postUploadProtectionStatements
   $triggerDisableStatement
+  $alameenRelationTriggerDisable
   $identityInsertOn
   DECLARE @SqlSyncInsertedRows INT = 0;
   $mergeStatements
   $identityInsertOff
+  $alameenRelationTriggerEnable
   $triggerEnableStatement
   COMMIT TRANSACTION;
   SELECT N'__SQL_SYNC_INSERTED__=' + CONVERT(NVARCHAR(20), @SqlSyncInsertedRows);
@@ -361,6 +427,7 @@ BEGIN CATCH
     ROLLBACK TRANSACTION;
   END;
   $triggerRestoreBlock
+  $alameenRelationTriggerRestore
   -- A confirmed SQL error rolled back the target transaction, so this stage
   -- cannot make forward progress unchanged. Transport/process interruption
   -- does not execute this block and therefore preserves committed chunks.
