@@ -835,7 +835,7 @@ class AgentControlPlaneClient {
     String sha256 = '',
     int chunkCount = 0,
   }) async {
-    final response = await _invokeFunction('agent_data_export_ack', {
+    final arguments = <String, dynamic>{
       'clientName': clientName,
       'requestId': requestId,
       'status': status,
@@ -843,7 +843,22 @@ class AgentControlPlaneClient {
       'bytes': bytes,
       'sha256': sha256,
       'chunkCount': chunkCount,
-    }, 'acknowledging read-only data export');
+    };
+    final normalizedStatus = status.trim().toLowerCase();
+    final terminalStatus =
+        normalizedStatus == 'completed' || normalizedStatus == 'failed';
+    final response =
+        terminalStatus
+            ? await _invokeFunctionWithRetry(
+              'agent_data_export_ack',
+              arguments,
+              'acknowledging terminal data export state',
+            )
+            : await _invokeFunction(
+              'agent_data_export_ack',
+              arguments,
+              'acknowledging read-only data export',
+            );
     if (response is! Map || response['dataExport'] is! Map) {
       throw const AgentControlPlaneException(
         'Unexpected data export acknowledgement payload.',

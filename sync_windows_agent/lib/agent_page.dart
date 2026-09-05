@@ -5417,11 +5417,6 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
         );
       }
       _resetSelectedDatabaseSyncBaselinesAfterReplacement(database);
-      await _loadDatabases(
-        profile: profile,
-        loadTables: true,
-        preserveSelection: true,
-      );
       await _acknowledgeDataExport(
         request,
         status: 'completed',
@@ -5438,6 +5433,23 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
         progress: 100,
         busy: false,
       );
+      try {
+        await _loadDatabases(
+          profile: profile,
+          loadTables: true,
+          preserveSelection: true,
+        );
+      } catch (error, stackTrace) {
+        // Replacement and DBCC already succeeded and were acknowledged. A UI
+        // refresh failure is diagnostic-only and cannot reverse terminal state.
+        logAgentDiagnostic(
+          'data_export.post_restore_refresh_failed',
+          level: AgentLogLevel.warning,
+          context: {'requestId': request.requestId, 'database': database},
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
     } finally {
       if (output != null) await output.close();
       if (await stagingBackup.exists()) {

@@ -2885,6 +2885,14 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("master.sys.master_files", policy)
         self.assertIn("database_id = DB_ID(N'$databaseLiteral') AND type = 0", policy)
         self.assertIn("pathRows.first[0].trim().toUpperCase() == 'NULL'", agent_page)
+        self.assertIn("storedTerminalStatus", backend)
+        self.assertIn("export acknowledgement update conflicted; retry", backend)
+        self.assertIn("_invokeFunctionWithRetry(", api)
+        self.assertLess(
+            agent_page.index("status: 'completed'", agent_page.index("_runRequestedFullDatabaseRestore")),
+            agent_page.index("await _loadDatabases(", agent_page.index("_runRequestedFullDatabaseRestore")),
+        )
+        self.assertIn("data_export.post_restore_refresh_failed", agent_page)
         self.assertIn("async function tryServePrivateExport", server)
         self.assertIn('"Cache-Control": "private, no-store"', server)
         self.assertIn("authorizedPrivateExport(req)", server)

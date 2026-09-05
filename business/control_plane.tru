@@ -9101,6 +9101,19 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
   let resolvedRequestIdOrNull = null;
   const normalizedStatus = truncate_text(status.trim().toLowerCase(), 32);
   const terminalStatus = normalizedStatus == 'completed' || normalizedStatus == 'failed';
+  const storedStatus = string.from(matchingAgent.dataExportStatus ?? '').trim().toLowerCase();
+  const storedTerminalStatus = storedStatus == 'completed' || storedStatus == 'failed';
+  // Terminal acknowledgements are immutable and idempotent. A response can be
+  // lost after the update commits, and a later error path must never downgrade
+  // an already completed database replacement to failed.
+  if (storedTerminalStatus) {
+    return {
+      ok: true,
+      idempotent: true,
+      clientName: resolvedClientName,
+      dataExport: agent_data_export_payload(matchingAgent)
+    };
+  }
   if (terminalStatus) {
     resolvedRequestIdOrNull = acknowledgedRequestId;
   }
@@ -9138,7 +9151,14 @@ function agent_data_export_ack(clientName: string? = null, requestId: string? = 
     updatedAt: now_iso()
   });
   if (updatedCount == 0) {
-    return raw_json_error(404, 'client not found');
+    // A heartbeat can update the same Agent row concurrently. The client will
+    // retry this bounded conflict; reporting "client not found" is false and
+    // previously made a successful restore appear to have failed.
+    const racedAgent = db.selectOne(Agent, { clientName: resolvedClientName, dataExportRequestId: acknowledgedRequestId });
+    if (racedAgent == null) {
+      return raw_json_error(404, 'client not found');
+    }
+    return raw_json_error(409, 'export acknowledgement update conflicted; retry');
   }
   const updated = db.selectOne(Agent, { clientName: resolvedClientName, dataExportRequestId: acknowledgedRequestId });
   if (updated == null) {

@@ -701,6 +701,61 @@ void main() {
     },
   );
 
+  test(
+    'terminal data export acknowledgement retries one row conflict',
+    () async {
+      final scripted = _ScriptedClient(
+        responseForRequest: (name, args, callIndex) {
+          expect(name, 'agent_data_export_ack');
+          expect(args['status'], 'completed');
+          if (callIndex == 0) {
+            return (
+              statusCode: 409,
+              body: {
+                'error': 'export acknowledgement update conflicted; retry',
+              },
+            );
+          }
+          return (
+            statusCode: 200,
+            body: {
+              'status': 'success',
+              'value': {
+                'dataExport': {
+                  'requestId': 'restore-1',
+                  'database': 'AmnDb048',
+                  'mode': 'full_restore',
+                  'status': 'completed',
+                  'bytes': 4096,
+                  'sha256': 'b' * 64,
+                  'chunkCount': 1,
+                },
+              },
+            },
+          );
+        },
+      );
+      final api = AgentControlPlaneClient(
+        client: scripted,
+        baseUrl: 'https://example.com/call',
+        snapshotTransferMaxAttempts: 2,
+        snapshotTransferRetryDelays: const [Duration.zero],
+      );
+
+      final acknowledged = await api.acknowledgeDataExport(
+        clientName: 'alshallan2',
+        requestId: 'restore-1',
+        status: 'completed',
+        bytes: 4096,
+        sha256: 'b' * 64,
+        chunkCount: 1,
+      );
+
+      expect(acknowledged.status, 'completed');
+      expect(scripted.requests, hasLength(2));
+    },
+  );
+
   test('dedicated data export poll parses a pending command', () async {
     final scripted = _ScriptedClient(
       responseForRequest: (name, args, callIndex) {
