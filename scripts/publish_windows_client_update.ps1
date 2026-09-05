@@ -71,6 +71,40 @@ function Invoke-CheckedNative {
     }
 }
 
+function Assert-PublicClientUpdateReady {
+    param(
+        [Parameter(Mandatory = $true)][string] $ManifestUrl,
+        [Parameter(Mandatory = $true)][string] $ExpectedVersion,
+        [Parameter(Mandatory = $true)][string] $ExpectedCommit,
+        [ValidateRange(1, 12)][int] $Attempts = 6
+    )
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        try {
+            $manifest = Invoke-RestMethod -Uri $ManifestUrl -Method Get -TimeoutSec 30
+            if ([string]$manifest.version -ne $ExpectedVersion -or [string]$manifest.commit -ne $ExpectedCommit) {
+                throw 'The public client manifest does not identify the expected immutable release.'
+            }
+            $filesManifestUrl = [string]$manifest.filesManifestUrl
+            if ([string]::IsNullOrWhiteSpace($filesManifestUrl)) {
+                throw 'The public client manifest has no differential files manifest URL.'
+            }
+            $filesResponse = Invoke-WebRequest -Uri $filesManifestUrl -Method Get -UseBasicParsing -TimeoutSec 30
+            if ($filesResponse.StatusCode -eq 200 -and $filesResponse.RawContentLength -gt 0) {
+                return
+            }
+            throw 'The public differential files manifest is not readable.'
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Seconds 5
+            }
+        }
+    }
+    throw "The public client update did not become ready after $Attempts attempts: $lastError"
+}
+
 function Assert-ClientUpdateZipContents {
     param(
         [Parameter(Mandatory = $true)][string] $ZipPath,
@@ -520,7 +554,10 @@ $manifest = [ordered]@{
     commit = $commit
     releaseDate = $releaseDate
     packageType = 'files-v1'
-    filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json"
+    # WebClient on older deployed agents may cache a transient 404. Keep the
+    # immutable path and add a release-bound query so a republished pointer
+    # cannot reuse a negative cache entry for the same package.
+    filesManifestUrl = "$publicRoot/packages/$packageDirName/files.json?release=$commit"
     zipUrl = "$publicRoot/$zipName"
     updateScriptUrl = "$publicRoot/packages/$packageDirName/bootstrap.ps1"
     sha256 = $zipHash
@@ -582,6 +619,11 @@ try {
             & ssh $SshTarget "kubectl exec -n '$Namespace' '$pod' -- mkdir -p '$RemoteUpdatesDir/packages/$packageDirName' '$RemoteUpdatesDir/packages/latest-package' && kubectl cp -n '$Namespace' '$remoteStage/$zipName' '$pod`:$RemoteUpdatesDir/$zipName' && kubectl cp -n '$Namespace' '$remoteStage/sync_windows_agent_latest.zip' '$pod`:$RemoteUpdatesDir/sync_windows_agent_latest.zip' && kubectl cp -n '$Namespace' '$remoteStage/update.ps1' '$pod`:$RemoteUpdatesDir/update.ps1' && kubectl cp -n '$Namespace' '$remoteStage/packages/$packageDirName/.' '$pod`:$RemoteUpdatesDir/packages/$packageDirName' && kubectl cp -n '$Namespace' '$remoteStage/packages/latest-package/.' '$pod`:$RemoteUpdatesDir/packages/latest-package' && kubectl cp -n '$Namespace' '$remoteStage/latest-files.json' '$pod`:$RemoteUpdatesDir/latest-files.json' && kubectl cp -n '$Namespace' '$remoteStage/latest.json' '$pod`:$RemoteUpdatesDir/latest.json.next' && kubectl exec -n '$Namespace' '$pod' -- mv '$RemoteUpdatesDir/latest.json.next' '$RemoteUpdatesDir/latest.json'"
         }
     }
+
+    Assert-PublicClientUpdateReady `
+        -ManifestUrl "$($PublicBaseUrl.TrimEnd('/'))/latest.json" `
+        -ExpectedVersion $version `
+        -ExpectedCommit $commit
 
     Write-Host "Uploaded client update $version ($commit) to $($pods.Count) frontend pod(s)."
 }
