@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as path;
 
 import 'agent_page.dart';
 import 'client_version.dart';
@@ -522,41 +521,23 @@ class _SyncWindowsAgentAppState extends State<SyncWindowsAgentApp> {
   String _shellClientUpdateInstallDir() =>
       File(Platform.resolvedExecutable).parent.path.replaceAll('/', r'\');
 
-  String? _shellLocalClientUpdateScriptPath() {
-    final updateScript = File(
-      path.join(File(Platform.resolvedExecutable).parent.path, 'update.ps1'),
-    );
-    if (!updateScript.existsSync()) {
-      return null;
-    }
-    return updateScript.path.replaceAll('/', r'\');
-  }
-
   List<String> _shellClientUpdatePowerShellArgs(ClientUpdateInfo updateInfo) {
     final manifestUrl = _shellClientUpdateManifestUrl();
-    final scriptUrl = _shellClientUpdateScriptUrl(updateInfo);
+    final scriptUri = Uri.parse(_shellClientUpdateScriptUrl(updateInfo));
+    final scriptUrl =
+        scriptUri
+            .replace(
+              queryParameters: <String, String>{
+                ...scriptUri.queryParameters,
+                'bootstrapAttempt':
+                    DateTime.now().microsecondsSinceEpoch.toString(),
+              },
+            )
+            .toString();
     final installDir = _shellClientUpdateInstallDir();
-    final localScriptPath = _shellLocalClientUpdateScriptPath();
-    // Start the packaged updater directly. It owns bounded DNS-aware metadata
-    // retries and resumable file transfers; downloading another script first
-    // would create an unreported, non-resumable failure point on slow links.
-    if (localScriptPath != null) {
-      return <String>[
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-WindowStyle',
-        'Hidden',
-        '-File',
-        localScriptPath,
-        '-ManifestUrl',
-        manifestUrl,
-        '-InstallDir',
-        installDir,
-      ];
-    }
-    // Legacy/incomplete portable folders may not contain the packaged updater.
-    // Keep the immutable HTTPS bootstrap as a last-resort compatibility path.
+    // Always start the complete updater published at this release's immutable
+    // HTTPS URL. A unique attempt query prevents a transient cached HTTP error
+    // from poisoning a later retry, and avoids trusting an older local updater.
     return <String>[
       '-NoProfile',
       '-ExecutionPolicy',

@@ -1753,22 +1753,23 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_client_manifest_uses_immutable_release_scoped_updater(self):
         publisher = read_text("scripts/publish_windows_client_update.ps1")
-        bootstrap = read_text("scripts/client_update_bootstrap.ps1")
+        updater = read_text("update.ps1")
 
         self.assertIn(
             'updateScriptUrl = "$publicRoot/packages/$packageDirName/bootstrap.ps1"',
             publisher,
         )
         self.assertNotIn('updateScriptUrl = "$publicRoot/update.ps1"', publisher)
-        self.assertIn("Copy-Item -LiteralPath $BootstrapUpdaterScript", publisher)
-        self.assertIn("$localUpdater = Join-Path", bootstrap)
-        self.assertIn("& $localUpdater @invokeParameters", bootstrap)
-        self.assertNotIn("Invoke-WebRequest", bootstrap)
+        self.assertIn(
+            "Copy-Item -LiteralPath $UpdaterScript -Destination (Join-Path -Path $packageOutputDir -ChildPath 'bootstrap.ps1')",
+            publisher,
+        )
+        self.assertNotIn("$BootstrapUpdaterScript", publisher)
+        self.assertIn("RequestCacheLevel.NoCacheNoStore", updater)
 
     def test_pinned_server_update_starts_resilient_updater_without_manifest_prefetch(self):
         agent = read_text("sync_windows_agent/lib/agent_page.dart")
         updater = read_text("update.ps1")
-        bootstrap = read_text("scripts/client_update_bootstrap.ps1")
         handler = agent.split(
             "Future<void> _handleRequestedClientUpdate(", 1
         )[1].split("Future<", 1)[0]
@@ -1787,7 +1788,7 @@ class SyncContractsTests(unittest.TestCase):
             "$script:UpdateTargetVersion.Trim() -ne $ExpectedVersion.Trim()",
             updater,
         )
-        self.assertIn("$invokeParameters.ExpectedVersion = $ExpectedVersion", bootstrap)
+        self.assertIn("[string] $ExpectedVersion = ''", updater)
 
     def test_windows_update_uses_resumable_verified_compressed_differentials(self):
         update_script = read_text("update.ps1")
@@ -2038,13 +2039,14 @@ class SyncContractsTests(unittest.TestCase):
             body = source.split(f"List<String> {function_name}", 1)[1].split(
                 "\n  }", 1
             )[0]
-            self.assertIn("if (localScriptPath != null)", body)
-            self.assertLess(
-                body.index("if (localScriptPath != null)"),
-                body.index("Invoke-WebRequest"),
-            )
-            self.assertIn("unreported, non-resumable failure point", body)
-            self.assertIn("last-resort compatibility path", body)
+            self.assertNotIn("localScriptPath", body)
+            self.assertIn("'bootstrapAttempt'", body)
+            self.assertIn("DateTime.now().microsecondsSinceEpoch", body)
+            self.assertIn("Invoke-WebRequest", body)
+            self.assertIn("immutable", body)
+
+    def test_client_always_bootstraps_the_release_updater_with_unique_attempt_url(self):
+        self.test_client_prefers_live_updater_with_local_offline_fallback()
 
     def test_update_script_stops_supervisor_before_replacing_client_files(self):
         update_script = read_text("update.ps1")

@@ -2720,7 +2720,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
 
   List<String> _clientUpdatePowerShellArgs(ClientUpdateInfo updateInfo) {
     final manifestUrl = _clientUpdateManifestUrl();
-    final scriptUrl = _clientUpdateScriptUrl(updateInfo);
+    final scriptUri = Uri.parse(_clientUpdateScriptUrl(updateInfo));
+    final scriptUrl =
+        scriptUri
+            .replace(
+              queryParameters: <String, String>{
+                ...scriptUri.queryParameters,
+                'bootstrapAttempt':
+                    DateTime.now().microsecondsSinceEpoch.toString(),
+              },
+            )
+            .toString();
     final expectedVersion = updateInfo.version.trim();
     final expectedVersionArgs =
         RegExp(r'^\d+\.\d+\.\d+\+\d+$').hasMatch(expectedVersion)
@@ -2729,28 +2739,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     final installDir = File(
       Platform.resolvedExecutable,
     ).parent.path.replaceAll('/', r'\');
-    final localScriptPath = _localClientUpdateScriptPath();
-    // Start the packaged updater directly. It owns bounded DNS-aware metadata
-    // retries and resumable file transfers; downloading another script first
-    // would create an unreported, non-resumable failure point on slow links.
-    if (localScriptPath != null) {
-      return <String>[
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-WindowStyle',
-        'Hidden',
-        '-File',
-        localScriptPath,
-        '-ManifestUrl',
-        manifestUrl,
-        '-InstallDir',
-        installDir,
-        ...expectedVersionArgs,
-      ];
-    }
-    // Legacy/incomplete portable folders may not contain the packaged updater.
-    // Keep the immutable HTTPS bootstrap as a last-resort compatibility path.
+    // Always start the complete updater published at this release's immutable
+    // HTTPS URL. A unique attempt query prevents a transient cached HTTP error
+    // from poisoning a later retry, and avoids trusting an older local updater.
     return <String>[
       '-NoProfile',
       '-ExecutionPolicy',

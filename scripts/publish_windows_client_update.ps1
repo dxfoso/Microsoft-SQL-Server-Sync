@@ -23,7 +23,6 @@ $PortableName = 'sync_windows_agent-windows-portable'
 $BuildOutputRoot = [System.IO.Path]::GetFullPath($OutputDir)
 $PortableZip = Join-Path -Path $BuildOutputRoot -ChildPath "$PortableName.zip"
 $UpdaterScript = Join-Path -Path $RepoRoot -ChildPath 'update.ps1'
-$BootstrapUpdaterScript = Join-Path -Path $PSScriptRoot -ChildPath 'client_update_bootstrap.ps1'
 
 function Get-PubspecVersion {
     $pubspecPath = Join-Path -Path $ProjectPath -ChildPath 'pubspec.yaml'
@@ -408,9 +407,6 @@ function New-PortableZipParts {
 if (-not (Test-Path -LiteralPath $UpdaterScript -PathType Leaf)) {
     throw "Missing updater script: $UpdaterScript"
 }
-if (-not (Test-Path -LiteralPath $BootstrapUpdaterScript -PathType Leaf)) {
-    throw "Missing client update bootstrap script: $BootstrapUpdaterScript"
-}
 
 if ([string]::IsNullOrWhiteSpace($Namespace)) {
     $Namespace = Get-NamespaceFromDeploymentEnv
@@ -528,9 +524,10 @@ finally {
 }
 
 # Older clients fetch updateScriptUrl before their resumable updater starts.
-# Keep that immutable bootstrap tiny: it immediately transfers control to the
-# already-installed, DNS-aware and resumable packaged updater.
-Copy-Item -LiteralPath $BootstrapUpdaterScript -Destination (Join-Path -Path $packageOutputDir -ChildPath 'bootstrap.ps1') -Force
+# Publish the complete current updater at an immutable release URL. The client
+# launches this copy directly, so a stale updater left by an older installation
+# can never block a later release before the cache-safe code starts.
+Copy-Item -LiteralPath $UpdaterScript -Destination (Join-Path -Path $packageOutputDir -ChildPath 'bootstrap.ps1') -Force
 
 $zipHash = (Get-FileHash -LiteralPath $versionedZip -Algorithm SHA256).Hash.ToLowerInvariant()
 $zipSize = (Get-Item -LiteralPath $versionedZip).Length
