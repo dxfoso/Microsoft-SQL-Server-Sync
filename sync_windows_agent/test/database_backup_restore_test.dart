@@ -112,15 +112,35 @@ AmnDb048_log|D:\\Data\\AmnDb048_log.ldf|L|NULL
     expect(parseSqlServerPercentComplete(''), isNull);
   });
 
-  test('legacy SQL Server storage lookup falls back to target physical files', () {
-    final sql = buildDatabaseStorageDirectoriesSql("AmnDb'048");
-    expect(sql, contains("SERVERPROPERTY('InstanceDefaultDataPath')"));
-    expect(sql, contains("SERVERPROPERTY('InstanceDefaultLogPath')"));
-    expect(sql, contains("database_id = DB_ID(N'AmnDb''048') AND type = 0"));
-    expect(sql, contains("database_id = DB_ID(N'AmnDb''048') AND type = 1"));
-    expect(sql, contains('master.sys.master_files'));
-    expect(sql, contains("CHARINDEX(N'\\', REVERSE(physical_name))"));
-    expect(sql, contains("CHARINDEX(N'/', REVERSE(physical_name))"));
-    expect(sql, isNot(contains('THROW')));
-  });
+  test(
+    'legacy SQL Server storage lookup falls back to target physical files',
+    () {
+      final sql = buildDatabaseStorageDirectoriesSql("AmnDb'048");
+      expect(sql, contains("SERVERPROPERTY('InstanceDefaultDataPath')"));
+      expect(sql, contains("SERVERPROPERTY('InstanceDefaultLogPath')"));
+      expect(sql, contains("database_id = DB_ID(N'AmnDb''048') AND type = 0"));
+      expect(sql, contains("database_id = DB_ID(N'AmnDb''048') AND type = 1"));
+      expect(sql, contains('master.sys.master_files'));
+      expect(sql, contains("CHARINDEX(N'\\', REVERSE(physical_name))"));
+      expect(sql, contains("CHARINDEX(N'/', REVERSE(physical_name))"));
+      expect(sql, isNot(contains('THROW')));
+    },
+  );
+
+  test(
+    'isolated Al-Ameen audit captures row images in transaction versions',
+    () {
+      final sql = buildInstallAlameenLabAuditSql();
+      expect(sql, contains('CREATE TABLE dbo.SqlSyncLabAudit'));
+      expect(sql, contains('PRIMARY KEY (AuditId)'));
+      expect(sql, contains('ENABLE CHANGE_TRACKING'));
+      expect(sql, contains("(N'bu000')"));
+      expect(sql, contains("(N'MatExBarcode000')"));
+      expect(sql, contains('FROM inserted AS r FOR XML'));
+      expect(sql, contains('FROM deleted AS r FOR XML'));
+      expect(sql, contains('BINARY BASE64'));
+      expect(sql, contains('system_type_id NOT IN (34, 35, 99)'));
+      expect(sql, isNot(contains('DROP DATABASE')));
+    },
+  );
 }

@@ -439,6 +439,58 @@ SELECT N'backup-restore-ok';
         )
         if "backup-restore-ok" not in result.stdout:
             raise AssertionError("Full database backup/restore verification returned no success marker.")
+
+        sqlcmd(
+            """
+CREATE TABLE dbo.bu000 (
+  GUID uniqueidentifier NOT NULL PRIMARY KEY,
+  Number int NOT NULL,
+  Total float NULL,
+  Notes ntext NULL
+);
+ALTER TABLE dbo.bu000 ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON);
+""",
+            database=restored,
+        )
+        audit_source = (AGENT_DIR / "lib" / "database_backup_restore.dart").read_text(
+            encoding="utf-8"
+        )
+        audit_match = re.search(
+            r'String buildInstallAlameenLabAuditSql\(\) => r"""(.*?)""";',
+            audit_source,
+            re.DOTALL,
+        )
+        if audit_match is None:
+            raise AssertionError("Unable to extract the shipped Al-Ameen lab audit SQL.")
+        sqlcmd(audit_match.group(1), database=restored)
+        audit_result = sqlcmd(
+            """
+DECLARE @id uniqueidentifier = NEWID();
+INSERT dbo.bu000 (GUID, Number, Total, Notes) VALUES (@id, 100, 10.5, N'ignored legacy text');
+UPDATE dbo.bu000 SET Total = 11.5 WHERE GUID = @id;
+DELETE dbo.bu000 WHERE GUID = @id;
+SELECT COUNT(*) AS AuditRows FROM dbo.SqlSyncLabAudit WHERE TableName = N'bu000';
+SELECT COUNT(DISTINCT ct.SYS_CHANGE_VERSION) AS TransactionVersions
+FROM CHANGETABLE(CHANGES dbo.SqlSyncLabAudit, 0) AS ct
+JOIN dbo.SqlSyncLabAudit AS audit_row ON audit_row.AuditId = ct.AuditId
+WHERE audit_row.TableName = N'bu000';
+SELECT COUNT(*) AS CapturedValues
+FROM dbo.SqlSyncLabAudit
+WHERE TableName = N'bu000'
+  AND (CONVERT(nvarchar(max), InsertedRows) LIKE N'%Number="100"%'
+       OR CONVERT(nvarchar(max), DeletedRows) LIKE N'%Number="100"%');
+""",
+            database=restored,
+        )
+        numeric_lines = [
+            int(line.strip())
+            for line in audit_result.stdout.splitlines()
+            if line.strip().isdigit()
+        ]
+        if numeric_lines[-3:] != [3, 3, 3]:
+            raise AssertionError(
+                f"Lab audit did not retain three row images in three transaction versions: {numeric_lines}"
+            )
     finally:
         sqlcmd(
             f"""

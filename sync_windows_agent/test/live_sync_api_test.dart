@@ -770,6 +770,8 @@ void main() {
                 'pending': true,
                 'requestId': 'export-2',
                 'database': 'AmnDb048',
+                'targetDatabase': 'AmnDb048_SyncLab',
+                'mode': 'lab_restore',
                 'uploadUrl': 'https://sync.velvet-leaf.com/private-export',
                 'uploadToken': '0123456789abcdef0123456789abcdef',
                 'status': 'requested',
@@ -789,6 +791,8 @@ void main() {
     expect(export.pending, isTrue);
     expect(export.requestId, 'export-2');
     expect(export.database, 'AmnDb048');
+    expect(export.targetDatabase, 'AmnDb048_SyncLab');
+    expect(export.mode, 'lab_restore');
     expect(export.uploadToken, hasLength(32));
   });
 

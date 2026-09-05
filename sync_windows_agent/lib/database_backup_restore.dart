@@ -164,6 +164,90 @@ IF DB_ID(N'$databaseLiteral') IS NOT NULL
 ''';
 }
 
+String buildInstallAlameenLabAuditSql() => r"""
+SET NOCOUNT ON;
+IF OBJECT_ID(N'dbo.SqlSyncLabAudit', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.SqlSyncLabAudit (
+    AuditId uniqueidentifier NOT NULL CONSTRAINT DF_SqlSyncLabAudit_AuditId DEFAULT NEWID(),
+    TableName sysname NOT NULL,
+    Operation nvarchar(16) NOT NULL,
+    CapturedAtUtc datetime2(3) NOT NULL CONSTRAINT DF_SqlSyncLabAudit_CapturedAtUtc DEFAULT SYSUTCDATETIME(),
+    InsertedRows xml NULL,
+    DeletedRows xml NULL,
+    CONSTRAINT PK_SqlSyncLabAudit PRIMARY KEY (AuditId)
+  );
+END;
+IF NOT EXISTS (
+  SELECT 1 FROM sys.change_tracking_tables
+  WHERE object_id = OBJECT_ID(N'dbo.SqlSyncLabAudit')
+)
+  ALTER TABLE dbo.SqlSyncLabAudit ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = OFF);
+
+DECLARE @tables TABLE (TableName sysname NOT NULL PRIMARY KEY);
+INSERT INTO @tables (TableName) VALUES
+  (N'ac000'), (N'bi000'), (N'bu000'), (N'ce000'), (N'cp000'),
+  (N'en000'), (N'er000'), (N'MatExBarcode000'), (N'mc000'),
+  (N'ms000'), (N'mt000'), (N'pt000');
+
+DECLARE @table sysname;
+DECLARE @trigger sysname;
+DECLARE @columns nvarchar(max);
+DECLARE @sql nvarchar(max);
+DECLARE table_cursor CURSOR LOCAL FAST_FORWARD FOR
+  SELECT TableName FROM @tables ORDER BY TableName;
+OPEN table_cursor;
+FETCH NEXT FROM table_cursor INTO @table;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+  IF OBJECT_ID(N'dbo.' + QUOTENAME(@table), N'U') IS NOT NULL
+  BEGIN
+    SET @trigger = N'TR_SqlSyncLabAudit_' + @table;
+    SET @columns = N'';
+    SELECT @columns = @columns +
+      CASE WHEN LEN(@columns) = 0 THEN N'' ELSE N',' END +
+      N'r.' + QUOTENAME(c.name)
+    FROM sys.columns AS c
+    WHERE c.object_id = OBJECT_ID(N'dbo.' + QUOTENAME(@table))
+      AND c.system_type_id NOT IN (34, 35, 99)
+    ORDER BY c.column_id;
+    IF LEN(@columns) = 0
+    BEGIN
+      RAISERROR('A lab-audit table has no serializable columns.', 16, 1);
+      CLOSE table_cursor;
+      DEALLOCATE table_cursor;
+      RETURN;
+    END;
+    IF OBJECT_ID(N'dbo.' + QUOTENAME(@trigger), N'TR') IS NOT NULL
+    BEGIN
+      SET @sql = N'DROP TRIGGER dbo.' + QUOTENAME(@trigger);
+      EXEC sp_executesql @sql;
+    END;
+    SET @sql = N'CREATE TRIGGER dbo.' + QUOTENAME(@trigger) +
+      N' ON dbo.' + QUOTENAME(@table) + N' AFTER INSERT, UPDATE, DELETE AS
+BEGIN
+  SET NOCOUNT ON;
+  DECLARE @inserted xml;
+  DECLARE @deleted xml;
+  SELECT @inserted = (SELECT ' + @columns + N' FROM inserted AS r FOR XML RAW(''row''), ROOT(''rows''), BINARY BASE64, TYPE);
+  SELECT @deleted = (SELECT ' + @columns + N' FROM deleted AS r FOR XML RAW(''row''), ROOT(''rows''), BINARY BASE64, TYPE);
+  INSERT dbo.SqlSyncLabAudit (TableName, Operation, InsertedRows, DeletedRows)
+  VALUES (N''' + REPLACE(@table, N'''', N'''''') + N''',
+    CASE WHEN EXISTS (SELECT 1 FROM inserted) AND EXISTS (SELECT 1 FROM deleted) THEN N''U''
+         WHEN EXISTS (SELECT 1 FROM inserted) THEN N''I'' ELSE N''D'' END,
+    @inserted, @deleted);
+END;';
+    EXEC sp_executesql @sql;
+  END;
+  FETCH NEXT FROM table_cursor INTO @table;
+END;
+CLOSE table_cursor;
+DEALLOCATE table_cursor;
+SELECT COUNT(*) AS InstalledTriggerCount
+FROM sys.triggers
+WHERE name LIKE N'TR[_]SqlSyncLabAudit[_]%';
+""";
+
 String buildDatabaseStorageDirectoriesSql(String database) {
   final databaseLiteral = database.replaceAll("'", "''");
   return '''

@@ -2,7 +2,7 @@
 
 ## Automatic Al-Ameen synchronization (2026-09-05)
 
-Overall: **60% complete - the generic sync engine and `ce000` voucher allocator are implemented, but automatic Sales/Purchase graph sync and material numbering are blocked by missing Al-Ameen business evidence**
+Overall: **70% complete - the isolated two-copy lab provisioner and transaction row-image audit are implemented and passed the complete SQL-version matrix; deployment and application observations remain**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -12,10 +12,14 @@ Overall: **60% complete - the generic sync engine and `ce000` voucher allocator 
 | Prove a complete Sales/Purchase save boundary | Blocked: one real Sales save used versions `5769` and `5770`, and no vendor completion marker or captured intermediate row image proves which database invariant rejects phase one | 40% |
 | Renumber `bu000` Sales/Purchase graphs atomically | Blocked until the completion boundary and every duplicated number reference are proven | 30% |
 | Resolve `mt000.Number` collisions automatically | Blocked: SQL Server does not enforce uniqueness and Al-Ameen behavior with two same-number materials has not been observed in two isolated application copies | 20% |
+| Provision identical isolated databases without replacing either live database | Implemented with fixed `_SyncLab` naming, disabled-client/zero-job guards, immutable source manifest, bounded chunks, SHA-256, restore-as-new, and DBCC CHECKDB | 100% |
+| Capture intermediate Al-Ameen row images by SQL transaction | Implemented in the isolated database with Change Tracking-versioned inserted/deleted XML for the mapped accounting, stock, and material tables | 100% |
+| Verify lab provisioning and audit across supported SQL versions | Done: All profile passed 12/12 stages in 1,264 seconds, including SQL Server 2017, 2019, and 2022 | 100% |
+| Deploy server/client `1.0.321+325` and provision both lab copies | In progress | 70% |
 | Run three-client collision/concurrency/recovery gates and publish | Waiting on the two evidence blockers above | 0% |
 | Enable production synchronization for these workflows | Stopped; `alshallan2` remains disabled | 0% |
 
-Stop reason: the available delta records the final two-version result but cannot reconstruct the transient row values after version `5769`. A validator written from the final state alone could accept an intermediate accounting graph without proof. The official SyrianSoft public site exposes product, download, and support pages but no public database transaction marker, schema contract, or numbering API was found. Completing this safely requires either vendor documentation/support that identifies the save boundary, or a controlled two-copy Al-Ameen experiment that captures the intermediate Sales/Purchase graph and same-number material behavior. This is the existing INC-403 / INC-454 safety boundary; no production sync rule was weakened or guessed.
+Current evidence boundary: the earlier delta cannot reconstruct the transient values after version `5769`, so production synchronization remains disabled. Release `1.0.321+325` adds the isolated evidence path needed to remove that blocker: two identical restore-as-new databases plus transaction-versioned row images. Both active clients are synchronization-disabled and have zero jobs while the release is prepared.
 
 ## Current operation summary (2026-09-05)
 
@@ -31,7 +35,7 @@ Overall: **100% complete - self-refreshing client release is installed on both e
 | Update eligible live clients | Done: `alshallan2` and `velvet factory` both report `1.0.320+324`, healthy server/SQL connections, `current` update state, and no pending update | 100% |
 | Run one final clean artifact-reuse clone for a successful terminal status | Done: request `8c7b0cff-6dcf-456c-9cdc-c2c528e4d8c1` completed from verified source artifact `78db8331-ff4b-4a51-ae94-70068cd07e24` | 100% |
 
-Current update boundary: the one-time transition is complete. Both eligible online clients installed `1.0.320+324`; later updates now start the complete immutable release updater with a unique attempt URL and cache bypass. `alshallan2` remains sync-disabled. Velvet Home remains disabled/offline and is ignored until it is enabled in the UI.
+Current update boundary: the one-time transition is complete. The original limitation was that code in a new package cannot change the old updater process before that package is installed. Both eligible online clients installed `1.0.320+324`; later updates now start the complete immutable release updater with a unique attempt URL and cache bypass. `alshallan2` remains in its synchronization-disabled state. Velvet Home remains disabled/offline and is ignored until it is enabled in the UI.
 
 Security remediation: **operationally complete - production healthy; Cloud credential lifecycle remains Cloud-owned**
 

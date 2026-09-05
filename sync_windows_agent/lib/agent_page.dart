@@ -5093,12 +5093,16 @@ SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
     RemoteAgentDataExport request,
     DataExportCancellation cancellation,
   ) async {
-    final database = request.database?.trim() ?? '';
+    final sourceDatabase = request.database?.trim() ?? '';
+    final isLabRestore = request.mode == 'lab_restore';
+    final requestedTargetDatabase = request.targetDatabase?.trim() ?? '';
+    final database = isLabRestore ? requestedTargetDatabase : sourceDatabase;
     final baseUrl = request.uploadUrl?.trim() ?? '';
     final token = request.uploadToken?.trim() ?? '';
     final sourceRequestId = request.sourceRequestId?.trim() ?? '';
     final sourceClientName = request.sourceClientName?.trim() ?? '';
-    if (database.isEmpty ||
+    if (sourceDatabase.isEmpty ||
+        database.isEmpty ||
         baseUrl != 'https://sync.velvet-leaf.com/private-export' ||
         token.length < 32 ||
         sourceRequestId.isEmpty ||
@@ -5108,9 +5112,16 @@ SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
         request.chunkCount <= 0) {
       throw StateError('The database restore request is incomplete.');
     }
-    if ((_selectedDatabase ?? '').trim().toLowerCase() !=
-        database.toLowerCase()) {
+    final selectedDatabase = (_selectedDatabase ?? '').trim();
+    if (selectedDatabase.toLowerCase() != sourceDatabase.toLowerCase()) {
       throw StateError('Restore target does not match the selected database.');
+    }
+    if (isLabRestore) {
+      final expectedLabDatabase = '${sourceDatabase}_SyncLab';
+      if (database.toLowerCase() != expectedLabDatabase.toLowerCase() ||
+          database.toLowerCase() == sourceDatabase.toLowerCase()) {
+        throw StateError('The isolated lab database name is invalid.');
+      }
     }
     if (_activeJobs.any((job) => job.isActive) ||
         _processingJobIds.isNotEmpty ||
@@ -5147,7 +5158,7 @@ SELECT @data, COALESCE(NULLIF(@logs, N''), @data);
         manifest['requestId']?.toString() != sourceRequestId ||
         manifest['clientName']?.toString() != sourceClientKey ||
         manifest['database']?.toString().toLowerCase() !=
-            database.toLowerCase() ||
+            sourceDatabase.toLowerCase() ||
         manifest['format']?.toString() != 'sql-server-copy-only-backup' ||
         (manifest['bytes'] as num?)?.toInt() != request.bytes ||
         (manifest['chunkCount'] as num?)?.toInt() != request.chunkCount ||
@@ -5243,28 +5254,30 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
         );
       }
 
-      _setDatabaseFileOperation(
-        operation: 'Restore',
-        database: database,
-        stage: 'Creating verified rollback backup',
-        progress: 42,
-        busy: true,
-      );
-      var rollbackResult = await createRollback(compression: true);
-      if (rollbackResult != null &&
-          shouldRetryBackupWithoutCompression(
-            exitCode: rollbackResult.exitCode,
-            stdout: rollbackResult.stdout.toString(),
-            stderr: rollbackResult.stderr.toString(),
-          )) {
-        rollbackResult = await createRollback(compression: false);
-      }
-      if (rollbackResult == null || rollbackResult.exitCode != 0) {
-        throw StateError(
-          rollbackResult == null
-              ? _sqlCmdUnavailableMessage(profile)
-              : _sqlCmdFailed('rollback backup', rollbackResult),
+      if (!isLabRestore) {
+        _setDatabaseFileOperation(
+          operation: 'Restore',
+          database: database,
+          stage: 'Creating verified rollback backup',
+          progress: 42,
+          busy: true,
         );
+        var rollbackResult = await createRollback(compression: true);
+        if (rollbackResult != null &&
+            shouldRetryBackupWithoutCompression(
+              exitCode: rollbackResult.exitCode,
+              stdout: rollbackResult.stdout.toString(),
+              stderr: rollbackResult.stderr.toString(),
+            )) {
+          rollbackResult = await createRollback(compression: false);
+        }
+        if (rollbackResult == null || rollbackResult.exitCode != 0) {
+          throw StateError(
+            rollbackResult == null
+                ? _sqlCmdUnavailableMessage(profile)
+                : _sqlCmdFailed('rollback backup', rollbackResult),
+          );
+        }
       }
 
       final sourceLiteral = _escapeSqlLiteral(stagingBackup.path);
@@ -5300,7 +5313,7 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
       final pathsResult = await _runSqlCmd(
         profile: profile,
         database: 'master',
-        query: buildDatabaseStorageDirectoriesSql(database),
+        query: buildDatabaseStorageDirectoriesSql(sourceDatabase),
         suppressHeaders: true,
       );
       final pathRows =
@@ -5319,19 +5332,31 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
           pathRows.first[1].trim().toUpperCase() == 'NULL') {
         throw StateError('SQL Server did not report data and log directories.');
       }
-      final restoreSql = buildReplaceDatabaseFromBackupSql(
-        database: database,
-        backupPath: stagingBackup.path,
-        dataDirectory: pathRows.first[0],
-        logDirectory: pathRows.first[1],
-        files: files,
-      );
+      final restoreSql =
+          isLabRestore
+              ? buildRestoreAsNewDatabaseSql(
+                database: database,
+                backupPath: stagingBackup.path,
+                dataDirectory: pathRows.first[0],
+                logDirectory: pathRows.first[1],
+                files: files,
+              )
+              : buildReplaceDatabaseFromBackupSql(
+                database: database,
+                backupPath: stagingBackup.path,
+                dataDirectory: pathRows.first[0],
+                logDirectory: pathRows.first[1],
+                files: files,
+              );
       ProcessResult? restoreResult;
       try {
         restoreResult = await _runDatabaseSqlWithProgress(
           operation: 'Restore',
           database: database,
-          stage: 'Replacing database from verified backup',
+          stage:
+              isLabRestore
+                  ? 'Creating isolated database from verified backup'
+                  : 'Replacing database from verified backup',
           sqlCommand: 'RESTORE DATABASE',
           startProgress: 55,
           endProgress: 90,
@@ -5357,7 +5382,15 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
         final replacementFailure =
             restoreResult == null
                 ? _sqlCmdUnavailableMessage(profile)
-                : _sqlCmdFailed('database replacement', restoreResult);
+                : _sqlCmdFailed(
+                  isLabRestore
+                      ? 'isolated database creation'
+                      : 'database replacement',
+                  restoreResult,
+                );
+        if (isLabRestore) {
+          throw StateError(replacementFailure);
+        }
         try {
           await _recoverDatabaseFromRollback(
             profile: profile,
@@ -5390,6 +5423,9 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
                   'restored database integrity check',
                   integrityResult,
                 );
+        if (isLabRestore) {
+          throw StateError(integrityFailure);
+        }
         try {
           await _recoverDatabaseFromRollback(
             profile: profile,
@@ -5407,12 +5443,38 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
           '$integrityFailure The original target database was restored automatically and passed DBCC CHECKDB.',
         );
       }
-      _resetSelectedDatabaseSyncBaselinesAfterReplacement(database);
+      if (isLabRestore) {
+        _setDatabaseFileOperation(
+          operation: 'Restore',
+          database: database,
+          stage: 'Installing isolated transaction audit',
+          progress: 95,
+          busy: true,
+        );
+        final auditResult = await _runSqlCmd(
+          profile: profile,
+          database: database,
+          query: buildInstallAlameenLabAuditSql(),
+          timeout: const Duration(minutes: 10),
+        );
+        if (auditResult == null || auditResult.exitCode != 0) {
+          throw StateError(
+            auditResult == null
+                ? _sqlCmdUnavailableMessage(profile)
+                : _sqlCmdFailed('isolated transaction audit', auditResult),
+          );
+        }
+      }
+      if (!isLabRestore) {
+        _resetSelectedDatabaseSyncBaselinesAfterReplacement(database);
+      }
       await _acknowledgeDataExport(
         request,
         status: 'completed',
         message:
-            'Database replacement and DBCC CHECKDB completed. Rollback backup: ${rollbackBackup.path}',
+            isLabRestore
+                ? 'Isolated lab database $database created and DBCC CHECKDB completed.'
+                : 'Database replacement and DBCC CHECKDB completed. Rollback backup: ${rollbackBackup.path}',
         bytes: request.bytes,
         sha256: request.sha256,
         chunkCount: request.chunkCount,
@@ -5420,7 +5482,10 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
       _setDatabaseFileOperation(
         operation: 'Restore',
         database: database,
-        stage: 'Replacement completed and integrity verified',
+        stage:
+            isLabRestore
+                ? 'Isolated lab database created and integrity verified'
+                : 'Replacement completed and integrity verified',
         progress: 100,
         busy: false,
       );
@@ -5459,7 +5524,7 @@ RESTORE VERIFYONLY FROM DISK = N'$rollbackLiteral' WITH CHECKSUM;
     final database = request.database?.trim() ?? '';
     final uploadBaseUrl = request.uploadUrl?.trim() ?? '';
     final uploadToken = request.uploadToken?.trim() ?? '';
-    if (request.mode == 'full_restore') {
+    if (request.mode == 'full_restore' || request.mode == 'lab_restore') {
       await _runRequestedFullDatabaseRestore(request, cancellation);
       return;
     }
