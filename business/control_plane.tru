@@ -111,6 +111,7 @@ class TableSyncPolicy {
   field database: string? min=0 max=256
   field table: string min=1 max=256
   field enabled: bool
+  field manualOverride: bool?
   field syncMode: string min=1 max=32
   field updatedAt: datetime
   field updatedByClientName: string min=0 max=128
@@ -861,7 +862,7 @@ function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<
   const rows = db.selectMany(TableSyncPolicy, {
     where: { ownerUserId: table_sync_policy_scope(ownerUserId) },
     orderBy: { field: 'table', dir: 'asc' },
-    fields: ['ownerUserId', 'database', 'table', 'enabled', 'updatedAt', 'updatedByClientName'],
+    fields: ['ownerUserId', 'database', 'table', 'enabled', 'manualOverride', 'updatedAt', 'updatedByClientName'],
     limit: 1000
   });
   if (rows == null) {
@@ -1103,7 +1104,7 @@ function table_sync_policy_for_table_with_policies(ownerUserId: string? = null, 
         table: localTable
       },
       orderBy: { field: 'updatedAt', dir: 'desc' },
-      fields: ['ownerUserId', 'database', 'table', 'enabled', 'syncMode', 'updatedAt', 'updatedByClientName'],
+      fields: ['ownerUserId', 'database', 'table', 'enabled', 'manualOverride', 'syncMode', 'updatedAt', 'updatedByClientName'],
       limit: 100
     });
     for (const fallbackPolicy of fallbackPolicies) {
@@ -1140,7 +1141,7 @@ function find_table_sync_policy(ownerUserId: string? = null, syncTable: string):
   return null;
 }
 
-function upsert_table_sync_policy(ownerUserId: string? = null, table: string, enabled: bool, updatedByClientName: string = ''): map<json> {
+function upsert_table_sync_policy(ownerUserId: string? = null, table: string, enabled: bool, updatedByClientName: string = '', manualOverride: bool = false): map<json> {
   const scope = table_sync_policy_scope(ownerUserId);
   const reference = sync_table_reference(table);
   const databaseName = string.from(reference.database).trim();
@@ -1160,6 +1161,7 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
         database: storedDatabase,
         table: localTable,
         enabled,
+        manualOverride,
         syncMode: 'sync',
         updatedAt: now_iso(),
         updatedByClientName
@@ -1175,6 +1177,7 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
         database: storedDatabase,
         table: localTable,
         enabled,
+        manualOverride,
         syncMode: 'sync',
         updatedAt: now_iso(),
         updatedByClientName
@@ -1189,6 +1192,7 @@ function upsert_table_sync_policy(ownerUserId: string? = null, table: string, en
     database: storedDatabase,
     table: localTable,
     enabled,
+    manualOverride,
     syncMode: 'sync',
     updatedAt: now_iso(),
     updatedByClientName
@@ -2461,7 +2465,8 @@ function table_sync_policy_set(table: string, enabled: bool, cascadeRelated: boo
     ownerUserId,
     normalizedTable,
     enabled,
-    current.username
+    current.username,
+    true
   );
   if (enabled && cascadeRelated) {
     const relatedTables = related_table_sync_keys_for_policy(ownerUserId, normalizedTable);
@@ -2470,7 +2475,8 @@ function table_sync_policy_set(table: string, enabled: bool, cascadeRelated: boo
         ownerUserId,
         string.from(relatedTable),
         true,
-        current.username
+        current.username,
+        true
       );
     }
   }
@@ -2526,12 +2532,13 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
         database: storedDatabase,
         table: localTable,
         enabled: true,
+        manualOverride: false,
         syncMode: 'sync',
         updatedAt: policyUpdatedAt,
         updatedByClientName: current.username
       }]);
       createdTables = createdTables.concat([normalizedTable]);
-    } else if (policy.enabled != true) {
+    } else if (policy.enabled != true && policy.manualOverride != true) {
       const policyDatabase = table_sync_policy_database_name(policy);
       if (policyDatabase.length == 0 && databaseName.length != 0) {
         legacyTablesToReactivate = legacyTablesToReactivate.concat([localTable]);
@@ -2545,6 +2552,7 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
           database: storedDatabase,
           table: table_sync_policy_local_name(policy),
           enabled: true,
+          manualOverride: false,
           syncMode: 'sync',
           updatedAt: policyUpdatedAt,
           updatedByClientName: current.username
@@ -2560,6 +2568,7 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
       table: { in: unique_string_values(legacyTablesToReactivate) }
     }, {
       enabled: true,
+      manualOverride: false,
       syncMode: 'sync',
       updatedAt: policyUpdatedAt,
       updatedByClientName: current.username
@@ -12811,7 +12820,13 @@ function table_sync_issue_resolve(clientName: string, table: string, action: str
   }
 
   if (normalizedAction == 'exclude_table') {
-    upsert_table_sync_policy(ownerId, normalizedTable, false, resolvedClientName);
+    upsert_table_sync_policy(
+      ownerId,
+      normalizedTable,
+      false,
+      resolvedClientName,
+      true
+    );
     const resolved = replace_sync_table_issue(ownerId, {
       table: normalizedTable,
       status: 'ready',

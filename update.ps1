@@ -786,7 +786,7 @@ function Get-AgentProcesses {
         [switch] $AllInstances
     )
 
-    $allProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+    $allProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) })
     if ($AllInstances) {
         return $allProcesses
@@ -968,7 +968,7 @@ function Stop-SupervisorProcesses {
         (Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1')
     )
     for ($attempt = 0; $attempt -lt 20; $attempt++) {
-        $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        $powershellProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
             Where-Object {
                 $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
                 ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
@@ -993,10 +993,10 @@ function Get-LauncherSupervisorProcessId {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
     try {
-        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -OperationTimeoutSec 5 -ErrorAction Stop
         $parentId = [int] $current.ParentProcessId
         if ($parentId -le 0) { return 0 }
-        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $parentId" -ErrorAction Stop
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $parentId" -OperationTimeoutSec 5 -ErrorAction Stop
         if ($parent.Name -ine 'powershell.exe' -and $parent.Name -ine 'pwsh.exe') { return 0 }
         $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
         $launchText = Get-PowerShellLaunchText -CommandLine $parent.CommandLine
@@ -1016,7 +1016,7 @@ function Stop-LauncherSupervisorProcess {
     )
 
     if ($ProcessId -le 0) { return }
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue
     if ($null -eq $process) { return }
     $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
     $launchText = Get-PowerShellLaunchText -CommandLine $process.CommandLine
@@ -1240,7 +1240,7 @@ function Stop-ObsoleteInstallProcesses {
     $stoppedSupervisors = 0
     $stoppedAgents = 0
 
-    $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    $powershellProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
         Where-Object {
             $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
             ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
@@ -1257,7 +1257,7 @@ function Stop-ObsoleteInstallProcesses {
         $stoppedSupervisors += 1
     }
 
-    $agentProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+    $agentProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
         Where-Object {
             -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
             -not ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith(
@@ -1285,7 +1285,7 @@ function Test-InstallNeedsElevation {
         return $true
     }
 
-    $hiddenAgent = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+    $hiddenAgent = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
         Where-Object { [string]::IsNullOrWhiteSpace($_.ExecutablePath) })
     return $hiddenAgent.Count -gt 0
 }
@@ -1350,7 +1350,7 @@ function Get-AgentProcesses {
         [switch] $AllInstances
     )
 
-    $allProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+    $allProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) })
     if ($AllInstances) {
         return $allProcesses
@@ -1478,7 +1478,7 @@ function Stop-SupervisorProcesses {
     $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
     $legacyWatchdogPath = [System.IO.Path]::GetFullPath((Join-Path -Path $TargetInstallDir -ChildPath 'sync_windows_agent_watchdog.ps1'))
     for ($attempt = 0; $attempt -lt 20; $attempt++) {
-        $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        $powershellProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
             Where-Object {
                 $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
                 ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
@@ -1505,10 +1505,10 @@ function Get-LauncherSupervisorProcessId {
     param([Parameter(Mandatory = $true)][string] $TargetInstallDir)
 
     try {
-        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -OperationTimeoutSec 5 -ErrorAction Stop
         $parentId = [int] $current.ParentProcessId
         if ($parentId -le 0) { return 0 }
-        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $parentId" -ErrorAction Stop
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $parentId" -OperationTimeoutSec 5 -ErrorAction Stop
         if ($parent.Name -ine 'powershell.exe' -and $parent.Name -ine 'pwsh.exe') { return 0 }
         $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
         $launchText = Get-PowerShellLaunchText -CommandLine $parent.CommandLine
@@ -1528,7 +1528,7 @@ function Stop-LauncherSupervisorProcess {
     )
 
     if ($ProcessId -le 0) { return }
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue
     if ($null -eq $process) { return }
     $supervisorPath = [System.IO.Path]::GetFullPath((Get-SupervisorScriptPath -TargetInstallDir $TargetInstallDir))
     $launchText = Get-PowerShellLaunchText -CommandLine $process.CommandLine
@@ -1742,7 +1742,7 @@ function Stop-ObsoleteInstallProcesses {
     $stoppedSupervisors = 0
     $stoppedAgents = 0
 
-    $powershellProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    $powershellProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
         Where-Object {
             $launchText = Get-PowerShellLaunchText -CommandLine $_.CommandLine
             ($_.Name -ieq 'powershell.exe' -or $_.Name -ieq 'pwsh.exe') -and
@@ -1759,7 +1759,7 @@ function Stop-ObsoleteInstallProcesses {
         $stoppedSupervisors += 1
     }
 
-    $agentProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -ErrorAction SilentlyContinue |
+    $agentProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'sync_windows_agent.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
         Where-Object {
             -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
             -not ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith(

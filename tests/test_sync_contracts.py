@@ -1327,6 +1327,21 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("public static int Main(string[] args) { return 7; }", rollback)
         self.assertNotIn("not a valid executable", rollback)
 
+    def test_updater_process_discovery_is_filtered_and_time_bounded(self):
+        updater = read_text("update.ps1")
+
+        self.assertGreaterEqual(updater.count("-OperationTimeoutSec 5"), 15)
+        self.assertGreaterEqual(
+            updater.count(
+                "-Filter \"Name = 'powershell.exe' OR Name = 'pwsh.exe'\""
+            ),
+            4,
+        )
+        self.assertNotIn(
+            "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue",
+            updater,
+        )
+
     def test_atomic_full_snapshot_apply_does_not_retry_at_ten_minutes(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
