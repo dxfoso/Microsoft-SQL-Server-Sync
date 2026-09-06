@@ -870,7 +870,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function queue_due_periodic_sync_jobs_for_owner(", 1
         )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
         self.assertIn("refresh_owner_baseline_table_issues(", scheduler)
-        self.assertIn("sync_owner_has_blocking_table_issues(", scheduler)
+        self.assertIn("sync_owner_has_blocking_table_issues_for_agents(", scheduler)
         self.assertIn("return [];", scheduler)
 
         manual_all = source.split("function jobs_create_all_enabled_for_identity(", 1)[1].split(
@@ -881,17 +881,47 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertNotIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", manual_all)
         self.assertIn("const plan = sync_table_baseline_plan(", scheduler)
-        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", manual_prepare)
+        self.assertIn("sync_table_issues_for_owner_agents(ownerUserId, ownerAgents)", manual_prepare)
         self.assertIn(
-            "sourceResolutionTableCount: sync_table_issues_for_owner(ownerUserId).length",
+            "sourceResolutionTableCount: blockingIssues.length",
             manual_prepare,
         )
 
         manual_one = source.split("function jobs_create(", 1)[1].split(
             "function jobs_bootstrap(", 1
         )[0]
-        self.assertIn("sync_owner_has_blocking_table_issues(ownerId)", manual_one)
+        self.assertIn("sync_owner_has_blocking_table_issues_for_agents(ownerId, ownerAgents)", manual_one)
         self.assertIn("raw_json_error(409", manual_one)
+
+    def test_table_issue_gate_is_scoped_to_enabled_agent_databases(self):
+        source = read_text("business/control_plane.tru")
+        applicability = source.split(
+            "function sync_table_issue_applies_to_agents(", 1
+        )[1].split("function sync_table_issues_for_owner_agents(", 1)[0]
+        gate = source.split("function sync_gate_payload_for_owners(", 1)[1].split(
+            "function automatic_sync_control_set(", 1
+        )[0]
+        scheduler = source.split(
+            "function queue_due_periodic_sync_jobs_for_owner(", 1
+        )[1].split("function periodic_sync_scheduler_agent_limit(", 1)[0]
+        cancellation = source.split(
+            "function cancel_owner_sync_jobs_for_input(", 1
+        )[1].split("function sync_owner_table_has_active_jobs(", 1)[0]
+        bootstrap = source.split("function jobs_bootstrap(", 1)[1].split(
+            "function retained_batch_recovery(", 1
+        )[0]
+
+        self.assertIn("sync_table_reference(string.from(issue.table", applicability)
+        self.assertIn("issueDatabase.length == 0", applicability)
+        self.assertIn("string.from(agent.database)", applicability)
+        self.assertIn("list_scheduler_agent_rows_for_owner(ownerUserId)", gate)
+        self.assertIn("sync_table_issues_for_owner_agents(ownerUserId, enabledOwnerAgents)", gate)
+        self.assertIn("schedulerOwnerAgents", scheduler)
+        self.assertIn("sync_owner_has_needs_input_table_issues_for_agents", scheduler)
+        self.assertIn("sync_owner_has_blocking_table_issues_for_agents", scheduler)
+        self.assertIn("fields: ['id', 'table']", cancellation)
+        self.assertIn("sync_table_matches_issue_database", cancellation)
+        self.assertIn("sync_owner_has_blocking_table_issues_for_agents(ownerId, enabledOwnerAgents)", bootstrap)
 
         complete = source.split("function jobs_complete(", 1)[1].split(
             "function jobs_fail(", 1
@@ -1265,7 +1295,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("if (durableOriginRepairTables.length > 0)", scheduler)
         self.assertIn("raise_persistent_union_divergence_issues(", scheduler)
         self.assertIn("return durableOriginRepairJobs;", scheduler)
-        self.assertIn("function release_durable_origin_automatable_issues(ownerUserId: string): array<string>", source)
+        self.assertIn(
+            "function release_durable_origin_automatable_issues(ownerUserId: string, agents: array<json>? = null): array<string>",
+            source,
+        )
+        self.assertIn("schedulerOwnerAgents", scheduler)
         self.assertIn("return releasedTables;", release)
         self.assertIn("reason == 'durable_origin_reconcile_pending'", release)
         self.assertIn(
@@ -1342,7 +1376,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("reason: 'primary_source_selected'", release)
         self.assertIn("automatic non-destructive repair", release)
         self.assertIn(
-            "release_primary_source_automatable_issues(normalizedOwnerUserId)",
+            "release_primary_source_automatable_issues(normalizedOwnerUserId, schedulerOwnerAgents)",
             scheduler,
         )
         self.assertIn("configuredConflictSource", planner)
@@ -2082,7 +2116,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("!preserveChangeTrackingBaselines", source)
         self.assertNotIn("sync_gate_payload_for_owners(ownerUserIds)", sync_all)
         self.assertNotIn("refresh_owner_baseline_table_issues(ownerUserId, visibleAgents)", sync_all)
-        self.assertIn("sync_owner_has_blocking_table_issues(ownerUserId)", source)
+        self.assertIn("sync_table_issues_for_owner_agents(ownerUserId, ownerAgents)", source)
         self.assertIn("create_authoritative_reconcile_batch(", source)
         self.assertIn("function multi_writer_batch_stale(batch: map<json>): bool", source)
         self.assertIn("return raw_json_error(410, 'sync job is no longer active');", source)

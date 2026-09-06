@@ -4620,25 +4620,24 @@ function order_owner_due_table_candidates(dueTables: array<string>, ownerAgents:
 function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, allAgents: array<json>? = null): array<json> {
   const sourceAgents = allAgents ?? list_scheduler_agent_rows();
   const normalizedOwnerUserId = string.from(ownerUserId).trim();
-  const durableOriginRepairTables = release_durable_origin_automatable_issues(normalizedOwnerUserId);
-  release_primary_source_automatable_issues(normalizedOwnerUserId);
+  const schedulerOwnerAgents = sourceAgents.filter((agent) =>
+    string.from(agent.ownerUserId) == normalizedOwnerUserId && agent_sync_enabled(agent)
+  );
+  const durableOriginRepairTables = release_durable_origin_automatable_issues(
+    normalizedOwnerUserId,
+    schedulerOwnerAgents
+  );
+  release_primary_source_automatable_issues(normalizedOwnerUserId, schedulerOwnerAgents);
   // Legacy input gates already identify the exact tables needing durable-origin
   // reconstruction. Queue those bounded tables directly before building the
   // owner's complete policy/table-state caches. On owners with thousands of
   // enrolled tables, materializing the complete scheduler expression merely to
   // rediscover two known repair tables can exceed the TRU request arena.
   if (durableOriginRepairTables.length > 0) {
-    let repairOwnerAgents = [];
-    for (const agent of sourceAgents) {
-      if (string.from(agent.ownerUserId) == normalizedOwnerUserId &&
-          agent_sync_enabled(agent)) {
-        repairOwnerAgents = repairOwnerAgents.concat([agent]);
-      }
-    }
     const durableOriginRepairJobs = raise_persistent_union_divergence_issues(
       normalizedOwnerUserId,
       durableOriginRepairTables,
-      repairOwnerAgents,
+      schedulerOwnerAgents,
       list_table_sync_policies_for_scope(normalizedOwnerUserId)
     );
     // An offline participant or an already-active table is retryable state, not
@@ -4648,16 +4647,16 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
   // A genuine Needs input issue can only continue after a user decision.
   // Resolving issues must still refresh fingerprints so a completed automatic
   // repair can reopen the gate without waiting for an offline client.
-  if (sync_owner_has_needs_input_table_issues(normalizedOwnerUserId)) {
+  if (sync_owner_has_needs_input_table_issues_for_agents(normalizedOwnerUserId, schedulerOwnerAgents)) {
     if (sync_owner_has_repair_resolution_table_issues(normalizedOwnerUserId)) {
       refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents);
     }
-    if (sync_owner_has_needs_input_table_issues(normalizedOwnerUserId)) {
+    if (sync_owner_has_needs_input_table_issues_for_agents(normalizedOwnerUserId, schedulerOwnerAgents)) {
       return [];
     }
   }
   refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents);
-  if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId)) {
+  if (sync_owner_has_blocking_table_issues_for_agents(normalizedOwnerUserId, schedulerOwnerAgents)) {
     return [];
   }
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
@@ -5211,6 +5210,29 @@ function sync_table_issue_is_blocking(issue: map<json>): bool {
   return status == 'needs_input' || status == 'resolving';
 }
 
+function sync_table_issue_applies_to_agents(issue: map<json>, agents: array<json>): bool {
+  const reference = sync_table_reference(string.from(issue.table ?? ''));
+  const issueDatabase = string.from(reference.database).trim();
+  // Legacy unqualified issues cannot be assigned safely to one database, so
+  // they retain the original owner-wide fail-closed behavior.
+  if (issueDatabase.length == 0) {
+    return true;
+  }
+  for (const agent of agents) {
+    if (agent_sync_enabled(agent) &&
+        issueDatabase.toLowerCase() == string.from(agent.database).trim().toLowerCase()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sync_table_issues_for_owner_agents(ownerUserId: string, agents: array<json>): array<json> {
+  return sync_table_issues_for_owner(ownerUserId).filter((issue) =>
+    sync_table_issue_applies_to_agents(issue, agents)
+  );
+}
+
 function clear_retryable_sync_failure_issues(ownerUserId: string): void {
   for (const issue of sync_table_issues_for_owner(ownerUserId)) {
     const reason = string.from(issue.reason ?? '').trim();
@@ -5246,8 +5268,26 @@ function sync_owner_has_blocking_table_issues(ownerUserId: string? = null): bool
   return false;
 }
 
+function sync_owner_has_blocking_table_issues_for_agents(ownerUserId: string, agents: array<json>): bool {
+  for (const issue of sync_table_issues_for_owner_agents(ownerUserId, agents)) {
+    if (sync_table_issue_is_blocking(issue)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function sync_owner_has_needs_input_table_issues(ownerUserId: string? = null): bool {
   for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    if (string.from(issue.status ?? '').trim().toLowerCase() == 'needs_input') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sync_owner_has_needs_input_table_issues_for_agents(ownerUserId: string, agents: array<json>): bool {
+  for (const issue of sync_table_issues_for_owner_agents(ownerUserId, agents)) {
     if (string.from(issue.status ?? '').trim().toLowerCase() == 'needs_input') {
       return true;
     }
@@ -5277,12 +5317,16 @@ function durable_origin_repair_was_interrupted(ownerUserId: string, table: strin
   return status == 'cancelled' || status == 'failed';
 }
 
-function release_durable_origin_automatable_issues(ownerUserId: string): array<string> {
+function release_durable_origin_automatable_issues(ownerUserId: string, agents: array<json>? = null): array<string> {
   const normalizedOwnerUserId = ownerUserId.trim();
   const existingIssues = sync_table_issues_for_owner(normalizedOwnerUserId);
   let nextIssues = [];
   let releasedTables = [];
   for (const issue of existingIssues) {
+    if (agents != null && !sync_table_issue_applies_to_agents(issue, agents)) {
+      nextIssues = nextIssues.concat([issue]);
+      continue;
+    }
     const status = string.from(issue.status ?? '').trim().toLowerCase();
     const reason = string.from(issue.reason ?? '').trim().toLowerCase();
     const action = string.from(issue.action ?? '').trim().toLowerCase();
@@ -5339,7 +5383,7 @@ function release_durable_origin_automatable_issues(ownerUserId: string): array<s
   return releasedTables;
 }
 
-function release_primary_source_automatable_issues(ownerUserId: string): int {
+function release_primary_source_automatable_issues(ownerUserId: string, agents: array<json>? = null): int {
   const normalizedOwnerUserId = ownerUserId.trim();
   const conflictSourceClient = conflict_source_client_for_owner(normalizedOwnerUserId);
   if (conflictSourceClient.length == 0) {
@@ -5349,6 +5393,10 @@ function release_primary_source_automatable_issues(ownerUserId: string): int {
   let nextIssues = [];
   let releasedCount = 0;
   for (const issue of existingIssues) {
+    if (agents != null && !sync_table_issue_applies_to_agents(issue, agents)) {
+      nextIssues = nextIssues.concat([issue]);
+      continue;
+    }
     const status = string.from(issue.status ?? '').trim().toLowerCase();
     const reason = string.from(issue.reason ?? '').trim().toLowerCase();
     if (status == 'needs_input' && reason == 'persistent_union_divergence') {
@@ -5465,19 +5513,35 @@ function replace_sync_table_issue(ownerUserId: string, nextIssue: map<json>): ma
   return nextIssue;
 }
 
-function cancel_owner_sync_jobs_for_input(ownerUserId: string, message: string): int {
+function sync_table_matches_issue_database(table: string, issueTables: array<string>): bool {
+  const tableReference = sync_table_reference(table);
+  const tableDatabase = string.from(tableReference.database).trim().toLowerCase();
+  for (const issueTable of issueTables) {
+    const issueReference = sync_table_reference(issueTable);
+    const issueDatabase = string.from(issueReference.database).trim().toLowerCase();
+    if (issueDatabase.length == 0 || tableDatabase.length == 0 || issueDatabase == tableDatabase) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function cancel_owner_sync_jobs_for_input(ownerUserId: string, message: string, issueTables: array<string>? = null): int {
   const activeJobs = db.selectMany(SyncJob, {
     where: {
       ownerUserId,
       status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
     },
     orderBy: { field: 'createdAt', dir: 'asc' },
-    fields: ['id'],
+    fields: ['id', 'table'],
     limit: 1000
   });
   let jobIds = [];
   for (const job of activeJobs) {
-    jobIds = jobIds.concat([job.id]);
+    if (issueTables == null || issueTables.length == 0 ||
+        sync_table_matches_issue_database(string.from(job.table), issueTables)) {
+      jobIds = jobIds.concat([job.id]);
+    }
   }
   if (jobIds.length != 0) {
     db.updateMany(SyncJob, { id: { in: jobIds } }, {
@@ -5532,7 +5596,8 @@ function raise_sync_table_issue(ownerUserId: string? = null, table: string, reas
   });
   cancel_owner_sync_jobs_for_input(
     normalizedOwnerUserId,
-    string.concat('Sync stopped: table ', normalizedTable, ' needs a user decision.')
+    string.concat('Sync stopped: table ', normalizedTable, ' needs a user decision.'),
+    [normalizedTable]
   );
   return issue;
 }
@@ -5732,7 +5797,8 @@ function raise_persistent_union_divergence_issues(ownerUserId: string, tables: a
   if (createdJobs.length == 0) {
     cancel_owner_sync_jobs_for_input(
       ownerUserId,
-      'Sync stopped: a completed union left conflicting current values and needs a user decision.'
+      'Sync stopped: a completed union left conflicting current values and needs a user decision.',
+      tables
     );
   }
   return createdJobs;
@@ -5830,6 +5896,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   let nextIssues = existingIssues;
   let issuesChanged = false;
   let introducedBlockingIssue = false;
+  let introducedBlockingTables = [];
   for (const table of unique_string_values(candidateTables)) {
     const existing = sync_table_issue_from_values(nextIssues, table);
     let existingStatus = '';
@@ -5963,6 +6030,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       });
       issuesChanged = true;
       introducedBlockingIssue = true;
+      introducedBlockingTables = introducedBlockingTables.concat([table]);
       continue;
     }
     if (existing != null &&
@@ -5989,6 +6057,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       });
       issuesChanged = true;
       introducedBlockingIssue = true;
+      introducedBlockingTables = introducedBlockingTables.concat([table]);
       continue;
     }
     if ((existing == null || string.from(existing.status ?? '').trim() == 'ready') &&
@@ -6012,6 +6081,7 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
       });
       issuesChanged = true;
       introducedBlockingIssue = true;
+      introducedBlockingTables = introducedBlockingTables.concat([table]);
     }
   }
   // A Sync All preflight can discover many divergent tables at once. Persist
@@ -6023,7 +6093,8 @@ function refresh_owner_baseline_table_issues(ownerUserId: string, agents: array<
   if (introducedBlockingIssue) {
     cancel_owner_sync_jobs_for_input(
       ownerUserId,
-      'Sync stopped: one or more tables need a user decision.'
+      'Sync stopped: one or more tables need a user decision.',
+      introducedBlockingTables
     );
   }
 }
@@ -6035,7 +6106,10 @@ function sync_gate_payload_for_owners(ownerUserIds: array<string>): map<json> {
     // Transport, connectivity, and runtime failures never require a data
     // authority decision. Make them retryable without advancing baselines.
     clear_retryable_sync_failure_issues(ownerUserId);
-    for (const issue of sync_table_issues_for_owner(ownerUserId)) {
+    const enabledOwnerAgents = list_scheduler_agent_rows_for_owner(ownerUserId).filter((agent) =>
+      agent_sync_enabled(agent)
+    );
+    for (const issue of sync_table_issues_for_owner_agents(ownerUserId, enabledOwnerAgents)) {
       const publicIssue = {
         ownerUserId,
         table: issue.table,
@@ -9500,12 +9574,15 @@ function begin_manual_sync_all_for_owner(ownerUserId: string, requestedAt: strin
       sourceResolutionTableCount: 0
     };
   }
-  if (sync_owner_has_blocking_table_issues(ownerUserId)) {
+  const blockingIssues = sync_table_issues_for_owner_agents(ownerUserId, ownerAgents).filter((issue) =>
+    sync_table_issue_is_blocking(issue)
+  );
+  if (blockingIssues.length != 0) {
     return {
       eligibleTableCount: 0,
       onlineClientCount: onlineAgents.length,
       offlineClientCount,
-      sourceResolutionTableCount: sync_table_issues_for_owner(ownerUserId).length
+      sourceResolutionTableCount: blockingIssues.length
     };
   }
   const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
@@ -11961,7 +12038,7 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
   );
   const ownerPolicies = list_table_sync_policies_for_scope(ownerId);
   refresh_owner_baseline_table_issues(ownerId, schedulerAgents, ownerPolicies);
-  if (sync_owner_has_blocking_table_issues(ownerId)) {
+  if (sync_owner_has_blocking_table_issues_for_agents(ownerId, ownerAgents)) {
     return raw_json_error(409, 'Sync is stopped because one or more tables need a user decision.');
   }
   const targetAgent = find_agent_row_by_name(ownerAgents, resolvedClientName);
@@ -12196,10 +12273,6 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
     return raw_json_error(403, 'permission denied');
   }
   const ownerId = owner_namespace_for_user(clientUser);
-  refresh_owner_baseline_table_issues(ownerId);
-  if (sync_owner_has_blocking_table_issues(ownerId)) {
-    return raw_json_error(409, 'Sync is stopped because one or more tables need a user decision.');
-  }
   const targetAgent = db.selectOne(Agent, { clientName: normalizedClientName });
   if (targetAgent == null || !agent_sync_enabled(targetAgent)) {
     return raw_json_error(409, 'bootstrap client is unavailable or disabled');
@@ -12210,6 +12283,10 @@ function jobs_bootstrap(clientName: string, tables: array<string>, token: string
   const enabledOwnerAgents = list_scheduler_agent_rows().filter((agent) =>
     string.from(agent.ownerUserId) == ownerId && agent_sync_enabled(agent)
   );
+  refresh_owner_baseline_table_issues(ownerId, enabledOwnerAgents);
+  if (sync_owner_has_blocking_table_issues_for_agents(ownerId, enabledOwnerAgents)) {
+    return raw_json_error(409, 'Sync is stopped because one or more tables need a user decision.');
+  }
   if (enabledOwnerAgents.length != 1 || string.from(enabledOwnerAgents[0].clientName) != normalizedClientName) {
     return raw_json_error(409, 'explicit bootstrap requires exactly one enabled client');
   }

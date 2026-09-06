@@ -321,13 +321,13 @@ class ControlPlanePerfContractsTests(unittest.TestCase):
         )[1].split("function periodic_sync_scheduler_agent_limit", 1)[0]
 
         decision_gate_position = scheduler_body.index(
-            "if (sync_owner_has_needs_input_table_issues(normalizedOwnerUserId))"
+            "if (sync_owner_has_needs_input_table_issues_for_agents(normalizedOwnerUserId, schedulerOwnerAgents))"
         )
         refresh_position = scheduler_body.index(
             "refresh_owner_baseline_table_issues(normalizedOwnerUserId, sourceAgents)"
         )
         blocking_gate_position = scheduler_body.index(
-            "if (sync_owner_has_blocking_table_issues(normalizedOwnerUserId))"
+            "if (sync_owner_has_blocking_table_issues_for_agents(normalizedOwnerUserId, schedulerOwnerAgents))"
         )
         self.assertLess(decision_gate_position, refresh_position)
         self.assertLess(refresh_position, blocking_gate_position)
