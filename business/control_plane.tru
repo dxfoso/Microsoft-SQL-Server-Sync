@@ -6465,17 +6465,28 @@ function automatic_number_incident_find_by_operation(rows: array<json>, operatio
 
 function automatic_number_incident_find_by_physical_key(rows: array<json>, physicalKey: string): map<json>? {
   // The same permanent row can be announced by several clients with distinct
-  // Change Tracking operation ids. Reuse its first durable reservation rather
-  // than allocating a second number for the same primary identity.
+  // Change Tracking operation ids. Prefer its durable reservation, but retain
+  // the earliest configured blocked incident as a recovery candidate. A
+  // complete-inventory retry can then promote that same audit record instead
+  // of leaving a stale blocked duplicate beside the resolved reservation.
+  let blockedMatch = null;
   for (const row of rows) {
     const status = string.from(row.status).trim().toLowerCase();
-    if (string.from(row.physicalKey) == physicalKey &&
-        string.from(row.afterNumber ?? '').trim().length != 0 &&
+    if (string.from(row.physicalKey) != physicalKey) {
+      continue;
+    }
+    if (string.from(row.afterNumber ?? '').trim().length != 0 &&
         (status == 'reserved' || status == 'resolved')) {
       return row;
     }
+    if (blockedMatch == null &&
+        status == 'blocked' &&
+        string.from(row.afterNumber ?? '').trim().length == 0 &&
+        string.from(row.numberColumn).trim().toLowerCase() != 'unconfigured') {
+      blockedMatch = row;
+    }
   }
-  return null;
+  return blockedMatch;
 }
 
 function automatic_number_batch_incident_ids(batchId: string): array<string> {

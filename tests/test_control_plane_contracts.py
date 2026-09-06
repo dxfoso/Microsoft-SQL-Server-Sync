@@ -44,7 +44,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "function automatic_number_incident_find_by_physical_key(", 1
         )[1].split("function automatic_number_batch_incident_ids", 1)[0]
 
-        self.assertIn("string.from(row.physicalKey) == physicalKey", physical_lookup)
+        self.assertIn("string.from(row.physicalKey) != physicalKey", physical_lookup)
         self.assertIn("string.from(row.afterNumber ?? '').trim().length != 0", physical_lookup)
         self.assertIn("status == 'reserved' || status == 'resolved'", physical_lookup)
         self.assertIn(
@@ -157,6 +157,20 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("sequence.initialized == true", upload)
         self.assertIn("!= 'automatic-number-inventory'", upload)
         self.assertNotIn("payloadIsDelta && sequence.initialized == true", upload)
+
+    def test_number_retry_reuses_configured_blocked_incident_by_physical_identity(self):
+        source = read_text("business/control_plane.tru")
+        lookup = source.split(
+            "function automatic_number_incident_find_by_physical_key(", 1
+        )[1].split("function automatic_number_batch_incident_ids", 1)[0]
+
+        self.assertIn("let blockedMatch = null", lookup)
+        self.assertIn("status == 'blocked'", lookup)
+        self.assertIn("!= 'unconfigured'", lookup)
+        self.assertIn("return blockedMatch", lookup)
+        self.assertIn(
+            "currentAutoNumberIncidents.concat(pendingAutoNumberIncidents)", source
+        )
 
     def test_client_update_recovery_path_is_bounded_and_authorized(self):
         source = read_text("business/control_plane.tru")
