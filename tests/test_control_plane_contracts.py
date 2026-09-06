@@ -26,7 +26,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("columnSet.length == 3", source)
         self.assertIn("columnSet[1]).trim().toLowerCase() == numberColumn", source)
         self.assertIn("completeMultiClientUnionBootstrap && ready", upload)
-        self.assertIn("payloadIsDelta && sequence.initialized == true", upload)
+        self.assertIn("sequence.initialized == true", upload)
+        self.assertIn("!= 'automatic-number-inventory'", upload)
         self.assertIn("incidentStatus = 'reserved'", upload)
         self.assertIn("accepted = false", upload)
         self.assertIn("This table has no scientifically validated automatic-number rule", upload)
@@ -126,6 +127,36 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("status: 'reserved'", recovery)
         self.assertIn("afterNumber: ''", recovery)
         self.assertIn("queue_automatic_number_inventory_recovery", recovery)
+
+    def test_initial_union_number_collision_queues_one_bounded_full_union_retry(self):
+        source = read_text("business/control_plane.tru")
+        detector = source.split(
+            "function automatic_number_unreserved_union_collision(", 1
+        )[1].split("function queue_automatic_number_full_union_retry", 1)[0]
+        retry = source.split(
+            "function queue_automatic_number_full_union_retry(", 1
+        )[1].split("function resolve_automatic_number_batch_incidents", 1)[0]
+        completion = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail", 1
+        )[0]
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download", 1
+        )[0]
+
+        self.assertIn("sync_source_is_complete_union_bootstrap", detector)
+        self.assertIn("automatic_number_rule(", detector)
+        self.assertIn("initialized: true", detector)
+        self.assertIn("!automatic_number_inventory_required(", detector)
+        self.assertIn("'automatic-number-full-union-retry'", detector)
+        self.assertIn("\n    false,\n    true,", retry)
+        self.assertIn("'automatic-number-full-union-retry'", retry)
+        self.assertIn("automatic_number_unreserved_union_collision(job, message)", completion)
+        self.assertIn("queue_automatic_number_full_union_retry(", completion)
+        self.assertIn("if (!automaticNumberFullUnionRetry)", completion)
+        self.assertIn("if (retryJobs.length == 0)", completion)
+        self.assertIn("sequence.initialized == true", upload)
+        self.assertIn("!= 'automatic-number-inventory'", upload)
+        self.assertNotIn("payloadIsDelta && sequence.initialized == true", upload)
 
     def test_client_update_recovery_path_is_bounded_and_authorized(self):
         source = read_text("business/control_plane.tru")

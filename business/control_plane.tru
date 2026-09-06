@@ -6618,6 +6618,70 @@ function queue_automatic_number_delta_retry(ownerUserId: string, table: string):
   );
 }
 
+// A first full union can discover a business-number collision while it is
+// simultaneously establishing the complete owner-wide maximum. The colliding
+// row is deliberately rejected during that inventory pass, so a target that
+// already owns the other identity must not be left at a manual unique-key
+// failure. Retry the complete union once after initialization; the retry can
+// now reserve a number before any canonical row reaches a target.
+function automatic_number_unreserved_union_collision(job: map<json>, message: string): bool {
+  const normalizedMessage = message.trim().toLowerCase();
+  if (string.from(job.direction).trim() != 'download' ||
+      !sync_source_is_complete_union_bootstrap(string.from(job.sourceClientName)) ||
+      string.from(job.automaticRetryKind ?? '').trim() == 'automatic-number-full-union-retry' ||
+      !normalizedMessage.contains('automatic latest-change reconciliation') ||
+      !normalizedMessage.contains('cannot insert duplicate key row')) {
+    return false;
+  }
+  const batchId = string.from(job.batchId ?? '').trim();
+  const batch = find_sync_batch(batchId);
+  if (batch == null ||
+      automatic_number_rule(
+        string.from(job.table),
+        batch.columns ?? [],
+        batch.keyColumns ?? [],
+        batch.uniqueKeyColumnSets ?? []
+      ) == null) {
+    return false;
+  }
+  const initializedSequences = db.selectMany(AutoNumberSequence, {
+    where: {
+      ownerUserId: string.from(job.ownerUserId),
+      table: string.from(job.table),
+      initialized: true
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id'],
+    limit: 1
+  });
+  return initializedSequences.length > 0 &&
+    !automatic_number_inventory_required(
+      string.from(job.ownerUserId),
+      string.from(job.table)
+    );
+}
+
+function queue_automatic_number_full_union_retry(ownerUserId: string, table: string): array<json> {
+  if (string_array_contains(active_job_tables_for_owner(ownerUserId), table)) {
+    return [];
+  }
+  const syncScope = automatic_number_sync_participants(ownerUserId, table);
+  if (!automatic_number_participants_online(syncScope.participants ?? [])) {
+    return [];
+  }
+  return create_multi_writer_batch(
+    ownerUserId,
+    table,
+    syncScope.participants ?? [],
+    '',
+    false,
+    true,
+    syncScope.policies ?? [],
+    'automatic-number-full-union-retry',
+    ''
+  );
+}
+
 function resolve_automatic_number_batch_incidents(ownerUserId: string, table: string, batchId: string, resolvedAt: string): int {
   const incidentIds = automatic_number_batch_incident_ids(batchId);
   if (incidentIds.length == 0) {
@@ -10796,7 +10860,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
               allocatedNumber = int.from(existingIncident.afterNumber);
               incidentStatus = string.from(existingIncident.status);
               incidentReason = string.from(existingIncident.reason);
-            } else if (payloadIsDelta && sequence.initialized == true) {
+            } else if (sequence.initialized == true &&
+                string.from(job.automaticRetryKind ?? '').trim() != 'automatic-number-inventory') {
               allocatedNumber = int.from(sequence.maximumObserved) + 1;
               pendingAutoNumberReservations = pendingAutoNumberReservations.concat([{
                 id: crypto.hash(json.stringify([
@@ -13115,6 +13180,10 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     return { job: public_job_payload(job) };
   }
 
+  const automaticNumberFullUnionRetry =
+    status.trim().toLowerCase() == 'failed' &&
+    automatic_number_unreserved_union_collision(job, message);
+
   const completedAt = now_iso();
   let nextSnapshotId = job.snapshotId;
   if (snapshotId != null && snapshotId.trim().length != 0) {
@@ -13189,19 +13258,36 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     if (rejectionSummary != null && rejectionSummary.trim().length != 0) {
       issueMessage = rejectionSummary;
     }
-    raise_sync_table_issue(
-      job.ownerUserId,
-      string.from(job.table),
-      conflictKind.trim().toLowerCase() == 'unique_business_key'
-        ? 'unique_business_key'
-        : rejectedRowCount != null && rejectedRowCount > 0
-          ? 'rejected_rows'
-          : 'sync_failed',
-      issueMessage,
-      string.from(job.clientName)
-    );
+    if (!automaticNumberFullUnionRetry) {
+      raise_sync_table_issue(
+        job.ownerUserId,
+        string.from(job.table),
+        conflictKind.trim().toLowerCase() == 'unique_business_key'
+          ? 'unique_business_key'
+          : rejectedRowCount != null && rejectedRowCount > 0
+            ? 'rejected_rows'
+            : 'sync_failed',
+        issueMessage,
+        string.from(job.clientName)
+      );
+    }
     if (failedBatchId.length != 0) {
       cleanup_multi_writer_batch_storage(failedBatchId);
+    }
+    if (automaticNumberFullUnionRetry) {
+      const retryJobs = queue_automatic_number_full_union_retry(
+        string.from(job.ownerUserId),
+        string.from(job.table)
+      );
+      if (retryJobs.length == 0) {
+        raise_sync_table_issue(
+          job.ownerUserId,
+          string.from(job.table),
+          'sync_failed',
+          'The bounded automatic-number full-union retry could not be queued safely.',
+          string.from(job.clientName)
+        );
+      }
     }
   }
   const completedBatchId = string.from(job.batchId ?? '').trim();
