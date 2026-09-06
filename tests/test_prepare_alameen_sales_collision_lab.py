@@ -6,6 +6,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "prepare_alameen_sales_collision_lab.py"
+LAUNCHER = ROOT / "scripts" / "start_prepare_alameen_sales_collision_lab_hidden.ps1"
 sys.path.insert(0, str(ROOT / "scripts"))
 SPEC = importlib.util.spec_from_file_location("prepare_alameen_sales_collision_lab", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -40,6 +41,15 @@ class PrepareAlameenSalesCollisionLabTests(unittest.TestCase):
         self.assertEqual(
             MODULE.parse_client_names(args), ["alshallan2", "velvet factory"]
         )
+
+    def test_hidden_launcher_quotes_every_complete_client_name(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+
+        self.assertIn("[string[]] $ClientName", source)
+        self.assertIn("$value.Contains('\"')", source)
+        self.assertIn("'--client \"{0}\"' -f $_", source)
+        self.assertIn("($clientArguments -join ' ')", source)
+        self.assertIn("-ArgumentList $arguments", source)
 
     def test_bounded_table_window_is_drained_until_exact_scope(self):
         snapshots = [
