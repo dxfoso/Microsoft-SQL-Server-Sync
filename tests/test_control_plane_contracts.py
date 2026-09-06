@@ -352,7 +352,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         body = match.group("body")
 
         self.assertNotIn("db.selectOne(Agent", body)
-        self.assertIn("list_table_sync_policies_for_scope(agent.ownerUserId)", body)
+        self.assertIn("table_sync_policies_for_database(", body)
+        self.assertIn("string.from(agent.database)", body)
         self.assertIn("apply_table_sync_policies_with_policies(", body)
         self.assertNotIn("apply_table_sync_policies(agent.ownerUserId", body)
         self.assertIn("agent_client_update_payload(agent)", body)
@@ -2330,6 +2331,27 @@ class ControlPlaneContractsTests(unittest.TestCase):
             policy_lookup,
         )
         self.assertNotIn("database: null", policy_lookup)
+
+    def test_large_multi_database_policy_catalog_cannot_hide_manual_exclusions(self):
+        source = read_text("business/control_plane.tru")
+        database_policies = source.split(
+            "function table_sync_policies_for_database(", 1
+        )[1].split("function table_sync_policy_payload(", 1)[0]
+        auto_enroll = source.split(
+            "function table_sync_policy_auto_enroll(", 1
+        )[1].split("function normalize_conflict_policy(", 1)[0]
+        public_agent = source.split("function public_agent_payload(", 1)[1].split(
+            "function diagnostic_request_pending(", 1
+        )[0]
+
+        self.assertIn("database: trimmedDatabase", database_policies)
+        self.assertIn("database: null", database_policies)
+        self.assertEqual(database_policies.count("limit: 1000"), 2)
+        self.assertEqual(
+            auto_enroll.count("policy = table_sync_policy_for_table("), 2
+        )
+        self.assertIn("table_sync_policies_for_database(", public_agent)
+        self.assertNotIn("list_table_sync_policies_for_scope", public_agent)
 
     def test_protocol_v5_unions_full_snapshots_for_multi_client_anti_entropy(self):
         source = read_text("business/control_plane.tru")

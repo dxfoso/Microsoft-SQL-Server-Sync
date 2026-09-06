@@ -872,12 +872,25 @@ function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<
 }
 
 function table_sync_policies_for_database(ownerUserId: string? = null, database: string = ''): array<json> {
-  const rows = list_table_sync_policies_for_scope(ownerUserId);
   const trimmedDatabase = database.trim();
   if (trimmedDatabase.length == 0) {
-    return rows;
+    return list_table_sync_policies_for_scope(ownerUserId);
   }
-  return rows.filter((row) => table_sync_policy_database_name(row) == trimmedDatabase);
+  const scope = table_sync_policy_scope(ownerUserId);
+  const fields = ['ownerUserId', 'database', 'table', 'enabled', 'manualOverride', 'updatedAt', 'updatedByClientName'];
+  const exactRows = db.selectMany(TableSyncPolicy, {
+    where: { ownerUserId: scope, database: trimmedDatabase },
+    orderBy: { field: 'table', dir: 'asc' },
+    fields,
+    limit: 1000
+  });
+  const legacyRows = db.selectMany(TableSyncPolicy, {
+    where: { ownerUserId: scope, database: null },
+    orderBy: { field: 'table', dir: 'asc' },
+    fields,
+    limit: 1000
+  });
+  return exactRows.concat(legacyRows);
 }
 
 function table_sync_policy_payload(policy: map<json>): map<json> {
@@ -2071,7 +2084,10 @@ function automatic_number_incident_count_for_client(ownerUserId: string, clientN
 function public_agent_payload(agent: map<json>, activeJobs: array<json>? = null, completedJobs: array<json>? = null, periodicStates: array<json>? = null, completedRowTotals: array<json>? = null, automaticNumberIncidentCounts: array<json>? = null): map<json> {
   let nextTables = [];
   if (agent.tables != null) {
-    const policies = list_table_sync_policies_for_scope(agent.ownerUserId);
+    const policies = table_sync_policies_for_database(
+      agent.ownerUserId,
+      string.from(agent.database)
+    );
     nextTables = apply_table_sync_policies_with_policies(
       agent.ownerUserId,
       bounded_agent_tables(agent.tables, agent.selectedTable),
@@ -2516,12 +2532,15 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
     const reference = sync_table_reference(normalizedTable);
     const databaseName = string.from(reference.database).trim();
     const localTable = string.from(reference.table).trim();
-    const policy = table_sync_policy_for_table_with_policies(
+    let policy = table_sync_policy_for_table_with_policies(
       ownerUserId,
       databaseName,
       localTable,
       existingPolicies
     );
+    if (policy == null) {
+      policy = table_sync_policy_for_table(ownerUserId, databaseName, localTable);
+    }
     if (policy == null) {
       let storedDatabase = null;
       if (databaseName.length != 0) {
@@ -2579,12 +2598,20 @@ function table_sync_policy_auto_enroll(tables: array<string>, token: string? = n
   }
   const enrolledPolicies = list_table_sync_policies_for_scope(ownerUserId);
   for (const normalizedTable of normalizedTables) {
-    const policy = table_sync_policy_for_table_with_policies(
+    let policy = table_sync_policy_for_table_with_policies(
       ownerUserId,
       '',
       normalizedTable,
       enrolledPolicies
     );
+    if (policy == null) {
+      const reference = sync_table_reference(normalizedTable);
+      policy = table_sync_policy_for_table(
+        ownerUserId,
+        string.from(reference.database).trim(),
+        string.from(reference.table).trim()
+      );
+    }
     if (policy != null) {
       policies = policies.concat([table_sync_policy_payload(policy)]);
     }
