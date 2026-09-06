@@ -72,7 +72,10 @@ exit 0
         -PassThru
     $supervisorLogPath = Join-Path $testInstall 'sync_windows_agent_supervisor.log'
     $supervisorLog = ''
-    $logDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    # Docker/SQL verification can saturate this workstation immediately before
+    # the fixture starts. Keep the assertion bounded but allow a loaded Windows
+    # host enough time to initialize a fresh hidden PowerShell process.
+    $logDeadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         Start-Sleep -Milliseconds 200
         if ($supervisorProcess.HasExited) {

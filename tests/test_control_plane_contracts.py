@@ -230,6 +230,29 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("reactivatedTables", body)
         self.assertIn("reactivatedTableCount: reactivatedTables.length", body)
 
+    def test_owner_policy_catalog_is_cursor_paginated_beyond_one_thousand_rows(self):
+        source = read_text("business/control_plane.tru")
+        page_loader = source.split(
+            "function list_table_sync_policy_page(", 1
+        )[1].split("function list_table_sync_policies_for_scope(", 1)[0]
+        scope_loader = source.split(
+            "function list_table_sync_policies_for_scope(", 1
+        )[1].split("function table_sync_policies_for_database(", 1)[0]
+
+        self.assertIn("db.page(TableSyncPolicy", page_loader)
+        self.assertIn("orderBy: { field: 'table', dir: 'asc' }", page_loader)
+        self.assertIn("limit: 1000", page_loader)
+        self.assertIn("cursor,", page_loader)
+        self.assertIn("includeTotal: false", page_loader)
+        self.assertIn("page.nextCursor", page_loader)
+        self.assertIn(
+            "list_table_sync_policy_page(scope, nextCursor, remainingPages - 1)",
+            page_loader,
+        )
+        self.assertIn("if (remainingPages == 1)", page_loader)
+        self.assertNotIn("db.selectMany(TableSyncPolicy", scope_loader)
+        self.assertIn("list_table_sync_policy_page(", scope_loader)
+
     def test_manual_table_disable_survives_auto_enrollment(self):
         source = read_text("business/control_plane.tru")
         setter = source.split("function table_sync_policy_set(", 1)[1].split(

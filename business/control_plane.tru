@@ -858,17 +858,37 @@ function table_sync_policy_scope(ownerUserId: string? = null): string {
   return ownerUserId.trim();
 }
 
-function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<json> {
-  const rows = db.selectMany(TableSyncPolicy, {
-    where: { ownerUserId: table_sync_policy_scope(ownerUserId) },
-    orderBy: { field: 'table', dir: 'asc' },
-    fields: ['ownerUserId', 'database', 'table', 'enabled', 'manualOverride', 'updatedAt', 'updatedByClientName'],
-    limit: 1000
-  });
-  if (rows == null) {
+function list_table_sync_policy_page(scope: string, cursor: string? = null, remainingPages: int = 100): array<json> {
+  if (remainingPages < 1) {
     return [];
   }
-  return rows;
+  const page = db.page(TableSyncPolicy, {
+    where: { ownerUserId: scope },
+    orderBy: { field: 'table', dir: 'asc' },
+    fields: ['ownerUserId', 'database', 'table', 'enabled', 'manualOverride', 'updatedAt', 'updatedByClientName'],
+    limit: 1000,
+    cursor,
+    includeTotal: false
+  });
+  const rows = page.rows;
+  const nextCursor = string.from(page.nextCursor ?? '').trim();
+  if (nextCursor.length == 0) {
+    return rows;
+  }
+  // A policy catalog beyond this already generous bound cannot be used
+  // partially: returning no policies keeps every scheduler path fail closed.
+  if (remainingPages == 1) {
+    return [];
+  }
+  const remainingRows = list_table_sync_policy_page(scope, nextCursor, remainingPages - 1);
+  if (remainingRows.length == 0) {
+    return [];
+  }
+  return rows.concat(remainingRows);
+}
+
+function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<json> {
+  return list_table_sync_policy_page(table_sync_policy_scope(ownerUserId));
 }
 
 function table_sync_policies_for_database(ownerUserId: string? = null, database: string = ''): array<json> {

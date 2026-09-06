@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 537)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 543)}
 
         observed_ids = set()
 
@@ -1531,7 +1531,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertIn("Agent install is incomplete; launch suppressed", lifecycle_launch)
         self.assertNotIn("'-SkipAgentStart'", lifecycle_launch)
-        self.assertIn("$logDeadline = [DateTime]::UtcNow.AddSeconds(15)", lifecycle_launch)
+        self.assertIn("$logDeadline = [DateTime]::UtcNow.AddSeconds(30)", lifecycle_launch)
         self.assertIn("do {", lifecycle_launch)
         self.assertIn("isolated_supervisor_fixture.ps1", test_script)
 
