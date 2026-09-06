@@ -125,6 +125,13 @@ class SyncContractsTests(unittest.TestCase):
             "await _discoverNewTablesForAutomaticEnrollment(database)",
             changed_discovery,
         )
+        self.assertIn(
+            "autoEnrollTableSyncPolicies(\n          tables: changedTables",
+            changed_discovery,
+        )
+        self.assertNotIn("updateTableSyncPolicy(", changed_discovery)
+        self.assertIn("enabled: current.enabled", changed_discovery)
+        self.assertIn("the remote table policy kept it disabled", changed_discovery)
         self.assertIn("'table_sync_policy_auto_enroll'", api)
         self.assertIn("N'unsupported'", discovery)
         self.assertIn("column_type.name IN", discovery)

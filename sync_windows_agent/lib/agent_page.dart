@@ -1983,16 +1983,18 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
             changedTables.add(syncKey);
           }
           nextTables[syncKey] = current.copyWith(
-            enabled: true,
+            enabled: current.enabled,
             autoRequired: false,
-            status: 'Queued',
+            status: current.enabled ? 'Queued' : 'Paused',
             progress: 0,
             changeTrackingStatus: 'enabled',
             changeTrackingMessage:
                 'A local SQL change was detected automatically.',
             localChangesPending: true,
             message:
-                'Changed automatically; waiting for every online client baseline.',
+                current.enabled
+                    ? 'Changed automatically; waiting for every online client baseline.'
+                    : 'A local change is waiting, but this table remains disabled by policy.',
           );
           stateChanged = true;
           continue;
@@ -2033,17 +2035,21 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
           _syncState.copyWith(tables: _nextTablesWithAutoRequired(nextTables)),
         );
       }
-      for (final syncKey in changedTables) {
-        await _controlPlaneClient.updateTableSyncPolicy(
-          table: syncKey,
-          enabled: true,
-          cascadeRelated: false,
-        );
-        logStartupEvent(
-          'Automatically enabled $syncKey after detecting a local SQL change.',
-        );
-      }
+      var newlyEnabled = <String>{};
       if (changedTables.isNotEmpty) {
+        final policies = await _controlPlaneClient.autoEnrollTableSyncPolicies(
+          tables: changedTables,
+        );
+        newlyEnabled = _applyRemoteTablePolicies(policies);
+        for (final syncKey in changedTables) {
+          logStartupEvent(
+            newlyEnabled.contains(syncKey)
+                ? 'Automatically enabled $syncKey after detecting a local SQL change.'
+                : 'Detected a local change in $syncKey; the remote table policy kept it disabled.',
+          );
+        }
+      }
+      if (newlyEnabled.isNotEmpty) {
         unawaited(_syncWithControlPlane());
       }
     } catch (error) {
