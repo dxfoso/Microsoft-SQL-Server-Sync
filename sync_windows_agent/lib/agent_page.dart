@@ -9404,11 +9404,16 @@ ORDER BY s.name, t.name;
       localTableName,
       database: targetDatabase,
     );
-    if (refreshFingerprint) {
+    final fingerprintTables = sqlSyncFingerprintTablesAfterApply(
+      schema: targetTable.schema,
+      table: targetTable.table,
+      visibleTableName: visibleTableName,
+    );
+    if (refreshFingerprint || fingerprintTables.length > 1) {
       final targetFingerprints = await _queryTableFingerprints(
         profile: targetProfile,
         database: targetDatabase,
-        tables: [visibleTableName],
+        tables: fingerprintTables,
       );
       _applyTableFingerprints(
         database: targetDatabase,

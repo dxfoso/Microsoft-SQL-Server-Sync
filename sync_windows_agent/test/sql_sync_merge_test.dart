@@ -3,6 +3,25 @@ import 'package:sync_windows_agent/sql_sync_merge.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
 
 void main() {
+  test('bu000 apply refreshes its side-effect er000 fingerprint', () {
+    expect(
+      sqlSyncFingerprintTablesAfterApply(
+        schema: 'dbo',
+        table: 'bu000',
+        visibleTableName: 'bu000',
+      ),
+      ['bu000', 'er000'],
+    );
+    expect(
+      sqlSyncFingerprintTablesAfterApply(
+        schema: 'dbo',
+        table: 'ce000',
+        visibleTableName: 'ce000',
+      ),
+      ['ce000'],
+    );
+  });
+
   test('only marked explicit deletes are durable tombstone reassertions', () {
     expect(
       isSqlSyncDurableTombstoneReassertion({

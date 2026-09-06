@@ -11,6 +11,23 @@ const sqlSyncChangeTrackingContextHex = '0x53514C53594E43';
 /// delete instruction.
 const sqlSyncDeletePolicy = 'explicit-tombstones-only';
 
+/// Tables whose cached physical fingerprints can change as a side effect of
+/// one atomic apply. Al-Ameen duplicates the `bu000.Number` relation in
+/// `er000.ParentNumber`, and the automatic-number transaction rewrites both.
+List<String> sqlSyncFingerprintTablesAfterApply({
+  required String schema,
+  required String table,
+  required String visibleTableName,
+}) {
+  final tables = <String>[visibleTableName];
+  if (schema.trim().toLowerCase() == 'dbo' &&
+      table.trim().toLowerCase() == 'bu000' &&
+      visibleTableName.trim().toLowerCase() != 'er000') {
+    tables.add('er000');
+  }
+  return List<String>.unmodifiable(tables);
+}
+
 /// Transport-only proof that a delete inside a canonical full merge is the
 /// server-validated reassertion of an existing durable explicit tombstone.
 /// Raw snapshot rows cannot create this trust marker; [live_sync_api.dart]

@@ -855,7 +855,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_pendingWindowActionAck = _PendingWindowActionAck(", queue_body)
         self.assertIn("await _flushPendingWindowActionAck();", queue_body)
 
-    def test_delta_apply_skips_full_table_fingerprint_after_success(self):
+    def test_delta_apply_refreshes_only_proven_side_effect_fingerprints(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         apply_body = agent_page.split(
             "Future<int> _applyDownloadedSnapshotToTarget({", 1
@@ -864,13 +864,18 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("if (!applyDelta) {", apply_body)
         self.assertIn("final targetFingerprints = await _queryTableFingerprints(", apply_body)
         self.assertIn("bool refreshFingerprint = false", apply_body)
-        self.assertIn("if (refreshFingerprint) {", apply_body)
+        self.assertIn("sqlSyncFingerprintTablesAfterApply(", apply_body)
+        self.assertIn(
+            "if (refreshFingerprint || fingerprintTables.length > 1) {",
+            apply_body,
+        )
         self.assertIn("selectiveRangeReconcile ||", agent_page)
         self.assertIn("(!snapshotToApply.isDelta &&", agent_page)
         self.assertIn("!authoritativeReconcile &&", agent_page)
         self.assertIn("!canonicalFullMerge", agent_page)
         self.assertIn("_applyTableFingerprints(", apply_body)
         self.assertIn("tables: [visibleTableName]", apply_body)
+        self.assertIn("tables: fingerprintTables", apply_body)
 
     def test_unique_business_key_failure_is_retryable_without_user_input(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
