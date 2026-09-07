@@ -935,7 +935,16 @@ function expand_alameen_business_operation_tables(tables: array<string>, policie
       continue;
     }
     const syncKey = table_sync_policy_sync_key(policy);
-    if (sync_table_is_alameen_business_operation_table(syncKey)) {
+    let sharesDetectedDatabase = false;
+    for (const detectedTable of detected) {
+      const detectedReference = sync_table_reference(string.from(detectedTable));
+      const detectedDatabase = string.from(detectedReference.database).trim();
+      if (detectedDatabase.length != 0 &&
+          sync_table_belongs_to_database(syncKey, detectedDatabase)) {
+        sharesDetectedDatabase = true;
+      }
+    }
+    if (sharesDetectedDatabase && sync_table_is_alameen_business_operation_table(syncKey)) {
       result = unique_string_values(result.concat([syncKey]));
     }
   }

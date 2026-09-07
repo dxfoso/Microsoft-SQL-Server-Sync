@@ -3265,6 +3265,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("sync_operation_group_uploads_completed(job)", source)
         self.assertIn("operation group is still waiting for all related table uploads", source)
         self.assertIn("expand_alameen_business_operation_tables", source)
+        graph_expansion = source.split(
+            "function expand_alameen_business_operation_tables(", 1
+        )[1].split("\n}", 1)[0]
+        self.assertIn("const detectedReference = sync_table_reference", graph_expansion)
+        self.assertIn(
+            "sync_table_belongs_to_database(syncKey, detectedDatabase)",
+            graph_expansion,
+        )
+        self.assertIn("sharesDetectedDatabase &&", graph_expansion)
         self.assertIn("let operationGroupReady = operationGroupTables.length == 9", source)
         self.assertIn(
             "function sync_table_plan_supports_alameen_operation_group(", source
