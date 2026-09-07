@@ -1332,6 +1332,25 @@ class SyncContractsTests(unittest.TestCase):
             benchmark,
         )
 
+    def test_bulk_benchmark_has_one_bounded_noise_confirmation(self):
+        benchmark = read_text("tests/benchmark_sql_bulk_stage.ps1")
+
+        self.assertIn("[switch] $ConfirmationAttempt", benchmark)
+        self.assertIn("if (-not $ConfirmationAttempt)", benchmark)
+        self.assertIn("-ConfirmationAttempt 2>&1", benchmark)
+        self.assertIn("the one bounded confirmation also failed", benchmark)
+
+    def test_updater_rollback_gate_has_one_fresh_confirmation(self):
+        runner = read_text("tests/run_sync_verification.ps1")
+
+        self.assertIn("function Invoke-NativeCheckedWithOneConfirmation", runner)
+        rollback_step = runner.split(
+            "Invoke-VerificationStep 'Windows updater transactional rollback'", 1
+        )[1].split("Invoke-VerificationStep 'Windows updater secure DNS fallback'", 1)[0]
+        self.assertIn("Invoke-NativeCheckedWithOneConfirmation", rollback_step)
+        self.assertEqual(rollback_step.count("Invoke-NativeCheckedWithOneConfirmation"), 1)
+        self.assertIn("one bounded fresh confirmation", runner)
+
     def test_updater_rollback_fixture_uses_deterministic_failing_executable(self):
         rollback = read_text("tests/test_windows_updater_rollback.ps1")
 

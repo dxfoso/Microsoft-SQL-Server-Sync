@@ -147,6 +147,22 @@ function Invoke-NativeChecked {
     }
 }
 
+function Invoke-NativeCheckedWithOneConfirmation {
+    param(
+        [Parameter(Mandatory = $true)][string] $Executable,
+        [Parameter(Mandatory = $true)][string[]] $Arguments,
+        [string] $WorkingDirectory = $repoRoot
+    )
+
+    try {
+        Invoke-NativeChecked -Executable $Executable -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+    }
+    catch {
+        Write-Host "The isolated native check ended unexpectedly; running its one bounded fresh confirmation. First failure: $($_.Exception.Message)"
+        Invoke-NativeChecked -Executable $Executable -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+    }
+}
+
 function Initialize-PinnedBackendSubmodule {
     $backendProbe = Join-Path $repoRoot 'backend\server\src\eval\expr\builtins\part_01.rs'
     if (Test-Path -LiteralPath $backendProbe -PathType Leaf) {
@@ -212,7 +228,7 @@ try {
             )
         }
         Invoke-VerificationStep 'Windows updater transactional rollback' {
-            Invoke-NativeChecked -Executable 'powershell.exe' -Arguments @(
+            Invoke-NativeCheckedWithOneConfirmation -Executable 'powershell.exe' -Arguments @(
                 '-NoProfile',
                 '-ExecutionPolicy', 'Bypass',
                 '-File', (Join-Path $repoRoot 'tests\test_windows_updater_rollback.ps1')

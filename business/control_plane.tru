@@ -6794,7 +6794,7 @@ function resolve_converged_automatic_number_incidents(ownerUserId: string, agent
     scheduler_agent_table_state_cache(agent, ownerPolicies)
   );
   const activeTables = active_job_tables_for_owner(ownerUserId);
-  let resolvedCount = 0;
+  let resolvedIncidentIds = [];
   let checkedTables = [];
   for (const incident of reservedRows) {
     const table = string.from(incident.table).trim();
@@ -6844,18 +6844,28 @@ function resolve_converged_automatic_number_incidents(ownerUserId: string, agent
         )) {
       continue;
     }
-    const resolvedAt = now_iso();
-    resolvedCount += db.updateMany(AutoNumberIncident, {
-      ownerUserId,
-      table,
-      status: 'reserved'
-    }, {
-      status: 'resolved',
-      resolvedAt,
-      updatedAt: resolvedAt
-    });
+    for (const reservedRow of reservedRows) {
+      if (string.from(reservedRow.table).trim() == table) {
+        resolvedIncidentIds = resolvedIncidentIds.concat([
+          string.from(reservedRow.id)
+        ]);
+      }
+    }
   }
-  return resolvedCount;
+  resolvedIncidentIds = unique_string_values(resolvedIncidentIds);
+  if (resolvedIncidentIds.length == 0) {
+    return 0;
+  }
+  const resolvedAt = now_iso();
+  return db.updateMany(AutoNumberIncident, {
+    id: { in: resolvedIncidentIds },
+    ownerUserId,
+    status: 'reserved'
+  }, {
+    status: 'resolved',
+    resolvedAt,
+    updatedAt: resolvedAt
+  });
 }
 
 function sync_row_logical_winner_refs(ownerUserId: string, table: string, row: map<json>, uniqueKeyColumnSets: array<json>): array<json> {

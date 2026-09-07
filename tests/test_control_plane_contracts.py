@@ -186,6 +186,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("participants.length < 2", convergence)
         self.assertIn("status: 'reserved'", convergence)
         self.assertIn("status: 'resolved'", convergence)
+        convergence_loop = convergence.split("for (const incident of reservedRows)", 1)[1].split(
+            "resolvedIncidentIds = unique_string_values", 1
+        )[0]
+        self.assertNotIn("db.updateMany(", convergence_loop)
+        self.assertIn("id: { in: resolvedIncidentIds }", convergence)
         self.assertIn("resolve_converged_automatic_number_incidents(ownerUserId)", heartbeat)
         self.assertNotIn("resolve_automatic_number_batch_incidents(", completion)
 

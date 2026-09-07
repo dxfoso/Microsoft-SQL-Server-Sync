@@ -5,7 +5,8 @@ param(
     [ValidateRange(1000, 100000)]
     [int] $Rows = 14030,
     [ValidateRange(1.0, 100.0)]
-    [double] $MinimumSpeedup = 1.25
+    [double] $MinimumSpeedup = 1.25,
+    [switch] $ConfirmationAttempt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -142,6 +143,15 @@ $bulkSeconds = [Math]::Round($bulkWatch.Elapsed.TotalSeconds, 3)
 $literalSeconds = [Math]::Round($literalWatch.Elapsed.TotalSeconds, 3)
 $speedup = if ($bulkSeconds -gt 0) { [Math]::Round($literalSeconds / $bulkSeconds, 2) } else { 0 }
 if ($speedup -lt $MinimumSpeedup) {
+    if (-not $ConfirmationAttempt) {
+        $confirmation = @(& powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $PSCommandPath -Server $Server -User $User -Password $Password -Rows $Rows -MinimumSpeedup $MinimumSpeedup -ConfirmationAttempt 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            $confirmation | Write-Output
+            return
+        }
+        $confirmationDetails = ($confirmation | Out-String).Trim()
+        throw "SqlBulkCopy speedup $speedup was below the required $MinimumSpeedup baseline and the one bounded confirmation also failed.`n$confirmationDetails"
+    }
     throw "SqlBulkCopy speedup $speedup was below the required $MinimumSpeedup baseline."
 }
 $result = [ordered]@{
