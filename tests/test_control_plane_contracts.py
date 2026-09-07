@@ -143,7 +143,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("function automatic_number_unreserved_union_collision", 1)[0]
         self.assertIn("'automatic-number-inventory'", inventory_queue)
         self.assertIn("\n    true,\n    true,", inventory_queue)
-        self.assertIn("resolve_automatic_number_batch_incidents", completion)
+        self.assertNotIn("resolve_automatic_number_batch_incidents(", completion)
+        self.assertIn("fresh equal-fingerprint gate", completion)
         self.assertIn("queue_automatic_number_full_union_retry", completion)
         self.assertIn("Change Tracking cursor can legitimately have", completion)
         self.assertNotIn("queue_automatic_number_delta_retry", source)
@@ -156,6 +157,37 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("status: 'reserved'", recovery)
         self.assertIn("afterNumber: ''", recovery)
         self.assertIn("queue_automatic_number_inventory_recovery", recovery)
+
+    def test_automatic_number_recovery_forces_complete_union_and_waits_for_fresh_convergence(self):
+        source = read_text("business/control_plane.tru")
+        planner = source.split("function sync_table_baseline_plan(", 1)[1].split(
+            "function enabled_sync_policy_tables_for_agent", 1
+        )[0]
+        convergence = source.split(
+            "function resolve_converged_automatic_number_incidents(", 1
+        )[1].split("function sync_row_logical_winner_refs", 1)[0]
+        heartbeat = source.split("function agents_heartbeat(", 1)[1].split(
+            "function begin_manual_sync_operation", 1
+        )[0]
+        completion = source.split("function jobs_complete(", 1)[1].split(
+            "function jobs_fail", 1
+        )[0]
+
+        self.assertIn("function automatic_number_recovery_requires_complete_union(", source)
+        self.assertIn("status: { in: ['blocked', 'reserved'] }", source)
+        self.assertIn("automatic_number_recovery_requires_complete_union(", planner)
+        complete_union_guard = planner.index(
+            "automatic_number_recovery_requires_complete_union("
+        )
+        self.assertLess(complete_union_guard, planner.index("mode: 'delta'"))
+        self.assertIn("mode: 'union_bootstrap'", planner[complete_union_guard:])
+        self.assertIn("repair_resolution_fingerprints_are_fresh(", convergence)
+        self.assertIn("fingerprints.length != 1", convergence)
+        self.assertIn("participants.length < 2", convergence)
+        self.assertIn("status: 'reserved'", convergence)
+        self.assertIn("status: 'resolved'", convergence)
+        self.assertIn("resolve_converged_automatic_number_incidents(ownerUserId)", heartbeat)
+        self.assertNotIn("resolve_automatic_number_batch_incidents(", completion)
 
     def test_initial_union_number_collision_queues_one_bounded_full_union_retry(self):
         source = read_text("business/control_plane.tru")

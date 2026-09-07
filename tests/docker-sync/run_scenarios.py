@@ -2351,10 +2351,25 @@ ALTER TABLE dbo.mt000 ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON);
         f"INSERT dbo.mt000 VALUES ('{material_2}',209812,N'SYNC TEST VELVET');",
         database=DATABASES[1],
     )
+    # Model the server's complete recovery relay from the two independent
+    # source inventories. A repair must contain both physical identities; a
+    # one-row range replay that carries only the renumber is not convergence.
+    source_material_inventories = [
+        [{"GUID": material_1, "Number": 209812, "Name": "SYNC TEST ALSHALLAN"}],
+        [{"GUID": material_2, "Number": 209812, "Name": "SYNC TEST VELVET"}],
+        [],
+    ]
     canonical_materials = [
         {"GUID": material_1, "Number": 209812, "Name": "SYNC TEST ALSHALLAN"},
         {"GUID": material_2, "Number": 209813, "Name": "SYNC TEST VELVET"},
     ]
+    source_material_guids = {
+        row["GUID"] for inventory in source_material_inventories for row in inventory
+    }
+    if source_material_guids != {material_1, material_2}:
+        raise AssertionError(
+            f"Complete material relay omitted a source identity: {source_material_guids}"
+        )
     for database in DATABASES:
         apply(
             database,
@@ -2590,6 +2605,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "business-key-collision-fails-closed-then-reserved-key-applies",
             "alameen-bu000-collision-renumbers-er000-by-parent-guid",
             "alameen-mt000-collision-preserves-guids-with-reserved-number",
+            "automatic-number-complete-union-relay-three-client-convergence",
             "invoice-line-primary-key-union-explicit-delete-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",
             "complete-reconcile-preserves-target-only-unicode-retry",

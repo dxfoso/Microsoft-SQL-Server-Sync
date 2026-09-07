@@ -3942,6 +3942,26 @@ function automatic_number_inventory_required(ownerUserId: string, table: string)
   return rows.length > 0;
 }
 
+// A blocked or reserved number incident is proof that a normal delta or a
+// selective range replay is no longer a complete repair boundary. A server
+// number override and its distinct counterpart can otherwise be separated by
+// source pages or ranges. Until fresh post-apply fingerprints converge, gather
+// the complete insert/update-only union from every enabled participant.
+function automatic_number_recovery_requires_complete_union(ownerUserId: string, table: string): bool {
+  const rows = db.selectMany(AutoNumberIncident, {
+    where: {
+      ownerUserId,
+      table,
+      status: { in: ['blocked', 'reserved'] }
+    },
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['id', 'numberColumn'],
+    limit: 1
+  });
+  return rows.length > 0 &&
+    string.from(rows[0].numberColumn ?? '').trim().toLowerCase() != 'unconfigured';
+}
+
 // A range manifest is usable only when it describes the exact complete table
 // inventory currently reported by that client. This prevents stale or partial
 // diagnostics from narrowing a repair unsafely.
@@ -4115,6 +4135,21 @@ function sync_table_baseline_plan(table: string, agents: array<json>, policies: 
       sourceAgent: null,
       targetAgents: participants,
       message: 'Automatic numbering requires a complete multi-client number inventory before another allocation can be reserved.'
+    };
+  }
+  if (participants.length >= 2 &&
+      allowInventoryUnion &&
+      automatic_number_recovery_requires_complete_union(
+        string.from(participants[0].ownerUserId),
+        table
+      )) {
+    return {
+      mode: 'union_bootstrap',
+      table,
+      participants,
+      sourceAgent: null,
+      targetAgents: participants,
+      message: 'Automatic numbering has an unresolved reservation; every enabled client must contribute a complete union before fresh fingerprint convergence can resolve it.'
     };
   }
   // Complete fingerprints are expected to differ while a valid-cursor client
@@ -6722,16 +6757,105 @@ function resolve_automatic_number_batch_incidents(ownerUserId: string, table: st
   if (incidentIds.length == 0) {
     return 0;
   }
+  // This legacy cleanup can only retain incidents that a prior fresh
+  // convergence pass already resolved. Successful job acknowledgements alone
+  // must never promote a reservation to resolved.
   return db.updateMany(AutoNumberIncident, {
     id: { in: incidentIds },
     ownerUserId,
     table,
-    status: 'reserved'
+    status: 'resolved'
   }, {
     status: 'resolved',
     resolvedAt,
     updatedAt: resolvedAt
   });
+}
+
+function resolve_converged_automatic_number_incidents(ownerUserId: string, agents: array<json>? = null): int {
+  const reservedRows = db.selectMany(AutoNumberIncident, {
+    where: { ownerUserId, status: 'reserved' },
+    orderBy: { field: 'updatedAt', dir: 'asc' },
+    fields: ['id', 'table', 'numberColumn'],
+    limit: 100
+  });
+  if (reservedRows.length == 0) {
+    return 0;
+  }
+  const sourceAgents = agents ?? list_scheduler_agent_rows();
+  const ownerPolicies = list_table_sync_policies_for_scope(ownerUserId);
+  let ownerAgents = [];
+  for (const agent of sourceAgents) {
+    if (string.from(agent.ownerUserId) == ownerUserId && agent_sync_enabled(agent)) {
+      ownerAgents = ownerAgents.concat([agent]);
+    }
+  }
+  const tableCaches = ownerAgents.map((agent) =>
+    scheduler_agent_table_state_cache(agent, ownerPolicies)
+  );
+  const activeTables = active_job_tables_for_owner(ownerUserId);
+  let resolvedCount = 0;
+  let checkedTables = [];
+  for (const incident of reservedRows) {
+    const table = string.from(incident.table).trim();
+    if (table.length == 0 ||
+        string.from(incident.numberColumn ?? '').trim().toLowerCase() == 'unconfigured' ||
+        string_array_contains(checkedTables, table) ||
+        string_array_contains(activeTables, table)) {
+      continue;
+    }
+    checkedTables = checkedTables.concat([table]);
+    const participants = sync_agents_enabled_for_table(
+      ownerAgents,
+      table,
+      ownerPolicies,
+      tableCaches
+    );
+    if (participants.length < 2) {
+      continue;
+    }
+    let clientNames = [];
+    let fingerprints = [];
+    let complete = true;
+    for (const participant of participants) {
+      clientNames = clientNames.concat([string.from(participant.clientName)]);
+      const cache = scheduler_agent_table_state_cache_for_agent(
+        string.from(participant.clientName),
+        tableCaches
+      );
+      const state = scheduler_agent_table_state(
+        cache == null ? [] : cache.tables ?? [],
+        table
+      );
+      const fingerprint = sync_table_reported_fingerprint(state);
+      if (fingerprint.length == 0) {
+        complete = false;
+      } else if (!string_array_contains(fingerprints, fingerprint)) {
+        fingerprints = fingerprints.concat([fingerprint]);
+      }
+    }
+    if (!complete ||
+        fingerprints.length != 1 ||
+        !repair_resolution_fingerprints_are_fresh(
+          ownerUserId,
+          table,
+          clientNames,
+          participants
+        )) {
+      continue;
+    }
+    const resolvedAt = now_iso();
+    resolvedCount += db.updateMany(AutoNumberIncident, {
+      ownerUserId,
+      table,
+      status: 'reserved'
+    }, {
+      status: 'resolved',
+      resolvedAt,
+      updatedAt: resolvedAt
+    });
+  }
+  return resolvedCount;
 }
 
 function sync_row_logical_winner_refs(ownerUserId: string, table: string, row: map<json>, uniqueKeyColumnSets: array<json>): array<json> {
@@ -8006,6 +8130,9 @@ function agents_heartbeat(clientName: string? = null, machineName: string = '', 
   // to ordinary lightweight heartbeats.
   if (tablesChanged && sync_owner_has_repair_resolution_table_issues(ownerUserId)) {
     refresh_owner_baseline_table_issues(ownerUserId);
+  }
+  if (tablesChanged) {
+    resolve_converged_automatic_number_incidents(ownerUserId);
   }
   // Administrative commands can be written while a heartbeat is processing
   // its bounded table inventory. Re-read the row immediately before forming
@@ -13394,12 +13521,8 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
       string.from(job.direction).trim() == 'download' &&
       completedBatchId.length != 0 &&
       sync_batch_all_jobs_completed(completedBatchId)) {
-    resolve_automatic_number_batch_incidents(
-      string.from(job.ownerUserId),
-      string.from(job.table),
-      completedBatchId,
-      completedAt
-    );
+    // The next changed-table heartbeat runs the fresh equal-fingerprint gate;
+    // successful job acknowledgements alone do not prove convergence.
     if (sync_batch_automatic_retry_kind(completedBatchId) == 'automatic-number-inventory') {
       // The client acknowledged the safely cancelled delta upload before this
       // inventory pass, so its Change Tracking cursor can legitimately have
