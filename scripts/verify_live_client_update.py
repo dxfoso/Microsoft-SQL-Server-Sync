@@ -20,10 +20,16 @@ class ApiError(RuntimeError):
 
 def retryable_transport_error(exc: Exception) -> bool:
     message = str(exc)
+    if message.startswith("HTTP "):
+        return False
     return (
         "WinError 10054" in message
         or "Errno 10054" in message
+        or "WinError 10060" in message
+        or "Errno 10060" in message
         or "ConnectionResetError" in message
+        or "timed out" in message.lower()
+        or "failed to respond" in message.lower()
     )
 
 
@@ -214,7 +220,14 @@ def main() -> int:
     deadline = time.time() + max(args.wait_seconds, 1)
     last_summary = None
     while time.time() < deadline:
-        state = live_state(args.base_url, token)
+        try:
+            state = live_state(args.base_url, token)
+        except ApiError as exc:
+            if not retryable_transport_error(exc):
+                raise
+            print(f"transient live-state transport failure; continuing until deadline: {exc}")
+            time.sleep(max(args.poll_seconds, 1))
+            continue
         summary = find_agent_summary(state, args.client_name)
         last_summary = summary
         print(

@@ -288,6 +288,33 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         )
         self.assertFalse(verifier.retryable_transport_error(verifier.ApiError("HTTP 408: timeout")))
 
+    def test_client_update_retryable_transport_error_matches_windows_timeout(self):
+        verifier = load_script_module(
+            "verify_live_client_update_timeout_script",
+            "scripts/verify_live_client_update.py",
+        )
+
+        self.assertTrue(
+            verifier.retryable_transport_error(
+                verifier.ApiError(
+                    "request failed: <urlopen error [WinError 10060] failed to respond>"
+                )
+            )
+        )
+        self.assertTrue(
+            verifier.retryable_transport_error(
+                verifier.ApiError("request failed: <urlopen error timed out>")
+            )
+        )
+        self.assertFalse(
+            verifier.retryable_transport_error(verifier.ApiError("HTTP 408: timeout"))
+        )
+
+        source = (ROOT / "scripts/verify_live_client_update.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("transient live-state transport failure", source)
+
     def test_client_update_post_json_retries_transient_transport_reset(self):
         verifier = load_script_module(
             "verify_live_client_update_script",
