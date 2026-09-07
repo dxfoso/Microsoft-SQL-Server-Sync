@@ -3,6 +3,7 @@
 ## Workflow Rule
 
 - Use `run.ps1` as the single local launcher for `frontend/`, `sync_windows_agent/`, `backend/`, and `business/`.
+- Continue authorized implementation, regression testing, release publication, deployment, and verification automatically without waiting for separate user prompts. Stop and request user input only when a genuinely manual action, missing authority, or material product choice is unavoidable; a live-data safety pause must not block continued diagnosis, fixes, tests, or new versions.
 - Keep the repo layout aligned to the current structure:
   - `frontend/` is the web control plane
   - `backend/` is only the `tru` submodule

@@ -145,11 +145,11 @@ class SyncContractsTests(unittest.TestCase):
     def test_deployment_backend_image_runs_validated_as_non_root(self):
         dockerfile = read_text("Dockerfile.backend")
 
-        self.assertIn("FROM docker.io/library/rust:1.89-bullseye AS builder", dockerfile)
+        self.assertIn("FROM docker.io/library/rust:1.94-bullseye AS builder", dockerfile)
         self.assertIn("FROM docker.io/library/debian:bullseye-slim AS runtime", dockerfile)
         self.assertEqual(
             dockerfile.count(
-                "id=tru-backend-target-rust189-bullseye,"
+                "id=tru-backend-target-rust194-bullseye,"
                 "target=/app/server/target,sharing=locked"
             ),
             2,
@@ -1017,6 +1017,9 @@ class SyncContractsTests(unittest.TestCase):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         client_api = read_text("sync_windows_agent/lib/live_sync_api.dart")
         merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        single_table_merge = merge.split(
+            "String buildTargetSnapshotStageApplySql(", 1
+        )[1]
         control_plane = read_text("business/control_plane.tru")
         apply_body = agent_page.split(
             "Future<int> _applyDownloadedSnapshotToTarget({", 1
@@ -1032,7 +1035,7 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_deduplicateCanonicalFullMergeRows", client_api)
         self.assertIn("canonicalFullMerge", control_plane)
         self.assertIn("mergeParticipantCount", control_plane)
-        self.assertNotIn("TABLOCKX", merge)
+        self.assertNotIn("TABLOCKX", single_table_merge)
         self.assertNotIn("DELETE TOP", merge)
         self.assertIn("explicit-tombstones-only", merge)
         self.assertIn("sqlSyncDurableTombstoneReassertionField", merge)
@@ -2579,13 +2582,49 @@ class SyncContractsTests(unittest.TestCase):
             "final deltaRows = await _fetchChangeTrackingRows(", 1
         )[1].split("rows.addAll(deltaRows);", 1)[0]
 
-        self.assertIn("snapshotVersion: tracking.currentVersion", caller)
+        self.assertIn(
+            "operationGroupSnapshotVersion ?? tracking.currentVersion", caller
+        )
         self.assertIn("required int snapshotVersion", capture)
         self.assertIn("SET XACT_ABORT ON;", capture)
         self.assertIn("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;", capture)
         self.assertIn("BEGIN TRANSACTION;", capture)
         self.assertIn("AND ct.SYS_CHANGE_VERSION <= $snapshotVersion", capture)
         self.assertIn("COMMIT TRANSACTION;", capture)
+
+    def test_alameen_operation_group_uses_one_source_boundary_and_one_target_transaction(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+
+        self.assertIn("_operationGroupSnapshotVersions", agent)
+        self.assertIn("_prepareOperationGroupUploadSnapshots", agent)
+        self.assertIn("currentBoundary != expectedBoundary", agent)
+        self.assertIn("_validateAlameenOperationGroupBoundary", agent)
+        self.assertIn("boundary.violationCount", agent)
+        self.assertIn("job.operationGroupId?.trim().isNotEmpty", agent)
+        self.assertIn("operationGroupSnapshotVersion ?? tracking.currentVersion", agent)
+        self.assertIn("_deferredOperationGroups", agent)
+        self.assertIn("buildAtomicTargetSnapshotGroupApplySql", agent)
+        self.assertIn("lockTableReferences:", agent)
+        self.assertIn("WITH (TABLOCKX, HOLDLOCK)", merge)
+        self.assertLess(
+            merge.index("WITH (TABLOCKX, HOLDLOCK)"),
+            merge.index("...tableApplySql"),
+        )
+        self.assertIn("_SyncOperationGroupReplanRequired", agent)
+        self.assertIn("sync.operation_group.replan_cleanup_failed", agent)
+        self.assertIn("BEGIN TRANSACTION;", merge)
+        self.assertIn("__SQL_SYNC_GROUP_COMMITTED__=1", merge)
+        self.assertIn("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION", merge)
+
+    def test_root_backend_validation_uses_the_locked_runtime_rust_version(self):
+        dockerfile = read_text("Dockerfile.backend")
+        backend_dockerfile = read_text("backend/Dockerfile")
+
+        self.assertIn("rust:1.94-bullseye", dockerfile)
+        self.assertIn("rust:1.94-bullseye", backend_dockerfile)
+        self.assertNotIn("rust189", dockerfile)
+        self.assertIn("TRU_VALIDATE_ONLY=1", dockerfile)
 
     def test_windows_client_delta_sync_reconciles_changes_and_advances_checkpoint(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")

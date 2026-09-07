@@ -3257,5 +3257,37 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn(".delta.json.gz", collector)
 
 
+    def test_alameen_operation_group_has_durable_upload_and_ack_barriers(self):
+        source = read_text("business/control_plane.tru")
+
+        self.assertIn("field operationGroupId", source)
+        self.assertIn("field operationGroupTables", source)
+        self.assertIn("sync_operation_group_uploads_completed(job)", source)
+        self.assertIn("operation group is still waiting for all related table uploads", source)
+        self.assertIn("expand_alameen_business_operation_tables", source)
+        self.assertIn("let operationGroupReady = operationGroupTables.length == 9", source)
+        self.assertIn("string.from(groupPlan.mode) != 'delta'", source)
+        self.assertIn("Never let part of an accounting graph escape independently", source)
+        self.assertIn("requestedOperationTableCount != 0 && operationGroupTables.length != 9", source)
+        self.assertIn("Atomic Al-Ameen operation group applied successfully.", source)
+        self.assertIn("operationGroupId: completedOperationGroupId", source)
+        self.assertIn(
+            "function alameen_business_operation_tables(tables: array<string>): array<string>",
+            source,
+        )
+        self.assertIn("let jobOperationGroupTables = operationGroupTables.filter", source)
+        self.assertNotIn("inOperationGroup ? operationGroupTables : []", source)
+        self.assertIn("let planOperationGroupTables = operationGroupTables.filter", source)
+        self.assertIn("string_array_contains(operationGroupTables, planTable)", source)
+        self.assertIn("planOperationGroupId,\n        planOperationGroupTables", source)
+        self.assertNotIn("rangeBucketCsv ?? ''),\n        operationGroupId,\n        operationGroupTables", source)
+        self.assertIn("failureKind.trim().toLowerCase() == 'operation_group_replan'", source)
+        self.assertIn("baselineReplan || automaticNumberInventoryReplan || operationGroupReplan", source)
+        self.assertIn("queued automatically for a fresh complete capture", source)
+        self.assertIn("const activeOperationJobs = db.selectMany(SyncJob", source)
+        self.assertIn("cleanup_multi_writer_batches_storage(cleanedOperationBatchIds)", source)
+        self.assertIn("db.deleteMany(UploadSession, { jobId: { in: activeOperationJobIds } })", source)
+
+
 if __name__ == "__main__":
     unittest.main()

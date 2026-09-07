@@ -2379,6 +2379,8 @@ class RemoteSyncJob {
     required this.message,
     required this.error,
     this.batchId,
+    this.operationGroupId,
+    this.operationGroupTables = const <String>[],
     this.protocolVersion = 0,
     this.syncEpoch = '',
   });
@@ -2407,6 +2409,8 @@ class RemoteSyncJob {
   final String message;
   final String? error;
   final String? batchId;
+  final String? operationGroupId;
+  final List<String> operationGroupTables;
   final int protocolVersion;
   final String syncEpoch;
 
@@ -2436,6 +2440,12 @@ class RemoteSyncJob {
       message: json['message'] as String? ?? '',
       error: json['error'] as String?,
       batchId: json['batchId'] as String?,
+      operationGroupId: json['operationGroupId'] as String?,
+      operationGroupTables: (json['operationGroupTables'] as List? ??
+              const <dynamic>[])
+          .map((value) => value.toString())
+          .where((value) => value.trim().isNotEmpty)
+          .toList(growable: false),
       protocolVersion: (json['protocolVersion'] as num? ?? 0).round(),
       syncEpoch: json['syncEpoch'] as String? ?? '',
     );

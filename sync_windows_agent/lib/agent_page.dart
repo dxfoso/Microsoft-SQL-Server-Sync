@@ -11,6 +11,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:path/path.dart' as path;
 
 import 'agent_widgets.dart';
+import 'alameen_operation_boundary.dart';
 import 'automatic_change_discovery.dart';
 import 'change_tracking_cursor_policy.dart';
 import 'client_version.dart';
@@ -195,6 +196,11 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   VoidCallback? _tableDataDialogRefresh;
   final Set<String> _processingJobIds = <String>{};
   final Set<String> _cancelledProcessingJobIds = <String>{};
+  final Map<String, Map<String, _DeferredOperationGroupTable>>
+  _deferredOperationGroups =
+      <String, Map<String, _DeferredOperationGroupTable>>{};
+  final Map<String, Future<int>> _operationGroupSnapshotVersions =
+      <String, Future<int>>{};
   bool _processingPendingJobsBusy = false;
   String? _lastSqlCmdLaunchError;
   ClientUpdateInfo? _clientUpdateInfo;
@@ -3737,6 +3743,10 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       'network is unreachable',
       'temporarily unavailable',
       'sync batch is still waiting',
+      'operation group is still waiting',
+      'al-ameen operation boundary is incomplete',
+      'al-ameen operation boundary changed during grouped capture',
+      'atomic al-ameen operation group merge will retry automatically',
       'timed out',
       'timeout',
       'socket',
@@ -7610,18 +7620,47 @@ ORDER BY s.name, t.name;
         );
       }
       var pendingIndex = 0;
+      final handledQueueJobIds = <String>{};
       while (pendingIndex < orderedPendingJobs.length) {
         final nextJob = orderedPendingJobs[pendingIndex];
+        if (handledQueueJobIds.contains(nextJob.id)) {
+          pendingIndex += 1;
+          continue;
+        }
         if (nextJob.direction == 'upload') {
           final tuning = _controlPlaneClient.transferTuning;
           final uploadWave = <RemoteSyncJob>[];
-          while (pendingIndex < orderedPendingJobs.length &&
-              orderedPendingJobs[pendingIndex].direction == 'upload' &&
-              uploadWave.length < tuning.parallelism) {
-            final candidate = orderedPendingJobs[pendingIndex];
+          final operationGroupId = nextJob.operationGroupId?.trim() ?? '';
+          if (operationGroupId.isNotEmpty) {
+            uploadWave.addAll(
+              orderedPendingJobs.where(
+                (candidate) =>
+                    candidate.direction == 'upload' &&
+                    candidate.operationGroupId?.trim() == operationGroupId &&
+                    !_processingJobIds.contains(candidate.id),
+              ),
+            );
+            final expectedTables = nextJob.operationGroupTables.toSet();
+            final availableTables = uploadWave.map((job) => job.table).toSet();
+            if (availableTables.length != expectedTables.length ||
+                !expectedTables.every(availableTables.contains)) {
+              break;
+            }
+            await _prepareOperationGroupUploadSnapshots(
+              operationGroupId,
+              uploadWave,
+            );
+            handledQueueJobIds.addAll(uploadWave.map((job) => job.id));
             pendingIndex += 1;
-            if (!_processingJobIds.contains(candidate.id)) {
-              uploadWave.add(candidate);
+          } else {
+            while (pendingIndex < orderedPendingJobs.length &&
+                orderedPendingJobs[pendingIndex].direction == 'upload' &&
+                uploadWave.length < tuning.parallelism) {
+              final candidate = orderedPendingJobs[pendingIndex];
+              pendingIndex += 1;
+              if (!_processingJobIds.contains(candidate.id)) {
+                uploadWave.add(candidate);
+              }
             }
           }
           final outcomes = await runBoundedSyncTransfers<bool>(
@@ -7751,6 +7790,8 @@ ORDER BY s.name, t.name;
         message: errorMessage,
         error: errorMessage,
         batchId: job.batchId,
+        operationGroupId: job.operationGroupId,
+        operationGroupTables: job.operationGroupTables,
         protocolVersion: job.protocolVersion,
         syncEpoch: job.syncEpoch,
       );
@@ -7939,6 +7980,76 @@ ORDER BY s.name, t.name;
         protocolVersion: job.protocolVersion,
         syncEpoch: job.syncEpoch,
       ),
+    );
+  }
+
+  Future<void> _prepareOperationGroupUploadSnapshots(
+    String operationGroupId,
+    List<RemoteSyncJob> jobs,
+  ) async {
+    if (jobs.length < 2) {
+      throw StateError(
+        'Al-Ameen operation boundary is incomplete because fewer than two grouped uploads are available. No rows were uploaded.',
+      );
+    }
+    final snapshots = <_RelaySnapshotDocument>[];
+    for (final job in jobs) {
+      final cacheKey = _transferCache.key(
+        direction: 'upload',
+        jobId: job.id,
+        batchId: job.batchId!,
+        protocolVersion: job.protocolVersion,
+        syncEpoch: job.syncEpoch,
+      );
+      final cached = await _transferCache.loadUploadSnapshot(cacheKey);
+      final snapshot =
+          cached == null
+              ? await _createRelaySnapshotForJob(job)
+              : _RelaySnapshotDocument.fromJson(cached);
+      if (cached == null) {
+        await _transferCache.saveUploadSnapshot(cacheKey, snapshot.toJson());
+      }
+      snapshots.add(snapshot);
+    }
+    final boundaries =
+        snapshots
+            .map((snapshot) => snapshot.changeTrackingVersion)
+            .whereType<int>()
+            .toSet();
+    final database = _databaseNameFromSyncKey(jobs.first.table).trim();
+    final expectedBoundary =
+        await _operationGroupSnapshotVersions[operationGroupId];
+    final currentBoundary = await _queryDatabaseChangeTrackingVersion(
+      profile: _activeProfile(),
+      database: database,
+    );
+    if (expectedBoundary == null ||
+        boundaries.length != 1 ||
+        boundaries.single != expectedBoundary ||
+        currentBoundary != expectedBoundary) {
+      for (final job in jobs) {
+        await _transferCache.clear(
+          _transferCache.key(
+            direction: 'upload',
+            jobId: job.id,
+            batchId: job.batchId!,
+            protocolVersion: job.protocolVersion,
+            syncEpoch: job.syncEpoch,
+          ),
+        );
+      }
+      _operationGroupSnapshotVersions.remove(operationGroupId);
+      throw StateError(
+        'Al-Ameen operation boundary changed during grouped capture. The complete group will retry automatically; no rows were uploaded.',
+      );
+    }
+    logAgentDiagnostic(
+      'sync.operation_group.snapshots_prepared',
+      context: {
+        'operationGroupId': operationGroupId,
+        'tableCount': jobs.length,
+        'changeTrackingVersion': expectedBoundary,
+      },
     );
   }
 
@@ -8137,7 +8248,8 @@ ORDER BY s.name, t.name;
     );
     final uploadedVersion = snapshot.changeTrackingVersion;
     final preserveChangeTrackingBaseline =
-        uploadPreservesChangeTrackingBaseline(job.sourceClientName);
+        uploadPreservesChangeTrackingBaseline(job.sourceClientName) ||
+        (job.operationGroupId?.trim().isNotEmpty ?? false);
     if (!preserveChangeTrackingBaseline &&
         uploadedVersion != null &&
         uploadedVersion >= 0) {
@@ -8321,6 +8433,14 @@ ORDER BY s.name, t.name;
               rows: [...downloadedSnapshot.rows, ...retryRows],
               isDelta: true,
             );
+    final operationGroupId = job.operationGroupId?.trim() ?? '';
+    final groupedApply = operationGroupId.isNotEmpty;
+    if (groupedApply && job.operationGroupTables.length < 2) {
+      throw StateError(
+        'Operation group $operationGroupId is missing its complete table manifest. No target data was changed.',
+      );
+    }
+    _TargetApplyResult? deferredMerge;
 
     if (streamedTargetRowCount < 0) {
       logAgentDiagnostic(
@@ -8341,7 +8461,40 @@ ORDER BY s.name, t.name;
         snapshot: snapshotToApply,
         applyStats: applyStats,
         fullSnapshotApply: authoritativeReconcile || canonicalFullMerge,
+        deferMerge: groupedApply,
+        onMergeDeferred: (result) => deferredMerge = result,
       );
+      if (groupedApply) {
+        final merge = deferredMerge;
+        if (merge == null || !merge.mergeDeferred) {
+          throw StateError(
+            'Operation group $operationGroupId did not produce a deferred table merge. No target data was changed.',
+          );
+        }
+        final group = _deferredOperationGroups.putIfAbsent(
+          operationGroupId,
+          () => <String, _DeferredOperationGroupTable>{},
+        );
+        group[job.table] = _DeferredOperationGroupTable(
+          job: job,
+          snapshot: snapshotToApply,
+          merge: merge,
+        );
+        final expectedTables = job.operationGroupTables.toSet();
+        if (!expectedTables.every(group.containsKey)) {
+          logAgentDiagnostic(
+            'sync.operation_group.staged',
+            context: {
+              'operationGroupId': operationGroupId,
+              'stagedTables': group.keys.toList(growable: false),
+              'expectedTables': job.operationGroupTables,
+            },
+          );
+          return;
+        }
+        await _commitDeferredOperationGroup(operationGroupId, expectedTables);
+        return;
+      }
       logAgentDiagnostic(
         'sync.apply.committed',
         context: {
@@ -8488,6 +8641,186 @@ ORDER BY s.name, t.name;
     }
   }
 
+  Future<void> _commitDeferredOperationGroup(
+    String operationGroupId,
+    Set<String> expectedTables,
+  ) async {
+    final group = _deferredOperationGroups[operationGroupId];
+    if (group == null || !expectedTables.every(group.containsKey)) {
+      throw StateError(
+        'Atomic operation group $operationGroupId is incomplete. No target data was changed.',
+      );
+    }
+    final orderedJobs = _sortPendingJobsByDependencies(
+      expectedTables.map((table) => group[table]!.job).toList(growable: false),
+    );
+    final ordered = orderedJobs
+        .map((job) => group[job.table]!)
+        .toList(growable: false);
+    final databases =
+        ordered
+            .map((entry) => _databaseNameFromSyncKey(entry.job.table).trim())
+            .where((database) => database.isNotEmpty)
+            .toSet();
+    if (databases.isEmpty) {
+      throw StateError(
+        'Atomic operation group $operationGroupId has no target database. No target data was changed.',
+      );
+    }
+    logAgentDiagnostic(
+      'sync.operation_group.commit_started',
+      context: {
+        'operationGroupId': operationGroupId,
+        'tables': ordered.map((entry) => entry.job.table).toList(),
+      },
+    );
+    try {
+      await _runSqlCmdOrThrow(
+        profile: _activeProfile(),
+        database: databases.first,
+        query: buildAtomicTargetSnapshotGroupApplySql(
+          ordered.map((entry) => entry.merge.deferredMergeSql).toList(),
+          lockTableReferences: ordered
+              .map((entry) {
+                final database =
+                    _databaseNameFromSyncKey(entry.job.table).trim();
+                final parts = _splitQualifiedName(
+                  _localTableName(entry.job.table),
+                );
+                return '${_quoteIdentifier(database)}.${_quoteIdentifier(parts.schema)}.${_quoteIdentifier(parts.table)}';
+              })
+              .toList(growable: false),
+        ),
+        context: 'atomic Al-Ameen operation group merge',
+        timeout: _atomicSnapshotApplySqlCmdTimeout,
+        captureOutputFile: true,
+      );
+    } catch (error) {
+      if (error.toString().toLowerCase().contains(
+        'atomic operation group found post-upload local changes',
+      )) {
+        _deferredOperationGroups.remove(operationGroupId);
+        _operationGroupSnapshotVersions.remove(operationGroupId);
+        for (final entry in ordered) {
+          try {
+            await _dropTargetSnapshotStage(
+              profile: _activeProfile(),
+              database: _databaseNameFromSyncKey(entry.job.table).trim(),
+              stageTableName: entry.merge.stageTableName,
+            );
+            await _transferCache.clear(
+              _transferCache.key(
+                direction: 'download',
+                jobId: entry.job.id,
+                batchId: entry.job.batchId!,
+                protocolVersion: entry.job.protocolVersion,
+                syncEpoch: entry.job.syncEpoch,
+              ),
+            );
+          } catch (cleanupError) {
+            logAgentDiagnostic(
+              'sync.operation_group.replan_cleanup_failed',
+              context: {
+                'operationGroupId': operationGroupId,
+                'table': entry.job.table,
+                'error': cleanupError.toString(),
+              },
+            );
+          }
+        }
+        throw _SyncOperationGroupReplanRequired(operationGroupId);
+      }
+      throw StateError(
+        'Atomic Al-Ameen operation group merge will retry automatically; SQL Server rolled back the complete group. $error',
+      );
+    }
+
+    // SQL is committed at this point. Remove resumable stages before the
+    // network acknowledgement; a lost response safely rebuilds and reapplies
+    // the idempotent group from the server's immutable snapshots.
+    _deferredOperationGroups.remove(operationGroupId);
+    _operationGroupSnapshotVersions.remove(operationGroupId);
+    for (final entry in ordered) {
+      final database = _databaseNameFromSyncKey(entry.job.table).trim();
+      await _dropTargetSnapshotStage(
+        profile: _activeProfile(),
+        database: database,
+        stageTableName: entry.merge.stageTableName,
+      );
+      await _rejectionOutbox.saveTable(
+        widget.clientName,
+        entry.job.table,
+        const <SyncRejectedChange>[],
+      );
+      await _refreshTargetStateAfterRemoteApply(
+        entry.job,
+        refreshFingerprint: true,
+      );
+      final preserveBaseline = downloadPreservesChangeTrackingBaseline(
+        entry.job.sourceClientName,
+      );
+      final appliedVersion =
+          preserveBaseline
+              ? null
+              : entry.snapshot.changeTrackingVersions[widget.clientName];
+      if (appliedVersion != null && appliedVersion >= 0) {
+        final current =
+            _syncState.tables[entry.job.table] ??
+            _defaultSyncTableState(entry.job.table);
+        _updateSyncTableState(
+          entry.job.table,
+          current.copyWith(
+            changeTrackingVersion: appliedVersion,
+            changeTrackingOwner: widget.clientName,
+            changeTrackingStatus: 'enabled',
+            changeTrackingMessage:
+                'Atomic Al-Ameen operation group baseline is current.',
+          ),
+        );
+      }
+      await _controlPlaneClient.clearMultiWriterTransfer(
+        entry.job.id,
+        batchId: entry.job.batchId!,
+        protocolVersion: entry.job.protocolVersion,
+        syncEpoch: entry.job.syncEpoch,
+      );
+    }
+    final acknowledgementJob = ordered.last.job;
+    final completed = await _controlPlaneClient.completeJob(
+      acknowledgementJob.id,
+      status: 'completed',
+      progress: 100,
+      message:
+          'Atomic Al-Ameen operation group applied successfully (${ordered.length} tables).',
+      rowCount: ordered.fold<int>(
+        0,
+        (total, entry) => total + entry.snapshot.rows.length,
+      ),
+      rejectedRowCount: 0,
+      snapshotId: ordered.last.snapshot.id,
+      snapshotCreatedAt: ordered.last.snapshot.createdAt,
+      snapshotBytes: ordered.fold<int>(
+        0,
+        (total, entry) => total + entry.snapshot.snapshotBytes,
+      ),
+    );
+    _applyRemoteJobState(
+      completed,
+      appendHistory: true,
+      success: true,
+      overrideMessage:
+          'Applied one atomic Al-Ameen operation across ${ordered.length} related tables.',
+    );
+    await _syncWithControlPlane();
+    logAgentDiagnostic(
+      'sync.operation_group.committed',
+      context: {
+        'operationGroupId': operationGroupId,
+        'tableCount': ordered.length,
+      },
+    );
+  }
+
   String _syncRejectionSummary(List<SyncRejectedChange> changes) {
     final permanent =
         changes
@@ -8502,6 +8835,70 @@ ORDER BY s.name, t.name;
             .length;
     final transient = changes.length - permanent - dependency;
     return 'quarantined=${changes.length}; permanent=$permanent; dependency=$dependency; transient=$transient';
+  }
+
+  Future<int> _validateAlameenOperationGroupBoundary(
+    RemoteSyncJob job,
+    String database,
+  ) async {
+    final baselines = <String, int>{};
+    for (final syncTable in job.operationGroupTables) {
+      final tableDatabase = _databaseNameFromSyncKey(syncTable).trim();
+      if (tableDatabase.isNotEmpty &&
+          tableDatabase.toLowerCase() != database.toLowerCase()) {
+        throw StateError(
+          'Al-Ameen operation group spans different databases. No rows were uploaded.',
+        );
+      }
+      final localTable =
+          _splitQualifiedName(_localTableName(syncTable)).table.toLowerCase();
+      if (!alameenOperationLocalTables.contains(localTable)) continue;
+      final baseline = _syncState.tables[syncTable]?.changeTrackingVersion;
+      if (baseline == null || baseline < 0) {
+        throw StateError(
+          'Al-Ameen operation boundary is incomplete because $syncTable has no valid Change Tracking baseline. No rows were uploaded.',
+        );
+      }
+      baselines[localTable] = baseline;
+    }
+    if (!baselines.keys.toSet().containsAll(alameenOperationLocalTables)) {
+      throw StateError(
+        'Al-Ameen operation boundary is incomplete because the enabled business graph is missing a required table. No rows were uploaded.',
+      );
+    }
+    final result = await _runSqlCmdOrThrow(
+      profile: _activeProfile(),
+      database: database,
+      query: buildAlameenOperationBoundarySql(
+        database: database,
+        tableBaselines: baselines,
+      ),
+      context: 'Al-Ameen business operation boundary validation',
+      timeout: _snapshotSqlCmdTimeout,
+      captureOutputFile: true,
+    );
+    final boundary = parseAlameenOperationBoundaryResult(
+      result.stdout.toString(),
+    );
+    if (boundary == null) {
+      throw StateError(
+        'Al-Ameen operation boundary is incomplete because SQL Server returned no validation marker. No rows were uploaded.',
+      );
+    }
+    if (!boundary.isComplete) {
+      throw StateError(
+        'Al-Ameen operation boundary is incomplete: ${boundary.violationCount} of ${boundary.candidateDocumentCount} changed document(s) do not yet have a balanced final graph. The same job will retry automatically; no rows were uploaded.',
+      );
+    }
+    logAgentDiagnostic(
+      'sync.operation_group.boundary_validated',
+      context: {
+        'operationGroupId': job.operationGroupId,
+        'changeTrackingVersion': boundary.changeTrackingVersion,
+        'candidateDocumentCount': boundary.candidateDocumentCount,
+      },
+    );
+    return boundary.changeTrackingVersion;
   }
 
   Future<_RelaySnapshotDocument> _createRelaySnapshotForJob(
@@ -8603,6 +9000,25 @@ ORDER BY s.name, t.name;
       schema: tableParts.schema,
       table: tableParts.table,
     );
+    final operationGroupId = job.operationGroupId?.trim() ?? '';
+    int? operationGroupSnapshotVersion;
+    if (operationGroupId.isNotEmpty && tracking != null) {
+      try {
+        operationGroupSnapshotVersion = await _operationGroupSnapshotVersions
+            .putIfAbsent(
+              operationGroupId,
+              () => _validateAlameenOperationGroupBoundary(job, database),
+            );
+      } catch (_) {
+        _operationGroupSnapshotVersions.remove(operationGroupId);
+        rethrow;
+      }
+      if (operationGroupSnapshotVersion > tracking.currentVersion) {
+        throw StateError(
+          'Operation group $operationGroupId cannot capture ${job.table} at the shared Change Tracking boundary $operationGroupSnapshotVersion. No rows were uploaded.',
+        );
+      }
+    }
     final canUseDelta =
         tracking != null &&
         previousVersion != null &&
@@ -8625,9 +9041,12 @@ ORDER BY s.name, t.name;
         columns: syncColumns,
         primaryKeyColumns: primaryKeyColumns,
         previousVersion: previousVersion,
-        snapshotVersion: tracking.currentVersion,
+        snapshotVersion:
+            operationGroupSnapshotVersion ?? tracking.currentVersion,
       );
       rows.addAll(deltaRows);
+      snapshotChangeTrackingVersion =
+          operationGroupSnapshotVersion ?? tracking.currentVersion;
       isDelta = true;
     } else if (job.sourceClientName == 'server-bootstrap-v3' ||
         multiClientUnionSnapshot ||
@@ -8894,6 +9313,8 @@ ORDER BY s.name, t.name;
     bool refreshLocalState = true,
     _DeltaApplyStats? applyStats,
     bool fullSnapshotApply = false,
+    bool deferMerge = false,
+    void Function(_TargetApplyResult result)? onMergeDeferred,
   }) async {
     final stats = applyStats ?? _DeltaApplyStats();
     final targetDatabase = _databaseNameFromSyncKey(job.table).trim();
@@ -9171,9 +9592,14 @@ ORDER BY s.name, t.name;
         manageTriggers: true,
         insertOnly: false,
         resolveUniqueConflictsLatestWins: false,
+        deferMerge: deferMerge,
         onStageProgress: reportStageProgress,
         onMergeStarted: reportMergeStarted,
       );
+      if (applyResult.mergeDeferred) {
+        onMergeDeferred?.call(applyResult);
+        return -1;
+      }
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
         database: targetDatabase,
@@ -9259,9 +9685,14 @@ ORDER BY s.name, t.name;
         manageTriggers: true,
         insertOnly: false,
         resolveUniqueConflictsLatestWins: false,
+        deferMerge: deferMerge,
         onStageProgress: reportStageProgress,
         onMergeStarted: reportMergeStarted,
       );
+      if (applyResult.mergeDeferred) {
+        onMergeDeferred?.call(applyResult);
+        return -1;
+      }
       final rowCountAfter = await _queryTableRowCount(
         profile: targetProfile,
         database: targetDatabase,
@@ -9437,6 +9868,15 @@ ORDER BY s.name, t.name;
 
   Future<void> _markRemoteJobFailed(RemoteSyncJob job, Object error) async {
     try {
+      if (error is _SyncOperationGroupReplanRequired) {
+        await _controlPlaneClient.failJob(
+          job.id,
+          error.toString(),
+          progress: 100,
+          failureKind: 'operation_group_replan',
+        );
+        return;
+      }
       if (error is _SyncBaselineReplanRequired) {
         await _controlPlaneClient.failJob(
           job.id,
@@ -10449,6 +10889,7 @@ END
     bool manageTriggers = true,
     bool insertOnly = false,
     bool resolveUniqueConflictsLatestWins = false,
+    bool deferMerge = false,
     Future<void> Function(int loadedRows, int totalRows)? onStageProgress,
     Future<void> Function()? onMergeStarted,
   }) async {
@@ -10599,23 +11040,34 @@ END
         },
       );
       await onMergeStarted?.call();
+      final mergeSql = buildTargetSnapshotStageApplySql(
+        database: database,
+        schema: schema,
+        table: table,
+        stageTableName: stageTableName,
+        columns: columns,
+        primaryKeyColumns: primaryKeyColumns,
+        uniqueIndexColumnSets: uniqueIndexColumnSets,
+        deltaDeleteRows: deltaDeleteRows,
+        protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
+        manageTriggers: manageTriggers,
+        insertOnly: insertOnly,
+        resolveUniqueConflictsLatestWins: resolveUniqueConflictsLatestWins,
+        failOnProtectedRows: deferMerge,
+      );
+      if (deferMerge) {
+        return _TargetApplyResult(
+          insertedRows: 0,
+          mergeDeferred: true,
+          deferredMergeSql: mergeSql,
+          stageTableName: stageTableName,
+          rowCountBefore: rowCountBefore.value,
+        );
+      }
       final mergeResult = await _runSqlCmdOrThrow(
         profile: profile,
         database: database,
-        query: buildTargetSnapshotStageApplySql(
-          database: database,
-          schema: schema,
-          table: table,
-          stageTableName: stageTableName,
-          columns: columns,
-          primaryKeyColumns: primaryKeyColumns,
-          uniqueIndexColumnSets: uniqueIndexColumnSets,
-          deltaDeleteRows: deltaDeleteRows,
-          protectLocalChangesAfterVersion: protectLocalChangesAfterVersion,
-          manageTriggers: manageTriggers,
-          insertOnly: insertOnly,
-          resolveUniqueConflictsLatestWins: resolveUniqueConflictsLatestWins,
-        ),
+        query: mergeSql,
         context: 'target snapshot merge',
         timeout: _atomicSnapshotApplySqlCmdTimeout,
         captureOutputFile: true,
@@ -15130,6 +15582,17 @@ class _SyncBaselineReplanRequired implements Exception {
       'current=${currentVersion ?? 'unavailable'}). No rows were uploaded or applied.';
 }
 
+class _SyncOperationGroupReplanRequired implements Exception {
+  const _SyncOperationGroupReplanRequired(this.operationGroupId);
+
+  final String operationGroupId;
+
+  @override
+  String toString() =>
+      'Atomic operation group $operationGroupId changed locally after upload; '
+      'the complete group was rolled back and will be captured again automatically.';
+}
+
 class _DeltaApplyStats {
   int insertedRows = 0;
   int updatedRows = 0;
@@ -15147,12 +15610,32 @@ class _TargetApplyResult {
     this.protectedRows = 0,
     this.protectedUpsertRows = 0,
     this.protectedDeleteRows = 0,
+    this.mergeDeferred = false,
+    this.deferredMergeSql = '',
+    this.stageTableName = '',
+    this.rowCountBefore = 0,
   });
 
   final int insertedRows;
   final int protectedRows;
   final int protectedUpsertRows;
   final int protectedDeleteRows;
+  final bool mergeDeferred;
+  final String deferredMergeSql;
+  final String stageTableName;
+  final int rowCountBefore;
+}
+
+class _DeferredOperationGroupTable {
+  const _DeferredOperationGroupTable({
+    required this.job,
+    required this.snapshot,
+    required this.merge,
+  });
+
+  final RemoteSyncJob job;
+  final RemoteSnapshot snapshot;
+  final _TargetApplyResult merge;
 }
 
 class _StringQueryResult {

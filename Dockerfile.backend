@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM docker.io/library/rust:1.89-bullseye AS builder
+FROM docker.io/library/rust:1.94-bullseye AS builder
 WORKDIR /app
 ARG TRU_BUILD_GIT_SHA=""
 ENV TRU_BUILD_GIT_SHA=${TRU_BUILD_GIT_SHA}
@@ -9,13 +9,13 @@ COPY backend/server/Cargo.toml backend/server/Cargo.lock ./server/
 RUN mkdir -p server/src && echo "fn main() {}" > server/src/main.rs
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-  --mount=type=cache,id=tru-backend-target-rust189-bullseye,target=/app/server/target,sharing=locked \
+  --mount=type=cache,id=tru-backend-target-rust194-bullseye,target=/app/server/target,sharing=locked \
   cargo build --manifest-path server/Cargo.toml --release --bin tru_server
 
 COPY backend/server/src ./server/src
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-  --mount=type=cache,id=tru-backend-target-rust189-bullseye,target=/app/server/target,sharing=locked \
+  --mount=type=cache,id=tru-backend-target-rust194-bullseye,target=/app/server/target,sharing=locked \
   cargo build --manifest-path server/Cargo.toml --release --bin tru_server && \
   install -D /app/server/target/release/tru_server /tmp/tru_server
 

@@ -62,6 +62,50 @@ List<Map<String, dynamic>> completeSnapshotRowsForContentVerification(
 // complete snapshot as one enormous batch.
 const targetSnapshotInsertRowsPerStatement = 1000;
 
+/// Runs already-validated, already-staged table merges as one SQL Server
+/// transaction. Each table script keeps its own TRY/CATCH and nested
+/// transaction, while the outer transaction makes the complete Al-Ameen
+/// business graph visible atomically. sqlcmd stops on the first raised error,
+/// whose inner CATCH rolls back the outer transaction as well.
+String buildAtomicTargetSnapshotGroupApplySql(
+  List<String> tableApplySql, {
+  List<String> lockTableReferences = const <String>[],
+}) {
+  if (tableApplySql.length < 2) {
+    throw ArgumentError.value(
+      tableApplySql.length,
+      'tableApplySql',
+      'An atomic operation group requires at least two table merges.',
+    );
+  }
+  if (tableApplySql.any((sql) => sql.trim().isEmpty)) {
+    throw ArgumentError(
+      'Atomic operation group contains an empty table merge.',
+    );
+  }
+  if (lockTableReferences.isNotEmpty &&
+      lockTableReferences.length != tableApplySql.length) {
+    throw ArgumentError(
+      'Atomic operation group must lock every table before applying any merge.',
+    );
+  }
+  final lockSql =
+      lockTableReferences.isEmpty
+          ? ''
+          : <String>[
+            'DECLARE @SqlSyncGroupLockProbe BIGINT;',
+            ...lockTableReferences.map(
+              (reference) =>
+                  'SELECT @SqlSyncGroupLockProbe = COUNT_BIG(*) FROM $reference WITH (TABLOCKX, HOLDLOCK);',
+            ),
+          ].join('\n');
+  return <String>[
+    'SET NOCOUNT ON;\nSET XACT_ABORT ON;\nBEGIN TRANSACTION;\n$lockSql',
+    ...tableApplySql,
+    'IF @@TRANCOUNT <> 1\nBEGIN\n  IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\n  RAISERROR(\'Atomic sync operation transaction depth is invalid.\', 16, 1);\nEND;\nCOMMIT TRANSACTION;\nSELECT N\'__SQL_SYNC_GROUP_COMMITTED__=1\';',
+  ].join('\nGO\n');
+}
+
 int unexpectedCompleteSnapshotMismatchCount({
   required int unappliedRowCount,
   required int protectedUpsertRowCount,
@@ -240,6 +284,7 @@ String buildTargetSnapshotStageApplySql({
   bool manageTriggers = true,
   bool insertOnly = false,
   bool resolveUniqueConflictsLatestWins = false,
+  bool failOnProtectedRows = false,
 }) {
   final insertColumns = columns
       .where((column) => column.isWritable)
@@ -408,12 +453,24 @@ String buildTargetSnapshotStageApplySql({
   ${_buildBatchedInsertStatement(database: database, schema: schema, table: table, sourceTableReference: workingSource, sourceColumnList: sourceColumnList, insertColumnList: insertColumnList, insertValueList: insertValueList, joinClause: joinClause)}
   SET @SqlSyncInsertedRows += @@ROWCOUNT;
   $alameenHeaderGraphRewrite''';
+  final protectedGroupGuard =
+      failOnProtectedRows
+          ? '''
+  IF @SqlSyncProtectedRows > 0
+  BEGIN
+    RAISERROR('Atomic operation group found post-upload local changes and requires a complete replan.', 16, 1);
+  END;'''
+          : '';
 
   return '''
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 $transactionIsolation
 BEGIN TRY
+  IF OBJECT_ID(N'tempdb..#source_rows', N'U') IS NOT NULL
+  BEGIN
+    DROP TABLE #source_rows;
+  END;
   SELECT __row_num, $sourceColumnList
   INTO $workingSource
   FROM $stageTarget;
@@ -423,6 +480,7 @@ BEGIN TRY
   DECLARE @SqlSyncProtectedUpsertRows INT = 0;
   DECLARE @SqlSyncProtectedDeleteRows INT = 0;
   $postUploadProtectionStatements
+  $protectedGroupGuard
   $triggerDisableStatement
   $alameenRelationTriggerDisable
   $identityInsertOn

@@ -2971,6 +2971,17 @@ void main() {
     );
   });
 
+  test('remote jobs retain the durable operation-group manifest', () {
+    final job = RemoteSyncJob.fromJson({
+      'id': 'job-1',
+      'operationGroupId': 'group-1',
+      'operationGroupTables': ['db::bu000', 'db::bi000'],
+    });
+
+    expect(job.operationGroupId, 'group-1');
+    expect(job.operationGroupTables, ['db::bu000', 'db::bi000']);
+  });
+
   test('loginClient rejects malformed login payloads', () async {
     final client = _ScriptedClient(
       responseForRequest: (name, args, callIndex) {

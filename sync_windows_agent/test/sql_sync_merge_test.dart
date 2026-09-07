@@ -3,6 +3,72 @@ import 'package:sync_windows_agent/sql_sync_merge.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
 
 void main() {
+  test('Al-Ameen table merges are wrapped in one outer transaction', () {
+    final sql = buildAtomicTargetSnapshotGroupApplySql(
+      [
+        'BEGIN TRY\nBEGIN TRANSACTION;\nCOMMIT TRANSACTION;\nEND TRY\nBEGIN CATCH\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\nEND CATCH;',
+        'BEGIN TRY\nBEGIN TRANSACTION;\nCOMMIT TRANSACTION;\nEND TRY\nBEGIN CATCH\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\nEND CATCH;',
+      ],
+      lockTableReferences: const ['[db].[dbo].[bu000]', '[db].[dbo].[bi000]'],
+    );
+
+    expect(sql, startsWith('SET NOCOUNT ON;\nSET XACT_ABORT ON;'));
+    expect(sql, contains('WITH (TABLOCKX, HOLDLOCK);\nGO\nBEGIN TRY'));
+    expect(sql, contains('FROM [db].[dbo].[bu000] WITH (TABLOCKX, HOLDLOCK)'));
+    expect(sql, contains('FROM [db].[dbo].[bi000] WITH (TABLOCKX, HOLDLOCK)'));
+    expect(
+      sql.indexOf('WITH (TABLOCKX, HOLDLOCK)'),
+      lessThan(sql.indexOf('\nGO\nBEGIN TRY')),
+    );
+    expect(sql, contains('IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;'));
+    expect(sql, endsWith("SELECT N'__SQL_SYNC_GROUP_COMMITTED__=1';"));
+    expect(
+      () => buildAtomicTargetSnapshotGroupApplySql(['only one']),
+      throwsArgumentError,
+    );
+    expect(
+      () => buildAtomicTargetSnapshotGroupApplySql(
+        ['first', 'second'],
+        lockTableReferences: const ['[db].[dbo].[only_one]'],
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('atomic group rejects every post-upload local row before merge', () {
+    const columns = [
+      SqlSyncColumnDefinition(
+        name: 'Id',
+        sqlType: 'int',
+        maxLength: 4,
+        precision: 10,
+        scale: 0,
+        isIdentity: false,
+        isComputed: false,
+      ),
+    ];
+    final sql = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'bu000',
+      stageTableName: '#stage_bu000',
+      columns: columns,
+      primaryKeyColumns: const ['Id'],
+      protectLocalChangesAfterVersion: 42,
+      failOnProtectedRows: true,
+    );
+
+    expect(sql, contains('IF @SqlSyncProtectedRows > 0'));
+    expect(
+      sql,
+      contains('Atomic operation group found post-upload local changes'),
+    );
+    expect(
+      sql.indexOf('IF @SqlSyncProtectedRows > 0'),
+      lessThan(sql.indexOf('DECLARE @SqlSyncInsertedRows')),
+    );
+  });
+
   test('bu000 apply refreshes its side-effect er000 fingerprint', () {
     expect(
       sqlSyncFingerprintTablesAfterApply(

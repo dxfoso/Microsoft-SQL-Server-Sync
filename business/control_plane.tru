@@ -146,6 +146,10 @@ class SyncJob {
   field clientUserId: string? min=0 max=64
   field ownerUserId: string? min=0 max=64
   field batchId: string? min=0 max=128
+  // One Al-Ameen business operation can commit across several related tables.
+  // Keep those table batches behind one durable upload/apply barrier.
+  field operationGroupId: string? min=0 max=128
+  field operationGroupTables: array<json>?
   // Internal scheduler provenance. A failed full-download repair is allowed
   // exactly one automatic retry; ordinary/manual batches leave this null.
   field automaticRetryKind: string? min=0 max=32
@@ -885,6 +889,63 @@ function list_table_sync_policy_page(scope: string, cursor: string? = null, rema
     return [];
   }
   return rows.concat(remainingRows);
+}
+
+function sync_table_is_alameen_business_operation_table(syncTable: string): bool {
+  const reference = sync_table_reference(syncTable);
+  let localTable = string.from(reference.table).trim().toLowerCase();
+  const parts = localTable.split('.');
+  if (parts.length == 2 && string.from(parts[0]).trim() == 'dbo') {
+    localTable = string.from(parts[1]).trim();
+  }
+  return localTable == 'ac000' || localTable == 'bi000' ||
+    localTable == 'bu000' || localTable == 'ce000' ||
+    localTable == 'en000' || localTable == 'er000' ||
+    localTable == 'ms000' || localTable == 'mt000' ||
+    localTable == 'pt000';
+}
+
+function alameen_business_operation_tables(tables: array<string>): array<string> {
+  let result = [];
+  for (const table of unique_string_values(tables)) {
+    if (sync_table_is_alameen_business_operation_table(string.from(table))) {
+      result = result.concat([string.from(table)]);
+    }
+  }
+  return result;
+}
+
+function expand_alameen_business_operation_tables(tables: array<string>, policies: array<json>): array<string> {
+  const detected = alameen_business_operation_tables(tables);
+  if (detected.length == 0) {
+    return tables;
+  }
+  let result = unique_string_values(tables);
+  for (const policy of policies) {
+    if (policy.enabled != true) {
+      continue;
+    }
+    const syncKey = table_sync_policy_sync_key(policy);
+    if (sync_table_is_alameen_business_operation_table(syncKey)) {
+      result = unique_string_values(result.concat([syncKey]));
+    }
+  }
+  return result;
+}
+
+function prioritize_operation_group_tables(tables: array<string>, operationTables: array<string>): array<string> {
+  let result = [];
+  for (const table of operationTables) {
+    if (string_array_contains(tables, string.from(table))) {
+      result = result.concat([string.from(table)]);
+    }
+  }
+  for (const table of tables) {
+    if (!string_array_contains(operationTables, string.from(table))) {
+      result = result.concat([string.from(table)]);
+    }
+  }
+  return result;
 }
 
 function list_table_sync_policies_for_scope(ownerUserId: string? = null): array<json> {
@@ -2742,6 +2803,8 @@ function public_job_payload(job: map<json>): map<json> {
     rejectedRowCount: job.rejectedRowCount,
     rejectionSummary: job.rejectionSummary,
     batchId: job.batchId,
+    operationGroupId: job.operationGroupId,
+    operationGroupTables: job.operationGroupTables ?? [],
     protocolVersion: job.protocolVersion,
     syncEpoch: job.syncEpoch
   };
@@ -2776,6 +2839,8 @@ function agent_job_payload(job: map<json>): map<json> {
     rejectedRowCount: job.rejectedRowCount,
     rejectionSummary: job.rejectionSummary,
     batchId: job.batchId,
+    operationGroupId: job.operationGroupId,
+    operationGroupTables: job.operationGroupTables ?? [],
     protocolVersion: job.protocolVersion,
     syncEpoch: job.syncEpoch
   };
@@ -4863,13 +4928,60 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
     );
   }
 
+  // A sale or purchase is one business operation even though Al-Ameen writes
+  // its header, lines, voucher, ledger, stock and account projections in
+  // separate commits. Enqueue the complete enabled graph in one scheduler
+  // wave and place it before unrelated tables so the group cannot deadlock on
+  // the ordinary four-table concurrency bound.
+  dueTables = expand_alameen_business_operation_tables(dueTables, ownerPolicies);
+  const operationGroupTables = alameen_business_operation_tables(dueTables);
+  let operationGroupReady = operationGroupTables.length == 9;
+  if (operationGroupReady) {
+    for (const operationTable of operationGroupTables) {
+      const groupPlan = sync_table_baseline_plan(
+        operationTable,
+        ownerAgents,
+        ownerPolicies,
+        tableCaches,
+        !preserveChangeTrackingBaselines,
+        recentUploadModes
+      );
+      if (string.from(groupPlan.mode) != 'delta' ||
+          (groupPlan.participants ?? []).length == 0) {
+        operationGroupReady = false;
+      }
+      for (const groupAgent of (groupPlan.participants ?? [])) {
+        if (string_array_contains(
+          active_job_tables_from_cache(string.from(groupAgent.clientName), activeTableCaches) ?? [],
+          operationTable
+        )) {
+          operationGroupReady = false;
+        }
+      }
+    }
+  }
+  if (operationGroupTables.length != 0 && !operationGroupReady) {
+    // Never let part of an accounting graph escape independently. A later
+    // scheduler tick retries once every member has a valid delta baseline and
+    // no member is busy.
+    dueTables = dueTables.filter((candidateTable) =>
+      !string_array_contains(operationGroupTables, string.from(candidateTable))
+    );
+  }
+  const operationGroupId = operationGroupReady ? uuid.v4() : '';
+  dueTables = prioritize_operation_group_tables(dueTables, operationGroupTables);
+
   let createdJobs = [];
   let queuedTables = [];
   let unavailableManualTables = [];
   let queuedTableCount = activeTableCapacityUsed;
   for (const table of dueTables) {
+    const inOperationGroup = operationGroupId.length != 0 &&
+      string_array_contains(operationGroupTables, table);
     if (queuedTableCount >= periodic_sync_scheduler_table_limit()) {
-      break;
+      if (!inOperationGroup) {
+        break;
+      }
     }
     const plan = sync_table_baseline_plan(
       table,
@@ -4939,6 +5051,12 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
       if (planIsUnion && preserveChangeTrackingBaselines) {
         continue;
       }
+      let jobOperationGroupId = '';
+      let jobOperationGroupTables = operationGroupTables.filter((groupTable) => false);
+      if (inOperationGroup) {
+        jobOperationGroupId = operationGroupId;
+        jobOperationGroupTables = operationGroupTables;
+      }
       jobs = create_multi_writer_batch(
         normalizedOwnerUserId,
         table,
@@ -4950,7 +5068,9 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         planIsUnion && failedUnionRetryBatchId.length != 0
           ? 'failed-download'
           : '',
-        string.from(plan.rangeBucketCsv ?? '')
+        string.from(plan.rangeBucketCsv ?? ''),
+        jobOperationGroupId,
+        jobOperationGroupTables
       );
     }
     if (jobs.length > 0) {
@@ -7325,7 +7445,7 @@ function sync_batch_version_values(values: array<json>, clientName: string, trac
   return next;
 }
 
-function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = '', rangeBucketCsv: string = ''): array<json> {
+function multi_writer_job_rows(batchId: string, table: string, agents: array<json>, ownerUserId: string, protocol: map<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = '', rangeBucketCsv: string = '', operationGroupId: string = '', operationGroupTables: array<json>? = null): array<json> {
   let rows = [];
   const createdAt = now_iso();
   for (const agent of agents) {
@@ -7381,6 +7501,8 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       clientUserId: agent.clientUserId,
       ownerUserId,
       batchId,
+      operationGroupId,
+      operationGroupTables: operationGroupTables ?? [],
       automaticRetryKind,
       protocolVersion: protocol.protocolVersion,
       syncEpoch: protocol.syncEpoch
@@ -7415,6 +7537,8 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
       clientUserId: agent.clientUserId,
       ownerUserId,
       batchId,
+      operationGroupId,
+      operationGroupTables: operationGroupTables ?? [],
       automaticRetryKind,
       protocolVersion: protocol.protocolVersion,
       syncEpoch: protocol.syncEpoch
@@ -7423,7 +7547,7 @@ function multi_writer_job_rows(batchId: string, table: string, agents: array<jso
   return rows;
 }
 
-function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = '', rangeBucketCsv: string = ''): array<json> {
+function create_multi_writer_batch(ownerUserId: string, table: string, agents: array<json>, bootstrapSourceClientName: string = '', preserveChangeTrackingBaselines: bool = false, unionBootstrap: bool = false, policies: array<json>? = null, automaticRetryKind: string = '', rangeBucketCsv: string = '', operationGroupId: string = '', operationGroupTables: array<json>? = null): array<json> {
   if (agents.length == 0) {
     return [];
   }
@@ -7466,7 +7590,9 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
     unionBootstrap,
     policies,
     automaticRetryKind,
-    rangeBucketCsv
+    rangeBucketCsv,
+    operationGroupId,
+    operationGroupTables
   ));
 }
 
@@ -11577,6 +11703,42 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   });
 }
 
+function sync_operation_group_uploads_completed(job: map<json>): bool {
+  const operationGroupId = string.from(job.operationGroupId ?? '').trim();
+  if (operationGroupId.length == 0) {
+    return true;
+  }
+  const expectedTables = job.operationGroupTables ?? [];
+  if (expectedTables.length < 2) {
+    return false;
+  }
+  const uploads = db.selectMany(SyncJob, {
+    where: {
+      ownerUserId: job.ownerUserId,
+      operationGroupId,
+      direction: 'upload'
+    },
+    orderBy: { field: 'createdAt', dir: 'asc' },
+    fields: ['table', 'status'],
+    limit: 100
+  });
+  let uploadedTables = [];
+  for (const upload of uploads) {
+    if (string.from(upload.status) != 'completed') {
+      return false;
+    }
+    uploadedTables = unique_string_values(
+      uploadedTables.concat([string.from(upload.table)])
+    );
+  }
+  for (const expectedTable of expectedTables) {
+    if (!string_array_contains(uploadedTables, string.from(expectedTable))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function jobs_multi_writer_download(jobId: string, batchId: string, cursor: string? = null, token: string? = null, protocolVersion: int = 0, syncEpoch: string = ''): map<json> {
   const current = current_user_record(token);
   const job = find_job_by_id(jobId);
@@ -11601,6 +11763,9 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   }
   if (multi_writer_batch_stale(batch)) {
     return raw_json_error(410, 'multi-writer batch expired; start a new sync');
+  }
+  if (!sync_operation_group_uploads_completed(job)) {
+    return raw_json_error(409, 'operation group is still waiting for all related table uploads');
   }
   if (batch.status != 'ready') {
     return raw_json_error(409, 'sync batch is still waiting for client uploads');
@@ -12406,6 +12571,29 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     }
     tablePlans = tablePlans.concat([plan]);
   }
+  let operationGroupCandidates = [];
+  let requestedOperationTableCount = 0;
+  for (const plan of tablePlans) {
+    if (sync_table_is_alameen_business_operation_table(string.from(plan.table))) {
+      requestedOperationTableCount = requestedOperationTableCount + 1;
+    }
+    const mode = string.from(plan.mode);
+    if (mode == 'delta') {
+      operationGroupCandidates = operationGroupCandidates.concat([
+        string.from(plan.table)
+      ]);
+    }
+  }
+  const operationGroupTables = alameen_business_operation_tables(
+    operationGroupCandidates
+  );
+  if (requestedOperationTableCount != 0 && operationGroupTables.length != 9) {
+    return raw_json_error(
+      409,
+      'Al-Ameen accounting sync requires all nine mapped tables with valid delta baselines; retry after automatic baseline preparation'
+    );
+  }
+  const operationGroupId = operationGroupTables.length == 9 ? uuid.v4() : '';
   let createdJobs = [];
   for (const plan of tablePlans) {
     let nextJobs = [];
@@ -12435,16 +12623,27 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
           'multi-client union bootstrap waits until every enabled client is online'
         );
       }
+      const planTable = string.from(plan.table);
+      const inOperationGroup = operationGroupId.length != 0 &&
+        string_array_contains(operationGroupTables, planTable);
+      let planOperationGroupId = '';
+      let planOperationGroupTables = operationGroupTables.filter((groupTable) => false);
+      if (inOperationGroup) {
+        planOperationGroupId = operationGroupId;
+        planOperationGroupTables = operationGroupTables;
+      }
       nextJobs = create_multi_writer_batch(
         ownerId,
-        string.from(plan.table),
+        planTable,
         plan.participants ?? [],
         '',
         preserveChangeTrackingBaselines,
         planIsUnion,
         ownerPolicies,
         '',
-        string.from(plan.rangeBucketCsv ?? '')
+        string.from(plan.rangeBucketCsv ?? ''),
+        planOperationGroupId,
+        planOperationGroupTables
       );
     }
     if (nextJobs.length > 0) {
@@ -13459,9 +13658,49 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   if (updated != null) {
     nextJob = updated;
   }
+  const completedOperationGroupId = string.from(job.operationGroupId ?? '').trim();
+  if (status.trim().toLowerCase() == 'completed' &&
+      string.from(job.direction).trim() == 'download' &&
+      completedOperationGroupId.length != 0) {
+    // The client commits every staged table merge in one outer SQL
+    // transaction before sending this acknowledgement. Close all download
+    // rows for this client together so a lost response/restart cannot leave a
+    // committed business operation waiting for an already-finished sibling.
+    db.updateMany(SyncJob, {
+      ownerUserId: job.ownerUserId,
+      clientName: job.clientName,
+      operationGroupId: completedOperationGroupId,
+      direction: 'download',
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    }, {
+      status: 'completed',
+      progress: 100,
+      completedAt,
+      message: 'Atomic Al-Ameen operation group applied successfully.',
+      error: null,
+      rejectedRowCount: 0,
+      rejectionSummary: null,
+      updatedAt: completedAt
+    });
+  }
   if (status.trim().toLowerCase() == 'failed' ||
       (rejectedRowCount != null && rejectedRowCount > 0)) {
     const failedBatchId = string.from(job.batchId ?? '').trim();
+    const failedOperationGroupId = string.from(job.operationGroupId ?? '').trim();
+    if (failedOperationGroupId.length != 0) {
+      db.updateMany(SyncJob, {
+        ownerUserId: job.ownerUserId,
+        operationGroupId: failedOperationGroupId,
+        status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+      }, {
+        status: 'failed',
+        progress: 100,
+        completedAt,
+        error: string.concat('Atomic operation group failed: ', message),
+        message: string.concat('Atomic operation group failed: ', message),
+        updatedAt: completedAt
+      });
+    }
     if (failedBatchId.length != 0) {
       const activeBatchJobs = db.selectMany(SyncJob, {
         where: {
@@ -13604,7 +13843,9 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
   const baselineReplan = failureKind.trim().toLowerCase() == 'baseline_required';
   const automaticNumberInventoryReplan =
     failureKind.trim().toLowerCase() == 'automatic_number_inventory_required';
-  const safeReplan = baselineReplan || automaticNumberInventoryReplan;
+  const operationGroupReplan =
+    failureKind.trim().toLowerCase() == 'operation_group_replan';
+  const safeReplan = baselineReplan || automaticNumberInventoryReplan || operationGroupReplan;
   db.delete(UploadSession, { jobId });
   db.delete(DownloadSession, { jobId });
   const completedAt = now_iso();
@@ -13639,12 +13880,56 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
       ? 'Delta cancelled safely because its Change Tracking cursor was unavailable; queued for an all-client baseline replan.'
       : automaticNumberInventoryReplan
         ? 'Batch cancelled before download; a complete all-client number inventory was queued automatically.'
-        : message,
+        : operationGroupReplan
+          ? 'Atomic operation group cancelled safely because a client changed during apply; queued automatically for a fresh complete capture.'
+          : message,
     clientUserId: job.clientUserId,
     ownerUserId: job.ownerUserId,
     updatedAt: completedAt
   });
   const failedBatchId = string.from(job.batchId ?? '').trim();
+  const failedOperationGroupId = string.from(job.operationGroupId ?? '').trim();
+  if (failedOperationGroupId.length != 0) {
+    const activeOperationJobs = db.selectMany(SyncJob, {
+      where: {
+        ownerUserId: job.ownerUserId,
+        operationGroupId: failedOperationGroupId,
+        status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+      },
+      orderBy: { field: 'createdAt', dir: 'asc' },
+      fields: ['id', 'batchId'],
+      limit: 1000
+    });
+    db.updateMany(SyncJob, {
+      ownerUserId: job.ownerUserId,
+      operationGroupId: failedOperationGroupId,
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    }, {
+      status: safeReplan ? 'cancelled' : 'failed',
+      progress: 100,
+      completedAt,
+      error: batchFailureError,
+      message: safeReplan
+        ? 'Atomic operation group cancelled safely for automatic replan.'
+        : string.concat('Atomic operation group failed: ', message),
+      updatedAt: completedAt
+    });
+    const activeOperationJobIds = activeOperationJobs.map((operationJob) =>
+      string.from(operationJob.id)
+    );
+    const cleanedOperationBatchIds = unique_string_values(
+      activeOperationJobs
+        .map((operationJob) => string.from(operationJob.batchId ?? '').trim())
+        .filter((operationBatchId) => operationBatchId.length != 0)
+    );
+    if (activeOperationJobIds.length != 0) {
+      db.deleteMany(UploadSession, { jobId: { in: activeOperationJobIds } });
+      db.deleteMany(DownloadSession, { jobId: { in: activeOperationJobIds } });
+    }
+    if (cleanedOperationBatchIds.length != 0) {
+      cleanup_multi_writer_batches_storage(cleanedOperationBatchIds);
+    }
+  }
   const automaticNumberCollision = failedBatchId.length != 0 &&
     automatic_number_allocation_collision(message, failedBatchId);
   if (automaticNumberCollision) {
@@ -13676,7 +13961,9 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
           ? 'Atomic delta batch cancelled safely and queued for an all-client baseline replan.'
           : automaticNumberInventoryReplan
             ? 'Atomic batch cancelled before download and queued for a complete all-client number inventory.'
-            : string.concat('Atomic batch failed: ', message),
+            : operationGroupReplan
+              ? 'Atomic operation group cancelled safely and queued automatically for a fresh complete capture.'
+              : string.concat('Atomic batch failed: ', message),
         updatedAt: completedAt
       });
     }

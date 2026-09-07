@@ -564,6 +564,21 @@ def generate_sql(
         request_path.unlink(missing_ok=True)
 
 
+def wrap_atomic_group(table_apply_sql):
+    request = {"operation": "group-wrap", "tableApplySql": table_apply_sql}
+    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
+        json.dump(request, handle, ensure_ascii=False)
+        request_path = Path(handle.name)
+    try:
+        result = run(
+            [DART, "run", "tool/sync_sql_harness.dart", str(request_path)],
+            cwd=AGENT_DIR,
+        )
+        return result.stdout
+    finally:
+        request_path.unlink(missing_ok=True)
+
+
 def apply(
     database,
     *,
@@ -1579,8 +1594,73 @@ def run_robustness_scenarios(*, include_restart=True, fuzz_rounds=30, scale_rows
     print(json.dumps({"ok": True, "suite": "robustness", "scenarios": scenarios}))
 
 
+def assert_alameen_operation_group_atomicity(database):
+    group_columns = [
+        {"name": "Id", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
+        {"name": "Code", "sqlType": "nvarchar", "maxLength": 100, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+        {"name": "Notes", "sqlType": "nvarchar", "maxLength": 200, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    ]
+    sqlcmd(
+        """
+IF OBJECT_ID(N'dbo.GroupHeader', N'U') IS NOT NULL DROP TABLE dbo.GroupHeader;
+IF OBJECT_ID(N'dbo.GroupLine', N'U') IS NOT NULL DROP TABLE dbo.GroupLine;
+CREATE TABLE dbo.GroupHeader (Id int NOT NULL PRIMARY KEY, Code nvarchar(50) NULL, Notes nvarchar(100) NULL);
+CREATE TABLE dbo.GroupLine (Id int NOT NULL PRIMARY KEY, Code nvarchar(50) NULL, Notes nvarchar(100) NULL);
+INSERT dbo.GroupHeader VALUES (1, N'OLD-H', N'old header');
+INSERT dbo.GroupLine VALUES (1, N'OLD-L', N'old line');
+""",
+        database=database,
+    )
+    header = generate_sql(
+        database,
+        table="GroupHeader",
+        columns=group_columns,
+        rows=[{"Id": 1, "Code": "NEW-H", "Notes": "new header"}],
+    )
+    line = generate_sql(
+        database,
+        table="GroupLine",
+        columns=group_columns,
+        rows=[{"Id": 1, "Code": "NEW-L", "Notes": "new line"}],
+    )
+    missing_line = line.replace(
+        f"[{database}].[dbo].[GroupLine]",
+        f"[{database}].[dbo].[GroupLine_Missing]",
+    )
+    failed = execute_generated_sql(
+        wrap_atomic_group([header, missing_line]),
+        check=False,
+    )
+    if failed.returncode == 0:
+        raise AssertionError("Injected second-table group fault unexpectedly succeeded.")
+    retained = sqlcmd(
+        "SET NOCOUNT ON; SELECT Code FROM dbo.GroupHeader WHERE Id=1; SELECT Code FROM dbo.GroupLine WHERE Id=1;",
+        database=database,
+    ).stdout
+    if "OLD-H" not in retained or "OLD-L" not in retained:
+        raise AssertionError("Atomic group fault did not roll back every table.")
+
+    execute_generated_sql(wrap_atomic_group([header, line]))
+    applied = sqlcmd(
+        "SET NOCOUNT ON; SELECT Code FROM dbo.GroupHeader WHERE Id=1; SELECT Code FROM dbo.GroupLine WHERE Id=1;",
+        database=database,
+    ).stdout
+    if "NEW-H" not in applied or "NEW-L" not in applied:
+        raise AssertionError("Atomic group did not commit every staged table.")
+    # A committed-response retry must be harmless.
+    execute_generated_sql(wrap_atomic_group([header, line]))
+    retried = sqlcmd(
+        "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.GroupHeader; SELECT COUNT(*) FROM dbo.GroupLine;",
+        database=database,
+    ).stdout
+    numeric = [int(value.strip()) for value in retried.splitlines() if value.strip().isdigit()]
+    if numeric[-2:] != [1, 1]:
+        raise AssertionError(f"Atomic group retry was not idempotent: {numeric}")
+
+
 def run_scenarios(*, include_database_backup_restore=False):
     reset_databases()
+    assert_alameen_operation_group_atomicity(DATABASES[0])
     if include_database_backup_restore:
         assert_full_database_backup_restore()
     assert_hex_row_transport(DATABASES[0])
@@ -2605,6 +2685,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "business-key-collision-fails-closed-then-reserved-key-applies",
             "alameen-bu000-collision-renumbers-er000-by-parent-guid",
             "alameen-mt000-collision-preserves-guids-with-reserved-number",
+            "alameen-cross-table-operation-group-atomic-rollback-and-retry",
             "automatic-number-complete-union-relay-three-client-convergence",
             "invoice-line-primary-key-union-explicit-delete-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",

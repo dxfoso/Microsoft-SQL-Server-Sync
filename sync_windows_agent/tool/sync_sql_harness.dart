@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:sync_windows_agent/sql_sync_merge.dart';
 import 'package:sync_windows_agent/sql_sync_fingerprint.dart';
 import 'package:sync_windows_agent/sql_sync_schema.dart';
+import 'package:sync_windows_agent/alameen_operation_boundary.dart';
 
 void main(List<String> arguments) {
   if (arguments.length != 1) {
@@ -16,6 +17,27 @@ void main(List<String> arguments) {
       jsonDecode(File(arguments.single).readAsStringSync())
           as Map<String, dynamic>;
   final operation = request['operation']?.toString() ?? '';
+  if (operation == 'alameen-operation-boundary') {
+    stdout.write(
+      buildAlameenOperationBoundarySql(
+        database: request['database'].toString(),
+        tableBaselines: Map<String, dynamic>.from(
+          request['tableBaselines'] as Map,
+        ).map((key, value) => MapEntry(key, (value as num).toInt())),
+      ),
+    );
+    return;
+  }
+  if (operation == 'group-wrap') {
+    stdout.write(
+      buildAtomicTargetSnapshotGroupApplySql(
+        (request['tableApplySql'] as List)
+            .map((value) => value.toString())
+            .toList(growable: false),
+      ),
+    );
+    return;
+  }
   if (operation == 'transport-expression') {
     stdout.write(
       buildSqlSyncTransportValueExpression(
@@ -71,10 +93,9 @@ void main(List<String> arguments) {
     final winners = coalesceSqlSyncDeltaRows(
       rows: rows,
       primaryKeyColumns: _strings(request['primaryKeyColumns']),
-      uniqueKeyColumnSets:
-          (request['uniqueKeyColumnSets'] as List? ?? const [])
-              .map((columns) => _strings(columns))
-              .toList(growable: false),
+      uniqueKeyColumnSets: (request['uniqueKeyColumnSets'] as List? ?? const [])
+          .map((columns) => _strings(columns))
+          .toList(growable: false),
     );
     stdout.write(jsonEncode(winners));
     return;
