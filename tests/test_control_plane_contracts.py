@@ -3266,7 +3266,22 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("operation group is still waiting for all related table uploads", source)
         self.assertIn("expand_alameen_business_operation_tables", source)
         self.assertIn("let operationGroupReady = operationGroupTables.length == 9", source)
-        self.assertIn("string.from(groupPlan.mode) != 'delta'", source)
+        self.assertIn(
+            "function sync_table_plan_supports_alameen_operation_group(", source
+        )
+        group_mode_helper = source.split(
+            "function sync_table_plan_supports_alameen_operation_group(", 1
+        )[1].split("\n}", 1)[0]
+        self.assertIn("mode == 'delta'", group_mode_helper)
+        self.assertIn("mode == 'union_bootstrap'", group_mode_helper)
+        self.assertIn("mode == 'range_union'", group_mode_helper)
+        self.assertIn(
+            "!sync_table_plan_supports_alameen_operation_group(groupPlan)", source
+        )
+        self.assertIn(
+            "if (sync_table_plan_supports_alameen_operation_group(plan))", source
+        )
+        self.assertNotIn("string.from(groupPlan.mode) != 'delta'", source)
         self.assertIn("Never let part of an accounting graph escape independently", source)
         self.assertIn("requestedOperationTableCount != 0 && operationGroupTables.length != 9", source)
         self.assertIn("Atomic Al-Ameen operation group applied successfully.", source)

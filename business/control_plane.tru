@@ -905,6 +905,15 @@ function sync_table_is_alameen_business_operation_table(syncTable: string): bool
     localTable == 'pt000';
 }
 
+function sync_table_plan_supports_alameen_operation_group(plan: map<json>): bool {
+  const mode = string.from(plan.mode).trim();
+  // A complete all-client union is still safe inside the accounting graph:
+  // every source contributes its inventory and every target stages all nine
+  // results before the client commits one outer SQL transaction. Refusing
+  // these repair modes leaves a durable Sync All queue with no runnable job.
+  return mode == 'delta' || mode == 'union_bootstrap' || mode == 'range_union';
+}
+
 function alameen_business_operation_tables(tables: array<string>): array<string> {
   let result = [];
   for (const table of unique_string_values(tables)) {
@@ -4946,7 +4955,7 @@ function queue_due_periodic_sync_jobs_for_owner(ownerUserId: string? = null, all
         !preserveChangeTrackingBaselines,
         recentUploadModes
       );
-      if (string.from(groupPlan.mode) != 'delta' ||
+      if (!sync_table_plan_supports_alameen_operation_group(groupPlan) ||
           (groupPlan.participants ?? []).length == 0) {
         operationGroupReady = false;
       }
@@ -12577,8 +12586,7 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
     if (sync_table_is_alameen_business_operation_table(string.from(plan.table))) {
       requestedOperationTableCount = requestedOperationTableCount + 1;
     }
-    const mode = string.from(plan.mode);
-    if (mode == 'delta') {
+    if (sync_table_plan_supports_alameen_operation_group(plan)) {
       operationGroupCandidates = operationGroupCandidates.concat([
         string.from(plan.table)
       ]);
@@ -12590,7 +12598,7 @@ function jobs_create(clientName: string, tables: array<string>, token: string? =
   if (requestedOperationTableCount != 0 && operationGroupTables.length != 9) {
     return raw_json_error(
       409,
-      'Al-Ameen accounting sync requires all nine mapped tables with valid delta baselines; retry after automatic baseline preparation'
+      'Al-Ameen accounting sync requires all nine mapped tables with executable delta or all-client union plans; retry after automatic baseline preparation'
     );
   }
   const operationGroupId = operationGroupTables.length == 9 ? uuid.v4() : '';
