@@ -172,6 +172,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         completion = source.split("function jobs_complete(", 1)[1].split(
             "function jobs_fail", 1
         )[0]
+        freshness = source.split(
+            "function repair_resolution_fingerprints_are_fresh(", 1
+        )[1].split("function refresh_owner_baseline_table_issues", 1)[0]
 
         self.assertIn("function automatic_number_recovery_requires_complete_union(", source)
         self.assertIn("status: { in: ['blocked', 'reserved'] }", source)
@@ -193,6 +196,15 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("id: { in: resolvedIncidentIds }", convergence)
         self.assertIn("if (cache != null)", convergence)
         self.assertNotIn("cache == null ? [] : cache.tables", convergence)
+        self.assertNotIn("status: 'completed'", freshness)
+        self.assertIn("orderBy: { field: 'updatedAt', dir: 'desc' }", freshness)
+        self.assertIn("latestStatus != 'completed'", freshness)
+        self.assertIn(
+            "requireCompleteUnion && !sync_source_is_complete_union_bootstrap(latestSource)",
+            freshness,
+        )
+        self.assertIn("sharedBatchId != latestBatchId", freshness)
+        self.assertIn("participants,\n          true", convergence)
         self.assertIn("resolve_converged_automatic_number_incidents(ownerUserId)", heartbeat)
         self.assertNotIn("resolve_automatic_number_batch_incidents(", completion)
 
@@ -1458,7 +1470,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[1].split("Future<void> _markRemoteJobFailed(", 1)[0]
 
         self.assertIn("direction: 'download'", refresh)
-        self.assertIn("status: 'completed'", refresh)
+        self.assertNotIn("status: 'completed'", refresh)
+        self.assertIn("latestStatus != 'completed'", refresh)
+        self.assertIn("sharedBatchId != latestBatchId", refresh)
         self.assertIn("date.diff(heartbeatAt, latestCompletedAt, 'ms') <= 0", refresh)
         self.assertEqual(refresh.count("resolutionFingerprintsFresh &&"), 3)
         self.assertIn("durable_origin_nonconvergence_fresh", refresh)

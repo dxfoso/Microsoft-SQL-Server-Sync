@@ -2,7 +2,7 @@
 
 ## Automatic Al-Ameen synchronization (2026-09-07)
 
-Overall: **99% complete for the expanded ten-table lab scope - the material allocator reserves a collision-free number and the INC-550 complete-union/fresh-convergence fix passed 408 focused regressions, all 35 three-client Docker scenarios, all 11 robustness scenarios, and a 60-second soak with 28 iterations. Immutable deployment and the corrected targeted lab repair remain. Development and release continue automatically; only unsafe real-client scheduling remains paused until that repair converges. General all-table production activation remains outside the proven scope.**
+Overall: **99% complete for the expanded ten-table lab scope - the controlled material repair converged both clients at 14,093 rows with identical checksums, but INC-556 found that incident metadata resolved from an older completed download while the current full-union repair was still active. The long-term newest-attempt/same-batch guard is implemented and its full release gates are running. Development and release continue automatically; only unsafe real-client scheduling remains disabled during verification. General all-table production activation remains outside the proven scope.**
 
 | Step | Status | Progress |
 |---|---|---:|

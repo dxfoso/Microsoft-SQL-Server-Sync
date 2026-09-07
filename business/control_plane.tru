@@ -5878,28 +5878,50 @@ function sync_table_reported_change_tracking_version(tableState: map<json>? = nu
   return int.from(tableState.changeTrackingVersion);
 }
 
-function repair_resolution_fingerprints_are_fresh(ownerUserId: string, table: string, clientNames: array<string>, agents: array<json>): bool {
+function repair_resolution_fingerprints_are_fresh(ownerUserId: string, table: string, clientNames: array<string>, agents: array<json>, requireCompleteUnion: bool = false): bool {
   if (clientNames.length < 2) {
     return false;
   }
-  const completedDownloads = db.selectMany(SyncJob, {
+  // Inspect the newest download attempt for every participant, including
+  // unfinished and failed work. Filtering this query to completed rows would
+  // allow an older successful repair to certify fingerprints while a newer
+  // complete-union repair is still being applied.
+  const latestDownloads = db.selectMany(SyncJob, {
     where: {
       ownerUserId,
       table,
-      direction: 'download',
-      status: 'completed'
+      direction: 'download'
     },
-    orderBy: { field: 'completedAt', dir: 'desc' },
-    fields: ['clientName', 'completedAt'],
-    limit: 100
+    orderBy: { field: 'updatedAt', dir: 'desc' },
+    fields: ['clientName', 'batchId', 'sourceClientName', 'status', 'completedAt', 'updatedAt'],
+    limit: 200
   });
+  let sharedBatchId = '';
   for (const clientName of clientNames) {
-    let latestCompletedAt = '';
-    for (const job of completedDownloads) {
+    let latestDownload = null;
+    for (const job of latestDownloads) {
       if (normalize_user_name(job.clientName) == normalize_user_name(clientName)) {
-        latestCompletedAt = string.from(job.completedAt ?? '').trim();
+        latestDownload = job;
         break;
       }
+    }
+    if (latestDownload == null) {
+      return false;
+    }
+    const latestStatus = string.from(latestDownload.status ?? '').trim().toLowerCase();
+    const latestCompletedAt = string.from(latestDownload.completedAt ?? '').trim();
+    const latestBatchId = string.from(latestDownload.batchId ?? '').trim();
+    const latestSource = string.from(latestDownload.sourceClientName ?? '').trim();
+    if (latestStatus != 'completed' ||
+        latestCompletedAt.length == 0 ||
+        latestBatchId.length == 0 ||
+        (requireCompleteUnion && !sync_source_is_complete_union_bootstrap(latestSource))) {
+      return false;
+    }
+    if (sharedBatchId.length == 0) {
+      sharedBatchId = latestBatchId;
+    } else if (sharedBatchId != latestBatchId) {
+      return false;
     }
     let participant = null;
     for (const agent of agents) {
@@ -5908,7 +5930,7 @@ function repair_resolution_fingerprints_are_fresh(ownerUserId: string, table: st
         break;
       }
     }
-    if (participant == null || latestCompletedAt.length == 0) {
+    if (participant == null) {
       return false;
     }
     const heartbeatAt = string.from(participant.lastHeartbeat ?? '').trim();
@@ -6844,7 +6866,8 @@ function resolve_converged_automatic_number_incidents(ownerUserId: string, agent
           ownerUserId,
           table,
           clientNames,
-          participants
+          participants,
+          true
         )) {
       continue;
     }
